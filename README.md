@@ -9,7 +9,7 @@ You can easily adjust the following settings for your Chess client:
 * ELO Rating (700-4700): How "skilled" the client will be when calculating moves.
 * ThinkAhead Moves (1-14): How many moves the client will predict in the move calculation.
 * Move Speed (0-20s): If using Auto-Move, how long the client will wait before making the move.
-* Ghost (Toggle): Humanizes your gameplay and move speed to evade bans.
+* Ghost (Toggle): Humanizes your gameplay and move speed to evade bans and play like a human.
 * Highlight Move (Toggle): Highlights the move that the client has calculated.
 * Auto-Move (Toggle): Automatically performs the calculated move after the Move Speed.
 * Auto-Queue (Toggle): Automatically queues for the next game when your current game finishes.
