@@ -9,6 +9,10 @@ export const TIMINGS = {
 	engineInfoCoalesceMs: 100,
 	adapterDebounceMs: 40,
 	adapterSelfCheckIntervalMs: 15_000,
+	/** `observeMove`: wait for the move list after the piece has landed (Task 20). */
+	adapterMoveConfirmMs: 1_500,
+	/** Budget for one MAIN-world bridge round trip from an adapter (Task 20). */
+	adapterBridgeTimeoutMs: 1_000,
 	executorVerifyTimeoutMs: 1_200,
 	executorRetryDelayMs: [250, 600],
 	debuggerIdleDetachMs: 180_000,

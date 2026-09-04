@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<!--
+  HAND-BUILT FIXTURE (2026-09-04) from Appendix C §1.2–§1.6 verified DOM descriptions.
+  Replace with a real capture of a finished https://www.chess.com/game/live/<id> during manual QA (Task 31).
+  Scripts stripped. Scholar's mate: 1.e4 e5 2.Bc4 Nc6 3.Qh5 Nf6 4.Qxf7# (white won, ply 7).
+  FEN: r1bqkb1r/pppp1Qpp/2n2n2/4p3/2B1P3/8/PPPP1PPP/RNB1K1NR b KQkq - 0 4
+-->
+<html lang="en">
+<head><meta charset="utf-8"><title>Play Chess Online - Chess.com</title></head>
+<body class="board-layout with-players with-controls with-evaluation">
+<div id="board-layout-main" class="board-layout-main">
+  <div id="board-layout-player-top" class="board-layout-player board-layout-top">
+    <div class="player-component player-top">
+      <div class="player-playerContent">
+        <div class="player-tagline">
+          <div class="cc-user-block-component cc-user-block-black">
+            <a class="cc-user-username-component" data-test-element="user-tagline-username">MagnusFan99</a>
+            <span class="cc-user-rating-black">(1842)</span>
+          </div>
+        </div>
+      </div>
+      <div class="clock-component clock-top clock-black">
+        <span class="clock-time-monospace" role="timer">2:41</span>
+      </div>
+    </div>
+  </div>
+  <div id="board-layout-chessboard" class="board-layout-chessboard">
+    <wc-chess-board class="board" id="board-single" style="--move-animation-duration: 180ms; width: 528px; height: 528px;">
+      <svg class="coordinates" viewBox="0 0 100 100"><text class="coordinate-light" x="0.75" y="3.5">8</text></svg>
+      <div class="element-pool"></div>
+      <div class="highlight square-85" style="background-color: rgb(255, 255, 51); opacity: 0.5;" data-test-element="highlight" data-test-type="highlight"></div>
+      <div class="highlight square-67" style="background-color: rgb(255, 255, 51); opacity: 0.5;" data-test-element="highlight" data-test-type="highlight"></div>
+      <div class="hover-square"></div>
+      <div class="piece wr square-11"></div>
+      <div class="piece wn square-21"></div>
+      <div class="piece wb square-31"></div>
+      <div class="piece wk square-51"></div>
+      <div class="piece wn square-71"></div>
+      <div class="piece wr square-81"></div>
+      <div class="piece wp square-12"></div>
+      <div class="piece wp square-22"></div>
+      <div class="piece wp square-32"></div>
+      <div class="piece wp square-42"></div>
+      <div class="piece wp square-62"></div>
+      <div class="piece wp square-72"></div>
+      <div class="piece wp square-82"></div>
+      <div class="piece wp square-54"></div>
+      <div class="piece wb square-34"></div>
+      <div class="piece wq square-67"></div>
+      <div class="piece br square-18"></div>
+      <div class="piece bb square-38"></div>
+      <div class="piece bq square-48"></div>
+      <div class="piece bk square-58"></div>
+      <div class="piece bb square-68"></div>
+      <div class="piece br square-88"></div>
+      <div class="piece bp square-17"></div>
+      <div class="piece bp square-27"></div>
+      <div class="piece bp square-37"></div>
+      <div class="piece bp square-47"></div>
+      <div class="piece bp square-77"></div>
+      <div class="piece bp square-87"></div>
+      <div class="piece bp square-55"></div>
+      <div class="piece bn square-36"></div>
+      <div class="piece bn square-66"></div>
+    </wc-chess-board>
+    <div class="board-modal-container-container">
+      <div class="game-over-modal-shell-container">
+        <div class="game-over-modal-shell-content game-over-modal-shell-v6">
+          <div class="game-over-modal-header-component game-over-modal-header-userWon">
+            <div class="game-over-modal-title-component">You Won!</div>
+            <div class="game-over-modal-subtitle-component">by checkmate</div>
+          </div>
+          <div class="game-over-modal-shell-buttons">
+            <button class="cc-button-component" data-cy="game-over-modal-new-game-button" aria-label="New Game">New 3 min</button>
+            <button class="cc-button-component" data-cy="game-over-modal-rematch-button" aria-label="Rematch">Rematch</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div id="board-layout-player-bottom" class="board-layout-player board-layout-bottom">
+    <div class="player-component player-bottom">
+      <div class="player-playerContent">
+        <div class="player-tagline">
+          <div class="cc-user-block-component cc-user-block-white">
+            <a class="cc-user-username-component" data-test-element="user-tagline-username">owen_g</a>
+            <span class="cc-user-rating-white">(1658)</span>
+          </div>
+        </div>
+      </div>
+      <div class="clock-component clock-bottom clock-white">
+        <span class="clock-time-monospace" role="timer">2:48</span>
+      </div>
+    </div>
+  </div>
+  <div id="board-layout-sidebar" class="board-layout-sidebar">
+    <div class="player-game-over-component"><span class="rating-score-change">+8</span></div>
+    <div class="new-game-buttons-component">
+      <div class="new-game-buttons-buttons">
+        <button class="cc-button-component new-game-buttons-rematch" data-cy="sidebar-game-over-rematch-button">Rematch</button>
+        <button class="cc-button-component" data-cy="sidebar-game-over-new-game-button">New 3 min</button>
+      </div>
+    </div>
+    <wc-simple-move-list class="mode-swap-move-list-wrapper-component move-list chessboard-pkg-move-list-component">
+      <div class="timestamps-with-base-time">
+        <div class="main-line-row move-list-row light-row" data-whole-move-number="1">1.
+          <div data-node="0-0" class="node white-move main-line-ply"><span class="node-highlight-content">e4 </span></div>
+          <div data-node="0-1" class="node black-move main-line-ply"><span class="node-highlight-content">e5 </span></div>
+        </div>
+        <div class="main-line-row move-list-row dark-row" data-whole-move-number="2">2.
+          <div data-node="0-2" class="node white-move main-line-ply"><span class="node-highlight-content">Bc4 </span></div>
+          <div data-node="0-3" class="node black-move main-line-ply"><span class="node-highlight-content">Nc6 </span></div>
+        </div>
+        <div class="main-line-row move-list-row light-row" data-whole-move-number="3">3.
+          <div data-node="0-4" class="node white-move main-line-ply"><span class="node-highlight-content">Qh5 </span></div>
+          <div data-node="0-5" class="node black-move main-line-ply"><span class="node-highlight-content">Nf6 </span></div>
+        </div>
+        <div class="main-line-row move-list-row dark-row" data-whole-move-number="4">4.
+          <div data-node="0-6" class="node white-move main-line-ply"><span class="node-highlight-content selected">Qxf7# </span></div>
+        </div>
+        <div class="main-line-row move-list-row result-row"><span class="game-result">1-0 </span></div>
+      </div>
+    </wc-simple-move-list>
+  </div>
+</div>
+</body>
+</html>

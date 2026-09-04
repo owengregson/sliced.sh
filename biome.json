@@ -15,6 +15,7 @@
 			"*.ts",
 			"!legacy",
 			"!dist",
+			"!test/fixtures",
 			"!assets",
 			"!src/page/generated",
 			"!src/design/tokens.generated.ts",
