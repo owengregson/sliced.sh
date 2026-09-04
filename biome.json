@@ -97,6 +97,16 @@
 					}
 				}
 			}
+		},
+		{
+			"includes": ["src/core/logger.ts"],
+			"linter": {
+				"rules": {
+					"suspicious": {
+						"noConsole": "off"
+					}
+				}
+			}
 		}
 	]
 }
