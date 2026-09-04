@@ -14,7 +14,8 @@
 		"test:watch": "bun test --watch",
 		"check": "bun run gen:tokens && bun run gen:pagescript && bun run lint && bun run typecheck && bun run test",
 		"gen:pagescript": "bun scripts/gen-pagescript.ts",
-		"verify:dist": "bun scripts/verify-dist.ts"
+		"verify:dist": "bun scripts/verify-dist.ts",
+		"vendor:engine": "bun scripts/vendor-engine.ts"
 	},
 	"dependencies": {
 		"chess.js": "^1.4.0"
@@ -22,6 +23,7 @@
 	"devDependencies": {
 		"@biomejs/biome": "^2.4.12",
 		"@fortawesome/fontawesome-free": "^7.3.1",
+		"@lichess-org/stockfish-web": "0.4.4",
 		"@types/bun": "^1.3.12",
 		"@types/chrome": "^0.1.36",
 		"@types/estree": "^1.0.8",

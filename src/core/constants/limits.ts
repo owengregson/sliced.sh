@@ -17,6 +17,10 @@ export const LIMITS = {
 	timingLogMax: 200,
 	analysisCacheEntries: 256,
 	cpClamp: 1000,
+	/** Smallnet weights bundled in `assets/engine/` (§6.1); `nn-<sha256[0:12]>.nnue`. */
+	nnueSmallName: "nn-4ca89e4b3abf.nnue",
+	/** Full-strength `sf_18` dual nets `[big, small]`, fetched on demand into OPFS (Task 12). */
+	nnueBigNames: ["nn-c288c895ea92.nnue", "nn-37f18f62d772.nnue"],
 } as const;
 
 /**

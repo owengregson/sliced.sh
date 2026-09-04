@@ -1,0 +1,84 @@
+{
+	"manifest_version": 3,
+	"minimum_chrome_version": "128",
+	"name": "sliced.gg",
+	"short_name": "sliced",
+	"description": "A powerful chess assistant that runs in your browser.",
+	"version": "2.0.0",
+	"key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAub1abNW0/Xmh/Dlvt4nP8CMvLWzbAoGzAQpcMz80U/vCK3wLVK7i7c0gc7xINGP2gziUioJJGdO3Yf7JLC4QWALwfxgvLPdT/k7mWjY1FGNdlKTIhQETrGXpRzXAiRCCxZ/pipnMLWDlxVHvyv8rO+gg/NANC2DZeBMOS00PGzbelSxTXaRh4+t74Jh+FlRMNgwvx08o8HVNOD+PfFCqK8xGWBlnn477IMWKIUk78ntkReldUIPXETcKYqR9QeDui1PUarKdAZ1hsjnE1qXuiJxNY3Z5fZMSgPBYH9x+4e1xaC06IQ++hGrQLLiiBZYjbKwaWrJBBt9NfjuPXI0fLwIDAQAB",
+	"icons": {
+		"128": "assets/images/sliced_128.png",
+		"256": "assets/images/sliced_256.png"
+	},
+	"action": {
+		"default_title": "sliced.gg",
+		"default_icon": {
+			"128": "assets/images/sliced_128.png"
+		}
+	},
+	"side_panel": {
+		"default_path": "pages/panel.html"
+	},
+	"background": {
+		"service_worker": "js/service-worker.js",
+		"type": "module"
+	},
+	"content_scripts": [
+		{
+			"matches": ["*://*.chess.com/*", "*://*.lichess.org/*"],
+			"js": ["js/page/chesscom-bridge.js", "js/page/lichess-bridge.js"],
+			"run_at": "document_start",
+			"world": "MAIN"
+		},
+		{
+			"matches": ["*://*.chess.com/*", "*://*.lichess.org/*"],
+			"js": ["js/content.js"],
+			"run_at": "document_start"
+		}
+	],
+	"commands": {
+		"play-best-move": {
+			"suggested_key": {
+				"default": "Alt+Shift+M"
+			},
+			"description": "Play the recommended move now"
+		},
+		"toggle-auto-move": {
+			"suggested_key": {
+				"default": "Alt+Shift+A"
+			},
+			"description": "Arm / disarm auto-move"
+		},
+		"disable-assistant": {
+			"suggested_key": {
+				"default": "Alt+Shift+X"
+			},
+			"description": "Disable sliced immediately"
+		}
+	},
+	"permissions": [
+		"storage",
+		"debugger",
+		"sidePanel",
+		"offscreen",
+		"tts",
+		"alarms",
+		"unlimitedStorage"
+	],
+	"host_permissions": ["*://*.chess.com/*", "*://*.lichess.org/*", "https://explorer.lichess.ovh/*"],
+	"web_accessible_resources": [
+		{
+			"resources": ["assets/engine/*", "assets/sounds/*"],
+			"matches": ["*://*.chess.com/*", "*://*.lichess.org/*"]
+		}
+	],
+	"cross_origin_embedder_policy": {
+		"value": "require-corp"
+	},
+	"cross_origin_opener_policy": {
+		"value": "same-origin"
+	},
+	"content_security_policy": {
+		"extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+	}
+}
