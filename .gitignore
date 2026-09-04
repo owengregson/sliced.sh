@@ -7,3 +7,6 @@ src/design/tokens.generated.ts
 css/tokens.css
 .DS_Store
 .superpowers/
+
+# Python bytecode from tools/data
+__pycache__/
