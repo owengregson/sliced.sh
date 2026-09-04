@@ -64,3 +64,17 @@ export function onRuntimeConnect(handler: (port: chrome.runtime.Port) => void): 
 	chrome.runtime.onConnect.addListener(handler);
 	return () => chrome.runtime.onConnect.removeListener(handler);
 }
+
+/** Subscribe to `chrome.runtime.onInstalled`; returns the unsubscribe. */
+export function onRuntimeInstalled(
+	handler: (details: chrome.runtime.InstalledDetails) => void
+): () => void {
+	chrome.runtime.onInstalled.addListener(handler);
+	return () => chrome.runtime.onInstalled.removeListener(handler);
+}
+
+/** Subscribe to `chrome.runtime.onStartup`; returns the unsubscribe. */
+export function onRuntimeStartup(handler: () => void): () => void {
+	chrome.runtime.onStartup.addListener(handler);
+	return () => chrome.runtime.onStartup.removeListener(handler);
+}

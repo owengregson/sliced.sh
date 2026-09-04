@@ -78,3 +78,21 @@ export function onStorageChanged(
 	chrome.storage.onChanged.addListener(listener);
 	return () => chrome.storage.onChanged.removeListener(listener);
 }
+
+/**
+ * Untyped reads/removes of `chrome.storage.local` keys that are NOT in the
+ * registry — only for the one-time 1.x → 2.0 legacy migration (§12.3).
+ */
+export function chromeLocalGetRaw(keys: readonly string[]): Promise<Record<string, unknown>> {
+	return new Promise((resolve, reject) =>
+		chrome.storage.local.get([...keys], (items: Record<string, unknown>) => {
+			const err = chrome.runtime.lastError;
+			if (err) return reject(new Error(err.message));
+			resolve(items);
+		})
+	);
+}
+
+export function chromeLocalRemoveRaw(keys: readonly string[]): Promise<void> {
+	return areaRemove(chrome.storage.local, [...keys]);
+}

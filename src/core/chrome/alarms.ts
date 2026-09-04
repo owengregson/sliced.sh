@@ -32,3 +32,9 @@ export function alarmClear(name: AlarmName): Promise<boolean> {
 		})
 	);
 }
+
+/** Subscribe to `chrome.alarms.onAlarm`; returns the unsubscribe. */
+export function onAlarm(handler: (alarm: chrome.alarms.Alarm) => void): () => void {
+	chrome.alarms.onAlarm.addListener(handler);
+	return () => chrome.alarms.onAlarm.removeListener(handler);
+}

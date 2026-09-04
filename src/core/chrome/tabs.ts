@@ -58,3 +58,39 @@ export function tabsSendMessage(
 		}
 	});
 }
+
+export function tabsGet(tabId: number): Promise<chrome.tabs.Tab> {
+	return new Promise((resolve, reject) =>
+		chrome.tabs.get(tabId, (tab) => {
+			const err = chrome.runtime.lastError;
+			if (err) return reject(new Error(err.message));
+			resolve(tab);
+		})
+	);
+}
+
+export type TabUpdatedHandler = (
+	tabId: number,
+	changeInfo: chrome.tabs.OnUpdatedInfo,
+	tab: chrome.tabs.Tab
+) => void;
+
+/** Subscribe to `chrome.tabs.onUpdated`; returns the unsubscribe. */
+export function onTabUpdated(handler: TabUpdatedHandler): () => void {
+	chrome.tabs.onUpdated.addListener(handler);
+	return () => chrome.tabs.onUpdated.removeListener(handler);
+}
+
+/** Subscribe to `chrome.tabs.onActivated`; returns the unsubscribe. */
+export function onTabActivated(handler: (info: chrome.tabs.OnActivatedInfo) => void): () => void {
+	chrome.tabs.onActivated.addListener(handler);
+	return () => chrome.tabs.onActivated.removeListener(handler);
+}
+
+/** Subscribe to `chrome.tabs.onRemoved`; returns the unsubscribe. */
+export function onTabRemoved(
+	handler: (tabId: number, info: chrome.tabs.OnRemovedInfo) => void
+): () => void {
+	chrome.tabs.onRemoved.addListener(handler);
+	return () => chrome.tabs.onRemoved.removeListener(handler);
+}
