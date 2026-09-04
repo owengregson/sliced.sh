@@ -1,5 +1,6 @@
 // test/core/engine/uci-client.test.ts
 import { describe, expect, it } from "bun:test";
+import { pvToSan } from "@core/chess/san";
 import { TIMINGS } from "@core/constants/timings";
 import type { AnalysisUpdate } from "@core/engine/types";
 import { cpEquivalent, FEATURE_DEPTH, UciEngine } from "@core/engine/uci-client";
@@ -16,6 +17,21 @@ const AFTER_E4 = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1";
 function info(depth: number, multipv: number, cp: number, pv: string, extra = ""): string {
 	return `info depth ${depth} seldepth ${depth + 2} multipv ${multipv} score cp ${cp}${extra} nodes ${depth * 100} nps 50000 time ${depth * 2} pv ${pv}`;
 }
+
+// One-time warm-up (chess.js load + the client's hot paths) so first-use cost is not
+// billed to whichever pure-logic test happens to run first under the 5 ms budget.
+await (async () => {
+	pvToSan(START, ["e2e4", "e7e5"]);
+	const t = new FakeEngineTransport();
+	const eng = new UciEngine(t, { scheduler: new FakeScheduler().scheduler });
+	await eng.init();
+	const h = eng.analyse({ id: "warm", fen: START, multiPv: 2, limit: { movetimeMs: 1 } });
+	const it = h.updates[Symbol.asyncIterator]();
+	t.feed(info(1, 1, 0, "e2e4 e7e5"), info(1, 2, 0, "d2d4 d7d5"), "bestmove e2e4");
+	await it.next();
+	await h.result;
+	eng.dispose();
+})();
 
 async function setup(): Promise<{
 	t: FakeEngineTransport;
@@ -131,6 +147,12 @@ describe("UciEngine.analyse (b)", () => {
 		});
 		expect(u.lines[1]?.pvSan).toEqual(["d4", "d5"]);
 		expect(sched.pending).toBe(1); // only the movetime watchdog
+	});
+	it("resolves on bestmove with the final frame, then the iterator ends", async () => {
+		const { t, sched, eng } = await setup();
+		const h = eng.analyse({ id: "r1", fen: START, multiPv: 2, limit: { movetimeMs: 800 } });
+		const it = h.updates[Symbol.asyncIterator]();
+		t.feed(info(1, 1, 30, "e2e4 e7e5"), info(1, 2, 20, "d2d4 d7d5"));
 		t.feed("bestmove e2e4 ponder e7e5");
 		const r = await h.result;
 		expect(r.status).toBe("complete");
@@ -215,7 +237,7 @@ describe("UciEngine.analyse (b)", () => {
 		expect(r.final.lines[0]?.score).toEqual({ mate: 3 });
 		expect(r.final.lines[0]?.wdl).toEqual([1000, 0, 0]);
 	});
-	it("sends UCI_LimitStrength/UCI_Elo per request only when they change", async () => {
+	it("sends UCI_LimitStrength/UCI_Elo/MultiPV per request only when they change", async () => {
 		const { t, eng } = await setup();
 		eng.analyse({ id: "r1", fen: START, multiPv: 1, limit: { movetimeMs: 100 }, elo: 1500 });
 		expect(t.sent.slice(0, 3)).toEqual([
@@ -232,7 +254,8 @@ describe("UciEngine.analyse (b)", () => {
 			limit: { movetimeMs: 100 },
 			elo: 1500,
 		});
-		expect(t.sent[0]).toBe("setoption name MultiPV value 1");
+		// nothing changed (same elo, same MultiPV): no setoption at all before position
+		expect(t.sent[0]).toBe(`position fen ${START}`);
 		t.feed("bestmove e2e4");
 		expect((await h2.result).engineElo).toBe(1500);
 		t.sent.length = 0;
@@ -404,6 +427,76 @@ describe("UciEngine crash and recovery (d)", () => {
 		await flush();
 		expect(t.restarts).toBe(1);
 		expect(eng.state()).toBe("idle");
+	});
+});
+
+describe("UciEngine after an unrecovered crash", () => {
+	it("fails new requests immediately instead of queueing them forever", async () => {
+		const { t, eng } = await setup();
+		t.restartImpl = () => Promise.reject(new Error("no worker"));
+		eng.analyse({ id: "r1", fen: START, multiPv: 1, limit: { movetimeMs: 800 } });
+		t.crash();
+		await flush();
+		expect(eng.state()).toBe("crashed");
+		const h = eng.analyse({ id: "r2", fen: START, multiPv: 1, limit: { movetimeMs: 800 } });
+		const r = await h.result;
+		expect(r.status).toBe("failed");
+		expect(r.bestmove).toBeNull();
+		const it = h.updates[Symbol.asyncIterator]();
+		expect((await next(it)).value?.id).toBe("r2"); // the (empty) final frame
+		expect((await next(it)).done).toBe(true);
+		expect(t.sent.filter((l) => l.startsWith("go")).length).toBe(1);
+	});
+	it("refuses init() while a recovery is in flight, then accepts it after a failed recovery", async () => {
+		const { t, eng } = await setup();
+		let fail: () => void = () => {};
+		t.restartImpl = () =>
+			new Promise<void>((_, reject) => {
+				fail = () => reject(new Error("worker gone"));
+			});
+		eng.analyse({ id: "r1", fen: START, multiPv: 1, limit: { movetimeMs: 800 } });
+		t.crash();
+		await expect(eng.init()).rejects.toThrow(/recovery in progress/);
+		fail(); // the restart itself fails: recovery gives up
+		await flush();
+		expect(eng.state()).toBe("crashed");
+		const info = await eng.init();
+		expect(info.name).toBe("Fake 1");
+		expect(eng.state()).toBe("idle");
+	});
+	it("cleans up the waiter when the transport throws synchronously on send", async () => {
+		const t = new FakeEngineTransport();
+		const sched = new FakeScheduler();
+		const eng = new UciEngine(t, { scheduler: sched.scheduler });
+		const send = t.send.bind(t);
+		t.send = (line: string) => {
+			if (line === "uci") throw new Error("port closed");
+			send(line);
+		};
+		await expect(eng.init()).rejects.toThrow(/port closed/);
+		expect(sched.pending).toBe(0);
+		expect(eng.state()).toBe("crashed");
+	});
+});
+
+describe("UciEngine ponder interruption", () => {
+	it("a panel request interrupts a running ponder", async () => {
+		const { t, eng } = await setup();
+		const hPonder = eng.ponder(START, [], 4);
+		expect(t.sent.at(-1)).toBe("go infinite");
+		const hPanel = eng.analyse({
+			id: "p1",
+			fen: AFTER_E4,
+			multiPv: 1,
+			limit: { infinite: true },
+			priority: "panel",
+		});
+		expect(t.sent.at(-1)).toBe("stop");
+		t.feed("bestmove e2e4");
+		expect((await hPonder.result).status).toBe("superseded");
+		expect(t.sent.slice(-2)).toEqual([`position fen ${AFTER_E4}`, "go infinite"]);
+		t.feed("bestmove e7e5");
+		expect((await hPanel.result).status).toBe("complete");
 	});
 });
 

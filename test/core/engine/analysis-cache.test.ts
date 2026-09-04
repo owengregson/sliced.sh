@@ -1,7 +1,14 @@
 // test/core/engine/analysis-cache.test.ts
 import { describe, expect, it } from "bun:test";
 import { LIMITS } from "@core/constants/limits";
-import { AnalysisCache, cacheKey, fenKey, limitKey } from "@core/engine/analysis-cache";
+import { TIMINGS } from "@core/constants/timings";
+import {
+	AnalysisCache,
+	cacheKey,
+	fenKey,
+	isCacheable,
+	limitKey,
+} from "@core/engine/analysis-cache";
 import type {
 	AnalysisLimit,
 	AnalysisRequest,
@@ -22,6 +29,8 @@ function result(
 		limit?: AnalysisLimit;
 		status?: AnalysisStatus;
 		id?: string;
+		/** `final.complete` (default true). */
+		finalComplete?: boolean;
 	} = {}
 ): AnalysisResult {
 	const request: AnalysisRequest = {
@@ -34,7 +43,15 @@ function result(
 	const out: AnalysisResult = {
 		id: request.id,
 		bestmove: "e2e4",
-		final: { id: request.id, depth, lines: [], nodes: 0, nps: 0, timeMs: 0, complete: true },
+		final: {
+			id: request.id,
+			depth,
+			lines: [],
+			nodes: 0,
+			nps: 0,
+			timeMs: 0,
+			complete: opts.finalComplete ?? true,
+		},
 		status: opts.status ?? "complete",
 		request,
 	};
@@ -54,7 +71,10 @@ describe("keys", () => {
 		expect(limitKey({ movetimeMs: 800 })).toBe("t800");
 		expect(limitKey({ depth: 12, movetimeMs: 800 })).toBe("d12t800");
 		expect(limitKey({ nodes: 5000 })).toBe("n5000");
-		expect(limitKey({})).toBe("t");
+		expect(limitKey({ depth: 12, nodes: 5000 })).toBe("d12n5000");
+		// an empty limit is what the client sends as the default movetime
+		expect(limitKey({})).toBe(`t${TIMINGS.analysisDefaultMovetimeMs}`);
+		expect(limitKey({})).toBe(limitKey({ movetimeMs: TIMINGS.analysisDefaultMovetimeMs }));
 	});
 	it("cacheKey is fen|multiPv|elo|limit with `full` for full strength", () => {
 		expect(cacheKey(START_LATER, 4, 1500, { movetimeMs: 800 })).toBe(`${fenKey(START)}|4|1500|t800`);
@@ -84,12 +104,23 @@ describe("AnalysisCache", () => {
 		expect(c.get(START, 6, 8)).toBe(shallow);
 		expect(c.get(START, 8, 8)).toBeUndefined();
 	});
-	it("matches only status: complete results", () => {
+	it("caches complete and superseded results only when their final iteration completed", () => {
 		const c = new AnalysisCache();
-		c.set(result(START, 20, { status: "superseded" }));
-		c.set(result(START, 20, { status: "failed", limit: { depth: 20 } }));
-		expect(c.get(START, 4, 1)).toBeUndefined();
-		expect(c.size).toBe(0);
+		// a ponder cancelled by the next analyse, with a complete depth-20 iteration → cached
+		const ponder = result(START, 20, { status: "superseded", limit: { infinite: true } });
+		expect(isCacheable(ponder)).toBe(true);
+		c.set(ponder);
+		expect(c.get(START, 4, 20)).toBe(ponder);
+		// superseded before any iteration completed → not cached
+		const early = result(OTHER, 3, { status: "superseded", finalComplete: false });
+		expect(isCacheable(early)).toBe(false);
+		c.set(early);
+		expect(c.get(OTHER, 4, 1)).toBeUndefined();
+		// a normal end mid-iteration → not cached either; failed → never
+		c.set(result(OTHER, 12, { finalComplete: false }));
+		c.set(result(OTHER, 20, { status: "failed", limit: { depth: 20 } }));
+		expect(c.get(OTHER, 4, 1)).toBeUndefined();
+		expect(c.size).toBe(1);
 	});
 	it("replaces an entry with the same key", () => {
 		const c = new AnalysisCache();

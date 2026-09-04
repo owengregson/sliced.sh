@@ -83,7 +83,7 @@ export interface UciEngineOptions {
 
 const PRIORITY_RANK: Readonly<Record<AnalysisPriority, number>> = { move: 0, ponder: 1, panel: 2 };
 
-type WaitKind = "uciok" | "readyok" | "bestmove";
+type WaitKind = "uciok" | "readyok";
 
 interface Waiter {
 	kind: WaitKind;
@@ -394,6 +394,9 @@ export class UciEngine {
 		if (this.disposed) return Promise.reject(new Error("UciEngine.init: disposed"));
 		if (this.st === "searching" || this.st === "stopping")
 			return Promise.reject(new Error("UciEngine.init: refused while searching"));
+		if (this.recovering) return Promise.reject(new Error("UciEngine.init: recovery in progress"));
+		if (this.st === "initialising")
+			return Promise.reject(new Error("UciEngine.init: already initialising"));
 		return this.handshake(false);
 	}
 
@@ -430,18 +433,23 @@ export class UciEngine {
 		});
 	}
 
-	/** Queued; a request supersedes a running search of equal or lower priority. */
+	/**
+	 * Queued; a request supersedes a running search of equal or lower priority,
+	 * and any request supersedes a running ponder. Fails immediately when the
+	 * engine is crashed with no recovery in flight (call `init()` first).
+	 */
 	analyse(req: AnalysisRequest): AnalysisHandle {
 		const p = new Pending(req, this.pendingCtx);
-		if (this.disposed) {
+		if (this.disposed || (this.st === "crashed" && !this.recovering)) {
 			p.fail();
 			return p.handle();
 		}
 		const at = this.queue.findIndex((q) => q.rank > p.rank);
 		if (at < 0) this.queue.push(p);
 		else this.queue.splice(at, 0, p);
-		if (this.active && this.st === "searching" && p.rank <= this.active.rank)
-			this.stopActive(this.active, "superseded");
+		const active = this.active;
+		if (active && this.st === "searching" && (p.rank <= active.rank || active.priority === "ponder"))
+			this.stopActive(active, "superseded");
 		this.pump();
 		return p.handle();
 	}
@@ -498,9 +506,7 @@ export class UciEngine {
 		this.busy = true;
 		this.initInfo = { name: "", author: "", options: {} };
 		try {
-			const uciok = this.waitFor("uciok");
-			this.transport.send("uci");
-			await uciok;
+			await this.sendAndWait("uciok", "uci");
 			for (const [name, value] of this.applied) this.transport.send(formatSetOption(name, value));
 			if (newGame) this.transport.send("ucinewgame");
 			await this.isReady();
@@ -516,21 +522,31 @@ export class UciEngine {
 		}
 	}
 
-	private async isReady(): Promise<void> {
-		const readyok = this.waitFor("readyok");
-		this.transport.send("isready");
-		await readyok;
+	private isReady(): Promise<void> {
+		return this.sendAndWait("readyok", "isready");
 	}
 
-	private waitFor(kind: WaitKind, timeoutMs = this.readyTimeoutMs): Promise<void> {
+	/**
+	 * Register a `kind` waiter, then send `line`. The waiter is registered first
+	 * so a transport that answers synchronously is not missed; a synchronous
+	 * `send` throw removes it again (no dangling timer) and rejects.
+	 */
+	private sendAndWait(kind: WaitKind, line: string): Promise<void> {
 		return new Promise<void>((resolve, reject) => {
 			const waiter: Waiter = { kind, resolve, reject, timer: undefined };
 			waiter.timer = this.sched.setTimeout(() => {
 				this.waiters = this.waiters.filter((w) => w !== waiter);
 				reject(new Error(`UciEngine: timed out waiting for ${kind}`));
 				this.onCrash(`timeout waiting for ${kind}`);
-			}, timeoutMs);
+			}, this.readyTimeoutMs);
 			this.waiters.push(waiter);
+			try {
+				this.transport.send(line);
+			} catch (err) {
+				this.waiters = this.waiters.filter((w) => w !== waiter);
+				this.sched.clearTimeout(waiter.timer);
+				reject(err instanceof Error ? err : new Error(String(err)));
+			}
 		});
 	}
 
@@ -552,12 +568,9 @@ export class UciEngine {
 		}
 	}
 
+	/** Diffed: sends only when `value` differs from the last applied value; records replay order. */
 	private applyOption(name: string, value: EngineOptionValue): void {
 		if (this.applied.get(name) === value) return;
-		this.sendOption(name, value);
-	}
-
-	private sendOption(name: string, value: EngineOptionValue): void {
 		this.applied.delete(name);
 		this.applied.set(name, value);
 		this.transport.send(formatSetOption(name, value));
@@ -576,7 +589,7 @@ export class UciEngine {
 		} else if (this.applied.get("UCI_LimitStrength") === true) {
 			this.applyOption("UCI_LimitStrength", false);
 		}
-		this.sendOption("MultiPV", multiPv);
+		this.applyOption("MultiPV", multiPv);
 		const suffix = moves && moves.length > 0 ? ` moves ${moves.join(" ")}` : "";
 		this.transport.send(`position fen ${fen}${suffix}`);
 		this.transport.send(`go ${goArgs(limit, searchmoves)}`);
@@ -638,7 +651,6 @@ export class UciEngine {
 			this.active = undefined;
 			if (this.st === "searching" || this.st === "stopping") this.st = "idle";
 			p?.finish(bm);
-			this.settleWaiters("bestmove");
 			this.pump();
 			return;
 		}

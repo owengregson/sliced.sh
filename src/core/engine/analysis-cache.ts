@@ -7,6 +7,7 @@
  */
 
 import { LIMITS } from "@core/constants/limits";
+import { TIMINGS } from "@core/constants/timings";
 import { LruCache } from "@core/util/lru";
 import type { AnalysisLimit, AnalysisResult } from "./types";
 
@@ -15,13 +16,18 @@ export function fenKey(fen: string): string {
 	return fen.trim().split(/\s+/).slice(0, 4).join(" ");
 }
 
-/** `inf` | `d<depth>[t<ms>]` | `t<ms>` | `n<nodes>`; `t` alone is the default movetime. */
+/**
+ * `inf`, else the concatenation of `d<depth>`, `t<ms>`, `n<nodes>` for the
+ * fields present; an empty limit keys as the explicit default movetime the
+ * client sends (`t${TIMINGS.analysisDefaultMovetimeMs}`).
+ */
 export function limitKey(limit: AnalysisLimit): string {
 	if (limit.infinite) return "inf";
-	if (limit.nodes !== undefined) return `n${limit.nodes}`;
-	const depth = limit.depth !== undefined ? `d${limit.depth}` : "";
-	const time = limit.movetimeMs !== undefined ? `t${limit.movetimeMs}` : "";
-	return depth !== "" && time === "" ? depth : `${depth}t${limit.movetimeMs ?? ""}`;
+	let key = "";
+	if (limit.depth !== undefined) key += `d${limit.depth}`;
+	if (limit.movetimeMs !== undefined) key += `t${limit.movetimeMs}`;
+	if (limit.nodes !== undefined) key += `n${limit.nodes}`;
+	return key === "" ? `t${TIMINGS.analysisDefaultMovetimeMs}` : key;
 }
 
 export function cacheKey(
@@ -31,6 +37,15 @@ export function cacheKey(
 	limit: AnalysisLimit
 ): string {
 	return `${fenKey(fen)}|${multiPv}|${elo ?? "full"}|${limitKey(limit)}`;
+}
+
+/**
+ * A result is cacheable when it ended normally or was superseded (a ponder
+ * cancelled by the next `analyse` is the common case) AND its final depth
+ * iteration completed — never a failed or partial-iteration result.
+ */
+export function isCacheable(result: AnalysisResult): boolean {
+	return (result.status === "complete" || result.status === "superseded") && result.final.complete;
 }
 
 export class AnalysisCache {
@@ -47,7 +62,7 @@ export class AnalysisCache {
 	}
 
 	/**
-	 * The deepest complete result for `fen` searched with `multiPv` lines or
+	 * The deepest cacheable result for `fen` searched with `multiPv` lines or
 	 * more at the same strength (`elo` undefined = full strength) and
 	 * `final.depth >= minDepth`. A hit refreshes recency.
 	 */
@@ -63,7 +78,7 @@ export class AnalysisCache {
 				continue;
 			}
 			if (
-				r.status !== "complete" ||
+				!isCacheable(r) ||
 				r.request.multiPv < multiPv ||
 				r.request.elo !== elo ||
 				r.final.depth < minDepth
@@ -79,9 +94,9 @@ export class AnalysisCache {
 		return best;
 	}
 
-	/** Only complete results are stored. */
+	/** Stores only cacheable results (see `isCacheable`). */
 	set(result: AnalysisResult): void {
-		if (result.status !== "complete") return;
+		if (!isCacheable(result)) return;
 		const { fen, multiPv, elo, limit } = result.request;
 		const fk = fenKey(fen);
 		const key = cacheKey(fen, multiPv, elo, limit);

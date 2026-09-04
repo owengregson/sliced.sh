@@ -125,5 +125,7 @@ export class FakeScheduler {
 	}
 }
 
-/** Let queued microtasks and promise continuations run. */
-export const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
+/** Drain queued microtasks / promise continuations (no macrotask hop, so no real-time wait). */
+export async function flush(): Promise<void> {
+	for (let i = 0; i < 64; i++) await Promise.resolve();
+}
