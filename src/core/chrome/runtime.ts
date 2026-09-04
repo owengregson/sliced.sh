@@ -20,6 +20,15 @@ export function runtimeSendMessage<R = unknown>(message: unknown): Promise<R> {
 	);
 }
 
+/**
+ * Read (and thereby clear) `chrome.runtime.lastError`. Call inside a
+ * `port.onDisconnect` listener so Chrome does not log "Unchecked
+ * runtime.lastError"; returns the message, if any.
+ */
+export function consumeRuntimeLastError(): string | undefined {
+	return chrome.runtime.lastError?.message;
+}
+
 export function runtimeConnect(name: string): chrome.runtime.Port {
 	return chrome.runtime.connect({ name });
 }

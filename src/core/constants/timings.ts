@@ -15,4 +15,7 @@ export const TIMINGS = {
 	licenseValidateTimeoutMs: 8_000,
 	autoQueueDelayRangeMs: [900, 2_600],
 	keybindDebounceMs: 150,
+	/** `connectPort` reconnect backoff: base, doubling up to the cap (Task 4). */
+	portReconnectBaseMs: 250,
+	portReconnectMaxMs: 4_000,
 } as const;
