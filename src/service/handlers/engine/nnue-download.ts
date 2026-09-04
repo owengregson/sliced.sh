@@ -5,6 +5,13 @@
  * `LIMITS.nnueChunkBytes` slices. Chunks are base64 text: `chrome.runtime`
  * ports JSON-serialise their payloads (no structured clone —
  * crbug.com/248548), so an `ArrayBuffer` would arrive as `{}`.
+ *
+ * CORS: the mirror redirects (`302 → https://data.stockfishchess.org/nn/<name>`)
+ * and neither host sends `Access-Control-Allow-Origin`, so a `mode: "cors"`
+ * fetch fails. Extension fetches to hosts covered by `host_permissions` bypass
+ * CORS instead — both hosts are listed there (`URLS.nnueMirrorHosts`, checked by
+ * `test/scripts/manifest-hosts.test.ts`); the fetch uses the default mode and
+ * follows the redirect.
  */
 
 import { LIMITS } from "@core/constants/limits";
@@ -30,19 +37,20 @@ export interface NnueDownloadDeps {
 	chunkBytes?: number;
 }
 
-/** Split `bytes` into ordered base64 chunks (at least one, so an empty net still completes). */
-export function encodeNnueChunks(
+/**
+ * Yield `bytes` as ordered base64 chunks, one slice encoded per step so only
+ * one chunk is materialised at a time (at least one, so an empty net completes).
+ */
+export function* encodeNnueChunks(
 	name: string,
 	bytes: Uint8Array,
 	chunkBytes: number = LIMITS.nnueChunkBytes
-): NnueChunk[] {
+): Generator<NnueChunk, void, undefined> {
 	const total = Math.max(1, Math.ceil(bytes.length / chunkBytes));
-	const chunks: NnueChunk[] = [];
 	for (let index = 0; index < total; index++) {
 		const slice = bytes.subarray(index * chunkBytes, (index + 1) * chunkBytes);
-		chunks.push({ kind: "nnue-chunk", name, index, total, bytes: bytesToBase64(slice) });
+		yield { kind: "nnue-chunk", name, index, total, bytes: bytesToBase64(slice) };
 	}
-	return chunks;
 }
 
 function errorMessage(error: unknown): string {
@@ -51,7 +59,7 @@ function errorMessage(error: unknown): string {
 
 /** Answer every `nnue-request` on `port`; returns the detach function. */
 export function attachNnueDownload(port: NnueRelayPort, deps: NnueDownloadDeps = {}): () => void {
-	const fetchFn = deps.fetch ?? ((url: string) => fetch(url, { mode: "cors" }));
+	const fetchFn = deps.fetch ?? ((url: string) => fetch(url, { redirect: "follow" }));
 	const chunkBytes = deps.chunkBytes ?? LIMITS.nnueChunkBytes;
 
 	async function download(name: string): Promise<void> {

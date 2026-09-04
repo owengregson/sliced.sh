@@ -131,6 +131,7 @@ export type TimingInferenceInputs = Record<string, number>;
 export type EnginePortMessage =
 	| { kind: "line"; line: string }
 	| { kind: "status"; status: EngineStatus }
+	/** @deprecated superseded by `nnue-progress` (carries the net name); removed at integration. */
 	| { kind: "nnue"; progress: number }
 	/** Ask the SW to download a net that is neither bundled nor cached (Task 12). */
 	| { kind: "nnue-request"; name: string }

@@ -14,7 +14,7 @@ import { NnueStore } from "./nnue-store";
 import { bootEngineDetailed } from "./stockfish-loader";
 import { createTimingInference } from "./timing-inference";
 
-serveEnginePort({
+const served = serveEnginePort({
 	createStore: (post) =>
 		new NnueStore({
 			post,
@@ -28,3 +28,7 @@ serveEnginePort({
 		}),
 	timing: createTimingInference(),
 });
+
+// The document is closed by `chrome.offscreen.closeDocument()` (or an extension
+// reload): quit the engine and stop routing so nothing outlives the page.
+globalThis.addEventListener?.("pagehide", () => served.stop(), { once: true });

@@ -21,6 +21,8 @@ const BESTMOVE_TIMEOUT_MS = 10_000;
 interface Booted {
 	sf: Awaited<ReturnType<typeof bootEngine>>;
 	lines: string[];
+	/** Everything the engine wrote to stderr (`onError`); must stay empty. */
+	errors: string[];
 	waitFor: (predicate: (line: string) => boolean, timeoutMs: number) => Promise<string>;
 }
 
@@ -58,6 +60,7 @@ if (typeof SharedArrayBuffer === "undefined") {
 		booted = {
 			sf,
 			lines,
+			errors,
 			waitFor: (predicate, timeoutMs) =>
 				new Promise<string>((resolve, reject) => {
 					const hit = lines.find(predicate);
@@ -97,6 +100,7 @@ describe("Stockfish 18 smallnet (real wasm)", () => {
 			const bestmove = await b.waitFor((l) => l.startsWith("bestmove"), BESTMOVE_TIMEOUT_MS);
 			expect(bestmove).toMatch(/^bestmove [a-h][1-8][a-h][1-8]/);
 			expect(b.lines.some((l) => /^info depth 8 /.test(l))).toBe(true);
+			expect(b.errors).toEqual([]);
 			b.sf.uci("quit");
 		},
 		BESTMOVE_TIMEOUT_MS + 12_000

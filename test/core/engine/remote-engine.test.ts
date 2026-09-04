@@ -128,6 +128,35 @@ describe("RemoteEngine over the simulator", () => {
 		expect(side.current().commands).toEqual(["uci"]);
 	});
 
+	it("queues restart()/loadNnue()/send() issued before the port exists and flushes them in order", async () => {
+		const side = await bootOffscreen();
+		let release: () => void = () => {};
+		const gate = new Promise<void>((r) => {
+			release = r;
+		});
+		const engine = await (sw as SwContext).run(async () => {
+			const e = new RemoteEngine({ ensureHost: () => gate, variant: "smallnet", threads: 1 });
+			e.send("uci");
+			const restarted = e.restart();
+			e.loadNnue(["nn-cccccccccccc.nnue"]);
+			e.send("isready");
+			await settle();
+			expect(side.engines).toHaveLength(0);
+			release();
+			await e.ready;
+			await restarted;
+			return e;
+		});
+		await settle();
+		// configure boots #1; restart quits it and boots #2; the queued lines and the net land on #2
+		expect(side.engines).toHaveLength(2);
+		expect(side.engines[0]?.commands).toEqual(["quit"]);
+		expect(side.current().commands).toEqual(["uci", "isready"]);
+		expect(side.current().nets).toEqual([{ bytes: new Uint8Array(1), index: 0 }]);
+		expect(engine.status()?.nnue).toEqual(["nn-cccccccccccc.nnue"]);
+		engine.dispose();
+	});
+
 	it("restart() resolves once the host reports ready again, and rejects on timeout", async () => {
 		const side = await bootOffscreen();
 		const engine = await (sw as SwContext).run(async () => {

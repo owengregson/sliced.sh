@@ -25,6 +25,9 @@ import { log } from "@core/logger";
 import { base64ToBytes } from "@core/util/base64";
 
 export const NNUE_CHECKSUM_ERROR = "nnue checksum mismatch";
+export const NNUE_NAME_ERROR = "invalid nnue name";
+/** `nn-<12 hex>.nnue` — the only shape that may reach the file system or the mirror. */
+const NNUE_NAME_RE = /^nn-[0-9a-f]{12}\.nnue$/;
 
 /** `nn-<12 hex>.nnue` → the 12 hex digits. */
 const HASH_START = 3;
@@ -235,6 +238,7 @@ export class NnueStore {
 	}
 
 	private async load(name: string): Promise<Uint8Array> {
+		if (!NNUE_NAME_RE.test(name)) throw new Error(`${NNUE_NAME_ERROR}: ${name}`);
 		if (this.bundled.has(name)) {
 			const bundled = await this.readBundled(name);
 			if (bundled) return bundled;

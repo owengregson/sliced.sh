@@ -5,6 +5,7 @@ import type { EnginePortMessage, NnueChunk } from "@core/constants/messages";
 import { base64ToBytes, bytesToBase64 } from "@core/util/base64";
 import {
 	NNUE_CHECKSUM_ERROR,
+	NNUE_NAME_ERROR,
 	NnueStore,
 	type OpfsDirectory,
 	type OpfsFileHandle,
@@ -170,7 +171,7 @@ describe("NnueStore.get", () => {
 		const p = h.store.get(name);
 		await until(() => h.requests.length === 1);
 		expect(h.requests).toEqual([name]);
-		const chunks = encodeNnueChunks(name, data, 1024);
+		const chunks = [...encodeNnueChunks(name, data, 1024)];
 		expect(chunks).toHaveLength(5);
 		for (const chunk of chunks) h.store.handleChunk(chunk);
 		const got = await p;
@@ -250,6 +251,14 @@ describe("NnueStore.get", () => {
 		expect(third.requests).toEqual([name]);
 		third.store.abortAll("done");
 		await expect(q).rejects.toThrow("done");
+	});
+
+	it("rejects names that are not nn-<12 hex>.nnue before touching any storage", async () => {
+		const h = setup({});
+		await expect(h.store.get("../evil")).rejects.toThrow(NNUE_NAME_ERROR);
+		await expect(h.store.get("nn-XYZ.nnue")).rejects.toThrow(NNUE_NAME_ERROR);
+		expect(h.requests).toEqual([]);
+		expect(h.fetched).toEqual([]);
 	});
 
 	it("ignores chunks for names nobody requested", () => {

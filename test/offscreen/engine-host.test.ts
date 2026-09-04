@@ -23,6 +23,8 @@ interface Harness {
 	bootCalls: EngineVariant[];
 	sched: FakeScheduler;
 	gets: string[];
+	/** Names passed to `nnueStore.delete`. */
+	deleted: string[];
 	/** Names the store rejects with `store failed: <name>`. */
 	failGets: Set<string>;
 	/** Make the next boot reject with `message` (once). */
@@ -37,6 +39,7 @@ function setup(recommended: readonly string[] = NETS): Harness {
 	const bootCalls: EngineVariant[] = [];
 	const gets: string[] = [];
 	const failGets = new Set<string>();
+	const deleted: string[] = [];
 	const sched = new FakeScheduler();
 	let failWith: string | undefined;
 	let hang = false;
@@ -45,6 +48,9 @@ function setup(recommended: readonly string[] = NETS): Harness {
 			gets.push(name);
 			if (failGets.has(name)) throw new Error(`store failed: ${name}`);
 			return bytesFor(name);
+		},
+		delete: async (name: string): Promise<void> => {
+			deleted.push(name);
 		},
 	};
 	const boot = async (variant: EngineVariant, hooks: BootHooks): Promise<BootedEngine> => {
@@ -82,6 +88,7 @@ function setup(recommended: readonly string[] = NETS): Harness {
 		bootCalls,
 		sched,
 		gets,
+		deleted,
 		failGets,
 		states: () => posted.flatMap((m) => (m.kind === "status" ? [m.status.state] : [])) as string[],
 		lines: () => posted.flatMap((m) => (m.kind === "line" ? [m.line] : [])),
@@ -284,6 +291,42 @@ describe("EngineHost crash recovery", () => {
 		expect(h.bootCalls).toHaveLength(steps.length + 1);
 		expect(h.host.status()).toMatchObject({ state: "crashed", error: "crash final" });
 		expect(h.sched.pending).toBe(0);
+	});
+
+	it("after giving up, the next uci line (the SW re-initialising) triggers a fresh boot", async () => {
+		const h = setup();
+		let sf = await booted(h);
+		const steps = TIMINGS.engineRestartBackoffMs;
+		for (let i = 0; i <= steps.length; i++) {
+			sf.fail(`crash ${i}`);
+			h.sched.advance(steps[Math.min(i, steps.length - 1)] as number);
+			await flush();
+			sf = h.boots[h.boots.length - 1] as FakeStockfishWeb;
+		}
+		expect(h.host.status().state).toBe("crashed");
+		const boots = h.bootCalls.length;
+		h.host.handle({ kind: "uci", line: "uci" });
+		expect(h.bootCalls).toHaveLength(boots + 1);
+		await flush();
+		expect(h.host.status().state).toBe("ready");
+		expect(h.boots[h.boots.length - 1]?.commands).toEqual(["uci"]);
+		// the counter was reset by the explicit re-boot: a crash now backs off from the first step
+		(h.boots[h.boots.length - 1] as FakeStockfishWeb).fail("again");
+		expect(h.sched.pending).toBe(1);
+		h.sched.advance(steps[0] as number);
+		expect(h.bootCalls).toHaveLength(boots + 2);
+	});
+
+	it("a BAD_NNUE error evicts the loaded nets from the store before rebooting", async () => {
+		const h = setup();
+		const sf = await booted(h);
+		sf.fail("BAD_NNUE nn-aaaaaaaaaaaa.nnue");
+		await flush();
+		expect(h.deleted).toEqual(NETS);
+		expect(h.host.status().state).toBe("crashed");
+		h.sched.advance(TIMINGS.engineRestartBackoffMs[0]);
+		await flush();
+		expect(h.host.status().state).toBe("ready");
 	});
 
 	it("a boot failure (e.g. missing isolation) is reported as crashed with that error and retried", async () => {

@@ -27,27 +27,24 @@
  * routed; its disconnect aborts pending NNUE downloads.
  */
 
+import { DEFAULT_ENGINE_STATUS } from "@core/constants/defaults";
 import type { EnginePortCommand, EnginePortMessage, NnueChunk } from "@core/constants/messages";
 import { PORT_NAMES } from "@core/constants/ports";
 import { TIMINGS } from "@core/constants/timings";
 import { log } from "@core/logger";
 import { type AcceptedPort, acceptPorts } from "@core/messaging/ports";
+import { DEFAULT_SCHEDULER, type TimerScheduler } from "@core/util/scheduler";
 import type StockfishWeb from "@lichess-org/stockfish-web";
 import type { EngineStatus, EngineVariant } from "@typedefs/engine";
 import type { BootedEngine, NnueSource } from "./stockfish-loader";
 import { TIMING_NOT_AVAILABLE, type TimingInference } from "./timing-inference";
 
-export interface HostScheduler {
-	setTimeout(fn: () => void, ms: number): unknown;
-	clearTimeout(handle: unknown): void;
-	now(): number;
-}
+export type HostScheduler = TimerScheduler;
 
-const DEFAULT_SCHEDULER: HostScheduler = {
-	setTimeout: (fn, ms) => globalThis.setTimeout(fn, ms),
-	clearTimeout: (handle) => globalThis.clearTimeout(handle as ReturnType<typeof setTimeout>),
-	now: () => Date.now(),
-};
+/** The store surface the host uses: `get` for `loadNnue`, `delete` to evict a net the engine rejected. */
+export interface HostNnueStore extends NnueSource {
+	delete?(name: string): Promise<void>;
+}
 
 /** What the loader needs from the host for one engine instance. */
 export interface BootHooks {
@@ -58,23 +55,17 @@ export interface BootHooks {
 
 export interface EngineHostDeps {
 	boot(variant: EngineVariant, hooks: BootHooks): Promise<BootedEngine>;
-	nnueStore: NnueSource;
+	nnueStore: HostNnueStore;
 	post(msg: EnginePortMessage): void;
 	scheduler?: HostScheduler;
 }
-
-const INITIAL_STATUS: EngineStatus = {
-	state: "booting",
-	variant: "smallnet",
-	threads: 1,
-	nnue: [],
-	version: "",
-};
 
 const MULTIPV_RE = /\bmultipv (\d+)/;
 const NPS_RE = /\bnps (\d+)/;
 const THREADS_OPTION_RE = /^setoption name Threads value (\d+)\s*$/;
 const ID_NAME_PREFIX = "id name ";
+/** stderr prefix the engine wrapper uses for a rejected network: evict the cached copy. */
+const BAD_NNUE_PREFIX = "BAD_NNUE";
 const NOOP = (): void => {};
 
 function errorMessage(error: unknown): string {
@@ -83,7 +74,7 @@ function errorMessage(error: unknown): string {
 
 export class EngineHost {
 	private readonly sched: HostScheduler;
-	private readonly st: EngineStatus = { ...INITIAL_STATUS, nnue: [] };
+	private readonly st: EngineStatus = { ...DEFAULT_ENGINE_STATUS, nnue: [] };
 	private sf: StockfishWeb | undefined;
 	private started = false;
 	private booting = false;
@@ -157,6 +148,7 @@ export class EngineHost {
 
 	private uci(line: string): void {
 		if (!this.started) this.configure(this.st.variant, this.st.threads);
+		else if (this.gaveUp()) this.restart(); // the SW re-initialising after a give-up
 		if (!this.sf || this.booting) {
 			this.queued.push(line);
 			return;
@@ -174,6 +166,11 @@ export class EngineHost {
 			return;
 		}
 		if (line.startsWith("go") && this.st.state !== "searching") this.setState("searching");
+	}
+
+	/** Crashed with the backoff steps exhausted: no engine, no boot, no reboot pending. */
+	private gaveUp(): boolean {
+		return !this.sf && !this.booting && this.rebootTimer === undefined;
 	}
 
 	private restart(): void {
@@ -270,9 +267,11 @@ export class EngineHost {
 	private onCrash(message: string): void {
 		if (this.disposed) return;
 		log.error("engine-host: engine crashed", { message, attempt: this.attempt });
+		this.cancelReboot(); // a second entry must not burn another backoff step
 		this.teardownEngine();
 		this.clearFlush();
 		this.pendingInfo.clear();
+		if (message.startsWith(BAD_NNUE_PREFIX)) this.evictNets();
 		this.setState("crashed", message);
 		const steps = TIMINGS.engineRestartBackoffMs;
 		if (this.attempt >= steps.length) {
@@ -285,6 +284,17 @@ export class EngineHost {
 			this.rebootTimer = undefined;
 			this.startBoot();
 		}, wait);
+	}
+
+	/** The engine rejected a net: drop the cached copies so the reboot downloads fresh ones. */
+	private evictNets(): void {
+		const remove = this.deps.nnueStore.delete;
+		if (!remove) return;
+		for (const name of this.st.nnue) {
+			remove.call(this.deps.nnueStore, name).catch((error: unknown) => {
+				log.warn("engine-host: could not evict net", { name, error: errorMessage(error) });
+			});
+		}
 	}
 
 	private cancelReboot(): void {
@@ -415,6 +425,7 @@ export function serveEnginePort<S extends NnueStoreLike>(deps: ServeEngineDeps<S
 		}
 	};
 
+	let unsubscribeCurrent: () => void = () => {};
 	const stopAccepting = acceptPorts<EnginePortMessage, EnginePortCommand>(
 		PORT_NAMES.engine,
 		(port) => {
@@ -422,12 +433,16 @@ export function serveEnginePort<S extends NnueStoreLike>(deps: ServeEngineDeps<S
 			const offMessage = port.onMessage((cmd) => {
 				if (current === port) route(cmd);
 			});
-			port.onDisconnect(() => {
+			const offDisconnect = port.onDisconnect(() => {
 				offMessage();
 				if (current !== port) return;
 				current = null;
 				store.abortAll(NO_PORT_DROP_REASON);
 			});
+			unsubscribeCurrent = () => {
+				offMessage();
+				offDisconnect();
+			};
 			log.info("engine-host: service worker connected");
 			port.post({ kind: "status", status: host.status() });
 		}
@@ -437,7 +452,9 @@ export function serveEnginePort<S extends NnueStoreLike>(deps: ServeEngineDeps<S
 		host,
 		stop() {
 			stopAccepting();
+			unsubscribeCurrent(); // an `AcceptedPort` cannot be closed from this side; stop routing it
 			current = null;
+			store.abortAll(NO_PORT_DROP_REASON);
 			deps.timing?.dispose();
 			host.dispose();
 		},

@@ -65,7 +65,13 @@
 		"alarms",
 		"unlimitedStorage"
 	],
-	"host_permissions": ["*://*.chess.com/*", "*://*.lichess.org/*", "https://explorer.lichess.ovh/*"],
+	"host_permissions": [
+		"*://*.chess.com/*",
+		"*://*.lichess.org/*",
+		"https://explorer.lichess.ovh/*",
+		"https://tests.stockfishchess.org/*",
+		"https://data.stockfishchess.org/*"
+	],
 	"web_accessible_resources": [
 		{
 			"resources": ["assets/engine/*", "assets/sounds/*"],

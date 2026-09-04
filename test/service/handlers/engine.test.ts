@@ -33,7 +33,7 @@ function fakePort() {
 describe("encodeNnueChunks", () => {
 	it("splits raw bytes into base64 chunks of at most chunkBytes that concatenate back", () => {
 		const data = new Uint8Array(10_000).map((_, i) => i & 0xff);
-		const chunks = encodeNnueChunks("nn-x.nnue", data, 4096);
+		const chunks = [...encodeNnueChunks("nn-x.nnue", data, 4096)];
 		expect(chunks).toHaveLength(3);
 		const parts = chunks.map((c) => ("bytes" in c ? base64ToBytes(c.bytes) : new Uint8Array()));
 		expect(parts.map((p) => p.length)).toEqual([4096, 4096, 1808]);
@@ -49,7 +49,7 @@ describe("encodeNnueChunks", () => {
 			[1, 3],
 			[2, 3],
 		]);
-		expect(encodeNnueChunks("nn-x.nnue", new Uint8Array(), 4096)).toHaveLength(1);
+		expect([...encodeNnueChunks("nn-x.nnue", new Uint8Array(), 4096)]).toHaveLength(1);
 	});
 });
 

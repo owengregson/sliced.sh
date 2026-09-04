@@ -9,10 +9,12 @@
  *     offscreen document accepts and replies with its current status; that
  *     first status marks the transport `ready` (a `searching` engine left over
  *     from a previous SW life is told to `stop`).
- *   - `send(line)` never throws: lines queue until the port exists and are
+ *   - `send(line)` / `post(cmd)` never throw: every command (uci, restart,
+ *     loadNnue, configure, timing) queues in order until the port exists and is
  *     dropped with a warning after `dispose()`.
  *   - `restart()` posts `{kind:"restart"}` and settles when the host reports
- *     `ready`, or rejects after `TIMINGS.engineReadyTimeoutMs`.
+ *     `ready` *after* a non-ready status (so a stale `ready` in flight cannot
+ *     resolve it), or rejects after `TIMINGS.engineReadyTimeoutMs`.
  *   - `configure` (variant, threads) is sent on connect and re-sent on the
  *     first status after a reconnect (the document may be a fresh one).
  *
@@ -26,6 +28,7 @@ import { PORT_NAMES } from "@core/constants/ports";
 import { TIMINGS } from "@core/constants/timings";
 import { log } from "@core/logger";
 import { type ConnectedPort, connectPort, type PortScheduler } from "@core/messaging/ports";
+import { DEFAULT_SCHEDULER } from "@core/util/scheduler";
 import type { EngineStatus, EngineVariant } from "@typedefs/engine";
 import type { EngineTransport } from "./types";
 
@@ -43,6 +46,8 @@ interface RestartWaiter {
 	resolve: () => void;
 	reject: (error: Error) => void;
 	timer: unknown;
+	/** Set once a non-`ready` status has been seen since the restart was posted. */
+	armed: boolean;
 }
 
 function errorMessage(error: unknown): string {
@@ -57,7 +62,8 @@ export class RemoteEngine implements EngineTransport {
 	private readonly scheduler: PortScheduler;
 	private readonly readyTimeoutMs: number;
 	private port: ConnectedPort<EnginePortCommand> | undefined;
-	private queue: string[] = [];
+	/** Commands issued before the port exists, flushed in order once it does. */
+	private queue: EnginePortCommand[] = [];
 	private variant: EngineVariant | undefined;
 	private threads: number | undefined;
 	private needsConfigure = true;
@@ -71,10 +77,7 @@ export class RemoteEngine implements EngineTransport {
 
 	constructor(opts: RemoteEngineOptions = {}) {
 		this.ensureHost = opts.ensureHost ?? (() => Promise.resolve());
-		this.scheduler = opts.scheduler ?? {
-			setTimeout: (fn, ms) => globalThis.setTimeout(fn, ms),
-			clearTimeout: (handle) => globalThis.clearTimeout(handle as ReturnType<typeof setTimeout>),
-		};
+		this.scheduler = opts.scheduler ?? DEFAULT_SCHEDULER;
 		this.readyTimeoutMs = opts.readyTimeoutMs ?? TIMINGS.engineReadyTimeoutMs;
 		if (opts.variant !== undefined) this.variant = opts.variant;
 		if (opts.threads !== undefined) this.threads = opts.threads;
@@ -87,14 +90,6 @@ export class RemoteEngine implements EngineTransport {
 	// ── EngineTransport ──────────────────────────────────────────────────
 
 	send(line: string): void {
-		if (this.disposed) {
-			log.warn("remote-engine: send after dispose dropped", { line });
-			return;
-		}
-		if (!this.port) {
-			this.queue.push(line);
-			return;
-		}
 		this.post({ kind: "uci", line });
 	}
 
@@ -111,7 +106,7 @@ export class RemoteEngine implements EngineTransport {
 	restart(): Promise<void> {
 		if (this.disposed) return Promise.reject(new Error("remote-engine: disposed"));
 		return new Promise<void>((resolve, reject) => {
-			const waiter: RestartWaiter = { resolve, reject, timer: undefined };
+			const waiter: RestartWaiter = { resolve, reject, timer: undefined, armed: false };
 			waiter.timer = this.scheduler.setTimeout(() => {
 				this.restartWaiters = this.restartWaiters.filter((w) => w !== waiter);
 				reject(new Error("remote-engine: timed out waiting for the engine to become ready"));
@@ -129,14 +124,18 @@ export class RemoteEngine implements EngineTransport {
 		return () => this.messageCbs.delete(cb);
 	}
 
-	/** Post any command; never throws (queued by the port until it is live). */
+	/** Post any command; never throws (queued until the port exists, then by the port until it is live). */
 	post(cmd: EnginePortCommand): void {
 		if (this.disposed) {
 			log.warn("remote-engine: post after dispose dropped", { kind: cmd.kind });
 			return;
 		}
+		if (!this.port) {
+			this.queue.push(cmd);
+			return;
+		}
 		try {
-			this.port?.post(cmd);
+			this.port.post(cmd);
 		} catch (error) {
 			log.warn("remote-engine: post failed", { kind: cmd.kind, error: errorMessage(error) });
 		}
@@ -145,7 +144,7 @@ export class RemoteEngine implements EngineTransport {
 	configure(variant: EngineVariant, threads: number): void {
 		this.variant = variant;
 		this.threads = threads;
-		if (this.port) this.post({ kind: "configure", variant, threads });
+		if (this.port) this.post({ kind: "configure", variant, threads }); // else sent on connect
 	}
 
 	loadNnue(names: string[]): void {
@@ -178,33 +177,39 @@ export class RemoteEngine implements EngineTransport {
 	// ── internals ────────────────────────────────────────────────────────
 
 	private async connect(): Promise<void> {
+		let port: ConnectedPort<EnginePortCommand>;
 		try {
 			await this.ensureHost();
-		} catch (error) {
-			log.error("remote-engine: ensureHost failed; connecting anyway", {
-				error: errorMessage(error),
+			if (this.disposed) return;
+			port = connectPort<EnginePortCommand, EnginePortMessage>(PORT_NAMES.engine, {
+				onMessage: (m) => this.onPortMessage(m),
+				onDisconnect: (reason) => {
+					this.synced = false;
+					this.needsConfigure = true;
+					log.info("remote-engine: port disconnected; will reconnect", {
+						reason: reason ?? null,
+					});
+					// The document may be gone — recreate it so the port's backoff retries land.
+					this.ensureHost().catch((error: unknown) =>
+						log.error("remote-engine: ensureHost failed after disconnect", {
+							error: errorMessage(error),
+						})
+					);
+				},
+				scheduler: this.scheduler,
 			});
+		} catch (error) {
+			// `connectPort` retries failed `runtime.connect` calls itself; reaching here means
+			// `ensureHost` threw or the port could not even be created. Queued commands stay
+			// queued; the SW constructs a fresh transport on its next life.
+			log.error("remote-engine: connect failed", { error: errorMessage(error) });
+			return;
 		}
-		if (this.disposed) return;
-		this.port = connectPort<EnginePortCommand, EnginePortMessage>(PORT_NAMES.engine, {
-			onMessage: (m) => this.onPortMessage(m),
-			onDisconnect: (reason) => {
-				this.synced = false;
-				this.needsConfigure = true;
-				log.info("remote-engine: port disconnected; will reconnect", { reason: reason ?? null });
-				// The document may be gone — recreate it so the port's backoff retries land.
-				this.ensureHost().catch((error: unknown) =>
-					log.error("remote-engine: ensureHost failed after disconnect", {
-						error: errorMessage(error),
-					})
-				);
-			},
-			scheduler: this.scheduler,
-		});
+		this.port = port;
 		this.postConfigure();
 		const queued = this.queue;
 		this.queue = [];
-		for (const line of queued) this.post({ kind: "uci", line });
+		for (const cmd of queued) this.post(cmd);
 	}
 
 	private postConfigure(): void {
@@ -236,10 +241,12 @@ export class RemoteEngine implements EngineTransport {
 			if (status.state === "searching") this.post({ kind: "uci", line: "stop" });
 			this.resolveReady();
 		}
-		if (status.state === "ready") {
-			const waiters = this.restartWaiters;
-			this.restartWaiters = [];
-			for (const w of waiters) {
+		if (status.state !== "ready") {
+			for (const w of this.restartWaiters) w.armed = true;
+		} else {
+			const done = this.restartWaiters.filter((w) => w.armed);
+			this.restartWaiters = this.restartWaiters.filter((w) => !w.armed);
+			for (const w of done) {
 				this.scheduler.clearTimeout(w.timer);
 				w.resolve();
 			}
