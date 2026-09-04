@@ -35,6 +35,10 @@ export const UI_TIMINGS = {
 	licenseRevealMs: 10_000,
 	/** Task 26 (§4.7): the engine view samples nps for the 60 s sparkline at this cadence. */
 	sparklineSampleMs: 1_000,
+	/** Task 23 / §4.10: clicks on the mark that open the cat-facts popover … */
+	easterEggClicks: 7,
+	/** … within this window. */
+	easterEggWindowMs: 3_000,
 } as const;
 
 /**

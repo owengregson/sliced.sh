@@ -319,6 +319,52 @@ export const COPY = {
 		levels: { silent: "Silent", error: "Error", warn: "Warn", info: "Info", debug: "Debug" },
 		consoleEmpty: "No log entries yet",
 	},
+	// ── Task 23: login / expired / unsupported / waiting / update views (Appendix F §4.1–4.3,
+	// §4.8–4.10) — strings the §7.2 table leaves implicit ──────────────────────────────────────
+	loginView: {
+		placeholder: "SL-XXXX-XXXX-XXXX",
+		tryAgain: "Try again",
+		manageDevices: "Manage devices",
+		renew: "Renew",
+		expiredNoDate: "This key has expired.",
+		version: (version: string): string => `v${version}`,
+		discord: "Discord",
+	},
+	expiredView: {
+		bodyNoDate:
+			"sliced stopped assisting. Renew to pick up where you left off — your settings are kept.",
+		recheck: "Check again",
+		signedIn: (maskedKey: string): string => `Signed in with ${maskedKey}`,
+	},
+	unsupportedView: { chesscom: "chess.com", lichess: "lichess.org", play: "Play" },
+	waitingView: {
+		sites: { chesscom: "chess.com", lichess: "lichess" },
+		engineStopped: "engine stopped",
+		opponent: "Opponent",
+		noOpponent: "No opponent yet",
+		bot: "Bot",
+		rating: (rating: number): string => `Rated ${rating}`,
+		ratingUnknown: "opponent rating unknown",
+		target: (elo: number): string => `Target ${elo}`,
+		lastSession: "Last session",
+		session: (games: number, moves: number, avg: string): string =>
+			`${games} games · ${moves} moves · ${avg}s avg move`,
+		newGame: "Start a new game",
+	},
+	catFacts: {
+		title: "Cat facts",
+		another: "Another",
+		facts: [
+			"A group of kittens is called a kindle.",
+			"Cats spend about two thirds of their lives asleep.",
+			"A cat's nose print is unique, much like a human fingerprint.",
+			"Cats can rotate their ears 180 degrees.",
+			"The oldest known pet cat lived around 9,500 years ago in Cyprus.",
+			"A cat cannot see directly under its own nose.",
+			"Cats have a third eyelid called the haw.",
+			"Adult cats only meow to communicate with humans, not with other cats.",
+		],
+	},
 } as const;
 
 /** Heading shown by the placeholder view registry until Tasks 23–26 land the real views. */

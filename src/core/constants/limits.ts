@@ -36,6 +36,8 @@ export const LIMITS = {
 	engineMemoryInitialPages: [2560, 1536, 1024],
 	/** Shared `WebAssembly.Memory` maximum pages (512 MiB). */
 	engineMemoryMaxPages: 8192,
+	/** Task 23: devices one key may be active on (Appendix F §7.2 "already active on 2 devices"). */
+	licenseMaxDevices: 2,
 } as const;
 
 /**

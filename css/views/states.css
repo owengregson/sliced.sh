@@ -1,0 +1,169 @@
+/* css/views/states.css — the state views: Not on a supported site (§4.2), Waiting for a game
+   (§4.3), Update available (§4.8) and License expired (§4.9). Composition only — the anatomy
+   comes from the empty-state, eval-bar, toggle, pill and button components. Tokens throughout. */
+
+.sl-app__content[data-view="expired"],
+.sl-app__content[data-view="unsupported"],
+.sl-app__content[data-view="update"],
+.sl-app__content[data-view="waiting"] {
+	display: flex;
+	flex-direction: column;
+}
+
+.sl-expired,
+.sl-unsupported,
+.sl-update,
+.sl-waiting {
+	flex: 1 1 auto;
+	display: flex;
+	flex-direction: column;
+	min-height: 100%;
+}
+
+/* ---- 4.9 expired / 4.8 update: stacked full-width actions (primary above ghost) ---------- */
+
+.sl-expired .sl-empty__actions,
+.sl-update .sl-empty__actions {
+	flex-direction: column;
+	align-items: stretch;
+	width: 100%;
+	gap: var(--sl-space-2);
+}
+
+.sl-expired .sl-empty__actions .sl-button,
+.sl-update .sl-empty__actions .sl-button {
+	width: 100%;
+}
+
+.sl-expired {
+	gap: var(--sl-space-4);
+}
+
+.sl-expired__card {
+	flex: 1 1 auto;
+	display: flex;
+	flex-direction: column;
+}
+
+.sl-expired__footer {
+	color: var(--sl-color-text-tertiary);
+	padding-bottom: var(--sl-space-2);
+}
+
+/* the 64 px mark sits above the title, in the icon's place */
+.sl-update__mark {
+	width: var(--sl-space-16);
+	height: var(--sl-space-16);
+	margin-bottom: var(--sl-space-2);
+}
+
+/* ---- 4.3 waiting ------------------------------------------------------------------------ */
+
+.sl-waiting {
+	gap: var(--sl-space-4);
+}
+
+.sl-waiting__hero {
+	display: flex;
+	gap: var(--sl-space-3);
+	min-height: calc(var(--sl-space-16) * 2);
+}
+
+.sl-waiting__rail {
+	display: flex;
+	align-self: stretch;
+}
+
+/* the rail is present but neutral and dimmed */
+.sl-waiting__rail .sl-evalbar {
+	opacity: 0.64;
+}
+
+.sl-waiting__text {
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	gap: var(--sl-space-1);
+	min-width: 0;
+}
+
+.sl-waiting__meta {
+	color: var(--sl-color-text-secondary);
+}
+
+.sl-waiting__status {
+	display: flex;
+	align-items: center;
+	gap: var(--sl-space-2);
+	margin-top: var(--sl-space-2);
+	color: var(--sl-color-text-secondary);
+}
+
+/* pulse dot: success when the content script is connected, warn while the board is unread;
+   a slow ≈2 s pulse (duration.6 × 4, alternating) */
+.sl-waiting__dot {
+	flex: none;
+	width: var(--sl-space-2);
+	height: var(--sl-space-2);
+	border-radius: var(--sl-radius-full);
+	background: var(--sl-color-success);
+	animation-name: sl-waiting-pulse;
+	animation-duration: calc(var(--sl-motion-duration-6) * 4);
+	animation-timing-function: var(--sl-motion-easing-standard);
+	animation-iteration-count: infinite;
+	animation-direction: alternate;
+}
+
+.sl-waiting__dot[data-state="warn"] {
+	background: var(--sl-color-warn);
+}
+
+@keyframes sl-waiting-pulse {
+	from {
+		opacity: 1;
+	}
+	to {
+		opacity: 0.32;
+	}
+}
+
+.sl-waiting__opponent {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sl-space-1);
+}
+
+.sl-waiting__opponent-label,
+.sl-waiting__opponent-rating {
+	color: var(--sl-color-text-secondary);
+}
+
+.sl-waiting__opponent-name {
+	color: var(--sl-color-text-primary);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sl-waiting__target {
+	color: var(--sl-color-brand-text);
+}
+
+.sl-waiting__controls {
+	min-height: var(--sl-size-control-md);
+}
+
+.sl-waiting__session {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sl-space-1);
+}
+
+.sl-waiting__session-label {
+	color: var(--sl-color-text-secondary);
+}
+
+.sl-waiting__newgame {
+	display: flex;
+	flex-direction: column;
+}

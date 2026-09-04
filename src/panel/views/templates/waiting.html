@@ -1,0 +1,32 @@
+<section class="sl-view sl-waiting" data-view="waiting">
+	<div class="sl-waiting__hero">
+		<div class="sl-waiting__rail"></div>
+		<div class="sl-waiting__text">
+			<!-- biome-ignore lint/a11y/useHeadingContent: filled from copy.ts at mount -->
+			<h1 class="sl-view__title sl-waiting__title sl-type-title"></h1>
+			<p class="sl-waiting__meta sl-type-body"></p>
+			<p class="sl-waiting__status sl-type-label" role="status">
+				<span class="sl-waiting__dot" data-state="ok" aria-hidden="true"></span>
+				<span class="sl-waiting__status-text"></span>
+			</p>
+		</div>
+	</div>
+	<div class="sl-waiting__opponent sl-card sl-card--tight">
+		<div class="sl-row sl-row--between">
+			<span class="sl-waiting__opponent-label sl-type-label"></span>
+			<span class="sl-waiting__bot" hidden></span>
+		</div>
+		<div class="sl-waiting__opponent-name sl-type-body-strong"></div>
+		<div class="sl-waiting__opponent-rating sl-type-label"></div>
+		<div class="sl-waiting__target sl-type-label"></div>
+	</div>
+	<div class="sl-waiting__controls sl-row sl-row--between">
+		<div class="sl-waiting__toggle"></div>
+		<div class="sl-waiting__settings"></div>
+	</div>
+	<div class="sl-waiting__session" hidden>
+		<div class="sl-waiting__session-label sl-type-label"></div>
+		<div class="sl-waiting__session-strip sl-type-body"></div>
+	</div>
+	<div class="sl-waiting__newgame" hidden></div>
+</section>

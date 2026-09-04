@@ -8,10 +8,15 @@
 import { viewTitle } from "../copy";
 import { instantiate, part } from "../template";
 import { VIEW_NAMES, type View, type ViewName, type ViewRegistry } from "../view";
-import { engineView } from "./engine"; // Task 26
+import { engineView } from "./engine";
+import { expiredView } from "./expired";
 import { liveView } from "./live";
+import { loginView } from "./login";
 import { createSettingsView } from "./settings";
 import stubHtml from "./templates/stub.html?raw";
+import { unsupportedView } from "./unsupported";
+import { updateView } from "./update";
+import { waitingView } from "./waiting";
 
 export function createStubView(name: ViewName): View {
 	return {
@@ -25,18 +30,25 @@ export function createStubView(name: ViewName): View {
 	};
 }
 
-export const VIEWS: ViewRegistry = Object.fromEntries(
+const STUBS: ViewRegistry = Object.fromEntries(
 	VIEW_NAMES.map((name) => [name, createStubView(name)])
 ) as ViewRegistry;
+
+export const VIEWS: ViewRegistry = {
+	...STUBS,
+	// Task 23
+	login: loginView,
+	expired: expiredView,
+	unsupported: unsupportedView,
+	waiting: waitingView,
+	update: updateView,
+};
+
+// ── Task 24: the real Live view replaces its stub ────────────────────────────────────────────
+VIEWS.live = liveView;
 
 // ── Task 25: the real Settings view replaces its stub ────────────────────────────────────────
 VIEWS.settings = createSettingsView();
 
 // ── Task 26: the real Engine view replaces its stub ──────────────────────────────────────────
 VIEWS.engine = engineView;
-
-// ── Task 24: the real Live view replaces its stub ────────────────────────────────────────────
-
-// ── Task 24: the real Live view replaces its stub ────────────────────────────────────────────
-VIEWS.live = liveView;
-VIEWS.live = liveView;

@@ -12,4 +12,11 @@ export const URLS = {
 	nnueMirrorHosts: ["https://tests.stockfishchess.org/*", "https://data.stockfishchess.org/*"],
 	chesscomMatch: "*://*.chess.com/*",
 	lichessMatch: "*://*.lichess.org/*",
+	// Task 23: panel links (Appendix F §4.1 / §4.2 / §4.3)
+	chesscom: "https://www.chess.com/",
+	chesscomPlay: "https://www.chess.com/play/online",
+	lichess: "https://lichess.org/",
+	/** The lichess lobby is the site root (the plan's `/lobby` path has no such page). */
+	lichessLobby: "https://lichess.org/",
+	discord: "https://sliced.sh/discord",
 } as const;

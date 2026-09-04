@@ -1,0 +1,111 @@
+/* css/views/login.css — View 1, Login (Appendix F §4.1). The mark block is centred in the top
+   ≈40 % of the panel, the form starts at ≈44 % (a 4 : 5 flex split around it) and the footer is
+   pinned to the bottom inside the content padding (space.4). Every value is a Lattice token. */
+
+.sl-app__content[data-view="login"] {
+	display: flex;
+	flex-direction: column;
+}
+
+.sl-login {
+	flex: 1 1 auto;
+	display: flex;
+	flex-direction: column;
+	gap: var(--sl-space-6);
+	min-height: 100%;
+}
+
+.sl-login__hero {
+	flex: 4 1 0;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: var(--sl-space-2);
+	padding-top: var(--sl-space-8);
+	text-align: center;
+}
+
+/* 64 px mark (space.16), never recoloured */
+.sl-login__mark {
+	width: var(--sl-space-16);
+	height: var(--sl-space-16);
+	margin-bottom: var(--sl-space-2);
+}
+
+.sl-login__wordmark {
+	color: var(--sl-color-text-primary);
+}
+
+.sl-login__tagline {
+	color: var(--sl-color-text-secondary);
+	max-width: 28ch;
+}
+
+.sl-login__form {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sl-space-3);
+}
+
+.sl-login__extra {
+	display: flex;
+}
+
+.sl-login__submit {
+	display: flex;
+	flex-direction: column;
+	margin-top: var(--sl-space-1);
+}
+
+.sl-login__link {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: var(--sl-space-1);
+	color: var(--sl-color-text-secondary);
+}
+
+.sl-login__link-button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: var(--sl-size-control-sm);
+	height: var(--sl-size-control-sm);
+	border-radius: var(--sl-radius-xs);
+	color: var(--sl-color-brand-text);
+	transition: background-color var(--sl-motion-duration-1) var(--sl-motion-easing-standard);
+}
+
+.sl-login__link-button:hover {
+	background: var(--sl-color-surface-hover);
+}
+
+.sl-login__spacer {
+	flex: 5 1 0;
+}
+
+.sl-login__footer {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	color: var(--sl-color-text-tertiary);
+}
+
+.sl-login__discord {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--sl-space-1);
+	height: var(--sl-size-control-sm);
+	padding: 0 var(--sl-space-2);
+	border-radius: var(--sl-radius-sm);
+	color: var(--sl-color-text-secondary);
+	transition:
+		background-color var(--sl-motion-duration-1) var(--sl-motion-easing-standard),
+		color var(--sl-motion-duration-1) var(--sl-motion-easing-standard);
+}
+
+.sl-login__discord:hover {
+	background: var(--sl-color-surface-hover);
+	color: var(--sl-color-text-primary);
+}
