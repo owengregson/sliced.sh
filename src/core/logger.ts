@@ -65,12 +65,19 @@ export function printLog(entry: LogEntry): void {
 	console[entry.level](LOG_PREFIX, ...tag, ...entry.args);
 }
 
+function isSeverity(level: unknown): level is LogSeverity {
+	return typeof level === "string" && level !== "silent" && Object.hasOwn(RANK, level);
+}
+
 export function isLogEnvelope(message: unknown): message is LogEnvelope {
+	if (typeof message !== "object" || message === null) return false;
+	const m = message as { type?: unknown; args?: unknown; level?: unknown; meta?: unknown };
 	return (
-		typeof message === "object" &&
-		message !== null &&
-		(message as { type?: unknown }).type === MSG.LOG &&
-		Array.isArray((message as { args?: unknown }).args)
+		m.type === MSG.LOG &&
+		Array.isArray(m.args) &&
+		isSeverity(m.level) &&
+		typeof m.meta === "object" &&
+		m.meta !== null
 	);
 }
 

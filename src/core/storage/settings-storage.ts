@@ -130,7 +130,12 @@ export function normalizeSettings(raw: unknown): Settings {
 			persona: oneOf(strength.persona, D.strength.persona, PERSONAS),
 			selectionMode: oneOf(strength.selectionMode, D.strength.selectionMode, SELECTION_MODES),
 			useOpeningBook: bool(strength.useOpeningBook, D.strength.useOpeningBook),
-			blunderScale: num(strength.blunderScale, D.strength.blunderScale),
+			blunderScale: numIn(
+				strength.blunderScale,
+				D.strength.blunderScale,
+				LIMITS.blunderScaleMin,
+				LIMITS.blunderScaleMax
+			),
 		},
 		timing: {
 			profile: oneOf(timing.profile, D.timing.profile, TIMING_PROFILES),
@@ -148,7 +153,12 @@ export function normalizeSettings(raw: unknown): Settings {
 			calibrateFromMyMouse: bool(execution.calibrateFromMyMouse, D.execution.calibrateFromMyMouse),
 			backend: oneOf(execution.backend, D.execution.backend, BACKENDS),
 			previewSelects: oneOf(execution.previewSelects, D.execution.previewSelects, PREVIEW_SELECTS),
-			previewSelectScale: num(execution.previewSelectScale, D.execution.previewSelectScale),
+			previewSelectScale: numIn(
+				execution.previewSelectScale,
+				D.execution.previewSelectScale,
+				LIMITS.previewSelectScaleMin,
+				LIMITS.previewSelectScaleMax
+			),
 		},
 		automation: {
 			autoMove: bool(automation.autoMove, D.automation.autoMove),
@@ -201,7 +211,10 @@ export async function getSettings(): Promise<Settings> {
 	return normalizeSettings(await chromeLocalGet(LOCAL_KEYS.settings));
 }
 
-/** Read-merge-write; resolves with the normalised result that was stored. */
+/**
+ * Read-merge-write; resolves with the normalised result that was stored.
+ * Not serialised: concurrent callers can lose a patch — the owner (Task 9) must queue writes.
+ */
 export async function setSettings(patch: SettingsPatch): Promise<Settings> {
 	const current = await getSettings();
 	const next = normalizeSettings(deepMerge(current as unknown as Obj, patch as Obj));

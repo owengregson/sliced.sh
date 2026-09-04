@@ -42,7 +42,6 @@ describe("tabsSendMessage", () => {
 		expect(await tabsSendMessage(1, { type: "x" })).toEqual({ success: false, error: "no tab" });
 		g.chrome.tabs = {
 			sendMessage: (_id: number, _m: unknown, cb: (r: unknown) => void) => {
-				fake.failNextWith("Receiving end does not exist");
 				(g.chrome.runtime as { lastError?: { message: string } }).lastError = {
 					message: "Receiving end does not exist",
 				};

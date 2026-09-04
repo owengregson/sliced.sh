@@ -1,6 +1,8 @@
 /** Promise wrappers over `chrome.alarms.*`; names come from `ALARM_NAMES`. */
 
-export function alarmCreate(name: string, info: chrome.alarms.AlarmCreateInfo): Promise<void> {
+import type { AlarmName } from "@core/constants/alarms";
+
+export function alarmCreate(name: AlarmName, info: chrome.alarms.AlarmCreateInfo): Promise<void> {
 	return new Promise((resolve, reject) =>
 		chrome.alarms.create(name, info, () => {
 			const err = chrome.runtime.lastError;
@@ -10,7 +12,7 @@ export function alarmCreate(name: string, info: chrome.alarms.AlarmCreateInfo): 
 	);
 }
 
-export function alarmGet(name: string): Promise<chrome.alarms.Alarm | null> {
+export function alarmGet(name: AlarmName): Promise<chrome.alarms.Alarm | null> {
 	return new Promise((resolve, reject) =>
 		chrome.alarms.get(name, (alarm) => {
 			const err = chrome.runtime.lastError;
@@ -21,7 +23,7 @@ export function alarmGet(name: string): Promise<chrome.alarms.Alarm | null> {
 }
 
 /** Resolves `true` when an alarm with that name was cleared. */
-export function alarmClear(name: string): Promise<boolean> {
+export function alarmClear(name: AlarmName): Promise<boolean> {
 	return new Promise((resolve, reject) =>
 		chrome.alarms.clear(name, (wasCleared) => {
 			const err = chrome.runtime.lastError;

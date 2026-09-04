@@ -75,6 +75,21 @@ describe("normalizeSettings", () => {
 		expect(normalizeSettings({ engine: { threads: 0 } }).engine.threads).toBe(1);
 		expect(normalizeSettings({ engine: { threads: 2.7 } }).engine.threads).toBe(3);
 	});
+	it("clamps blunderScale and previewSelectScale to their spec ranges", () => {
+		expect(normalizeSettings({ strength: { blunderScale: -50 } }).strength.blunderScale).toBe(
+			LIMITS.blunderScaleMin
+		);
+		expect(normalizeSettings({ strength: { blunderScale: 7 } }).strength.blunderScale).toBe(
+			LIMITS.blunderScaleMax
+		);
+		expect(normalizeSettings({ strength: { blunderScale: 1.5 } }).strength.blunderScale).toBe(1.5);
+		expect(
+			normalizeSettings({ execution: { previewSelectScale: 0 } }).execution.previewSelectScale
+		).toBe(LIMITS.previewSelectScaleMin);
+		expect(
+			normalizeSettings({ execution: { previewSelectScale: 9 } }).execution.previewSelectScale
+		).toBe(LIMITS.previewSelectScaleMax);
+	});
 	it("validates keybinds as whole objects", () => {
 		const s = normalizeSettings({
 			keybinds: {

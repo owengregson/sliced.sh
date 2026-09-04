@@ -14,6 +14,7 @@ async function getFlag(key: FlagKey, tabId: number): Promise<boolean> {
 	return flags?.[String(tabId)] === true;
 }
 
+/** Unserialised read-modify-write: the owner (Task 9) must serialise concurrent writes per key. */
 async function setFlag(key: FlagKey, tabId: number, value: boolean): Promise<void> {
 	const flags: TabFlags = { ...((await chromeSessionGet(key)) ?? {}) };
 	if (value) flags[String(tabId)] = true;
