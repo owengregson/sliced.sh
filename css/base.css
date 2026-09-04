@@ -1,0 +1,243 @@
+/* css/base.css — sl-ui base layer (Part I §10.1): reset, body.sl-shell, typography defaults,
+   focus ring, reduced-motion / forced-colors / prefers-contrast (Appendix F §8.4), scrollbars.
+   Imports only the layer above (tokens). Every value is a Lattice token. */
+
+/* ---- reset ---------------------------------------------------------------------------- */
+
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+	margin: 0;
+	padding: 0;
+}
+
+html {
+	height: 100%;
+	-webkit-text-size-adjust: 100%;
+	text-size-adjust: 100%;
+}
+
+body.sl-shell {
+	min-height: 100%;
+	background: var(--sl-color-canvas);
+	color: var(--sl-color-text-primary);
+	font-family: var(--sl-type-family-ui);
+	font-size: var(--sl-type-size-sm);
+	line-height: var(--sl-type-leading-sm);
+	font-weight: var(--sl-type-weight-regular);
+	letter-spacing: var(--sl-type-tracking-normal);
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+	text-rendering: optimizeLegibility;
+	overflow-x: hidden;
+	overflow-y: auto;
+	color-scheme: dark;
+}
+
+body.sl-shell[data-theme="light"] {
+	color-scheme: light;
+}
+
+#app {
+	min-height: 100%;
+	container-type: inline-size;
+}
+
+/* ---- typography defaults ---------------------------------------------------------------- */
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+	font-family: var(--sl-type-family-ui);
+	font-size: var(--sl-type-size-md);
+	line-height: var(--sl-type-leading-md);
+	font-weight: var(--sl-type-weight-semibold);
+	letter-spacing: var(--sl-type-tracking-tight);
+}
+
+p,
+li,
+dd,
+dt,
+label,
+legend,
+figcaption {
+	font-size: inherit;
+	line-height: inherit;
+}
+
+small {
+	font-size: var(--sl-type-size-xs);
+	line-height: var(--sl-type-leading-xs);
+}
+
+strong,
+b {
+	font-weight: var(--sl-type-weight-semibold);
+}
+
+a {
+	color: var(--sl-color-brand-text);
+	text-decoration: none;
+	text-underline-offset: var(--sl-space-1);
+}
+
+a:hover {
+	text-decoration: underline;
+}
+
+code,
+kbd,
+samp,
+pre {
+	font-family: var(--sl-type-family-mono);
+	font-size: var(--sl-type-size-sm);
+	line-height: var(--sl-type-leading-sm);
+	font-feature-settings: var(--sl-type-features-mono);
+}
+
+ul,
+ol {
+	list-style: none;
+}
+
+button,
+input,
+select,
+textarea {
+	font: inherit;
+	letter-spacing: inherit;
+	color: inherit;
+	background: transparent;
+	border: 0;
+	border-radius: 0;
+	appearance: none;
+}
+
+button {
+	cursor: pointer;
+	text-align: inherit;
+}
+
+button:disabled,
+[aria-disabled="true"] {
+	cursor: default;
+	pointer-events: none;
+}
+
+input::placeholder,
+textarea::placeholder {
+	color: var(--sl-color-text-tertiary);
+}
+
+img,
+svg,
+video,
+canvas {
+	display: block;
+	max-width: 100%;
+}
+
+hr {
+	border: 0;
+	border-top: var(--sl-hairline) solid var(--sl-color-border-subtle);
+}
+
+table {
+	border-collapse: collapse;
+	border-spacing: 0;
+}
+
+::selection {
+	background: var(--sl-color-brand-tint-strong);
+	color: var(--sl-color-text-primary);
+}
+
+/* ---- focus ring (2px focus ring at 2px offset from the canvas) ---------------------------- */
+
+:focus {
+	outline: none;
+}
+
+:focus-visible {
+	outline: none;
+	box-shadow:
+		0 0 0 calc(var(--sl-unit) / 2) var(--sl-color-canvas),
+		0 0 0 var(--sl-unit) var(--sl-color-focus);
+	border-radius: var(--sl-radius-xs);
+}
+
+/* ---- scrollbars ---------------------------------------------------------------------------- */
+
+body.sl-shell,
+.sl-scroll {
+	scrollbar-width: thin;
+	scrollbar-color: var(--sl-color-border-strong) transparent;
+}
+
+body.sl-shell::-webkit-scrollbar,
+.sl-scroll::-webkit-scrollbar {
+	width: var(--sl-space-2);
+	height: var(--sl-space-2);
+}
+
+body.sl-shell::-webkit-scrollbar-thumb,
+.sl-scroll::-webkit-scrollbar-thumb {
+	background: var(--sl-color-border-strong);
+	border-radius: var(--sl-radius-full);
+}
+
+body.sl-shell::-webkit-scrollbar-track,
+.sl-scroll::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+/* ---- reduced motion (Appendix F §8.4): transforms removed, crossfades only at duration.2-5 ---- */
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: var(--sl-motion-duration-2-5) !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: var(--sl-motion-duration-2-5) !important;
+		transition-property: opacity, visibility, color, background-color, border-color, box-shadow !important;
+		scroll-behavior: auto !important;
+	}
+
+	.fa-spin {
+		animation: none !important;
+	}
+}
+
+/* ---- forced colours (Appendix F §8.4) ------------------------------------------------------ */
+
+@media (forced-colors: active) {
+	body.sl-shell {
+		forced-color-adjust: auto;
+	}
+
+	:focus-visible {
+		box-shadow: none;
+		outline: calc(var(--sl-hairline) * 2) solid Highlight;
+		outline-offset: calc(var(--sl-hairline) * 2);
+	}
+
+	hr {
+		border-top-color: CanvasText;
+	}
+}
+
+/* ---- more contrast (Appendix F §8.4): borders use border-strong ---------------------------
+   (text-secondary → charcoal.300 is emitted by the token generator in tokens.css) */
+
+@media (prefers-contrast: more) {
+	body.sl-shell {
+		--sl-color-border-subtle: var(--sl-color-border-strong);
+		--sl-color-border-default: var(--sl-color-border-strong);
+	}
+}

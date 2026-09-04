@@ -1,0 +1,11 @@
+/* css/sl-ui.css — the sole stylesheet linked by pages/panel.html (Part I §10.1).
+   Layer order is binding: tokens → base → primitives → components → views. */
+@import url("tokens.css");
+@import url("base.css");
+@import url("primitives.css");
+@import url("components.css");
+@import url("views/login.css");
+@import url("views/states.css");
+@import url("views/live.css");
+@import url("views/settings.css");
+@import url("views/engine.css");

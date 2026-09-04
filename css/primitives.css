@@ -1,0 +1,248 @@
+/* css/primitives.css — sl-ui primitives layer (Part I §10.1): layout (.sl-stack/.sl-row/.sl-grid
+   with gap from tokens), .sl-card, .sl-text-*, .sl-icon, visibility utilities.
+   Imports only the layer above (base). Every value is a Lattice token. */
+
+/* ---- layout ---------------------------------------------------------------------------- */
+
+.sl-stack {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sl-space-3);
+}
+
+.sl-row {
+	display: flex;
+	flex-direction: row;
+	align-items: center;
+	gap: var(--sl-space-2);
+}
+
+.sl-grid {
+	display: grid;
+	gap: var(--sl-space-3);
+}
+
+.sl-grid--2 {
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.sl-grid--3 {
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.sl-row--wrap {
+	flex-wrap: wrap;
+}
+
+.sl-row--start,
+.sl-stack--start {
+	align-items: flex-start;
+}
+
+.sl-row--end {
+	justify-content: flex-end;
+}
+
+.sl-row--between {
+	justify-content: space-between;
+}
+
+.sl-row--center,
+.sl-stack--center {
+	align-items: center;
+	justify-content: center;
+}
+
+.sl-row--baseline {
+	align-items: baseline;
+}
+
+.sl-row--stretch,
+.sl-stack--stretch {
+	align-items: stretch;
+}
+
+/* gap modifiers: the only multipliers that exist (Appendix F §2.1) */
+.sl-gap-0 {
+	gap: var(--sl-space-0);
+}
+.sl-gap-1 {
+	gap: var(--sl-space-1);
+}
+.sl-gap-2 {
+	gap: var(--sl-space-2);
+}
+.sl-gap-3 {
+	gap: var(--sl-space-3);
+}
+.sl-gap-4 {
+	gap: var(--sl-space-4);
+}
+.sl-gap-5 {
+	gap: var(--sl-space-5);
+}
+.sl-gap-6 {
+	gap: var(--sl-space-6);
+}
+.sl-gap-8 {
+	gap: var(--sl-space-8);
+}
+.sl-gap-10 {
+	gap: var(--sl-space-10);
+}
+.sl-gap-12 {
+	gap: var(--sl-space-12);
+}
+.sl-gap-16 {
+	gap: var(--sl-space-16);
+}
+
+.sl-grow {
+	flex: 1 1 0;
+	min-width: 0;
+}
+
+.sl-shrink-0 {
+	flex-shrink: 0;
+}
+
+.sl-spacer {
+	flex: 1 1 auto;
+}
+
+/* ---- surfaces ------------------------------------------------------------------------------ */
+
+.sl-card {
+	background: var(--sl-color-surface-raised);
+	border-radius: var(--sl-radius-md);
+	box-shadow: var(--sl-shadow-raise);
+	padding: var(--sl-space-4);
+}
+
+.sl-card--sunken {
+	background: var(--sl-color-surface-sunken);
+	box-shadow: var(--sl-shadow-inset);
+}
+
+.sl-card--flat {
+	background: transparent;
+	box-shadow: none;
+	border: var(--sl-hairline) solid var(--sl-color-border-subtle);
+}
+
+.sl-card--tight {
+	padding: var(--sl-space-3);
+}
+
+.sl-rule {
+	border: 0;
+	border-top: var(--sl-hairline) solid var(--sl-color-border-subtle);
+}
+
+/* ---- text ----------------------------------------------------------------------------------- */
+
+.sl-text-primary {
+	color: var(--sl-color-text-primary);
+}
+.sl-text-secondary {
+	color: var(--sl-color-text-secondary);
+}
+.sl-text-tertiary {
+	color: var(--sl-color-text-tertiary);
+}
+.sl-text-disabled {
+	color: var(--sl-color-text-disabled);
+}
+.sl-text-brand {
+	color: var(--sl-color-brand-text);
+}
+.sl-text-success {
+	color: var(--sl-color-success);
+}
+.sl-text-warn {
+	color: var(--sl-color-warn);
+}
+.sl-text-danger {
+	color: var(--sl-color-danger-text);
+}
+
+.sl-text-numerals {
+	font-feature-settings: var(--sl-type-features-numerals);
+	font-variant-numeric: tabular-nums lining-nums;
+}
+
+.sl-text-center {
+	text-align: center;
+}
+.sl-text-end {
+	text-align: end;
+}
+.sl-text-nowrap {
+	white-space: nowrap;
+}
+
+.sl-text-truncate {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	min-width: 0;
+}
+
+.sl-text-break {
+	overflow-wrap: anywhere;
+}
+
+/* ---- icons (Appendix F §2.6): size = row type size, colour = row text tier, always fa-fw ---- */
+
+.sl-icon {
+	display: inline-block;
+	flex: none;
+	font-size: inherit;
+	line-height: inherit;
+	color: inherit;
+	vertical-align: middle;
+	text-align: center;
+}
+
+.sl-icon--sm {
+	font-size: var(--sl-size-icon-sm);
+}
+.sl-icon--md {
+	font-size: var(--sl-size-icon-md);
+}
+.sl-icon--lg {
+	font-size: var(--sl-size-icon-lg);
+}
+
+.sl-icon--secondary {
+	color: var(--sl-color-text-secondary);
+}
+.sl-icon--tertiary {
+	color: var(--sl-color-text-tertiary);
+}
+
+/* ---- visibility utilities ---------------------------------------------------------------- */
+
+.sl-hidden {
+	display: none !important;
+}
+
+.sl-invisible {
+	visibility: hidden;
+}
+
+.sl-visually-hidden {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	margin: calc(var(--sl-hairline) * -1);
+	padding: 0;
+	overflow: hidden;
+	clip-path: inset(50%);
+	white-space: nowrap;
+	border: 0;
+}
+
+.sl-no-pointer {
+	pointer-events: none;
+}
