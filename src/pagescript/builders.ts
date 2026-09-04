@@ -26,6 +26,7 @@ import {
 	type IfStatement,
 	isBindingName,
 	isIdentifierName,
+	isParamBindingName,
 	isParamName,
 	isSpoofName,
 	type Literal,
@@ -113,7 +114,9 @@ export const js = {
 	undef: (): Identifier => ({ type: "Identifier", name: "undefined" }),
 	/** Bind-time parameter slot (typed; substituted by `bind()`). */
 	param: <T = unknown>(name: string): Param<T> => {
-		if (!isBindingName(name)) throw new PagescriptError(`js.param: invalid name "${name}"`);
+		if (!isParamBindingName(name)) {
+			throw new PagescriptError(`js.param: invalid name "${name}" (identifier without "$")`);
+		}
 		return { type: "Identifier", name: PARAM_PREFIX + name };
 	},
 	/** Build-time spoofed global / property name (replaced by `deriveToken`). */

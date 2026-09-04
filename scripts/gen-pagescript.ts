@@ -24,7 +24,7 @@ import {
 	emit,
 	type ParamSpec,
 	type ParamType,
-	PLACEHOLDER_RE,
+	placeholderPattern,
 } from "../src/pagescript";
 
 export const ROOT = path.resolve(import.meta.dir, "..");
@@ -97,7 +97,7 @@ export function renderModule(name: string, params: readonly ParamSpec[], code: s
 		'\t\tif (!(p.name in values)) throw new TypeError("bind: missing argument " + JSON.stringify(p.name));',
 		'\t\tencoded.set(p.name, "(" + encode(p.name, p.type, values[p.name]) + ")");',
 		"\t}",
-		`\treturn code.replace(${PLACEHOLDER_RE.toString()}, (match, name: string) => {`,
+		`\treturn code.replace(${placeholderPattern().toString()}, (match, name: string) => {`,
 		"\t\tconst value = encoded.get(name);",
 		'\t\tif (value === undefined) throw new TypeError("bind: undeclared placeholder " + match);',
 		"\t\treturn value;",

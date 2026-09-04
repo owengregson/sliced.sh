@@ -175,6 +175,23 @@ describe("generatePagescript", () => {
 		expect(tsc.exitCode).toBe(0);
 	}, 60_000);
 
+	it("generated bind() substitutes every accepted parameter name shape", async () => {
+		const dist = path.join(root, "names-dist");
+		const generatedDir = path.join(root, "names-gen");
+		const names = defineProgram({
+			name: "names",
+			params: { a: "string", _x: "string", x1: "number", A_B_9: "boolean" },
+			build: (p) => js.program([js.ret(js.arr(p.a, p._x, p.x1, p.A_B_9))]),
+		});
+		await generatePrograms(dist, { programs: [names], generatedDir, seed: "s" });
+		const mod = (await import(pathToFileURL(path.join(generatedDir, "names.ts")).href)) as {
+			bind: (args: Record<string, unknown>) => string;
+		};
+		const bound = mod.bind({ a: "A", _x: "X", x1: 1, A_B_9: true });
+		expect(bound).not.toContain("$$param");
+		expect(new Function(bound)()).toEqual(["A", "X", 1, true]);
+	});
+
 	it("parseSeedArg reads --seed and rejects a missing value", () => {
 		expect(parseSeedArg([])).toBeUndefined();
 		expect(parseSeedArg(["--seed", "abc"])).toBe("abc");

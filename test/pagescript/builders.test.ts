@@ -23,6 +23,9 @@ describe("js builders: literals & identifiers", () => {
 		expect(js.param("sel")).toEqual({ type: "Identifier", name: "$$param:sel" });
 		expect(js.spoof("ready")).toEqual({ type: "Identifier", name: "$$spoof:ready" });
 		expect(() => js.param("")).toThrow();
+		expect(() => js.param("$sel")).toThrow(/\$sel/);
+		expect(() => js.param("a$b")).toThrow(/a\$b/);
+		expect(js.param("_x1")).toEqual({ type: "Identifier", name: "$$param:_x1" });
 		expect(() => js.spoof("")).toThrow();
 	});
 

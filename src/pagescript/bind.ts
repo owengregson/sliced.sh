@@ -22,6 +22,7 @@
 import { emit } from "./emit";
 import {
 	isBindingName,
+	isParamBindingName,
 	PARAM_PREFIX,
 	PagescriptError,
 	type Param,
@@ -68,8 +69,15 @@ export function paramPlaceholder(name: string): string {
 	return JSON.stringify(PARAM_PREFIX + name);
 }
 
-/** Matches one printed placeholder; group 1 is the parameter name. */
-export const PLACEHOLDER_RE = /"\$\$param:(\w+)"/g;
+/**
+ * A fresh pattern matching one printed placeholder; group 1 is the parameter
+ * name. Deliberately wider than `isParamBindingName` (it accepts `$`) so the
+ * validator and the pattern can never disagree; a new object per call, so no
+ * `lastIndex` state leaks between callers.
+ */
+export function placeholderPattern(): RegExp {
+	return /"\$\$param:([A-Za-z_$][\w$]*)"/g;
+}
 
 function encode(spec: ParamSpec, value: unknown): string {
 	const fail = (): never => {
@@ -102,7 +110,7 @@ export function bindCode(
 		if (!(spec.name in args)) throw new TypeError(`bind: missing argument "${spec.name}"`);
 		encoded.set(spec.name, `(${encode(spec, args[spec.name])})`);
 	}
-	return code.replace(PLACEHOLDER_RE, (match, name: string) => {
+	return code.replace(placeholderPattern(), (match, name: string) => {
 		const value = encoded.get(name);
 		if (value === undefined) throw new TypeError(`bind: undeclared placeholder ${match}`);
 		return value;
@@ -114,8 +122,10 @@ export function defineProgram<P extends ParamMap>(def: ProgramDef<P>): PageProgr
 		throw new PagescriptError(`defineProgram: invalid program name "${def.name}"`);
 	}
 	for (const name of Object.keys(def.params)) {
-		if (!isBindingName(name)) {
-			throw new PagescriptError(`defineProgram "${def.name}": invalid parameter name "${name}"`);
+		if (!isParamBindingName(name)) {
+			throw new PagescriptError(
+				`defineProgram "${def.name}": invalid parameter name "${name}" (identifier without "$")`
+			);
 		}
 	}
 	if (def.entryArgs !== undefined && def.entry !== true) {

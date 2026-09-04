@@ -17,9 +17,9 @@ export {
 	type ParamArgs,
 	type ParamMap,
 	type ParamSlots,
-	PLACEHOLDER_RE,
 	type ProgramDef,
 	paramPlaceholder,
+	placeholderPattern,
 } from "./bind";
 export { js } from "./builders";
 export { type EmitOptions, type Emitted, emit } from "./emit";

@@ -254,6 +254,18 @@ export function isBindingName(name: string): boolean {
 	return isIdentifierName(name) && !RESERVED.has(name);
 }
 
+const PARAM_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
+ * True when `name` may be a bind parameter: a binding name without `$`.
+ * Parameter names double as TypeScript object keys in generated `bind`
+ * signatures and as the group captured by the placeholder pattern, so the
+ * simpler identifier set is the contract.
+ */
+export function isParamBindingName(name: string): boolean {
+	return PARAM_NAME_RE.test(name) && !RESERVED.has(name);
+}
+
 export function isParamName(name: string): boolean {
 	return name.startsWith(PARAM_PREFIX);
 }

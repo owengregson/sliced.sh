@@ -1,6 +1,13 @@
 // test/pagescript/bind.test.ts
 import { describe, expect, it } from "bun:test";
-import { bindCode, defineProgram, emit, js, paramPlaceholder } from "@pagescript";
+import {
+	bindCode,
+	defineProgram,
+	emit,
+	js,
+	paramPlaceholder,
+	placeholderPattern,
+} from "@pagescript";
 
 const P = { name: "x", type: "json" } as const;
 
@@ -56,6 +63,33 @@ describe("bindCode", () => {
 		const out = bindCode(code, params, { a: { s: '"$$param:b"' }, b: "safe" });
 		expect(new Function(`return ${out};`)()).toEqual([{ s: '"$$param:b"' }, "safe"]);
 		expect(out.split("safe")).toHaveLength(2);
+	});
+
+	it("round-trips every accepted parameter name through paramPlaceholder and the pattern", () => {
+		const names = ["a", "_x", "x1", "camelCase", "A_B_9", "_", "sel", "boardSelector"];
+		for (const name of names) {
+			const ph = paramPlaceholder(name);
+			const m = placeholderPattern().exec(ph);
+			expect(m?.[1]).toBe(name);
+			expect(m?.[0]).toBe(ph);
+			const prog = defineProgram({
+				name: "rt",
+				params: { [name]: "string" },
+				build: (p) => js.program([js.ret(p[name] as never)]),
+			});
+			expect(new Function(prog.bind({ [name]: `v:${name}` }))()).toBe(`v:${name}`);
+		}
+		// The pattern is wider than the validator: `$` names still match, so the two cannot disagree.
+		expect(placeholderPattern().exec(paramPlaceholder("$sel"))?.[1]).toBe("$sel");
+		expect(placeholderPattern().exec(paramPlaceholder("a$b"))?.[1]).toBe("a$b");
+	});
+
+	it("returns a fresh pattern each call (no shared lastIndex)", () => {
+		const a = placeholderPattern();
+		expect(a).not.toBe(placeholderPattern());
+		a.exec(paramPlaceholder("x"));
+		expect(a.lastIndex).toBeGreaterThan(0);
+		expect(placeholderPattern().lastIndex).toBe(0);
 	});
 
 	it("rejects a placeholder in the code that no declared parameter covers", () => {
@@ -129,10 +163,19 @@ describe("defineProgram", () => {
 		).toThrow(/entry/);
 	});
 
-	it("rejects a param name that is not a valid identifier", () => {
+	it("rejects a param name that is not a valid identifier, including names with $", () => {
 		expect(() =>
 			defineProgram({ name: "x", params: { "bad name": "string" }, build: () => js.program([]) })
 		).toThrow(/bad name/);
+		expect(() =>
+			defineProgram({ name: "x", params: { $sel: "string" }, build: () => js.program([]) })
+		).toThrow(/\$sel/);
+		expect(() =>
+			defineProgram({ name: "x", params: { a$b: "string" }, build: () => js.program([]) })
+		).toThrow(/a\$b/);
+		expect(() =>
+			defineProgram({ name: "x", params: { class: "string" }, build: () => js.program([]) })
+		).toThrow(/class/);
 	});
 
 	it("bind() rethrows emit-time validation errors", () => {
