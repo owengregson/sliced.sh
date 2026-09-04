@@ -20,12 +20,74 @@ it("flags raw px, hex colours and literal durations", () => {
 	expect(props(".a { transition-duration: 0.2s; }")).toEqual(["transition-duration"]);
 });
 
-it("flags non-token custom-property references and easing literals", () => {
+it("flags non-token custom-property references and easing literals (named curves only)", () => {
 	expect(props(".a { padding: var(--space-3); }")).toEqual(["padding"]);
-	expect(props(".a { transition: opacity var(--sl-motion-duration-1) ease-in; }")).toEqual([]);
+	expect(props(".a { transition: opacity var(--sl-motion-duration-1) ease-in; }")).toEqual([
+		"transition",
+	]);
+	expect(props(".a { transition: opacity var(--sl-motion-duration-1) linear; }")).toEqual([
+		"transition",
+	]);
+	expect(props(".a { transition-timing-function: ease; }")).toEqual(["transition-timing-function"]);
+	expect(props(".a { animation: sl-pulse var(--sl-motion-duration-6) steps(4) infinite; }")).toEqual(
+		["animation"]
+	);
 	expect(
 		props(".a { transition: opacity var(--sl-motion-duration-1) cubic-bezier(0.2, 0, 0, 1); }")
 	).toEqual(["transition"]);
+	expect(
+		props(
+			".a { animation: sl-pulse var(--sl-motion-duration-6) var(--sl-motion-easing-standard) infinite alternate; }"
+		)
+	).toEqual([]);
+	expect(
+		props(".a { transition: opacity var(--sl-motion-duration-1) var(--sl-motion-easing-exit); }")
+	).toEqual([]);
+});
+
+it("rejects CSS named colours in colour properties but accepts system colours", () => {
+	expect(props(".a { color: red; }")).toEqual(["color"]);
+	expect(props(".a { background: white; }")).toEqual(["background"]);
+	expect(props(".a { background-color: orange; border-color: orange; }")).toEqual([
+		"background-color",
+		"border-color",
+	]);
+	expect(props(".a { box-shadow: 0 0 0 var(--sl-unit) tomato; }")).toEqual(["box-shadow"]);
+	expect(props(".a { border: var(--sl-hairline) solid silver; }")).toEqual(["border"]);
+	expect(props(".a { outline-color: blue; fill: green; }")).toEqual(["outline-color", "fill"]);
+	expect(props(".a { color: CanvasText; background: Canvas; border-color: ButtonBorder; }")).toEqual(
+		[]
+	);
+	expect(props(".a { outline: calc(var(--sl-hairline) * 2) solid Highlight; }")).toEqual([]);
+	expect(
+		props(".a { box-shadow: inset 0 var(--sl-hairline) 0 var(--sl-color-border-subtle); }")
+	).toEqual([]);
+	expect(
+		props(".a { background: var(--sl-color-canvas) url(x.png) no-repeat center / cover; }")
+	).toEqual([]);
+});
+
+it("checks custom-property declarations outside tokens.css (no second token source)", () => {
+	expect(props(".a { --sl-pad: 13px; padding: var(--sl-pad); }")).toEqual(["--sl-pad"]);
+	expect(props(".a { --gap: 0.5rem; }")).toEqual(["--gap"]);
+	expect(props(".a { --sl-tint: red; }")).toEqual(["--sl-tint"]);
+	expect(props(".a { --sl-color-border-subtle: var(--sl-color-border-strong); }")).toEqual([]);
+	expect(props(".a { --sl-ring: calc(var(--sl-unit) * 2); --x: 0; --y: transparent; }")).toEqual([]);
+});
+
+it("checks border and outline widths (1px or the hairline token only)", () => {
+	expect(props(".a { border: 3px solid var(--sl-color-border-default); }")).toEqual(["border"]);
+	expect(props(".a { border-width: 2px; outline-width: thin; }")).toEqual([
+		"border-width",
+		"outline-width",
+	]);
+	expect(props(".a { outline: medium solid var(--sl-color-focus); }")).toEqual(["outline"]);
+	expect(
+		props(".a { border-top: 1px solid var(--sl-color-border-subtle); border-width: 0; }")
+	).toEqual([]);
+	expect(
+		props(".a { border: var(--sl-hairline) dashed var(--sl-color-border-default); outline: 0; }")
+	).toEqual([]);
 });
 
 it("accepts tokens, calc() of tokens, and the allowed literals", () => {
@@ -51,7 +113,10 @@ it("accepts tokens, calc() of tokens, and the allowed literals", () => {
 it("leaves unlisted properties alone but still forbids hex colours anywhere", () => {
 	expect(props(".a { width: 320px; height: 100vh; line-height: 1.2; flex: 1 1 0; }")).toEqual([]);
 	expect(props(".a { border: 1px solid #22272d; }")).toEqual(["border"]);
-	expect(props(".a { outline: 2px solid rgba(0,0,0,.5); }")).toEqual(["outline"]);
+	expect(props(".a { outline: var(--sl-hairline) solid rgba(0,0,0,.5); }")).toEqual(["outline"]);
+	expect(
+		props(".a { grid-template-columns: repeat(2, minmax(0, 1fr)); font-weight: 600; }")
+	).toEqual([]);
 });
 
 it("reports file and line and handles nested at-rules and comments", () => {

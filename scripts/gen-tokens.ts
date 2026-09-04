@@ -8,14 +8,7 @@
 // Output is deterministic: the emission order is the declaration order in tokens.ts.
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import {
-	type AlphaStep,
-	type ColorRef,
-	type PaletteName,
-	type ShadowLayer,
-	type TypeStep,
-	tokens,
-} from "../src/design/tokens";
+import { type ColorRef, type ShadowLayer, type TypeStep, tokens } from "../src/design/tokens";
 
 const ROOT = path.resolve(import.meta.dir, "..");
 export const CSS_OUT = path.join(ROOT, "css", "tokens.css");
@@ -59,7 +52,7 @@ function px(n: number): string {
 function shadowLayer(l: ShadowLayer): string {
 	const parts = [px(l.x), px(l.y), px(l.blur)];
 	if (l.spread !== undefined && l.spread !== 0) parts.push(px(l.spread));
-	parts.push(resolveColor({ ref: l.color as PaletteName, alpha: l.alpha as AlphaStep }));
+	parts.push(resolveColor({ ref: l.color, alpha: l.alpha }));
 	return `${l.inset ? "inset " : ""}${parts.join(" ")}`;
 }
 
@@ -238,8 +231,11 @@ export function renderTs(): string {
 		leading[step] = tokens.type.leading[step];
 	}
 	const iconSize: Record<string, number> = {};
-	for (const [k, ref] of Object.entries(tokens.size.icon))
-		iconSize[k] = size[ref.slice("type.".length)] ?? 0;
+	for (const [k, ref] of Object.entries(tokens.size.icon)) {
+		const resolved = size[ref.slice("type.".length)];
+		if (resolved === undefined) throw new Error(`size.icon.${k} references unknown step "${ref}"`);
+		iconSize[k] = resolved;
+	}
 	const data: Json = {
 		unit: tokens.unit,
 		space: pxMap(tokens.space),

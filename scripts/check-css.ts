@@ -2,10 +2,14 @@
 //
 // For the listed properties every value token must be `var(--sl-…)`, a `calc()`/`min()`/`max()`/
 // `clamp()` of tokens, `0`, `1px`, `100%`, `auto`, `inherit`, `currentColor`, `transparent`,
-// `none`, or a keyword (e.g. `solid`, a transition property name, a forced-colors system colour).
-// Independently of the property list, a hex colour or `rgb()/rgba()/hsl()/hsla()` literal anywhere
-// outside `css/tokens.css` is a violation (Appendix F §2.1: no hex outside the palette).
-// `css/tokens.css` is generated from the token source and is skipped.
+// `none`, or a keyword allowed for the property class (border styles, background keywords,
+// `inset`, transition property / animation names, the CSS system colours for forced-colors).
+// CSS named colours (`red`, `white`, …) and generic easings (`ease`, `linear`, `steps()`,
+// `cubic-bezier()`) are rejected; border/outline widths accept only `0`, `1px` or a token.
+// Custom-property declarations (`--*`) outside `css/tokens.css` are checked too, so no second
+// token source can be introduced by hand (C3). Independently of the property list, a hex colour
+// or `rgb()/rgba()/hsl()/hsla()` literal anywhere outside `css/tokens.css` is a violation
+// (Appendix F §2.1: no hex outside the palette). `css/tokens.css` is generated and skipped.
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
@@ -19,11 +23,40 @@ export interface CssViolation {
 
 const GENERATED = new Set(["css/tokens.css"]);
 
-/** Properties whose every value token must be a token or an allowed literal (§10.1 list). */
-const CHECKED_PROPERTY_RE =
-	/^(?:color|background(?:-color)?|border-color|box-shadow|padding(?:-(?:top|right|bottom|left|inline|block)(?:-(?:start|end))?)?|margin(?:-(?:top|right|bottom|left|inline|block)(?:-(?:start|end))?)?|gap|row-gap|column-gap|font-size|border-radius|border-(?:top|bottom)-(?:left|right)-radius|border-(?:start|end)-(?:start|end)-radius|transition|transition-duration|transition-delay|z-index)$/;
+/**
+ * Property classes. Each checked property accepts tokens/allowed literals plus a class-specific
+ * keyword set; everything else (raw numbers, named colours, generic easings, `thin`, …) fails.
+ */
+type PropClass = "color" | "background" | "shadow" | "border" | "motion" | "numeric" | "custom";
 
-/** Bare tokens accepted in a checked property, case-insensitive. */
+const CLASS_RES: ReadonlyArray<readonly [PropClass, RegExp]> = [
+	[
+		"color",
+		/^(?:color|background-color|border-color|border-(?:top|right|bottom|left|inline|block)(?:-(?:start|end))?-color|outline-color|fill|stroke|caret-color|accent-color|text-decoration-color|column-rule-color|scrollbar-color)$/,
+	],
+	["background", /^background$/],
+	["shadow", /^(?:box-shadow|text-shadow)$/],
+	[
+		"border",
+		/^(?:border|border-(?:top|right|bottom|left|inline|block)(?:-(?:start|end))?|border-width|border-(?:top|right|bottom|left|inline|block)(?:-(?:start|end))?-width|outline|outline-width|column-rule)$/,
+	],
+	[
+		"motion",
+		/^(?:transition|transition-(?:duration|delay|timing-function)|animation|animation-(?:duration|delay|timing-function))$/,
+	],
+	[
+		"numeric",
+		/^(?:padding(?:-(?:top|right|bottom|left|inline|block)(?:-(?:start|end))?)?|margin(?:-(?:top|right|bottom|left|inline|block)(?:-(?:start|end))?)?|gap|row-gap|column-gap|font-size|border-radius|border-(?:top|bottom)-(?:left|right)-radius|border-(?:start|end)-(?:start|end)-radius|z-index)$/,
+	],
+];
+
+function classify(property: string): PropClass | null {
+	if (property.startsWith("--")) return "custom";
+	for (const [cls, re] of CLASS_RES) if (re.test(property)) return cls;
+	return null;
+}
+
+/** Bare tokens accepted in every checked property, lower-cased. */
 const LITERALS = new Set([
 	"0",
 	"1px",
@@ -39,6 +72,65 @@ const LITERALS = new Set([
 	"!important",
 	"/",
 ]);
+
+/** CSS system colours (forced-colors palette) — the only colour keywords allowed. */
+const SYSTEM_COLORS = new Set([
+	"canvas",
+	"canvastext",
+	"linktext",
+	"visitedtext",
+	"activetext",
+	"buttonface",
+	"buttontext",
+	"buttonborder",
+	"field",
+	"fieldtext",
+	"highlight",
+	"highlighttext",
+	"selecteditem",
+	"selecteditemtext",
+	"mark",
+	"marktext",
+	"graytext",
+	"accentcolor",
+	"accentcolortext",
+]);
+
+const BORDER_STYLES = new Set(["solid", "dashed", "dotted", "double", "hidden", "groove", "ridge"]);
+
+const BACKGROUND_KEYWORDS = new Set([
+	"no-repeat",
+	"repeat",
+	"repeat-x",
+	"repeat-y",
+	"space",
+	"round",
+	"center",
+	"top",
+	"right",
+	"bottom",
+	"left",
+	"cover",
+	"contain",
+	"fixed",
+	"local",
+	"scroll",
+	"border-box",
+	"padding-box",
+	"content-box",
+]);
+
+/** Generic easings are not named Lattice curves (§2.1 "Named curves only"). */
+const EASING_KEYWORDS = new Set([
+	"ease",
+	"ease-in",
+	"ease-out",
+	"ease-in-out",
+	"linear",
+	"step-start",
+	"step-end",
+]);
+const EASING_FUNCTIONS = new Set(["cubic-bezier", "steps", "linear"]);
 
 const TOKEN_VAR_RE = /^var\(--sl-[a-z0-9-]+\)$/i;
 const CALC_FN_RE = /^(calc|min|max|clamp)\((.*)\)$/is;
@@ -86,8 +178,28 @@ function calcIsClean(inner: string): boolean {
 	return rest === "";
 }
 
-/** Reason a single token is not allowed, or `null` if it is. */
-function tokenProblem(token: string): string | null {
+/** Whether a bare identifier is acceptable for the property class. */
+function keywordAllowed(lower: string, cls: PropClass): boolean {
+	switch (cls) {
+		case "color":
+			return SYSTEM_COLORS.has(lower);
+		case "background":
+			return SYSTEM_COLORS.has(lower) || BACKGROUND_KEYWORDS.has(lower);
+		case "shadow":
+			return SYSTEM_COLORS.has(lower) || lower === "inset";
+		case "border":
+			return SYSTEM_COLORS.has(lower) || BORDER_STYLES.has(lower);
+		case "motion":
+			// transition property names, animation names and animation keywords — but no generic easing
+			return !EASING_KEYWORDS.has(lower);
+		case "numeric":
+		case "custom":
+			return false;
+	}
+}
+
+/** Reason a single token is not allowed for the property class, or `null` if it is. */
+function tokenProblem(token: string, cls: PropClass): string | null {
 	const lower = token.toLowerCase();
 	if (LITERALS.has(lower)) return null;
 	if (TOKEN_VAR_RE.test(token)) return null;
@@ -99,14 +211,19 @@ function tokenProblem(token: string): string | null {
 		const name = (fn[1] ?? "").toLowerCase();
 		if (name === "url") return null;
 		if (/^(?:rgba?|hsla?)$/.test(name)) return `colour literal "${token}"`;
+		if (cls === "motion" && EASING_FUNCTIONS.has(name)) return `easing literal "${token}"`;
 		for (const arg of splitValue(fn[2] ?? "")) {
-			const p = tokenProblem(arg);
+			const p = tokenProblem(arg, cls);
 			if (p) return p;
 		}
 		return null;
 	}
 	if (/^["']/.test(token)) return null;
-	if (KEYWORD_RE.test(token)) return null;
+	if (KEYWORD_RE.test(token)) {
+		if (keywordAllowed(lower, cls)) return null;
+		if (cls === "motion") return `generic easing "${token}"`;
+		return `keyword "${token}" is not a token`;
+	}
 	return `raw value "${token}"`;
 }
 
@@ -121,7 +238,7 @@ function lineAt(src: string, index: number): number {
 	return n;
 }
 
-const DECL_RE = /(?<![\w-])([a-z-]+)\s*:\s*([^;{}]+?)\s*(?=[;}])/g;
+const DECL_RE = /(?<![\w-])(-{0,2}[a-z][a-z0-9-]*)\s*:\s*([^;{}]+?)\s*(?=[;}])/g;
 
 /** Pure check over `{ "css/file.css": source }` — used by tests and by `checkCss()`. */
 export function findCssViolations(files: Record<string, string>): CssViolation[] {
@@ -136,9 +253,10 @@ export function findCssViolations(files: Record<string, string>): CssViolation[]
 			const push = (reason: string): void => {
 				out.push({ file, line: lineAt(src, m.index ?? 0), property, value, reason });
 			};
-			if (CHECKED_PROPERTY_RE.test(property)) {
+			const cls = classify(property);
+			if (cls) {
 				for (const token of splitValue(value)) {
-					const p = tokenProblem(token);
+					const p = tokenProblem(token, cls);
 					if (p) {
 						push(p);
 						break;

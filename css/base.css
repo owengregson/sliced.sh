@@ -168,7 +168,6 @@ table {
 	box-shadow:
 		0 0 0 calc(var(--sl-unit) / 2) var(--sl-color-canvas),
 		0 0 0 var(--sl-unit) var(--sl-color-focus);
-	border-radius: var(--sl-radius-xs);
 }
 
 /* ---- scrollbars ---------------------------------------------------------------------------- */
