@@ -10,13 +10,15 @@
  * content swallows activation keys, every focusable in the content gets `aria-disabled="true"`
  * + `tabindex="-1"` (restored on exit; a MutationObserver covers views mounted meanwhile), the
  * view switch is disabled, the update banner is suspended and the top-ranked hands-off banner
- * explains why. The shell never calls `focus()`, `alert()` or `autofocus`.
+ * explains why. The shell never calls `focus()`, `alert()` or `autofocus`. The `aria-live`
+ * regions `announce()` writes into (`a11y.ts`) are mounted last in the shell.
  */
 
 import { chromeLocalGet, onStorageChanged } from "@core/chrome/storage";
 import type { PanelSnapshot } from "@core/constants/messages";
 import { LOCAL_KEYS } from "@core/constants/storage-keys";
 import { log } from "@core/logger";
+import { mountLiveRegions } from "./a11y";
 import { installActionHandlers } from "./actions";
 import { type BannerHandle, clearBanners, mountBannerSlot, showBanner } from "./components/banner";
 import { createPill, type PillHandle, type PillVariant } from "./components/pill";
@@ -117,6 +119,7 @@ export function bootShell(root: HTMLElement, options: ShellOptions): PanelShell 
 	const content = part(root, ".sl-app__content");
 	const toastLayer = part(root, ".sl-app__toasts");
 	const overlayLayer = part(root, ".sl-app__overlay");
+	const liveHost = part(root, ".sl-app__live");
 
 	const ui: PanelUiState = { tab: "game", updateAvailable: false, updateDismissed: false };
 	let snapshot: PanelSnapshot | null = null;
@@ -133,6 +136,7 @@ export function bootShell(root: HTMLElement, options: ShellOptions): PanelShell 
 	const unmountToasts = mountToastLayer(toastLayer);
 	const unmountOverlay = mountOverlayLayer(overlayLayer);
 	const unmountBanners = mountBannerSlot(bannerSlot);
+	const unmountLive = mountLiveRegions(liveHost); // §7.4 `announce()` target
 
 	const pill: PillHandle = createPill(statusHost, {
 		variant: "idle",
@@ -364,6 +368,7 @@ export function bootShell(root: HTMLElement, options: ShellOptions): PanelShell 
 			unmountBanners();
 			unmountToasts();
 			unmountOverlay();
+			unmountLive();
 			resetEscapeHandlers();
 			theme.dispose();
 			root.classList.remove("sl-app", "sl-hands-off");

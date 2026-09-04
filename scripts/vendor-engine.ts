@@ -10,6 +10,8 @@
 // 3. Writes `docs/third-party.md`: versions, the source offer and the SHA-256 of every file —
 //    including the opening books in `assets/books/` (Task 15; built by
 //    `scripts/build-club-book.py`, described here, never downloaded).
+// 3. Writes `docs/third-party.md`: versions, the source offer and the SHA-256 of every file,
+//    plus the vendored UI fonts section (Task 27; `FONT_FAMILIES`, `renderFontsSection`).
 //
 // Run: `bun run vendor:engine` (re-runnable; idempotent when nothing changed).
 
@@ -180,6 +182,8 @@ export interface ThirdPartyNotice {
 	typesFile: VendoredFile;
 	/** The Polyglot books in `BOOKS.dir` (Task 15), each with its build manifest. */
 	books: Array<{ file: VendoredFile; manifest: BookManifest }>;
+	/** Task 27: the vendored UI fonts (`describeFonts()`); omitted → no fonts section. */
+	fonts?: VendoredFont[];
 }
 
 const LICHESS_DB = "https://database.lichess.org/";
@@ -314,6 +318,113 @@ Georges \`gm2600.bin\`, whose licence forbids reuse without the author's permiss
 | File | Bytes | SHA-256 |
 |---|---|---|
 ${n.books.map(({ file }) => row(file)).join("\n")}
+${n.fonts ? `\n${renderFontsSection(n.fonts)}` : ""}`;
+}
+
+// ── Task 27: vendored UI fonts (`assets/fonts/`) ────────────────────────────────────────────
+// Kept as a separate, self-contained block so other lanes' additions to this file merge cleanly.
+
+/** Extension-relative directory holding the subset fonts referenced by `css/base.css`. */
+export const FONTS_DIR = "assets/fonts/";
+
+export interface FontFamilyNotice {
+	/** Family name exactly as declared in `@font-face` / `tokens.type.family`. */
+	family: string;
+	/** Subset woff2 shipped in `FONTS_DIR`. */
+	file: string;
+	/** OFL text shipped alongside. */
+	licenseFile: string;
+	/** Upstream package / repository and version the subset was cut from. */
+	source: string;
+	version: string;
+	copyright: string;
+	/** Retained variation axes after instancing (`fontTools.varLib.instancer`). */
+	axes: string;
+}
+
+export interface VendoredFont extends FontFamilyNotice, VendoredFile {}
+
+export const FONT_FAMILIES: readonly FontFamilyNotice[] = [
+	{
+		family: "Geist",
+		file: "Geist-Variable.woff2",
+		licenseFile: "LICENSE-Geist.txt",
+		source:
+			"npm `geist` (https://github.com/vercel/geist-font), `dist/fonts/geist-sans/Geist-Variable.ttf`",
+		version: "geist@1.7.2 (font version 1.800)",
+		copyright: "Copyright (c) 2023 Vercel, in collaboration with basement.studio",
+		axes: "wght 400–600",
+	},
+	{
+		family: "Geist Mono",
+		file: "GeistMono-Variable.woff2",
+		licenseFile: "LICENSE-GeistMono.txt",
+		source:
+			"npm `geist` (https://github.com/vercel/geist-font), `dist/fonts/geist-mono/GeistMono-Variable.ttf`",
+		version: "geist@1.7.2 (font version 1.700)",
+		copyright: "Copyright (c) 2023 Vercel, in collaboration with basement.studio",
+		axes: "wght 400–500",
+	},
+	{
+		family: "Bricolage Grotesque",
+		file: "BricolageGrotesque-Variable.woff2",
+		licenseFile: "LICENSE-BricolageGrotesque.txt",
+		source:
+			"google/fonts `ofl/bricolagegrotesque/BricolageGrotesque[opsz,wdth,wght].ttf` (upstream https://github.com/ateliertriay/bricolage @ 84745e5b)",
+		version: "font version 1.001",
+		copyright:
+			"Copyright 2022 The Bricolage Grotesque Project Authors (https://github.com/ateliertriay/bricolage)",
+		axes: "opsz 12–96, wght 400–600 (wdth pinned to 100)",
+	},
+];
+
+/** Google Fonts' `latin` range plus the glyphs the panel copy uses (× → ½ − · … – — ← ↑ ↓ ≤ ≥ § ±) and the chess figurines. */
+export const FONT_UNICODES =
+	"U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+2074,U+20AC,U+2122,U+2190-2193,U+2212,U+2215,U+2264,U+2265,U+2654-265F,U+FEFF,U+FFFD";
+
+/** Sizes + hashes of the shipped subsets (each family's `file` must exist). */
+export async function describeFonts(dir = path.join(ROOT, FONTS_DIR)): Promise<VendoredFont[]> {
+	const out: VendoredFont[] = [];
+	for (const family of FONT_FAMILIES) {
+		const [file] = await describe(dir, [family.file]);
+		if (!file) throw new Error(`${family.file} missing from ${FONTS_DIR}`);
+		out.push({ ...family, ...file });
+	}
+	return out;
+}
+
+export function renderFontsSection(fonts: readonly VendoredFont[]): string {
+	const total = fonts.reduce((n, f) => n + f.bytes, 0);
+	const row = (f: VendoredFont) =>
+		`| ${f.family} | \`${f.file}\` | ${f.axes} | ${f.bytes.toLocaleString("en-US")} | \`${f.sha256}\` |`;
+	const provenance = (f: VendoredFont) =>
+		`- **${f.family}** — ${f.source}; ${f.version}. ${f.copyright}. Licence text: \`${FONTS_DIR}${f.licenseFile}\`.`;
+	return `## UI fonts — \`${FONTS_DIR}\`
+
+The panel's type (Lattice \`tokens.type.family\`) is three open-source families, all under the
+SIL Open Font License 1.1 (the OFL text ships next to each file). Each is a variable woff2,
+instanced to the weights the design system uses and subset to Latin plus the panel's symbols
+with \`fonttools\` (\`pyftsubset\` / \`varLib.instancer\`); the fonts are not modified otherwise.
+The OFL permits this bundling and subsetting; the Reserved Font Name clause is respected because
+the files are only ever referenced under the original family names.
+
+| Family | File | Axes kept | Bytes | SHA-256 |
+|---|---|---|---|---|
+${fonts.map(row).join("\n")}
+
+Total ${total.toLocaleString("en-US")} bytes (budget 266,240 = 260 KB).
+
+${fonts.map(provenance).join("\n")}
+
+Subset recipe (reproducible; run from a scratch venv with \`fonttools\` + \`brotli\`):
+
+\`\`\`
+python -m fontTools.varLib.instancer <upstream>.ttf "wght=400:600" [opsz/wdth as per the table] -o <family>-var.ttf
+pyftsubset <family>-var.ttf --unicodes="${FONT_UNICODES}" \\
+  --layout-features="kern,liga,calt,tnum,lnum,pnum,onum,frac,ccmp,locl,mark,mkmk,ss01-ss10,zero,case,cpsp,salt,sups,subs,numr,dnom" \\
+  --flavor=woff2 --no-hinting --desubroutinize --name-IDs='*' --name-legacy --notdef-outline --drop-tables+=DSIG \\
+  --output-file=${FONTS_DIR}<Family>-Variable.woff2
+\`\`\`
 `;
 }
 
@@ -338,7 +449,11 @@ export async function vendorEngine(): Promise<void> {
 	if (!typesFile) throw new Error("types file missing after copy");
 	const { BOOKS } = registry;
 	const books = await readBookManifests(path.join(ROOT, BOOKS.dir), [BOOKS.gm2600, BOOKS.club]);
-	await writeFile(DOCS_DEST, renderThirdParty({ version, registry, engineFiles, typesFile, books }));
+	const fonts = await describeFonts();
+	await writeFile(
+		DOCS_DEST,
+		renderThirdParty({ version, registry, engineFiles, typesFile, books, fonts })
+	);
 	console.log(`wrote ${path.relative(ROOT, DOCS_DEST)}`);
 }
 

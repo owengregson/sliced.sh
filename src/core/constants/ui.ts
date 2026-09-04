@@ -17,6 +17,8 @@ export const UI_TIMINGS = {
 	engineStaleMs: 5_000,
 	/** §5.10: the armed play button's `aria-live` countdown updates per whole second. */
 	ariaCountdownStepMs: 1_000,
+	/** §7.4: `announce()` collapses a burst of live-region updates into the last one. */
+	announceDebounceMs: 150,
 	/** §6.2: countdown label shows tenths above this remaining time, whole seconds below. */
 	countdownTenthsAboveMs: 1_000,
 	/** §5.9: clock shows tenths under 10 s. */

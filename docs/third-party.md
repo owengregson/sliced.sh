@@ -85,3 +85,34 @@ Georges `gm2600.bin`, whose licence forbids reuse without the author's permissio
 |---|---|---|
 | `gm2600.bin` | 240,192 | `68aef21c2bb6b7f80a3858ff24a2565d95937ef52d5b23a6dd6bda0a3e1587d7` |
 | `club.bin` | 214,656 | `5ec6fb099c2a3d7bff25cc86edef03db6b9f9e26108b04c2af15445473d59340` |
+
+## UI fonts — `assets/fonts/`
+
+The panel's type (Lattice `tokens.type.family`) is three open-source families, all under the
+SIL Open Font License 1.1 (the OFL text ships next to each file). Each is a variable woff2,
+instanced to the weights the design system uses and subset to Latin plus the panel's symbols
+with `fonttools` (`pyftsubset` / `varLib.instancer`); the fonts are not modified otherwise.
+The OFL permits this bundling and subsetting; the Reserved Font Name clause is respected because
+the files are only ever referenced under the original family names.
+
+| Family | File | Axes kept | Bytes | SHA-256 |
+|---|---|---|---|---|
+| Geist | `Geist-Variable.woff2` | wght 400–600 | 22,412 | `6b900e59d296e36ca47887ec5b32d27f0e79f38b25705813c7b02114d6790b14` |
+| Geist Mono | `GeistMono-Variable.woff2` | wght 400–500 | 16,784 | `e1d28063428fbc0d20e20f712e4cc8e3bf280df84f773e6431b8aeb776861d17` |
+| Bricolage Grotesque | `BricolageGrotesque-Variable.woff2` | opsz 12–96, wght 400–600 (wdth pinned to 100) | 81,704 | `6b65fcf4af23b1d88e143829b121403e65d3e1a460679659615e7fc1c26edcd6` |
+
+Total 120,900 bytes (budget 266,240 = 260 KB).
+
+- **Geist** — npm `geist` (https://github.com/vercel/geist-font), `dist/fonts/geist-sans/Geist-Variable.ttf`; geist@1.7.2 (font version 1.800). Copyright (c) 2023 Vercel, in collaboration with basement.studio. Licence text: `assets/fonts/LICENSE-Geist.txt`.
+- **Geist Mono** — npm `geist` (https://github.com/vercel/geist-font), `dist/fonts/geist-mono/GeistMono-Variable.ttf`; geist@1.7.2 (font version 1.700). Copyright (c) 2023 Vercel, in collaboration with basement.studio. Licence text: `assets/fonts/LICENSE-GeistMono.txt`.
+- **Bricolage Grotesque** — google/fonts `ofl/bricolagegrotesque/BricolageGrotesque[opsz,wdth,wght].ttf` (upstream https://github.com/ateliertriay/bricolage @ 84745e5b); font version 1.001. Copyright 2022 The Bricolage Grotesque Project Authors (https://github.com/ateliertriay/bricolage). Licence text: `assets/fonts/LICENSE-BricolageGrotesque.txt`.
+
+Subset recipe (reproducible; run from a scratch venv with `fonttools` + `brotli`):
+
+```
+python -m fontTools.varLib.instancer <upstream>.ttf "wght=400:600" [opsz/wdth as per the table] -o <family>-var.ttf
+pyftsubset <family>-var.ttf --unicodes="U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+2074,U+20AC,U+2122,U+2190-2193,U+2212,U+2215,U+2264,U+2265,U+2654-265F,U+FEFF,U+FFFD" \
+  --layout-features="kern,liga,calt,tnum,lnum,pnum,onum,frac,ccmp,locl,mark,mkmk,ss01-ss10,zero,case,cpsp,salt,sups,subs,numr,dnom" \
+  --flavor=woff2 --no-hinting --desubroutinize --name-IDs='*' --name-legacy --notdef-outline --drop-tables+=DSIG \
+  --output-file=assets/fonts/<Family>-Variable.woff2
+```

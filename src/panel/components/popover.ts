@@ -9,6 +9,7 @@
 import { UI_TIMINGS } from "@core/constants/ui";
 import { TOKENS } from "@design/tokens.generated";
 import { ANIM } from "../animation-manager";
+import { COPY } from "../copy";
 import { mountIcons } from "../icons-mount";
 import { registerEscape } from "../keys";
 import { instantiate, part } from "../template";
@@ -83,6 +84,7 @@ export function openPopover(
 	const el = instantiate(html);
 	const titleEl = part(el, ".sl-popover__title");
 	const closeButton = part<HTMLButtonElement>(el, ".sl-popover__close");
+	closeButton.setAttribute("aria-label", COPY.common.popoverClose); // icon-only (§7.4)
 	const body = part(el, ".sl-popover__body");
 	const footer = part(el, ".sl-popover__footer");
 	const header = part(el, ".sl-popover__header");

@@ -2,6 +2,35 @@
    focus ring, reduced-motion / forced-colors / prefers-contrast (Appendix F §8.4), scrollbars.
    Imports only the layer above (tokens). Every value is a Lattice token. */
 
+/* ---- fonts (Task 27) ------------------------------------------------------------------------
+   Vendored, subset (Latin + × → ½ − and the arrows/dashes copy.ts uses) variable woff2 builds;
+   provenance, licences and hashes in docs/third-party.md. Family names match
+   `tokens.type.family` exactly; the weight ranges cover the Lattice weights (400/500/600). */
+
+@font-face {
+	font-family: "Geist";
+	font-style: normal;
+	font-weight: 400 600;
+	font-display: swap;
+	src: url("../assets/fonts/Geist-Variable.woff2") format("woff2");
+}
+
+@font-face {
+	font-family: "Geist Mono";
+	font-style: normal;
+	font-weight: 400 500;
+	font-display: swap;
+	src: url("../assets/fonts/GeistMono-Variable.woff2") format("woff2");
+}
+
+@font-face {
+	font-family: "Bricolage Grotesque";
+	font-style: normal;
+	font-weight: 400 600;
+	font-display: swap;
+	src: url("../assets/fonts/BricolageGrotesque-Variable.woff2") format("woff2");
+}
+
 /* ---- reset ---------------------------------------------------------------------------- */
 
 *,

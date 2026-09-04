@@ -117,6 +117,7 @@ export function createKeybindCapture(
 	let pulseTimer: ReturnType<typeof setTimeout> | null = null;
 
 	labelEl.textContent = options.label;
+	clear.setAttribute("aria-label", COPY.keybind.clear); // icon-only (§7.4: every control is named)
 
 	function setHint(text: string | null): void {
 		hint.textContent = text ?? "";
