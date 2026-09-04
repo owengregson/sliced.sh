@@ -7,11 +7,11 @@ import {
 	onSettingsChanged,
 	setSettings,
 } from "@core/storage/settings-storage";
+import { createSimulator } from "@test/sim";
 import { DEFAULT_SETTINGS } from "@typedefs/settings";
-import { installFakeChromeStorage } from "../../fakes/chrome-storage";
 
 beforeEach(() => {
-	installFakeChromeStorage();
+	(globalThis as Record<string, unknown>).chrome = createSimulator().chrome;
 });
 
 describe("settings storage", () => {

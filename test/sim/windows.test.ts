@@ -1,0 +1,20 @@
+// test/sim/windows.test.ts
+import { describe, expect, it } from "bun:test";
+import { createSimulator } from "@test/sim";
+import { WINDOW_ID_NONE } from "@test/sim/chrome/windows";
+
+describe("chrome.windows fake", () => {
+	it("setFocus fires onFocusChanged (including WINDOW_ID_NONE) and getters reflect it", async () => {
+		const sim = createSimulator();
+		const seen: number[] = [];
+		sim.chrome.windows.onFocusChanged.addListener((id) => void seen.push(id));
+		sim.windows.setFocus(WINDOW_ID_NONE);
+		sim.windows.setFocus(1);
+		expect(seen).toEqual([WINDOW_ID_NONE, 1]);
+		expect(sim.chrome.windows.WINDOW_ID_NONE).toBe(-1);
+		expect((await sim.chrome.windows.getLastFocused()).id).toBe(1);
+		expect((await sim.chrome.windows.getCurrent()).focused).toBe(true);
+		const viaCb = await new Promise<chrome.windows.Window>((r) => sim.chrome.windows.get(1, r));
+		expect(viaCb.id).toBe(1);
+	});
+});

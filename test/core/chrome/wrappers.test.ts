@@ -8,11 +8,12 @@ import {
 } from "@core/chrome/storage";
 import { tabsSendMessage } from "@core/chrome/tabs";
 import { LOCAL_KEYS, SESSION_KEYS } from "@core/constants";
-import { type FakeChromeStorage, installFakeChromeStorage } from "../../fakes/chrome-storage";
+import { createSimulator, type Simulator } from "@test/sim";
 
-let fake: FakeChromeStorage;
+let sim: Simulator;
 beforeEach(() => {
-	fake = installFakeChromeStorage();
+	sim = createSimulator();
+	(globalThis as Record<string, unknown>).chrome = sim.chrome;
 });
 
 describe("chrome storage wrappers", () => {
@@ -21,12 +22,12 @@ describe("chrome storage wrappers", () => {
 		await chromeLocalSet(LOCAL_KEYS.licenseKey, "abc");
 		expect(await chromeLocalGet(LOCAL_KEYS.licenseKey)).toBe("abc");
 		await chromeSessionSet(SESSION_KEYS.autoMoveArmed, { 7: true });
-		expect(fake.data.session[SESSION_KEYS.autoMoveArmed]).toEqual({ 7: true });
+		expect(sim.storage.data.session[SESSION_KEYS.autoMoveArmed]).toEqual({ 7: true });
 		await chromeSessionRemove(SESSION_KEYS.autoMoveArmed);
-		expect(fake.data.session[SESSION_KEYS.autoMoveArmed]).toBeUndefined();
+		expect(sim.storage.data.session[SESSION_KEYS.autoMoveArmed]).toBeUndefined();
 	});
 	it("reject with chrome.runtime.lastError", async () => {
-		fake.failNextWith("quota");
+		sim.storage.failNextWith("quota");
 		await expect(chromeLocalSet(LOCAL_KEYS.installedAt, 1)).rejects.toThrow("quota");
 	});
 });

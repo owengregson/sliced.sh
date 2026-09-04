@@ -17,10 +17,10 @@ import {
 	setDebuggerAttached,
 	setPersonaForGame,
 } from "@core/storage/session-storage";
-import { installFakeChromeStorage } from "../../fakes/chrome-storage";
+import { createSimulator } from "@test/sim";
 
 beforeEach(() => {
-	installFakeChromeStorage();
+	(globalThis as Record<string, unknown>).chrome = createSimulator().chrome;
 });
 
 describe("session storage", () => {
