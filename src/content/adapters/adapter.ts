@@ -26,6 +26,7 @@ import type {
 } from "@typedefs/game";
 import { pieceAt } from "./dom-fen";
 import { pointToSquare as pointToSquareGeom, squareRect as squareRectGeom } from "./geometry";
+import { checkGeometry } from "./self-check";
 
 const MOVE_CONFIRM_MS = TIMINGS.adapterMoveConfirmMs;
 const BRIDGE_CALL_TIMEOUT_MS = TIMINGS.adapterBridgeTimeoutMs;
@@ -293,7 +294,12 @@ export interface AdapterReading {
 	key: string;
 	snapshot: AdapterPositionSnapshot;
 	gameOver: GameResult | null;
-	/** Changes when a new game replaces the current one (board element, id, ply reset). */
+	/**
+	 * Identity of the game: the URL game id when the page has one, otherwise
+	 * `<path>#<serial>` where the serial advances only when a fresh board appears
+	 * (board element replaced, or the ply count reset after ≥ 2 plies). Never
+	 * changes as plies accumulate (`gameIdentity()`).
+	 */
 	gameKey: string;
 }
 
@@ -309,6 +315,7 @@ export abstract class AdapterBase implements SiteAdapter {
 	abstract readonly site: Site;
 	protected readonly doc: Document;
 	protected readonly win: Window;
+	/** The bridge object is kept even before the page side is ready; `bridgeReady()` gates every use. */
 	protected readonly bridge: PageBridge | null;
 	protected readonly theme: "dark" | "light";
 	protected bridgeState: BridgeState | null = null;
@@ -318,10 +325,15 @@ export abstract class AdapterBase implements SiteAdapter {
 	private readonly endCbs = new Set<(r: GameResult) => void>();
 	private readonly disposers: Array<() => void> = [];
 	private readonly observers: MutationObserver[] = [];
+	private readonly observerDisposers: Array<() => void> = [];
 	private readonly pending: { trigger(): void; cancel(): void };
 	private lastKey: string | null = null;
 	private lastGameKey: string | null = null;
 	private lastGameOver = false;
+	private lastProbeSignature: string | null = null;
+	private gameSerial = 0;
+	private gameBoard: Element | null = null;
+	private gamePly = -1;
 	private selfCheckTimer: ReturnType<typeof setInterval> | null = null;
 	private destroyed = false;
 	private primed = false;
@@ -329,7 +341,7 @@ export abstract class AdapterBase implements SiteAdapter {
 	constructor(options: AdapterOptions, debounceMs: number, selfCheckMs: number) {
 		this.doc = options.document ?? document;
 		this.win = options.window ?? window;
-		this.bridge = options.bridge?.isAvailable() ? options.bridge : null;
+		this.bridge = options.bridge ?? null;
 		this.theme = options.theme ?? "dark";
 		this.pending = debounced(() => this.evaluate(), debounceMs);
 		this.selfCheckTimer = setInterval(() => {
@@ -339,7 +351,7 @@ export abstract class AdapterBase implements SiteAdapter {
 
 	/** Site adapters call this at the end of their constructor (observers need the subclass fields). */
 	protected start(): void {
-		this.installObservers();
+		this.reinstallObservers();
 		this.wireBridge();
 		this.prime();
 		this.probe();
@@ -347,6 +359,7 @@ export abstract class AdapterBase implements SiteAdapter {
 
 	// ---- abstract site readers -------------------------------------------------
 
+	/** Register every MutationObserver / listener through `observe` / `addObserverDisposer`. */
 	protected abstract installObservers(): void;
 	/** `null` while the board is unstable (dragging, animating, promotion dialog open). */
 	protected abstract read(): AdapterReading | null;
@@ -356,6 +369,12 @@ export abstract class AdapterBase implements SiteAdapter {
 		arrows: Array<{ from: Square; to: Square; color: string }>
 	): unknown;
 	protected abstract clearPayload(): unknown;
+	/** The 8×8 board element (chess.com `wc-chess-board`, lichess `cg-board`). */
+	protected abstract boardElement(): Element | null;
+	/** Whether the page renders a move list at all (parity is meaningless without one). */
+	protected abstract hasMoveList(): boolean;
+	/** Game id from the URL, or `null` when the page has none (chess.com `/play/computer`). */
+	protected abstract urlGameId(): string | null;
 	abstract detectPageKind(): PageKind;
 	abstract getOpponent(): Opponent | null;
 	abstract isReady(): boolean;
@@ -449,10 +468,11 @@ export abstract class AdapterBase implements SiteAdapter {
 	}
 
 	clearHighlights(): void {
-		if (!this.bridge) return;
+		const bridge = this.readyBridge();
+		if (!bridge) return;
 		const payload = this.clearPayload();
 		this.highlightKeys = [];
-		this.bridge.call(BRIDGE_KINDS.clear, payload).catch((e: unknown) => {
+		bridge.call(BRIDGE_KINDS.clear, payload, BRIDGE_CALL_TIMEOUT_MS).catch((e: unknown) => {
 			log.debug("adapter.clear failed", this.site, e);
 		});
 	}
@@ -527,8 +547,7 @@ export abstract class AdapterBase implements SiteAdapter {
 		this.pending.cancel();
 		if (this.selfCheckTimer !== null) clearInterval(this.selfCheckTimer);
 		this.selfCheckTimer = null;
-		for (const o of this.observers) o.disconnect();
-		this.observers.length = 0;
+		this.disconnectObservers();
 		for (const d of this.disposers.splice(0)) d();
 		this.positionCbs.clear();
 		this.startCbs.clear();
@@ -552,6 +571,32 @@ export abstract class AdapterBase implements SiteAdapter {
 		this.observers.push(observer);
 	}
 
+	/** Listener removers that belong to the current observer set (dropped on re-install). */
+	protected addObserverDisposer(fn: () => void): void {
+		this.observerDisposers.push(fn);
+	}
+
+	/** Disconnect every observer/listener from `installObservers` and install afresh (containers replaced). */
+	protected reinstallObservers(): void {
+		this.disconnectObservers();
+		this.installObservers();
+	}
+
+	/** Does any added/removed element of `records` match (or contain) `selector`? */
+	protected touches(records: MutationRecord[], selector: string): boolean {
+		return records.some((r) =>
+			[...Array.from(r.addedNodes), ...Array.from(r.removedNodes)].some((n) => {
+				if (n.nodeType !== 1) return false;
+				const el = n as Element;
+				try {
+					return el.matches(selector) || el.querySelector(selector) !== null;
+				} catch {
+					return false;
+				}
+			})
+		);
+	}
+
 	/** Debounced re-evaluation (MutationObservers and bridge events call this). */
 	protected schedule(): void {
 		if (!this.destroyed) this.pending.trigger();
@@ -571,15 +616,85 @@ export abstract class AdapterBase implements SiteAdapter {
 		return w.MutationObserver ?? MutationObserver;
 	}
 
+	/** The bridge, only once its page side has answered ready (consulted at every use). */
+	protected readyBridge(): PageBridge | null {
+		return this.bridge?.isAvailable() ? this.bridge : null;
+	}
+
 	protected bridgeFen(): string | null {
 		const s = this.bridgeState;
 		return s?.fen ?? s?.analysisFen ?? null;
 	}
 
-	/** Ask the page for its state (no-op without a bridge); resolves once the cache is updated. */
+	/** Side to move from the move-list parity; `null` without a move list. */
+	protected parityTurn(): Color | null {
+		if (!this.hasMoveList()) return null;
+		return this.getPly() % 2 === 0 ? "w" : "b";
+	}
+
+	protected clockState(side: Color): ClockState {
+		const c = this.getClock(side);
+		return c ? { ms: c.ms, running: c.running } : { ms: 0, running: false };
+	}
+
+	protected geometryCheck(): SelfCheckResult {
+		const board = this.boardElement();
+		const rect = this.getBoardRect();
+		if (!board || !rect) return { name: "geometry", ok: false, detail: "no board" };
+		return checkGeometry(board, rect, this.isFlipped(), this.doc);
+	}
+
+	/** The last move implied by two marked squares: the occupied one is the destination. */
+	protected lastMoveBetween(
+		placement: string,
+		squares: readonly Square[]
+	): { lastMove: { from: Square; to: Square } } | null {
+		if (squares.length !== 2) return null;
+		const [a, b] = squares as [Square, Square];
+		const occA = pieceAt(placement, a) !== null;
+		const occB = pieceAt(placement, b) !== null;
+		if (occB && !occA) return { lastMove: { from: a, to: b } };
+		if (occA && !occB) return { lastMove: { from: b, to: a } };
+		return null;
+	}
+
+	/**
+	 * Game identity for `AdapterReading.gameKey`; call once per `read()`.
+	 * With a URL id the identity is that id. Without one, the serial advances
+	 * when the board element is replaced or the ply count resets after ≥ 2 plies.
+	 */
+	protected gameIdentity(ply: number): string {
+		const board = this.boardElement();
+		if (board !== this.gameBoard) {
+			if (this.gameBoard !== null) this.gameSerial++;
+			this.gameBoard = board;
+		}
+		if (ply === 0 && this.gamePly >= 2) this.gameSerial++;
+		this.gamePly = ply;
+		const id = this.urlGameId();
+		if (id !== null) return id;
+		return `${this.win.location.pathname.replace(/\W+/g, "-")}#${this.gameSerial}`;
+	}
+
+	/** Log required selector misses and extra warnings only when they differ from the last probe. */
+	protected reportProbe(
+		report: ProbeReport,
+		required: ReadonlySet<string>,
+		warnings: string[]
+	): void {
+		const misses = report.misses.filter((c) => required.has(c));
+		const signature = `${misses.join(",")}|${warnings.join(";")}`;
+		if (signature === this.lastProbeSignature) return;
+		this.lastProbeSignature = signature;
+		for (const concern of misses) log.warn("adapter.selectorMiss", { site: this.site, concern });
+		for (const w of warnings) log.warn(w);
+	}
+
+	/** Ask the page for its state (no-op until the bridge is ready); resolves once the cache is updated. */
 	protected refreshBridgeState(): Promise<void> {
-		if (!this.bridge) return Promise.resolve();
-		return this.bridge
+		const bridge = this.readyBridge();
+		if (!bridge) return Promise.resolve();
+		return bridge
 			.call<BridgeState>(BRIDGE_KINDS.getState, undefined, BRIDGE_CALL_TIMEOUT_MS)
 			.then((state) => {
 				if (state && typeof state === "object") this.bridgeState = { ...this.bridgeState, ...state };
@@ -587,6 +702,12 @@ export abstract class AdapterBase implements SiteAdapter {
 			.catch(() => {
 				// page side absent or slow: DOM readers carry on
 			});
+	}
+
+	private disconnectObservers(): void {
+		for (const o of this.observers) o.disconnect();
+		this.observers.length = 0;
+		for (const d of this.observerDisposers.splice(0)) d();
 	}
 
 	private wireBridge(): void {
@@ -603,8 +724,17 @@ export abstract class AdapterBase implements SiteAdapter {
 			BRIDGE_KINDS.gameover,
 		])
 			this.disposers.push(this.bridge.on(kind, merge));
-		for (const kind of [BRIDGE_KINDS.ply, BRIDGE_KINDS.ready])
-			this.disposers.push(this.bridge.on(kind, () => this.schedule()));
+		this.disposers.push(this.bridge.on(BRIDGE_KINDS.ply, () => this.schedule()));
+		// The page side may answer ready after construction: pick the bridge up then.
+		this.disposers.push(
+			this.bridge.on(BRIDGE_KINDS.ready, () => {
+				void this.refreshBridgeState().then(() => {
+					if (this.destroyed) return;
+					this.schedule();
+					this.probe();
+				});
+			})
+		);
 		void this.refreshBridgeState().then(() => {
 			if (!this.primed) this.prime();
 		});
@@ -620,11 +750,11 @@ export abstract class AdapterBase implements SiteAdapter {
 		this.lastGameOver = reading.gameOver !== null;
 	}
 
+	/** Apply the DOM reading at once; when the bridge answers, apply again (dedupe absorbs no-ops). */
 	private evaluate(): void {
 		if (this.destroyed) return;
-		if (this.bridge) {
-			void this.refreshBridgeState().then(() => this.apply());
-		} else this.apply();
+		this.apply();
+		if (this.readyBridge()) void this.refreshBridgeState().then(() => this.apply());
 	}
 
 	private apply(): void {
@@ -656,8 +786,9 @@ export abstract class AdapterBase implements SiteAdapter {
 		highlights: Array<{ square: Square; color: string }>,
 		arrows: Array<{ from: Square; to: Square; color: string }>
 	): void {
-		if (!this.bridge) return; // no DOM insertion from the adapter (§13.3)
-		this.bridge
+		const bridge = this.readyBridge();
+		if (!bridge) return; // no DOM insertion from the adapter (§13.3)
+		bridge
 			.call<{ keys?: string[] } | undefined>(
 				BRIDGE_KINDS.draw,
 				this.drawPayload(highlights, arrows),

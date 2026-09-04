@@ -7,7 +7,6 @@
 
 import { fileOf, squareOf } from "@core/chess/squares";
 import { TIMINGS } from "@core/constants/timings";
-import { log } from "@core/logger";
 import type { Color, GameResult, PageKind, PromoPiece, Site, Square } from "@typedefs/game";
 import {
 	AdapterBase,
@@ -21,18 +20,18 @@ import {
 	type PositionInfo,
 	type ProbeReport,
 	type Rect,
+	type SelfCheckResult,
 	type SiteAdapter,
 	toRect,
 } from "./adapter";
 import { lichessRunningClockColor, readLichessClock } from "./clocks";
 import { approximateFen, lichessPlacementFromDom, placementOf, replayMoves } from "./dom-fen";
-import { findLichessRoundMoves, readLichessMoveList } from "./move-list";
+import { findLichessRoundMoves, type LichessMoveList, readLichessMoveList } from "./move-list";
 import { detectLichessPageKind } from "./page-kind";
 import { queryAllSafe, queryFirst, queryFirstElement, querySafe } from "./query";
-import { LICHESS_AI_ELO, SELECTORS } from "./selectors";
+import { LICHESS_AI_ELO, PROMOTION_ORDER, SELECTORS } from "./selectors";
 import {
 	checkBoardSanity,
-	checkGeometry,
 	checkOrientation,
 	checkPlacementConsistency,
 	checkTurnConsistency,
@@ -42,7 +41,7 @@ import {
 const L = SELECTORS.lichess;
 const SITE: Site = "lichess";
 const GAME_ID_RE = /^\/([a-zA-Z0-9]{8})/;
-const REQUIRED = new Set(["wrap"]);
+const REQUIRED: ReadonlySet<string> = new Set(["wrap"]);
 
 const LADDERS: Record<string, readonly string[]> = {
 	wrap: L.wrap,
@@ -55,10 +54,17 @@ const LADDERS: Record<string, readonly string[]> = {
 	newOpponent: L.newOpponent,
 };
 
+/** Body-observer interest: promotion dialog, result, follow-up buttons, round app / board replacement. */
+const RELEVANT = [L.promotion, ...L.result, L.followUp, L.roundApp, L.board].join(",");
+
+function listPly(list: LichessMoveList): number {
+	return list.activeIndex >= 0 ? list.activeIndex + 1 : list.sans.length;
+}
+
 export class LichessAdapter extends AdapterBase implements SiteAdapter {
 	readonly site = SITE;
-	private lastWrap: Element | null = null;
-	private lastMovesContainer: Element | null = null;
+	private observedWrap: Element | null = null;
+	private observedMoves: Element | null = null;
 
 	constructor(options: AdapterOptions = {}) {
 		super(options, TIMINGS.adapterDebounceMs, TIMINGS.adapterSelfCheckIntervalMs);
@@ -76,7 +82,7 @@ export class LichessAdapter extends AdapterBase implements SiteAdapter {
 	getOpponent(): Opponent | null {
 		const top = querySafe(this.doc, L.playerTop);
 		if (!top) return null;
-		const name = querySafe(top, L.playerName)?.textContent?.trim() ?? top.textContent?.trim() ?? "";
+		const name = querySafe(top, L.playerName)?.textContent?.trim() ?? "";
 		const level = this.aiLevel();
 		if (level !== null) return { isBot: true, name, ratingEstimate: LICHESS_AI_ELO[level] ?? null };
 		const rating = Number(querySafe(top, L.playerRating)?.textContent?.replace(/\D/g, "") ?? "");
@@ -84,55 +90,33 @@ export class LichessAdapter extends AdapterBase implements SiteAdapter {
 	}
 
 	isReady(): boolean {
-		return this.board() !== null;
+		return this.boardElement() !== null;
 	}
 
 	getMyColor(): Color | null {
 		const wrap = this.wrap();
-		if (!wrap) return null;
-		const playing = this.doc.body.classList.contains(L.bodyPlayingClass);
-		if (!playing || !wrap.classList.contains(L.manipulable)) return null;
+		const body = this.doc.body as HTMLElement | null;
+		if (!wrap || !body) return null;
+		if (!body.classList.contains(L.bodyPlayingClass) || !wrap.classList.contains(L.manipulable))
+			return null;
 		return wrap.classList.contains(L.orientationBlack) ? "b" : "w";
 	}
 
 	// ---- position -----------------------------------------------------------------
 
 	getPlacement(): string | null {
-		const board = this.board();
+		const board = this.boardElement();
 		if (!board) return null;
-		const width = board.getBoundingClientRect().width;
-		const styled = Number.parseFloat((board.parentElement as HTMLElement | null)?.style?.width ?? "");
-		return lichessPlacementFromDom(board, width > 0 ? width : styled > 0 ? styled : undefined);
+		const size = board.getBoundingClientRect().width || this.styledSize();
+		return lichessPlacementFromDom(board, size > 0 ? size : undefined);
 	}
 
 	getPositionInfo(): PositionInfo | null {
-		const placement = this.getPlacement();
-		const fromBridge = this.bridgeFen();
-		if (fromBridge && (placement === null || placementOf(fromBridge) === placement))
-			return { fen: fromBridge, approximate: false, source: "bridge" };
-		const list = readLichessMoveList(this.doc);
-		const replay = list.firstPly === 0 ? replayMoves(list.sans.slice(0, this.listPly(list))) : null;
-		if (replay && (placement === null || placementOf(replay.fen) === placement))
-			return { fen: replay.fen, approximate: false, source: "replay" };
-		if (!placement) return null;
-		const ply = this.getPly();
-		const fen = approximateFen(placement, this.getSideToMove() ?? (ply % 2 === 0 ? "w" : "b"), {
-			fullmove: Math.floor(ply / 2) + 1,
-			...(this.lastMoveFromSquares(placement) ?? {}),
-		});
-		return { fen, approximate: true, source: "dom" };
+		return this.positionInfoFor(this.getPlacement(), readLichessMoveList(this.doc));
 	}
 
 	getSideToMove(): Color | null {
-		const fromBridge = this.bridgeFen();
-		const placement = this.getPlacement();
-		if (fromBridge && (placement === null || placementOf(fromBridge) === placement)) {
-			const turn = fromBridge.split(" ")[1];
-			if (turn === "w" || turn === "b") return turn;
-		}
-		const clock = lichessRunningClockColor(this.doc);
-		if (clock) return clock;
-		return this.parityTurn();
+		return this.sideToMoveFor(this.getPlacement(), readLichessMoveList(this.doc));
 	}
 
 	getClock(side: Color): ClockReading | null {
@@ -145,7 +129,7 @@ export class LichessAdapter extends AdapterBase implements SiteAdapter {
 
 	getPly(): number {
 		const list = readLichessMoveList(this.doc);
-		return list.firstPly + this.listPly(list);
+		return list.firstPly + listPly(list);
 	}
 
 	isAtLivePosition(): boolean {
@@ -154,13 +138,13 @@ export class LichessAdapter extends AdapterBase implements SiteAdapter {
 	}
 
 	isGameOver(): boolean {
-		return this.gameResult() !== null;
+		return this.gameResultFor(readLichessMoveList(this.doc)) !== null;
 	}
 
 	// ---- geometry -----------------------------------------------------------------
 
 	getBoardRect(): Rect | null {
-		const board = this.board();
+		const board = this.boardElement();
 		return board ? toRect(board.getBoundingClientRect()) : null;
 	}
 
@@ -171,7 +155,7 @@ export class LichessAdapter extends AdapterBase implements SiteAdapter {
 	getPromotionTargetRect(dest: Square, piece: PromoPiece): Rect | null {
 		const dialog = querySafe(this.doc, L.promotion);
 		if (!dialog) return null;
-		const index = L.promotionOrder.indexOf(piece);
+		const index = PROMOTION_ORDER.indexOf(piece);
 		const square = queryAllSafe(dialog, L.promotionSquare)[index];
 		if (!square) return null;
 		const own = toRect(square.getBoundingClientRect());
@@ -204,22 +188,21 @@ export class LichessAdapter extends AdapterBase implements SiteAdapter {
 
 	probe(): ProbeReport {
 		const ladder = probeLadders(LADDERS, this.doc);
-		for (const concern of ladder.misses)
-			if (REQUIRED.has(concern)) log.warn("adapter.selectorMiss", { site: SITE, concern });
 		const placement = this.getPlacement();
 		const list = readLichessMoveList(this.doc);
-		const replay = list.firstPly === 0 ? replayMoves(list.sans.slice(0, this.listPly(list))) : null;
+		const replay = list.firstPly === 0 ? replayMoves(list.sans.slice(0, listPly(list))) : null;
 		const found = findLichessRoundMoves(this.doc);
 		const ladderMoves = ladder.matched.some((m) => m.concern === "moves");
-		let tagRotation: ProbeReport["checks"][number];
+		const warnings: string[] = [];
+		let tagRotation: SelfCheckResult;
 		if (found && !ladderMoves) {
 			const detail = `${found.moveTag}/${found.indexTag}`;
-			log.warn("lichess rotated round tags to", detail);
+			warnings.push(`lichess rotated round tags to ${detail}`);
 			tagRotation = { name: "tagRotation", ok: true, detail };
 		} else if (found) tagRotation = { name: "tagRotation", ok: true, detail: "registry" };
 		else tagRotation = { name: "tagRotation", ok: false, detail: "no moves container" };
 		const wrap = this.wrap();
-		const bottomClock = querySafe(this.doc, `${L.clock}.rclock-bottom`);
+		const bottomClock = querySafe(this.doc, L.clockBottom);
 		const checks = [
 			checkBoardSanity(placement),
 			checkPlacementConsistency(replay ? placementOf(replay.fen) : null, placement),
@@ -251,15 +234,23 @@ export class LichessAdapter extends AdapterBase implements SiteAdapter {
 			this.geometryCheck(),
 			tagRotation,
 		];
-		return { site: SITE, at: Date.now(), matched: ladder.matched, misses: ladder.misses, checks };
+		const report = {
+			site: SITE,
+			at: Date.now(),
+			matched: ladder.matched,
+			misses: ladder.misses,
+			checks,
+		};
+		this.reportProbe(report, REQUIRED, warnings);
+		return report;
 	}
 
 	// ---- AdapterBase hooks --------------------------------------------------------
 
 	protected installObservers(): void {
-		const board = this.board();
+		const board = this.boardElement();
 		const wrap = this.wrap();
-		this.lastWrap = wrap;
+		this.observedWrap = wrap;
 		this.observe(board, {
 			childList: true,
 			subtree: true,
@@ -270,7 +261,7 @@ export class LichessAdapter extends AdapterBase implements SiteAdapter {
 		for (const clock of queryAllSafe(this.doc, L.clock))
 			this.observe(clock, { attributes: true, attributeFilter: ["class"] });
 		const moves = findLichessRoundMoves(this.doc);
-		this.lastMovesContainer = moves?.container ?? null;
+		this.observedMoves = moves?.container ?? null;
 		this.observe(moves?.container ?? null, {
 			childList: true,
 			subtree: true,
@@ -279,34 +270,32 @@ export class LichessAdapter extends AdapterBase implements SiteAdapter {
 		});
 		// promotion dialog, result, follow-up buttons, round app replacement (rematch redirect)
 		this.observe(this.doc.body, { childList: true, subtree: true }, (records) =>
-			records.some((r) =>
-				[...r.addedNodes, ...r.removedNodes].some(
-					(n) => n.nodeType === 1 && this.relevant(n as Element)
-				)
-			)
+			this.touches(records, RELEVANT)
 		);
 	}
 
 	protected read(): AdapterReading | null {
-		const board = this.board();
+		const board = this.boardElement();
 		const wrap = this.wrap();
 		if (!board || !wrap) return null;
 		const moves = findLichessRoundMoves(this.doc);
-		if (wrap !== this.lastWrap || (moves && moves.container !== this.lastMovesContainer))
-			this.installObservers();
+		if (wrap !== this.observedWrap || (moves && moves.container !== this.observedMoves))
+			this.reinstallObservers();
 		if (querySafe(board, L.anim) || querySafe(board, L.dragging)) return null;
 		if (querySafe(this.doc, L.promotion)) return null;
-		const info = this.getPositionInfo();
 		const placement = this.getPlacement();
-		if (!info || !placement) return null;
-		const sideToMove = this.getSideToMove() ?? (info.fen.split(" ")[1] === "b" ? "b" : "w");
 		const list = readLichessMoveList(this.doc);
-		const ply = list.firstPly + this.listPly(list);
-		const replay = list.firstPly === 0 ? replayMoves(list.sans.slice(0, this.listPly(list))) : null;
+		const info = this.positionInfoFor(placement, list);
+		if (!info || !placement) return null;
+		const sideToMove =
+			this.sideToMoveFor(placement, list) ?? (info.fen.split(" ")[1] === "b" ? "b" : "w");
+		const ply = list.firstPly + listPly(list);
+		const replay = list.firstPly === 0 ? replayMoves(list.sans.slice(0, listPly(list))) : null;
 		const lastMove = replay?.lastMove ?? null;
+		const gameId = this.gameIdentity(ply);
 		const snapshot: AdapterPositionSnapshot = {
 			site: SITE,
-			gameId: this.gameId(),
+			gameId,
 			fen: info.fen,
 			approximate: info.approximate,
 			ply,
@@ -319,8 +308,8 @@ export class LichessAdapter extends AdapterBase implements SiteAdapter {
 		return {
 			key: `${placement}|${sideToMove}`,
 			snapshot,
-			gameOver: this.gameResult(),
-			gameKey: `${this.gameId()}|${ply <= 1 && list.sans.length <= 1 ? "fresh" : "live"}`,
+			gameOver: this.gameResultFor(list),
+			gameKey: gameId,
 		};
 	}
 
@@ -343,24 +332,54 @@ export class LichessAdapter extends AdapterBase implements SiteAdapter {
 		return undefined;
 	}
 
+	protected boardElement(): Element | null {
+		const wrap = this.wrap();
+		return wrap ? querySafe(wrap, L.board) : null;
+	}
+
+	protected hasMoveList(): boolean {
+		return findLichessRoundMoves(this.doc) !== null;
+	}
+
+	protected urlGameId(): string | null {
+		return GAME_ID_RE.exec(this.win.location.pathname)?.[1] ?? null;
+	}
+
 	// ---- private readers ----------------------------------------------------------
 
 	private wrap(): Element | null {
 		return queryFirstElement(L.wrap, this.doc);
 	}
 
-	private board(): Element | null {
-		const wrap = this.wrap();
-		return wrap ? querySafe(wrap, L.board) : null;
+	/** Hybrid FEN (Appendix C §3): bridge → SAN replay (games from the start) → DOM + `approximate`. */
+	private positionInfoFor(placement: string | null, list: LichessMoveList): PositionInfo | null {
+		const fromBridge = this.bridgeFen();
+		if (fromBridge && (placement === null || placementOf(fromBridge) === placement))
+			return { fen: fromBridge, approximate: false, source: "bridge" };
+		const replay = list.firstPly === 0 ? replayMoves(list.sans.slice(0, listPly(list))) : null;
+		if (replay && (placement === null || placementOf(replay.fen) === placement))
+			return { fen: replay.fen, approximate: false, source: "replay" };
+		if (!placement) return null;
+		const ply = list.firstPly + listPly(list);
+		const turn = this.sideToMoveFor(placement, list) ?? (ply % 2 === 0 ? "w" : "b");
+		const fen = approximateFen(placement, turn, {
+			fullmove: Math.floor(ply / 2) + 1,
+			...(this.lastMoveBetween(placement, this.lastMoveSquares()) ?? {}),
+		});
+		return { fen, approximate: true, source: "dom" };
 	}
 
-	private relevant(el: Element): boolean {
-		const sel = [L.promotion, ...L.result, L.followUp, L.roundApp, L.board].join(",");
-		try {
-			return el.matches(sel) || el.querySelector(sel) !== null;
-		} catch {
-			return false;
+	/** Bridge FEN (when consistent with the DOM) → running clock → move-list parity. */
+	private sideToMoveFor(placement: string | null, list: LichessMoveList): Color | null {
+		const fromBridge = this.bridgeFen();
+		if (fromBridge && (placement === null || placementOf(fromBridge) === placement)) {
+			const turn = fromBridge.split(" ")[1];
+			if (turn === "w" || turn === "b") return turn;
 		}
+		const clock = lichessRunningClockColor(this.doc);
+		if (clock) return clock;
+		if (!this.hasMoveList()) return null;
+		return (list.firstPly + listPly(list)) % 2 === 0 ? "w" : "b";
 	}
 
 	private aiLevel(): number | null {
@@ -369,18 +388,9 @@ export class LichessAdapter extends AdapterBase implements SiteAdapter {
 		return m ? Number(m[1]) : null;
 	}
 
-	private listPly(list: { sans: string[]; activeIndex: number }): number {
-		return list.activeIndex >= 0 ? list.activeIndex + 1 : list.sans.length;
-	}
-
-	private parityTurn(): Color | null {
-		if (!findLichessRoundMoves(this.doc)) return null;
-		return this.getPly() % 2 === 0 ? "w" : "b";
-	}
-
 	/** Squares of `square.last-move` (orientation-aware transforms). */
 	private lastMoveSquares(): Square[] {
-		const board = this.board();
+		const board = this.boardElement();
 		if (!board) return [];
 		const size = board.getBoundingClientRect().width || this.styledSize();
 		if (!(size > 0)) return [];
@@ -404,54 +414,16 @@ export class LichessAdapter extends AdapterBase implements SiteAdapter {
 		return out;
 	}
 
+	/** `cg-container`'s inline width, for boards that have no layout (tests). */
 	private styledSize(): number {
-		const container = this.board()?.parentElement as HTMLElement | null;
+		const container = this.boardElement()?.parentElement as HTMLElement | null;
 		return Number.parseFloat(container?.style?.width ?? "") || 0;
 	}
 
-	private lastMoveFromSquares(placement: string): { lastMove: { from: Square; to: Square } } | null {
-		const squares = this.lastMoveSquares();
-		if (squares.length !== 2) return null;
-		const [a, b] = squares as [Square, Square];
-		const occupied = (sq: Square): boolean => {
-			const row = placement.split("/")[8 - Number(sq.charAt(1))] ?? "";
-			let file = 0;
-			for (const ch of row) {
-				if (/\d/.test(ch)) file += Number(ch);
-				else {
-					if (file === fileOf(sq)) return true;
-					file++;
-				}
-			}
-			return false;
-		};
-		if (occupied(b) && !occupied(a)) return { lastMove: { from: a, to: b } };
-		if (occupied(a) && !occupied(b)) return { lastMove: { from: b, to: a } };
-		return null;
-	}
-
-	private gameResult(): GameResult | null {
-		const list = readLichessMoveList(this.doc);
+	private gameResultFor(list: LichessMoveList): GameResult | null {
 		if (list.result) return list.result;
 		if (queryFirst(L.result, this.doc) || querySafe(this.doc, L.followUp)) return "*";
 		return null;
-	}
-
-	private clockState(side: Color): { ms: number; running: boolean } {
-		const c = this.getClock(side);
-		return c ? { ms: c.ms, running: c.running } : { ms: 0, running: false };
-	}
-
-	private gameId(): string {
-		const m = GAME_ID_RE.exec(this.win.location.pathname);
-		return m?.[1] ?? this.win.location.pathname.replace(/\W+/g, "-");
-	}
-
-	private geometryCheck(): ReturnType<typeof checkGeometry> {
-		const board = this.board();
-		const rect = this.getBoardRect();
-		if (!board || !rect) return { name: "geometry", ok: false, detail: "no board" };
-		return checkGeometry(board, rect, this.isFlipped(), this.doc);
 	}
 }
 

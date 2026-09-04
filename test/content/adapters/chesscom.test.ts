@@ -12,6 +12,7 @@ import {
 	type FixtureName,
 	fire,
 	loadFixture,
+	observerRegistry,
 	pageDocument,
 	pageWindow,
 	sleep,
@@ -24,7 +25,8 @@ const SETTLE = TIMINGS.adapterDebounceMs * 3;
 
 const cleanups: Array<() => void> = [];
 afterEach(() => {
-	for (const c of cleanups.splice(0)) c();
+	// LIFO: spies restore before the globals they wrapped are put back
+	for (const c of cleanups.splice(0).reverse()) c();
 });
 
 function boot(
@@ -409,5 +411,180 @@ describe("ChessComAdapter — probe and lifecycle", () => {
 		playD4(dom);
 		await sleep(SETTLE);
 		expect(seen.length).toBe(0);
+	});
+});
+
+/** Rewrite the fixture's board and move list to the start position (ply 0), keeping the element. */
+function resetToStart(dom: TabDom): void {
+	const board = dom.query("wc-chess-board");
+	for (const p of board.querySelectorAll(".piece, .highlight")) p.remove();
+	const files = "12345678";
+	const back = "rnbqkbnr";
+	const html: string[] = [];
+	for (let f = 0; f < 8; f++) {
+		html.push(`<div class="piece w${back[f]} square-${files[f]}1"></div>`);
+		html.push(`<div class="piece wp square-${files[f]}2"></div>`);
+		html.push(`<div class="piece bp square-${files[f]}7"></div>`);
+		html.push(`<div class="piece b${back[f]} square-${files[f]}8"></div>`);
+	}
+	board.insertAdjacentHTML("beforeend", html.join(""));
+	dom.query(".timestamps-with-base-time").innerHTML = "";
+}
+
+function pushMove(dom: TabDom, from: string, to: string, san: string, ply: number): void {
+	dom.query(`.piece.square-${from}`).setAttribute("class", `piece wp square-${to}`);
+	dom.document.querySelector(".node-highlight-content.selected")?.classList.remove("selected");
+	const color = ply % 2 === 1 ? "white-move" : "black-move";
+	dom
+		.query(".timestamps-with-base-time")
+		.insertAdjacentHTML(
+			"beforeend",
+			`<div class="main-line-row"><div data-node="0-${ply - 1}" class="node ${color} main-line-ply"><span class="node-highlight-content selected">${san} </span></div></div>`
+		);
+}
+
+describe("ChessComAdapter — game start keying (fix round 1)", () => {
+	it("fires once per game: not on ply 1→2, once when a fresh board replaces the old one", async () => {
+		const dom = loadFixture("chesscom-computer");
+		cleanups.push(installWindowGlobals(dom.window));
+		resetToStart(dom);
+		const adapter = createChesscomAdapter({ document: pageDocument(dom), window: pageWindow(dom) });
+		cleanups.push(() => adapter.destroy());
+		const starts: number[] = [];
+		const positions: AdapterPositionSnapshot[] = [];
+		adapter.onGameStart(() => starts.push(Date.now()));
+		adapter.onPositionChange((s) => positions.push(s));
+		expect(adapter.getPly()).toBe(0);
+		pushMove(dom, "52", "54", "e4", 1);
+		await sleep(SETTLE);
+		pushMove(dom, "57", "55", "e5", 2);
+		await sleep(SETTLE);
+		expect(positions.map((p) => p.ply)).toEqual([1, 2]);
+		expect(starts.length).toBe(0);
+		expect(new Set(positions.map((p) => p.gameId)).size).toBe(1);
+		// a fresh board (new element, start position, empty list) is a new game
+		const old = dom.query("wc-chess-board");
+		const fresh = old.cloneNode(false) as typeof old;
+		old.replaceWith(fresh);
+		resetToStart(dom);
+		await sleep(SETTLE);
+		expect(starts.length).toBe(1);
+		expect(positions.at(-1)?.ply).toBe(0);
+		expect(positions.at(-1)?.gameId).not.toBe(positions[0]?.gameId);
+		await sleep(SETTLE);
+		expect(starts.length).toBe(1);
+	});
+	it("with a URL game id, plies never start a game; a new id does", async () => {
+		const { dom, adapter } = boot("chesscom-live");
+		const starts: number[] = [];
+		adapter.onGameStart(() => starts.push(1));
+		playD4(dom);
+		await sleep(SETTLE);
+		expect(starts.length).toBe(0);
+		dom.window.history.pushState({}, "", "/game/live/173765478999");
+		resetToStart(dom);
+		await sleep(SETTLE);
+		expect(starts.length).toBe(1);
+	});
+});
+
+describe("ChessComAdapter — late bridge readiness (fix round 1)", () => {
+	it("picks the bridge up when it becomes available after construction", async () => {
+		const bridge = new FakeBridge();
+		bridge.available = false;
+		const bridgeFen = "r1bqkbnr/1ppp1ppp/p1n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQ - 3 4";
+		bridge.responses.set("getState", () => ({ fen: bridgeFen, mode: "playing", playingAs: "w" }));
+		bridge.responses.set("draw", () => ({ keys: ["k1"] }));
+		const { adapter } = boot("chesscom-live", bridge);
+		await sleep(SETTLE);
+		expect(bridge.callsOf("getState").length).toBe(0);
+		expect(adapter.getPositionInfo()?.source).toBe("replay");
+		adapter.highlight("e2", "e4", "both");
+		await sleep(10);
+		expect(bridge.callsOf("draw").length).toBe(0);
+		bridge.available = true;
+		bridge.emit("ready", {});
+		await waitFor(() => adapter.getFen() === bridgeFen);
+		expect(adapter.getPositionInfo()?.source).toBe("bridge");
+		adapter.highlight("e2", "e4", "both");
+		await waitFor(() => bridge.callsOf("draw").length === 1);
+	});
+	it("does not let a bridge in `playing` mode turn /puzzles or /analysis into a live game", async () => {
+		const bridge = new FakeBridge();
+		bridge.responses.set("getState", () => ({ mode: "playing", playingAs: "w" }));
+		const dom = loadFixture("chesscom-live", "https://www.chess.com/puzzles/rated");
+		cleanups.push(installWindowGlobals(dom.window));
+		const adapter = createChesscomAdapter({
+			document: pageDocument(dom),
+			window: pageWindow(dom),
+			bridge,
+		});
+		cleanups.push(() => adapter.destroy());
+		await waitFor(() => bridge.callsOf("getState").length > 0);
+		await sleep(10);
+		expect(adapter.detectPageKind()).toBe("puzzles");
+		dom.window.history.pushState({}, "", "/analysis/game/live/1");
+		expect(adapter.detectPageKind()).toBe("analysis");
+		dom.window.history.pushState({}, "", "/play/online");
+		expect(adapter.detectPageKind()).toBe("live-game");
+	});
+});
+
+describe("ChessComAdapter — observer wiring (fix round 1)", () => {
+	it("fires exactly once through happy-dom's genuine MutationObserver (first-batch case)", async () => {
+		const dom = loadFixture("chesscom-live", undefined, { observer: "native" });
+		cleanups.push(installWindowGlobals(dom.window));
+		const adapter = createChesscomAdapter({ document: pageDocument(dom), window: pageWindow(dom) });
+		cleanups.push(() => adapter.destroy());
+		const seen: AdapterPositionSnapshot[] = [];
+		adapter.onPositionChange((s) => seen.push(s));
+		// synchronously after construction: the one delivery happy-dom supports
+		dom.query(".piece.square-42").setAttribute("class", "piece wp square-44");
+		await sleep(SETTLE);
+		expect(seen.length).toBe(1);
+		expect(seen[0]?.fen.split(" ")[0]).toBe("r1bqkbnr/1ppp1ppp/p1n5/1B2p3/3PP3/5N2/PPP2PPP/RNBQK2R");
+	});
+	it("registers the documented observers with their init options and re-installs without leaking", async () => {
+		const bridge = new FakeBridge();
+		bridge.responses.set("getState", () => ({}));
+		const dom = loadFixture("chesscom-live", undefined, { observer: "recording" });
+		cleanups.push(installWindowGlobals(dom.window));
+		const registry = observerRegistry(dom);
+		const adapter = createChesscomAdapter({
+			document: pageDocument(dom),
+			window: pageWindow(dom),
+			bridge,
+		});
+		cleanups.push(() => adapter.destroy());
+		expect(registry.on("wc-chess-board").map((r) => r.init)).toEqual([
+			{ childList: true, subtree: true, attributes: true, attributeFilter: ["class", "style"] },
+		]);
+		expect(registry.on("wc-simple-move-list").map((r) => r.init)).toEqual([
+			{
+				childList: true,
+				subtree: true,
+				characterData: true,
+				attributes: true,
+				attributeFilter: ["class"],
+			},
+		]);
+		expect(registry.on(".clock-component").map((r) => r.init)).toEqual([
+			{ attributes: true, attributeFilter: ["class"] },
+			{ attributes: true, attributeFilter: ["class"] },
+		]);
+		expect(registry.on("body").map((r) => r.init)).toEqual([{ childList: true, subtree: true }]);
+		const initial = registry.active().length;
+		expect(initial).toBe(5);
+		for (let i = 0; i < 2; i++) {
+			const old = dom.query("wc-chess-board");
+			old.replaceWith(old.cloneNode(true));
+			bridge.emit("ply", {}); // the recording observer never delivers; re-evaluate explicitly
+			await sleep(SETTLE);
+			expect(registry.active().length).toBe(initial);
+			expect(registry.on("wc-chess-board")[0]?.target).toBe(dom.query("wc-chess-board") as never);
+		}
+		expect(registry.entries.length).toBe(initial * 3);
+		adapter.destroy();
+		expect(registry.active().length).toBe(0);
 	});
 });

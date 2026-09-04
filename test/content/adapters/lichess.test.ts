@@ -12,6 +12,7 @@ import {
 	fire,
 	lichessPiece,
 	loadFixture,
+	observerRegistry,
 	pageDocument,
 	pageWindow,
 	sleep,
@@ -25,7 +26,8 @@ const SETTLE = TIMINGS.adapterDebounceMs * 3;
 
 const cleanups: Array<() => void> = [];
 afterEach(() => {
-	for (const c of cleanups.splice(0)) c();
+	// LIFO: spies restore before the globals they wrapped are put back
+	for (const c of cleanups.splice(0).reverse()) c();
 });
 
 function boot(
@@ -359,5 +361,113 @@ describe("LichessAdapter — observeMove and probe", () => {
 		expect(black.checks.find((c) => c.name === "boardSanity")?.ok).toBe(true);
 		expect(black.checks.find((c) => c.name === "orientation")?.ok).toBe(true);
 		expect(black.checks.find((c) => c.name === "geometry")?.ok).toBe(true);
+	});
+});
+
+describe("LichessAdapter — game start keying (fix round 1)", () => {
+	it("does not fire on plies; fires once on a new game id with a fresh board", async () => {
+		const { dom, adapter } = boot("lichess-round-white");
+		const starts: number[] = [];
+		adapter.onGameStart(() => starts.push(1));
+		playD4(dom);
+		await sleep(SETTLE);
+		expect(starts.length).toBe(0);
+		// rematch: lila redirects to /{rematchId}/{color}; a fresh round app follows
+		dom.window.history.pushState({}, "", "/zyxwvuts5678/white");
+		const app = dom.query("app");
+		app.innerHTML = "";
+		for (const sq of dom.document.querySelectorAll("cg-board square")) sq.remove();
+		await sleep(SETTLE);
+		expect(starts.length).toBe(1);
+		await sleep(SETTLE);
+		expect(starts.length).toBe(1);
+	});
+	it("without a URL id (TV), a ply reset after ≥ 2 plies starts a new game", async () => {
+		const { dom, adapter } = boot("lichess-tv");
+		const starts: number[] = [];
+		adapter.onGameStart(() => starts.push(1));
+		const app = dom.query("app");
+		app.innerHTML = "";
+		for (const sq of dom.document.querySelectorAll("cg-board square")) sq.remove();
+		await sleep(SETTLE);
+		expect(starts.length).toBe(1);
+	});
+});
+
+describe("LichessAdapter — late bridge readiness (fix round 1)", () => {
+	it("uses the bridge for FEN and highlights once it reports ready", async () => {
+		const bridge = new FakeBridge();
+		bridge.available = false;
+		const fen = "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w Kkq - 2 3";
+		bridge.responses.set("getState", () => ({ hasLichessApi: true, fen }));
+		bridge.responses.set("draw", () => ({ ok: true }));
+		const { adapter } = boot("lichess-round-white", bridge);
+		await sleep(SETTLE);
+		expect(adapter.getPositionInfo()?.source).toBe("replay");
+		adapter.highlight("e2", "e4", "both");
+		await sleep(10);
+		expect(bridge.callsOf("draw").length).toBe(0);
+		bridge.available = true;
+		bridge.emit("ready", {});
+		await waitFor(() => adapter.getFen() === fen);
+		adapter.highlight("e2", "e4", "both");
+		await waitFor(() => bridge.callsOf("draw").length === 1);
+	});
+});
+
+describe("LichessAdapter — observer wiring (fix round 1)", () => {
+	it("fires exactly once through happy-dom's genuine MutationObserver (first-batch case)", async () => {
+		const dom = loadFixture("lichess-round-white", undefined, { observer: "native" });
+		cleanups.push(installWindowGlobals(dom.window));
+		dom.layout("cg-board", CG_RECT);
+		const adapter = createLichessAdapter({ document: pageDocument(dom), window: pageWindow(dom) });
+		cleanups.push(() => adapter.destroy());
+		const seen: AdapterPositionSnapshot[] = [];
+		adapter.onPositionChange((s) => seen.push(s));
+		lichessPiece(dom, 204, 408).setAttribute("style", "transform: translate(204px, 272px);");
+		await sleep(SETTLE);
+		expect(seen.length).toBe(1);
+		expect(seen[0]?.fen.split(" ")[0]).toBe("r1bqkbnr/pppp1ppp/2n5/4p3/3PP3/5N2/PPP2PPP/RNBQKB1R");
+	});
+	it("registers the documented observers with their init options and re-installs without leaking", async () => {
+		const bridge = new FakeBridge();
+		bridge.responses.set("getState", () => ({}));
+		const dom = loadFixture("lichess-round-white", undefined, { observer: "recording" });
+		cleanups.push(installWindowGlobals(dom.window));
+		dom.layout("cg-board", CG_RECT);
+		const registry = observerRegistry(dom);
+		const adapter = createLichessAdapter({
+			document: pageDocument(dom),
+			window: pageWindow(dom),
+			bridge,
+		});
+		cleanups.push(() => adapter.destroy());
+		expect(registry.on("cg-board").map((r) => r.init)).toEqual([
+			{ childList: true, subtree: true, attributes: true, attributeFilter: ["style", "class"] },
+		]);
+		expect(registry.on(".cg-wrap").map((r) => r.init)).toEqual([
+			{ attributes: true, attributeFilter: ["class"] },
+		]);
+		expect(registry.on(".rclock").map((r) => r.init)).toEqual([
+			{ attributes: true, attributeFilter: ["class"] },
+			{ attributes: true, attributeFilter: ["class"] },
+		]);
+		expect(registry.on("app").map((r) => r.init)).toEqual([
+			{ childList: true, subtree: true, attributes: true, attributeFilter: ["class"] },
+		]);
+		expect(registry.on("body").map((r) => r.init)).toEqual([{ childList: true, subtree: true }]);
+		const initial = registry.active().length;
+		expect(initial).toBe(6);
+		for (let i = 0; i < 2; i++) {
+			const old = dom.query("app");
+			old.replaceWith(old.cloneNode(true)); // moves container replaced (re-render / tag rotation)
+			bridge.emit("ply", {});
+			await sleep(SETTLE);
+			expect(registry.active().length).toBe(initial);
+			expect(registry.on("app")[0]?.target).toBe(dom.query("app") as never);
+		}
+		expect(registry.entries.length).toBe(initial * 3);
+		adapter.destroy();
+		expect(registry.active().length).toBe(0);
 	});
 });

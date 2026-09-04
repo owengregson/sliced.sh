@@ -183,6 +183,8 @@ export const SELECTORS = {
 		status: ".result-wrap .status",
 		// clocks (§2.4)
 		clock: ".rclock",
+		clockTop: ".rclock.rclock-top",
+		clockBottom: ".rclock.rclock-bottom",
 		clockRunning: ".rclock.running",
 		clockRunningClass: "running",
 		clockColor: { w: ".rclock-white", b: ".rclock-black" } as const,
@@ -208,11 +210,13 @@ export const SELECTORS = {
 		// promotion (§2.9)
 		promotion: "#promotion-choice",
 		promotionSquare: "square",
-		promotionOrder: ["q", "n", "r", "b"] as const,
 		keyboardInput: ".keyboard-move input.ready",
 		analysisFen: ".analyse__underboard .copyables input, input.copyable",
 	},
 } as const;
+
+/** Promotion picker order on both sites (chess.com `.promotion-piece` index, lichess `#promotion-choice square`). */
+export const PROMOTION_ORDER: readonly PromoPiece[] = ["q", "n", "r", "b"];
 
 export type ChesscomSelectors = typeof SELECTORS.chesscom;
 export type LichessSelectors = typeof SELECTORS.lichess;

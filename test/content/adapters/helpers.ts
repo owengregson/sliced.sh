@@ -37,12 +37,89 @@ function splitDocument(html: string): { head: string; bodyAttrs: string; body: s
 	return { head, bodyAttrs: bodyMatch?.[1] ?? "", body: bodyMatch?.[2] ?? html };
 }
 
-export function loadFixture(name: FixtureName, url: string = FIXTURE_URLS[name]): TabDom {
+export interface LoadFixtureOptions {
+	/**
+	 * Which `MutationObserver` the tab window exposes (see README.md):
+	 * `polling` (default) — the shim that works around happy-dom's first-batch-only delivery;
+	 * `native` — happy-dom's own observer (only mutations made before the first macrotask hop fire);
+	 * `recording` — honours `init`, records registrations, never delivers (`installRecordingObserver`).
+	 */
+	observer?: "polling" | "native" | "recording";
+}
+
+export function loadFixture(
+	name: FixtureName,
+	url: string = FIXTURE_URLS[name],
+	options: LoadFixtureOptions = {}
+): TabDom {
 	const dom = createTabDom(url);
 	const { head, bodyAttrs, body } = splitDocument(fixtureHtml(name));
 	dom.document.documentElement.innerHTML = `<head>${head}</head><body${bodyAttrs}>${body}</body>`;
-	installPollingObserver(dom);
+	const mode = options.observer ?? "polling";
+	if (mode === "polling") installPollingObserver(dom);
+	else if (mode === "recording") installRecordingObserver(dom);
 	return dom;
+}
+
+export interface ObserverRegistration {
+	target: Element | Document;
+	init: MutationObserverInit;
+	active: boolean;
+}
+
+export interface ObserverRegistry {
+	readonly entries: ObserverRegistration[];
+	active(): ObserverRegistration[];
+	/** Active registrations whose target matches `selector` (or the document when `"document"`). */
+	on(selector: string): ObserverRegistration[];
+}
+
+const REGISTRY = Symbol("observer-registry");
+
+/**
+ * Replace the window's `MutationObserver` with a stub that records every
+ * `observe(target, init)` (honouring `init` verbatim), marks registrations
+ * inactive on `disconnect()`, and never delivers. For asserting the
+ * observer wiring itself; `observerRegistry(dom)` reads the registrations.
+ */
+export function installRecordingObserver(dom: TabDom): ObserverRegistry {
+	const entries: ObserverRegistration[] = [];
+	class RecordingObserver {
+		private mine: ObserverRegistration[] = [];
+		observe(target: Element | Document, init: MutationObserverInit): void {
+			const entry = { target, init: { ...init }, active: true };
+			entries.push(entry);
+			this.mine.push(entry);
+		}
+		disconnect(): void {
+			for (const e of this.mine) e.active = false;
+			this.mine = [];
+		}
+		takeRecords(): MutationRecord[] {
+			return [];
+		}
+	}
+	const registry: ObserverRegistry = {
+		entries,
+		active: () => entries.filter((e) => e.active),
+		on: (selector) =>
+			entries.filter((e) => {
+				if (!e.active) return false;
+				if (selector === "document") return e.target === (dom.document as unknown as Document);
+				const el = e.target as Element;
+				return typeof el.matches === "function" && el.matches(selector);
+			}),
+	};
+	const w = dom.window as unknown as Record<string | symbol, unknown>;
+	w.MutationObserver = RecordingObserver;
+	w[REGISTRY] = registry;
+	return registry;
+}
+
+export function observerRegistry(dom: TabDom): ObserverRegistry {
+	const reg = (dom.window as unknown as Record<symbol, unknown>)[REGISTRY];
+	if (!reg) throw new Error('observerRegistry: load the fixture with { observer: "recording" }');
+	return reg as ObserverRegistry;
 }
 
 /** Real-timer poll interval of the observer shim (well under the adapter debounce). */
@@ -202,14 +279,14 @@ export interface StorageSpy {
 }
 
 /**
- * Count every `localStorage` / `sessionStorage` access on the given objects
- * (property getters). Also covers `document.cookie` on a document.
+ * Count every `localStorage` / `sessionStorage` / `indexedDB` access on the
+ * given objects (property getters). Also covers `document.cookie` on a document.
  */
 export function spyPageStorage(...targets: object[]): StorageSpy {
 	let hits = 0;
 	const saved: Array<[object, string, PropertyDescriptor | undefined]> = [];
 	for (const target of targets) {
-		const keys = "cookie" in target ? ["cookie"] : ["localStorage", "sessionStorage"];
+		const keys = "cookie" in target ? ["cookie"] : ["localStorage", "sessionStorage", "indexedDB"];
 		for (const key of keys) {
 			saved.push([target, key, Object.getOwnPropertyDescriptor(target, key)]);
 			Object.defineProperty(target, key, {
