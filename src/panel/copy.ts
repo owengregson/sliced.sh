@@ -248,6 +248,77 @@ export const COPY = {
 		promotes: "promotes to",
 		toggleHoldHint: "Hold for a moment to turn on auto-play",
 	},
+	// ── Task 26: Engine & diagnostics view (Appendix F §4.7, V2 §3.6) ─────────────────────────
+	engineView: {
+		sections: {
+			engine: "Engine",
+			executor: "Executor",
+			timing: "Timing model",
+			session: "Session",
+			log: "Log",
+		},
+		depth: (d: number): string => `depth ${d}`,
+		nps: {
+			mega: (n: string): string => `${n} Mn/s`,
+			kilo: (n: string): string => `${n} kn/s`,
+			unit: (n: string): string => `${n} n/s`,
+		},
+		sparkline: "Nodes per second, last 60 seconds",
+		none: "—",
+		rows: {
+			debugger: "Debugger",
+			target: "Target",
+			input: "Input mode",
+			last: "Last action",
+			license: "License",
+		},
+		sites: { chesscom: "chess.com", lichess: "lichess" },
+		target: (site: string, gameId: string): string => `${site} · game ${gameId}`,
+		styleAuto: "auto",
+		profiles: {
+			manual: "Manual",
+			fast: "Fast",
+			natural: "Natural",
+			slow: "Slow",
+			custom: "Custom",
+		},
+		inputMode: (style: string, profile: string): string => `${style} · ${profile}`,
+		outcomes: {
+			executed: "executed",
+			skipped: "skipped",
+			paused: "paused",
+			aborted: "aborted",
+			failed: "failed",
+		},
+		lastAction: (tier: string, seconds: string, outcome: string): string =>
+			`${tier} · ${seconds}s · ${outcome}`,
+		phase: (name: string, ms: number): string => `${name} ${ms}ms`,
+		detach: "Detach",
+		licenseVerdict: (raw: string, forced: boolean): string =>
+			forced ? `${raw} (forced valid)` : raw,
+		rationale: {
+			base: (seconds: string, mode: string, persona: string): string =>
+				`base ${seconds}s (${mode} · ${persona})`,
+			term: (name: string, value: string): string => `${value} ${name}`,
+			total: (seconds: string, mode: string, clock: string): string =>
+				`= ${seconds}s · ${mode} · clock ${clock}`,
+			exec: (seconds: string, delta: string): string => `actual ${seconds}s (Δ ${delta}s)`,
+			verify: (delta: string): string => `within plan (Δ ${delta}s)`,
+			warn: (delta: string): string => `drifted from plan (Δ ${delta}s)`,
+		},
+		copy: "Copy log",
+		export: "Export",
+		clear: "Clear",
+		copied: "Log copied",
+		copyFailed: "Couldn't copy the log",
+		logEmpty: "No timing entries yet",
+		session: (games: number, moves: number, avg: string): string =>
+			`${games} games · ${moves} moves · ${avg}s avg move`,
+		reset: "Reset session",
+		level: "Level",
+		levels: { silent: "Silent", error: "Error", warn: "Warn", info: "Info", debug: "Debug" },
+		consoleEmpty: "No log entries yet",
+	},
 } as const;
 
 /** Heading shown by the placeholder view registry until Tasks 23–26 land the real views. */

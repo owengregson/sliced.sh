@@ -33,6 +33,8 @@ export const UI_TIMINGS = {
 	strengthDangerElo: 2_600,
 	/** §4.6 Account › License: the eye reveals the key for this long, then it re-masks. */
 	licenseRevealMs: 10_000,
+	/** Task 26 (§4.7): the engine view samples nps for the 60 s sparkline at this cadence. */
+	sparklineSampleMs: 1_000,
 } as const;
 
 /**

@@ -1,0 +1,105 @@
+<section class="sl-view sl-engine sl-stack" data-view="engine">
+	<header class="sl-section">
+		<hr class="sl-section__rule" />
+		<div class="sl-section__row">
+			<!-- biome-ignore lint/a11y/useHeadingContent: filled from copy.ts at mount -->
+			<h2 class="sl-section__title sl-type-title" data-part="title-engine"></h2>
+		</div>
+	</header>
+	<div class="sl-engine__block sl-stack sl-gap-1">
+		<div class="sl-engine__row sl-row sl-row--between">
+			<span class="sl-engine__version sl-type-body sl-text-primary sl-text-truncate"></span>
+			<span class="sl-engine__status sl-shrink-0"></span>
+		</div>
+		<div class="sl-engine__row">
+			<span class="sl-engine__resources sl-type-body sl-text-secondary"></span>
+		</div>
+		<div class="sl-engine__row sl-row sl-row--between sl-row--baseline">
+			<span class="sl-engine__nps sl-type-numeral-sm sl-text-numerals sl-text-primary"></span>
+			<span class="sl-engine__depth sl-type-label sl-text-secondary"></span>
+		</div>
+		<div class="sl-engine__spark" role="img"></div>
+	</div>
+
+	<header class="sl-section">
+		<hr class="sl-section__rule" />
+		<div class="sl-section__row">
+			<!-- biome-ignore lint/a11y/useHeadingContent: filled from copy.ts at mount -->
+			<h2 class="sl-section__title sl-type-title" data-part="title-executor"></h2>
+		</div>
+	</header>
+	<dl class="sl-engine__kv">
+		<div class="sl-engine__kv-row" data-row="debugger">
+			<dt class="sl-engine__key sl-type-body sl-text-secondary"></dt>
+			<dd class="sl-engine__value sl-type-body sl-text-primary"></dd>
+			<i class="sl-icon sl-engine__flag" data-icon="status.ok" hidden></i>
+		</div>
+		<div class="sl-engine__kv-row" data-row="target">
+			<dt class="sl-engine__key sl-type-body sl-text-secondary"></dt>
+			<dd class="sl-engine__value sl-type-body sl-text-primary sl-text-truncate"></dd>
+		</div>
+		<div class="sl-engine__kv-row" data-row="input">
+			<dt class="sl-engine__key sl-type-body sl-text-secondary"></dt>
+			<dd class="sl-engine__value sl-type-body sl-text-primary"></dd>
+		</div>
+		<div class="sl-engine__kv-row" data-row="last">
+			<dt class="sl-engine__key sl-type-body sl-text-secondary"></dt>
+			<dd class="sl-engine__value sl-type-body sl-text-primary"></dd>
+		</div>
+		<div class="sl-engine__kv-row" data-row="license">
+			<dt class="sl-engine__key sl-type-body sl-text-secondary"></dt>
+			<dd class="sl-engine__value sl-type-mono sl-text-primary"></dd>
+		</div>
+	</dl>
+	<div class="sl-engine__timeline sl-row sl-row--wrap sl-gap-1 sl-type-mono-xs sl-text-secondary"></div>
+	<div class="sl-engine__actions sl-row sl-row--between">
+		<span data-part="detach"></span>
+		<span data-part="reattach"></span>
+	</div>
+
+	<header class="sl-section">
+		<hr class="sl-section__rule" />
+		<div class="sl-section__row">
+			<!-- biome-ignore lint/a11y/useHeadingContent: filled from copy.ts at mount -->
+			<h2 class="sl-section__title sl-type-title" data-part="title-timing"></h2>
+		</div>
+	</header>
+	<div class="sl-engine__log sl-card sl-card--sunken sl-card--tight sl-type-mono-xs sl-scroll" role="log">
+		<p class="sl-engine__log-empty sl-text-tertiary"></p>
+		<div class="sl-engine__log-rows"></div>
+	</div>
+	<div class="sl-engine__actions sl-row">
+		<span data-part="copy"></span>
+		<span data-part="export"></span>
+		<span class="sl-spacer"></span>
+		<span data-part="clear"></span>
+	</div>
+
+	<header class="sl-section">
+		<hr class="sl-section__rule" />
+		<div class="sl-section__row">
+			<!-- biome-ignore lint/a11y/useHeadingContent: filled from copy.ts at mount -->
+			<h2 class="sl-section__title sl-type-title" data-part="title-session"></h2>
+		</div>
+	</header>
+	<p class="sl-engine__session sl-type-body sl-text-primary sl-text-numerals"></p>
+	<div class="sl-engine__actions sl-row">
+		<span data-part="reset"></span>
+	</div>
+
+	<header class="sl-section">
+		<hr class="sl-section__rule" />
+		<div class="sl-section__row">
+			<!-- biome-ignore lint/a11y/useHeadingContent: filled from copy.ts at mount -->
+			<h2 class="sl-section__title sl-type-title" data-part="title-log"></h2>
+			<span class="sl-section__meta sl-engine__level-label sl-row sl-gap-1 sl-type-label">
+				<span data-part="level-label" aria-hidden="true"></span>
+				<select class="sl-engine__level sl-type-label"></select>
+			</span>
+		</div>
+	</header>
+	<div class="sl-engine__console sl-card sl-card--sunken sl-card--tight sl-type-mono-xs sl-scroll" role="log">
+		<p class="sl-engine__console-empty sl-text-tertiary"></p>
+		<div class="sl-engine__console-rows"></div>
+	</div>
+</section>

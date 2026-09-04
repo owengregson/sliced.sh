@@ -9,6 +9,7 @@ import { viewTitle } from "../copy";
 import { instantiate, part } from "../template";
 import { VIEW_NAMES, type View, type ViewName, type ViewRegistry } from "../view";
 import { createSettingsView } from "./settings";
+import { engineView } from "./engine"; // Task 26
 import stubHtml from "./templates/stub.html?raw";
 
 export function createStubView(name: ViewName): View {
@@ -29,3 +30,6 @@ export const VIEWS: ViewRegistry = Object.fromEntries(
 
 // ── Task 25: the real Settings view replaces its stub ────────────────────────────────────────
 VIEWS.settings = createSettingsView();
+
+// ── Task 26: the real Engine view replaces its stub ──────────────────────────────────────────
+VIEWS.engine = engineView;

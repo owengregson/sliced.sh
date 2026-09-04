@@ -5,6 +5,7 @@
  * `src/core/messaging/typed-messages.ts` (Task 4).
  */
 
+import type { LogEntry } from "@core/logger";
 import type { EngineStatus, EngineVariant, EvalLine } from "@typedefs/engine";
 import type {
 	ChosenMove,
@@ -19,7 +20,7 @@ import type {
 	Site,
 	Square,
 } from "@typedefs/game";
-import type { Keybinds, LicenseState, Settings } from "@typedefs/settings";
+import type { Keybinds, LicenseState, LogLevel, Settings } from "@typedefs/settings";
 import type { TimingLogEntry, TimingPlan } from "@typedefs/timing";
 
 export type { ChosenMove, EvalLine, PositionSnapshot, Recommendation, TimingPlan };
@@ -37,6 +38,11 @@ export const MSG = {
 	PANEL_RECHECK_LICENSE: "sl:panel:recheckLicense",
 	PANEL_ENGINE_RESTART: "sl:panel:engineRestart",
 	PANEL_EXPORT_TIMING_LOG: "sl:panel:exportTimingLog",
+	// Task 26 (engine & diagnostics view) — additive
+	PANEL_CLEAR_TIMING_LOG: "sl:panel:clearTimingLog",
+	PANEL_RESET_SESSION: "sl:panel:resetSession",
+	PANEL_ENGINE_DETACH: "sl:panel:engineDetach",
+	PANEL_ENGINE_REATTACH: "sl:panel:engineReattach",
 	// content → SW (request/response)
 	CONTENT_HELLO: "sl:content:hello",
 	CONTENT_KEYBIND: "sl:content:keybind",
@@ -150,3 +156,13 @@ export type EnginePortCommand =
 	| NnueChunk
 	/** Timing-head inference request (Task 34); answered with `timing-result`. */
 	| { kind: "timing"; id: string; inputs: TimingInferenceInputs };
+
+// Task 26: log stream port (`PORT_NAMES.logStream`, Appendix H.2)
+
+/** SW → panel: the ring backlog on connect, then one message per new entry. */
+export type LogStreamMessage =
+	| { kind: "backlog"; entries: LogEntry[] }
+	| { kind: "entry"; entry: LogEntry };
+
+/** panel → SW: the SW filters the stream at source from this level down. */
+export type LogStreamCommand = { kind: "setLevel"; level: LogLevel };

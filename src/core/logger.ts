@@ -30,7 +30,33 @@ export const LOG_PREFIX = "[sliced]";
 
 const RANK: Record<LogLevel, number> = { silent: 0, error: 1, warn: 2, info: 3, debug: 4 };
 
+/** Every level, most verbose last (the order the Engine view's level control lists them). */
+export const LOG_LEVELS: readonly LogLevel[] = ["silent", "error", "warn", "info", "debug"];
+
+/** Whether an entry of `severity` passes a filter set to `level` (`silent` passes nothing). */
+export function levelAllows(level: LogLevel, severity: LogSeverity): boolean {
+	return RANK[severity] <= RANK[level];
+}
+
+export function isLogLevel(value: unknown): value is LogLevel {
+	return typeof value === "string" && Object.hasOwn(RANK, value);
+}
+
 let currentLevel: LogLevel = DEFAULT_SETTINGS.advanced.logLevel;
+
+/**
+ * Task 26: the service worker's log bridge registers itself here so entries emitted by the
+ * SW's own `log.*` calls reach the panel's log stream (Appendix H.2). While a sink is set this
+ * context is the collector: entries are handed to it instead of being forwarded. Only the SW
+ * sets a sink; `null` restores the default routing.
+ */
+export type LogSink = (entry: LogEntry) => void;
+
+let sink: LogSink | null = null;
+
+export function setLogSink(next: LogSink | null): void {
+	sink = next;
+}
 
 export function setLogLevel(level: LogLevel): void {
 	currentLevel = level;
@@ -41,7 +67,7 @@ export function getLogLevel(): LogLevel {
 }
 
 function enabled(level: LogSeverity): boolean {
-	return RANK[level] <= RANK[currentLevel];
+	return levelAllows(currentLevel, level);
 }
 
 const isServiceWorker =
@@ -88,8 +114,9 @@ function emit(level: LogSeverity, values: unknown[]): void {
 		args: values.map((v) => toSerializable(v)),
 		meta: { source: detectSource(), timestamp: Date.now() },
 	};
-	if (isServiceWorker) {
-		printLog(entry);
+	if (isServiceWorker || sink) {
+		if (isServiceWorker) printLog(entry);
+		sink?.(entry);
 		return;
 	}
 	const envelope: LogEnvelope = { type: MSG.LOG, ...entry };

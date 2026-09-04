@@ -4,6 +4,8 @@
  *
  *   data-action="view-switch"     data-tab="settings"    → select a top-bar tab
  *   data-action="open-url"        data-url="website"     → open a `URLS` entry in a new tab
+ *                                                          (or an `https:` / JSON `data:` URL —
+ *                                                          the Engine view's Export, Task 26)
  *   data-action="dismiss-update"                         → "Later" on the update interrupt
  *
  * Opening tabs is refused while a game is live (§13.4: no `chrome.tabs.create` mid-game).
@@ -23,13 +25,16 @@ export interface ActionHost {
 
 export type UrlKey = keyof typeof URLS;
 
+/** Media type of the Engine view's timing-log export (the only `data:` URL the panel opens). */
+export const JSON_DATA_URL_PREFIX = "data:application/json";
+
 function resolveUrl(raw: string): string | null {
 	if (Object.hasOwn(URLS, raw)) {
 		// Only string entries are navigable; the registry also holds match-pattern lists.
 		const value: unknown = URLS[raw as UrlKey];
 		return typeof value === "string" ? value : null;
 	}
-	return /^https:\/\//.test(raw) ? raw : null;
+	return /^https:\/\//.test(raw) || raw.startsWith(JSON_DATA_URL_PREFIX) ? raw : null;
 }
 
 export function installActionHandlers(root: HTMLElement, host: ActionHost): () => void {

@@ -12,6 +12,7 @@
 import { log } from "@core/logger";
 import { bootstrapServiceSystems } from "@service/bootstrap";
 import { registerLicenseHandlers } from "@service/handlers/license";
+import { registerLogHandlers } from "@service/handlers/log";
 import { registerSettingsHandlers } from "@service/handlers/settings";
 import { wireServiceLifecycle } from "@service/lifecycle";
 import { installLogBridge } from "@service/log-bridge";
@@ -19,12 +20,13 @@ import { installLogBridge } from "@service/log-bridge";
 const systems = bootstrapServiceSystems();
 const { router } = systems;
 
-installLogBridge(router);
+const logBridge = installLogBridge(router);
 
 const lifecycle = wireServiceLifecycle({ systems });
 
 registerLicenseHandlers(router, systems);
 registerSettingsHandlers(router);
+registerLogHandlers(router, logBridge);
 
 router.install();
 
@@ -35,4 +37,4 @@ void systems.license
 	.ensure()
 	.catch((error: unknown) => log.warn("service-worker: startup license check failed", error));
 
-export { lifecycle, systems };
+export { lifecycle, logBridge, systems };

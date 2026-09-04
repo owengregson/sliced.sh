@@ -16,6 +16,12 @@ export const LIMITS = {
 	previewSelectScaleMin: 0.5,
 	previewSelectScaleMax: 2,
 	timingLogMax: 200,
+	/** Task 26: SW-side ring of recent `LogEntry`s streamed to the panel (Appendix H.2). */
+	logRingMax: 500,
+	/** Task 26: nps sparkline sample ring (one sample per `UI_TIMINGS.sparklineSampleMs`). */
+	npsSparklineSamples: 60,
+	/** Task 26: |actual − planned| / planned above this renders a `warn` rationale row. */
+	timingLogDriftWarn: 0.5,
 	analysisCacheEntries: 256,
 	cpClamp: 1000,
 	/** Lichess win-probability logistic `win(cp) = 1/(1+e^(−k·cp))` (§7.2, Appendix E §7.2). */

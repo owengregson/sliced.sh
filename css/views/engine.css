@@ -1,0 +1,195 @@
+/* css/views/engine.css — View 6: Engine and diagnostics (Appendix F §4.7). Everything is body /
+   mono; the only display-face numerals are nps and depth. The rationale log and the live log
+   pane are sunken, scrollable, mono-xs, newest at the bottom. Every value is a Lattice token. */
+
+.sl-engine {
+	padding: 0 var(--sl-space-4) var(--sl-space-6);
+}
+
+.sl-engine__block {
+	gap: var(--sl-space-1);
+}
+
+.sl-engine__row {
+	min-height: var(--sl-type-leading-sm);
+}
+
+/* ---- nps sparkline: 60 samples × unit wide, space-8 tall ------------------------------------ */
+
+.sl-engine__spark {
+	display: block;
+	width: 100%;
+	height: var(--sl-space-8);
+	margin-top: var(--sl-space-1);
+}
+
+.sl-engine__spark-svg {
+	display: block;
+	width: 100%;
+	height: 100%;
+	overflow: visible;
+}
+
+.sl-engine__spark-line {
+	stroke: var(--sl-color-brand);
+	vector-effect: non-scaling-stroke;
+}
+
+.sl-engine__spark-area {
+	fill: var(--sl-color-brand-tint);
+}
+
+/* ---- executor key/value rows -------------------------------------------------------------- */
+
+.sl-engine__kv {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sl-space-1);
+	margin: 0;
+}
+
+.sl-engine__kv-row {
+	display: grid;
+	grid-template-columns: minmax(0, auto) minmax(0, 1fr) auto;
+	align-items: center;
+	gap: var(--sl-space-2);
+	min-height: var(--sl-type-leading-sm);
+}
+
+.sl-engine__key {
+	white-space: nowrap;
+}
+
+.sl-engine__value {
+	margin: 0;
+	text-align: end;
+	min-width: 0;
+}
+
+.sl-engine__flag {
+	color: var(--sl-color-success);
+	font-size: var(--sl-size-icon-sm);
+}
+
+.sl-engine__timeline:empty {
+	display: none;
+}
+
+/* execution timeline: `exploration 420ms → approach 300ms → …` (§9.7) */
+.sl-engine__phase {
+	white-space: nowrap;
+}
+
+.sl-engine__phase + .sl-engine__phase::before {
+	content: "→";
+	margin-inline-end: var(--sl-space-1);
+	color: var(--sl-color-text-tertiary);
+}
+
+.sl-engine__actions {
+	gap: var(--sl-space-2);
+}
+
+/* ---- rationale log and live log pane: sunken, scrollable, newest at the bottom ------------- */
+
+.sl-engine__log,
+.sl-engine__console {
+	max-height: calc(var(--sl-space-16) * 3);
+	overflow-y: auto;
+	color: var(--sl-color-text-primary);
+}
+
+.sl-engine__log-empty,
+.sl-engine__console-empty {
+	margin: 0;
+}
+
+.sl-engine__log-rows,
+.sl-engine__console-rows {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sl-space-1);
+}
+
+/* fixed 8ch time column and 5ch kind column (Appendix F §4.7) */
+.sl-engine__log-row {
+	display: grid;
+	grid-template-columns: 8ch 5ch minmax(0, 1fr);
+	gap: var(--sl-space-2);
+	align-items: start;
+}
+
+.sl-engine__log-lines {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+}
+
+.sl-engine__log-line {
+	overflow-wrap: anywhere;
+}
+
+.sl-engine__log-row[data-kind="plan"] .sl-engine__log-kind {
+	color: var(--sl-color-text-secondary);
+}
+
+.sl-engine__log-row[data-kind="exec"] .sl-engine__log-kind {
+	color: var(--sl-color-brand-text);
+}
+
+.sl-engine__log-row[data-kind="verify"] .sl-engine__log-kind {
+	color: var(--sl-color-success);
+}
+
+.sl-engine__log-row[data-kind="warn"] .sl-engine__log-kind,
+.sl-engine__log-row[data-kind="warn"] .sl-engine__log-line {
+	color: var(--sl-color-warn);
+}
+
+/* live log pane: time · level · source · message */
+.sl-engine__console-row {
+	display: grid;
+	grid-template-columns: 8ch 5ch auto minmax(0, 1fr);
+	gap: var(--sl-space-2);
+	align-items: start;
+}
+
+.sl-engine__console-row[data-level="debug"] .sl-engine__console-level {
+	color: var(--sl-color-text-tertiary);
+}
+
+.sl-engine__console-row[data-level="info"] .sl-engine__console-level {
+	color: var(--sl-color-text-secondary);
+}
+
+.sl-engine__console-row[data-level="warn"] .sl-engine__console-level {
+	color: var(--sl-color-warn);
+}
+
+.sl-engine__console-row[data-level="error"] .sl-engine__console-level,
+.sl-engine__console-row[data-level="error"] .sl-engine__console-text {
+	color: var(--sl-color-danger-text);
+}
+
+.sl-engine__level-label {
+	cursor: pointer;
+}
+
+.sl-engine__level {
+	min-height: var(--sl-size-control-sm);
+	padding: 0 var(--sl-space-2);
+	border-radius: var(--sl-radius-sm);
+	background: var(--sl-color-surface-sunken);
+	box-shadow: var(--sl-shadow-inset);
+	color: var(--sl-color-text-primary);
+	cursor: pointer;
+}
+
+.sl-engine__level:focus-visible {
+	outline: var(--sl-hairline) solid var(--sl-color-focus);
+	outline-offset: var(--sl-space-1);
+}
+
+.sl-engine__session {
+	margin: 0;
+}
