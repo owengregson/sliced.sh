@@ -69,18 +69,23 @@ export function formatSetOption(name: string, value: EngineOptionValue): string 
 
 export interface OptionsEnv {
 	hardwareConcurrency: number;
+	/** `SharedArrayBuffer` available (cross-origin isolated): the multi-threaded build runs. */
+	sab: boolean;
 }
 
 /**
  * Settings → options: full-strength search with the engine's Elo limiter on
  * (§7.1 hybrid), WDL on for the panel, no UCI ponder mode (Appendix E §4.2).
+ * Threads (§6.1): `auto` → `clamp(hardwareConcurrency − 2, 1, 4)`; without
+ * `SharedArrayBuffer` the single-threaded build runs, so always 1.
  */
 export function optionsForSettings(settings: Settings, env: OptionsEnv): EngineOptions {
 	const { engine, strength } = settings;
-	const threads =
-		engine.threads === "auto"
-			? clampInt(env.hardwareConcurrency - AUTO_THREADS_RESERVE, 1, AUTO_THREADS_MAX)
-			: engine.threads;
+	let threads: number;
+	if (!env.sab) threads = 1;
+	else if (engine.threads === "auto")
+		threads = clampInt(env.hardwareConcurrency - AUTO_THREADS_RESERVE, 1, AUTO_THREADS_MAX);
+	else threads = engine.threads;
 	const clamped = clampEngineOptions({
 		Threads: threads,
 		Hash: engine.hashMb,

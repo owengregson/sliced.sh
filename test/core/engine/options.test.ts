@@ -22,6 +22,7 @@ describe("optionsForSettings", () => {
 		expect(
 			optionsForSettings(settings({ threads: "auto", hashMb: 32, multiPv: 6 }, 1500), {
 				hardwareConcurrency: 8,
+				sab: true,
 			})
 		).toEqual({
 			Threads: 4,
@@ -34,22 +35,29 @@ describe("optionsForSettings", () => {
 		});
 	});
 	it("clamps UCI_Elo to the engine's range", () => {
-		const env = { hardwareConcurrency: 8 };
+		const env = { hardwareConcurrency: 8, sab: true };
 		expect(optionsForSettings(settings({}, 800), env).UCI_Elo).toBe(LIMITS.engineEloMin);
 		expect(optionsForSettings(settings({}, 3200), env).UCI_Elo).toBe(LIMITS.engineEloMax);
 	});
 	it("derives threads: auto → clamp(hc − 2, 1, 4); explicit → clamped to threadsMax", () => {
-		expect(optionsForSettings(settings({}), { hardwareConcurrency: 2 }).Threads).toBe(1);
-		expect(optionsForSettings(settings({}), { hardwareConcurrency: 5 }).Threads).toBe(3);
-		expect(optionsForSettings(settings({}), { hardwareConcurrency: 32 }).Threads).toBe(4);
-		expect(optionsForSettings(settings({ threads: 6 }), { hardwareConcurrency: 2 }).Threads).toBe(6);
-		expect(optionsForSettings(settings({ threads: 99 }), { hardwareConcurrency: 2 }).Threads).toBe(
-			LIMITS.threadsMax
-		);
-		expect(optionsForSettings(settings({ threads: 0 }), { hardwareConcurrency: 2 }).Threads).toBe(1);
+		const hc = (n: number) => ({ hardwareConcurrency: n, sab: true });
+		expect(optionsForSettings(settings({}), hc(8)).Threads).toBe(4);
+		expect(optionsForSettings(settings({}), hc(4)).Threads).toBe(2);
+		expect(optionsForSettings(settings({}), hc(2)).Threads).toBe(1);
+		expect(optionsForSettings(settings({}), hc(1)).Threads).toBe(1);
+		expect(optionsForSettings(settings({}), hc(5)).Threads).toBe(3);
+		expect(optionsForSettings(settings({}), hc(32)).Threads).toBe(4);
+		expect(optionsForSettings(settings({ threads: 6 }), hc(2)).Threads).toBe(6);
+		expect(optionsForSettings(settings({ threads: 99 }), hc(2)).Threads).toBe(LIMITS.threadsMax);
+		expect(optionsForSettings(settings({ threads: 0 }), hc(2)).Threads).toBe(1);
+	});
+	it("falls back to a single thread without SharedArrayBuffer (auto and explicit)", () => {
+		const noSab = { hardwareConcurrency: 8, sab: false };
+		expect(optionsForSettings(settings({}), noSab).Threads).toBe(1);
+		expect(optionsForSettings(settings({ threads: 6 }), noSab).Threads).toBe(1);
 	});
 	it("clamps Hash and MultiPV (MultiPV at least 4)", () => {
-		const env = { hardwareConcurrency: 8 };
+		const env = { hardwareConcurrency: 8, sab: true };
 		expect(optionsForSettings(settings({ hashMb: 1 }), env).Hash).toBe(LIMITS.hashMbMin);
 		expect(optionsForSettings(settings({ hashMb: 4096 }), env).Hash).toBe(LIMITS.hashMbMax);
 		expect(optionsForSettings(settings({ multiPv: 1 }), env).MultiPV).toBe(4);
