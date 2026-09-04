@@ -12,7 +12,8 @@
 		"lint:fix": "biome check --write .",
 		"test": "bash scripts/test-runner.sh",
 		"test:watch": "bun test --watch",
-		"check": "bun run gen:tokens && bun run lint && bun run typecheck && bun run test",
+		"check": "bun run gen:tokens && bun run gen:pagescript && bun run lint && bun run typecheck && bun run test",
+		"gen:pagescript": "bun scripts/gen-pagescript.ts",
 		"verify:dist": "bun scripts/verify-dist.ts"
 	},
 	"dependencies": {
