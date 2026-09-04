@@ -25,3 +25,10 @@ export const SESSION_KEYS = {
 
 export type LocalKey = (typeof LOCAL_KEYS)[keyof typeof LOCAL_KEYS];
 export type SessionKey = (typeof SESSION_KEYS)[keyof typeof SESSION_KEYS];
+
+/** IndexedDB fallback for NNUE nets when OPFS is unavailable (offscreen `NnueStore`, Task 12). */
+export const NNUE_DB = {
+	name: "sl-nnue",
+	store: "nets",
+	version: 1,
+} as const;

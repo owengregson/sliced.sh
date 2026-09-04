@@ -14,6 +14,8 @@ export interface EngineStatus {
 	nnue: string[];
 	nps?: number;
 	version: string;
+	/** Set on `crashed` (and on a failed `loadNnue`) with the engine's or loader's message. */
+	error?: string;
 }
 
 /** A UCI score: centipawns or mate-in-N (sign from the side to move). */

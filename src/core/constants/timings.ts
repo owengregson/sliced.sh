@@ -7,6 +7,8 @@ export const TIMINGS = {
 	ponderMaxMs: 60_000,
 	panelSnapshotMinIntervalMs: 100,
 	engineInfoCoalesceMs: 100,
+	/** Offscreen host → SW: coalesced `info` lines are forwarded at most this often (§6.4). */
+	engineInfoForwardMs: 50,
 	adapterDebounceMs: 40,
 	adapterSelfCheckIntervalMs: 15_000,
 	/** `observeMove`: wait for the move list after the piece has landed (Task 20). */

@@ -23,6 +23,12 @@ export const LIMITS = {
 	nnueSmallName: "nn-4ca89e4b3abf.nnue",
 	/** Full-strength `sf_18` dual nets `[big, small]`, fetched on demand into OPFS (Task 12). */
 	nnueBigNames: ["nn-c288c895ea92.nnue", "nn-37f18f62d772.nnue"],
+	/** Raw bytes per `nnue-chunk` relayed SW → offscreen (before base64) (Task 12). */
+	nnueChunkBytes: 4_194_304,
+	/** Shared `WebAssembly.Memory` initial pages (64 KiB each) tried in order (§6.3). */
+	engineMemoryInitialPages: [2560, 1536, 1024],
+	/** Shared `WebAssembly.Memory` maximum pages (512 MiB). */
+	engineMemoryMaxPages: 8192,
 } as const;
 
 /**

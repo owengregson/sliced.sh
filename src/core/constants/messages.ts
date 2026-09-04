@@ -5,7 +5,7 @@
  * `src/core/messaging/typed-messages.ts` (Task 4).
  */
 
-import type { EngineStatus, EvalLine } from "@typedefs/engine";
+import type { EngineStatus, EngineVariant, EvalLine } from "@typedefs/engine";
 import type {
 	ChosenMove,
 	GameMeta,
@@ -114,14 +114,38 @@ export type GamePortCommand =
 	| { kind: "startNewGame" }
 	| { kind: "speak"; text: string };
 
+/**
+ * A slice of a net relayed by the SW (`handlers/engine/nnue-download.ts`).
+ * `chrome.runtime` ports JSON-serialise their payloads (crbug.com/248548: no
+ * structured clone), so an `ArrayBuffer` would arrive as `{}`; the raw bytes
+ * (`LIMITS.nnueChunkBytes` per chunk) travel base64-encoded instead.
+ */
+export type NnueChunk =
+	| { kind: "nnue-chunk"; name: string; index: number; total: number; bytes: string }
+	| { kind: "nnue-chunk"; name: string; error: string };
+
+/** Inputs of one timing-head inference (Task 34 defines the feature vector). */
+export type TimingInferenceInputs = Record<string, number>;
+
 /** offscreen → SW */
 export type EnginePortMessage =
 	| { kind: "line"; line: string }
 	| { kind: "status"; status: EngineStatus }
-	| { kind: "nnue"; progress: number };
+	| { kind: "nnue"; progress: number }
+	/** Ask the SW to download a net that is neither bundled nor cached (Task 12). */
+	| { kind: "nnue-request"; name: string }
+	/** Download/reassembly progress in `[0, 1]` for `name`. */
+	| { kind: "nnue-progress"; name: string; progress: number }
+	/** Reply to a `timing` command (`probs: null` + `error` when unavailable). */
+	| { kind: "timing-result"; id: string; probs: Record<string, number> | null; error?: string };
 
 /** SW → offscreen */
 export type EnginePortCommand =
 	| { kind: "uci"; line: string }
 	| { kind: "restart" }
-	| { kind: "loadNnue"; names: string[] };
+	| { kind: "loadNnue"; names: string[] }
+	/** Which build to run and how many threads the SW will ask for (first one boots the engine). */
+	| { kind: "configure"; variant: EngineVariant; threads: number }
+	| NnueChunk
+	/** Timing-head inference request (Task 34); answered with `timing-result`. */
+	| { kind: "timing"; id: string; inputs: TimingInferenceInputs };
