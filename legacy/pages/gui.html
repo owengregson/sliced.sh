@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="../css/style.css" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.0/dist/css/bootstrap.min.css" rel="stylesheet"
+    integrity="sha384-KyZXEAg3QhqLMpG8r+8fhAXLRk2vvoC2f3B09zVXn8CA5QIVfZOJ3BCsw2P0p/We" crossorigin="anonymous" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@100;200;300;400;500;600&display=swap"
+    rel="stylesheet" />
+</head>
+
+<body>
+  <div class="container">
+    <div class="header">
+      <!-- \<input oninput="new Promise((resolve, reject) => {let reader = new FileReader();reader.onerror = reject;reader.onload = (e) => resolve(e.target.result);reader.readAsDataURL(this.files[0]);}).then(result => {document.getElementById('audiobase').innerText = result; navigator.clipboard.writeText(result)})" type="file"> -->
+      <img src="../assets/images/sliced_256.png" alt="sliced.sh logo" width="32" height="32" />
+      <h3 style='margin-left: 8px; margin-top: 6.3px;'>sliced.sh</h3>
+
+      <div style='margin-top: 3.1px;' class="form-check form-switch">
+        <input class="form-check-input" type="checkbox" id="extension-toggle" />
+        <label class="form-check-label" for="extension-toggle">Enabled</label>
+      </div>
+    </div>
+    <hr />
+    <div class="main-menu">
+
+      <div class="input-div">
+        <label id="elo-label" name="elo-label" for="elo-range" class="form-label">ELO Rating: ~</label>
+        <input class=".form-range" type="range" min="1" max="20" step="1" class="slider" id="elo-range" />
+      </div>
+
+      <div class="field-info">Warning: Setting this too high can get you banned!</div>
+      <br>
+
+      <div class="input-div">
+        <label id="depth-label" name="depth-label" for="depth-range" class="form-label">Depth</label>
+        <input class=".form-range" type="range" min="1" max="14" step="1" class="slider" id="depth-range" />
+      </div>
+
+      <div class="field-info">Amount of future moves the engine will predict</div>
+      <br>
+
+      <div class="input-div">
+        <label id="wait-time-label" name="wait-time-label" for="wait-time-range" class="form-label">AutoMove Speed</label>
+        <input class=".form-range" type="range" min="0" max="10" step="1" class="slider" id="wait-time-range" />
+      </div>
+
+      <div class="field-info">Approximate time to wait before moving</div>
+
+      <div class="form-check form-switch">
+        <input class="form-check-input" type="checkbox" id="highlightMoves-toggle" />
+        <label class="form-check-label" for="highlightMoves-toggle">Highlight Moves</label>
+      </div>
+      <div class="field-info">Highlights the best move on the board</div>
+
+      <div class="form-check form-switch">
+        <input class="form-check-input" type="checkbox" id="automove-toggle" />
+        <label class="form-check-label" for="automove-toggle">Auto Move</label>
+      </div>
+
+      <div class="field-info">Automatically plays the next move</div>
+
+      <div class="form-check form-switch">
+        <input class="form-check-input" type="checkbox" id="auto-play-new-game-toggle" />
+        <label class="form-check-label" for="auto-play-new-game-toggle">Auto Queue</label>
+      </div>
+      <div class="field-info">Automatically starts the next game</div>
+
+      <br>
+      <div>
+        <label class="form-check-label">Keybinds</label>
+      </div>
+      <!-- <div class="field-info">[Q] - Text-to-Speech Best Move</div> -->
+      <br>
+      <div class="field-info"><kbd id="move-keybind" data-keyboard-key="Space" class="kbc-button-xxs kbc-button-dark">SPACE</kbd> Make next move</div>
+      <br>
+      <div class="field-info"><kbd id="exit-keybind" data-keyboard-key="A" class="kbc-button-xxs kbc-button-dark">A</kbd> Disable extension</div>
+      <br>
+      <div class="field-info"><kbd id="tts-keybind" data-keyboard-key="KeyW" class="kbc-button-xxs kbc-button-dark">W</kbd> Text-to-Speech next move</div>
+      <!-- <div class="field-info" id="audiobase"></div> -->
+
+    </div>
+  </div>
+</body>
+<script src="../scripts/popup.js"></script>
+
+</html>
