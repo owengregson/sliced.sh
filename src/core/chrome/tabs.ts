@@ -7,6 +7,7 @@
  */
 
 import { log } from "@core/logger";
+import { errorMessage } from "@core/util/errors";
 
 export interface TabsSendMessageResult {
 	success: boolean;
@@ -52,7 +53,7 @@ export function tabsSendMessage(
 			if (options) chrome.tabs.sendMessage(tabId, message, options, handleResponse);
 			else chrome.tabs.sendMessage(tabId, message, handleResponse);
 		} catch (err: unknown) {
-			const error = err instanceof Error ? err.message : String(err);
+			const error = errorMessage(err);
 			log.warn("tabsSendMessage threw", { tabId, type, error });
 			resolve({ success: false, error });
 		}

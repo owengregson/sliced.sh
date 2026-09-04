@@ -33,9 +33,14 @@ export class Keepalive {
 		return [...this.held];
 	}
 
-	/** The alarm's only job is to wake the SW; nothing to do here. */
+	/**
+	 * The alarm's only job is to wake the SW. `held` is in-memory while the
+	 * alarm persists, so after an SW restart a tick with nothing held clears
+	 * the orphaned alarm instead of waking the worker forever.
+	 */
 	onAlarm(): void {
 		log.debug("keepalive: tick", { reasons: this.reasons() });
+		if (!this.isHeld()) void this.reconcile();
 	}
 
 	dispose(): Promise<void> {

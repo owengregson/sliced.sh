@@ -9,25 +9,12 @@
  * the async work runs inside the handlers.
  */
 
-import { MSG } from "@core/constants/messages";
-import { type LogEntry, log, printLog } from "@core/logger";
-import type { MessageRouter } from "@core/messaging/router";
+import { log } from "@core/logger";
 import { bootstrapServiceSystems } from "@service/bootstrap";
 import { registerLicenseHandlers } from "@service/handlers/license";
 import { registerSettingsHandlers } from "@service/handlers/settings";
 import { wireServiceLifecycle } from "@service/lifecycle";
-
-/** Log bridge: print `MSG.LOG` envelopes forwarded by the other contexts (Task 26 adds streaming). */
-function installLogBridge(router: MessageRouter): void {
-	router.on(MSG.LOG, (msg, sender) => {
-		const entry: LogEntry = {
-			level: msg.level,
-			args: msg.args,
-			meta: msg.meta ?? { source: sender.url ?? "unknown", timestamp: Date.now() },
-		};
-		printLog(entry);
-	});
-}
+import { installLogBridge } from "@service/log-bridge";
 
 const systems = bootstrapServiceSystems();
 const { router } = systems;

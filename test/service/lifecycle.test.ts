@@ -6,6 +6,7 @@ import { getSettings } from "@core/storage/settings-storage";
 import { __resetServiceSystemsCache, bootstrapServiceSystems } from "@service/bootstrap";
 import {
 	LEGACY_KEYS,
+	legacyCodeToKeybind,
 	legacyEloToTargetElo,
 	legacyMaxWaitToSpeedScale,
 	migrateLegacySettings,
@@ -46,6 +47,25 @@ describe("legacy value mapping", () => {
 		expect(legacyEloToTargetElo(0)).toBe(LIMITS.engineEloMin);
 		expect(legacyEloToTargetElo(99)).toBe(LIMITS.engineEloMax);
 		expect(legacyEloToTargetElo(Number.NaN)).toBeNull();
+	});
+	it("coerces the popup's string slider values (event.target.value)", () => {
+		expect(legacyEloToTargetElo("14")).toBe(legacyEloToTargetElo(14));
+		expect(legacyEloToTargetElo(" 20 ")).toBe(LIMITS.engineEloMax);
+		expect(legacyEloToTargetElo("high")).toBeNull();
+		expect(legacyEloToTargetElo("")).toBeNull();
+		expect(legacyMaxWaitToSpeedScale("4")).toBe(1);
+		expect(legacyMaxWaitToSpeedScale("6")).toBe(legacyMaxWaitToSpeedScale(6));
+		expect(legacyMaxWaitToSpeedScale("soon")).toBeNull();
+	});
+	it("normalises legacy keybinds: codes as captured, bare default letters/digits to codes", () => {
+		expect(legacyCodeToKeybind("Space")).toMatchObject({ key: " ", code: "Space" });
+		expect(legacyCodeToKeybind("KeyA")).toMatchObject({ key: "a", code: "KeyA" });
+		expect(legacyCodeToKeybind("A")).toMatchObject({ key: "a", code: "KeyA" });
+		expect(legacyCodeToKeybind("w")).toMatchObject({ key: "w", code: "KeyW" });
+		expect(legacyCodeToKeybind("3")).toMatchObject({ key: "3", code: "Digit3" });
+		expect(legacyCodeToKeybind("ShiftLeft")).toMatchObject({ key: "ShiftLeft", code: "ShiftLeft" });
+		expect(legacyCodeToKeybind("")).toBeNull();
+		expect(legacyCodeToKeybind(42)).toBeNull();
 	});
 	it("maps the legacy maxWaitTime (s) onto timing.speedScale around the legacy default", () => {
 		expect(legacyMaxWaitToSpeedScale(4)).toBe(1);
@@ -100,6 +120,38 @@ describe("migrateLegacySettings", () => {
 		for (const k of LEGACY_KEYS) expect(k in sim.storage.data.local).toBe(false);
 		expect(sim.storage.data.local.unrelated).toBe("keep me");
 	});
+	it("migrates the shapes the 1.x popup actually wrote: string sliders, boolean toggles, bare default keybinds", async () => {
+		// popup.js: sliders store `event.target.value` (strings), toggles `event.target.checked`;
+		// background.js seeds the defaults `exitKeybind: "A"`, `ttsKeybind: "W"`.
+		Object.assign(sim.storage.data.local, {
+			extensionActive: false,
+			highlightMoves: "false",
+			elo: "14",
+			depthValue: "18",
+			maxWaitTime: "2",
+			automove: "true",
+			autoPlayNewGame: false,
+			key: "  GOLD-STR  ",
+			moveKeybind: "Space",
+			exitKeybind: "A",
+			ttsKeybind: "W",
+		});
+		const result = await migrateLegacySettings();
+		expect(result).toMatchObject({ migrated: true, keyImported: true });
+		const s = await getSettings();
+		expect(s.enabled).toBe(false);
+		expect(s.automation.highlightMoves).toBe(false);
+		expect(s.automation.autoMove).toBe(true);
+		expect(s.automation.autoQueue).toBe(false);
+		expect(s.strength.targetElo).toBe(2600); // legacyEloToTargetElo(14)
+		expect(s.engine.depthCap).toBe(18);
+		expect(s.timing.speedScale).toBeCloseTo(Math.exp(-0.5), 2);
+		expect(s.keybinds.playMove).toMatchObject({ key: " ", code: "Space" });
+		expect(s.keybinds.disable).toMatchObject({ key: "a", code: "KeyA", shiftKey: false });
+		expect(s.keybinds.speakMove).toMatchObject({ key: "w", code: "KeyW" });
+		expect(sim.storage.data.local[LOCAL_KEYS.licenseKey]).toBe("GOLD-STR");
+		for (const k of LEGACY_KEYS) expect(k in sim.storage.data.local).toBe(false);
+	});
 	it("ignores malformed legacy values and is a no-op without legacy keys", async () => {
 		Object.assign(sim.storage.data.local, {
 			extensionActive: "yes",
@@ -110,7 +162,7 @@ describe("migrateLegacySettings", () => {
 			moveKeybind: 42,
 		});
 		const first = await migrateLegacySettings();
-		expect(first.migrated).toBe(true);
+		expect(first).toMatchObject({ migrated: true, keyImported: false });
 		const s = await getSettings();
 		expect(s.enabled).toBe(DEFAULT_SETTINGS.enabled);
 		expect(s.strength.targetElo).toBe(DEFAULT_SETTINGS.strength.targetElo);
@@ -119,7 +171,7 @@ describe("migrateLegacySettings", () => {
 		expect(s.keybinds.playMove).toEqual({ ...DEFAULT_SETTINGS.keybinds.playMove });
 		expect(sim.storage.data.local[LOCAL_KEYS.licenseKey]).toBeUndefined();
 		const second = await migrateLegacySettings();
-		expect(second.migrated).toBe(false);
+		expect(second).toEqual({ migrated: false, keyImported: false, settings: null });
 	});
 	it("does not clobber v2 settings already present", async () => {
 		sim.storage.data.local[LOCAL_KEYS.settings] = {
@@ -131,6 +183,14 @@ describe("migrateLegacySettings", () => {
 		const s = await getSettings();
 		expect(s.strength.persona).toBe("blitz");
 		expect(s.strength.targetElo).toBe(LIMITS.engineEloMax);
+	});
+});
+
+describe("bootstrapServiceSystems", () => {
+	it("throws when options are passed after the singleton exists", () => {
+		bootstrapServiceSystems({ licenseClient: validClient() });
+		expect(() => bootstrapServiceSystems()).not.toThrow();
+		expect(() => bootstrapServiceSystems({ forceValid: false })).toThrow("already bootstrapped");
 	});
 });
 
@@ -158,6 +218,51 @@ describe("wireServiceLifecycle", () => {
 		expect("elo" in sim.storage.data.local).toBe(false);
 		expect((await getSettings()).strength.targetElo).toBe(LIMITS.engineEloMax);
 		expect(sim.storage.data.local[LOCAL_KEYS.installedAt]).toBeUndefined();
+		lifecycle.dispose();
+	});
+	it("validates a key imported by the migration, even while the boot-time ensure() is in flight", async () => {
+		const client = validClient();
+		const keys: string[] = [];
+		const original = client.validate.bind(client);
+		client.validate = async (key) => {
+			keys.push(key);
+			return original(key);
+		};
+		const systems = bootstrapServiceSystems({ licenseClient: client });
+		const lifecycle = wireServiceLifecycle({ systems });
+		Object.assign(sim.storage.data.local, { key: "GOLD-OLD", elo: "9" });
+		void systems.license.ensure(); // what service-worker.ts does at boot (empty key)
+		sim.runtime.fireOnInstalled({ reason: "update", previousVersion: "1.4.0" });
+		for (let i = 0; i < 10; i += 1) await settle();
+		expect(keys).toEqual(["", "GOLD-OLD"]);
+		expect(systems.license.getState().rawStatus).toBe("valid");
+		expect(sim.storage.data.local[LOCAL_KEYS.licenseKey]).toBe("GOLD-OLD");
+		lifecycle.dispose();
+	});
+	it("does not revalidate after an update that imported no key", async () => {
+		const client = validClient();
+		const systems = bootstrapServiceSystems({ licenseClient: client });
+		const lifecycle = wireServiceLifecycle({ systems });
+		Object.assign(sim.storage.data.local, { elo: "9", key: "" });
+		sim.runtime.fireOnInstalled({ reason: "update", previousVersion: "1.4.0" });
+		for (let i = 0; i < 10; i += 1) await settle();
+		expect(client.calls).toBe(1);
+		lifecycle.dispose();
+	});
+	it("a rejected license revalidation from the alarm is caught by the dispatcher", async () => {
+		const client = validClient();
+		const systems = bootstrapServiceSystems({ licenseClient: client });
+		const lifecycle = wireServiceLifecycle({ systems });
+		await systems.license.ensure();
+		sim.chrome.alarms.create(ALARM_NAMES.licenseRevalidate, { when: sim.now() + 1 });
+		sim.storage.failNextWith("quota exceeded");
+		await sim.time.advance(5);
+		for (let i = 0; i < 10; i += 1) await settle();
+		// the storage read failed before the client was reached; the rejection was caught
+		// by the dispatcher (an unhandled rejection would fail this test file)
+		expect(client.calls).toBe(1);
+		await systems.license.revalidate();
+		expect(client.calls).toBe(2);
 		lifecycle.dispose();
 	});
 	it("onStartup validates the license; the alarm dispatcher routes by name", async () => {

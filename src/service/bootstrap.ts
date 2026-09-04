@@ -65,7 +65,11 @@ export interface BootstrapOptions {
 let cached: ServiceSystems | null = null;
 
 export function bootstrapServiceSystems(options: BootstrapOptions = {}): ServiceSystems {
-	if (cached) return cached;
+	if (cached) {
+		if (Object.keys(options).length > 0)
+			throw new Error("bootstrapServiceSystems: options ignored — systems already bootstrapped");
+		return cached;
+	}
 	const gateOptions: ConstructorParameters<typeof LicenseGate>[0] = {};
 	if (options.licenseClient) gateOptions.client = options.licenseClient;
 	if (options.forceValid !== undefined) gateOptions.forceValid = options.forceValid;

@@ -1,6 +1,11 @@
 // test/service/side-panel-policy.test.ts
 import { beforeEach, describe, expect, it } from "bun:test";
-import { isChessHost, PANEL_PAGE_PATH, SidePanelPolicy } from "@service/side-panel-policy";
+import {
+	hostTestFromMatchPattern,
+	isChessHost,
+	PANEL_PAGE_PATH,
+	SidePanelPolicy,
+} from "@service/side-panel-policy";
 import { createSimulator, type Simulator } from "@test/sim";
 
 let sim: Simulator;
@@ -23,6 +28,15 @@ describe("isChessHost", () => {
 		expect(isChessHost("chrome://extensions")).toBe(false);
 		expect(isChessHost(undefined)).toBe(false);
 		expect(isChessHost("not a url")).toBe(false);
+	});
+	it("hostTestFromMatchPattern fails closed on an unparseable pattern", () => {
+		expect(hostTestFromMatchPattern("garbage")("chess.com")).toBe(false);
+		expect(hostTestFromMatchPattern("")("chess.com")).toBe(false);
+		expect(hostTestFromMatchPattern("*://*/*")("anything.example")).toBe(true);
+		expect(hostTestFromMatchPattern("https://lichess.org/*")("lichess.org")).toBe(true);
+		expect(hostTestFromMatchPattern("https://lichess.org/*")("www.lichess.org")).toBe(false);
+		expect(hostTestFromMatchPattern("*://*.chess.com/*")("chess.com")).toBe(true);
+		expect(hostTestFromMatchPattern("*://*.chess.com/*")("www.chess.com")).toBe(true);
 	});
 });
 

@@ -14,11 +14,15 @@ import { log } from "@core/logger";
 
 export const PANEL_PAGE_PATH = "pages/panel.html";
 
-/** `*://*.chess.com/*` → a test on `URL.hostname` (`*.` allows the bare host too, as Chrome does). */
-function hostTestFromMatchPattern(pattern: string): (hostname: string) => boolean {
+/**
+ * `*://*.chess.com/*` → a test on `URL.hostname` (`*.` allows the bare host too,
+ * as Chrome does). An unparseable pattern fails closed (matches nothing).
+ */
+export function hostTestFromMatchPattern(pattern: string): (hostname: string) => boolean {
 	const m = /^[^:]+:\/\/([^/]+)\//.exec(pattern);
-	const hostPart = m?.[1] ?? "";
-	if (hostPart === "*" || hostPart === "") return () => true;
+	if (!m || m[1] === undefined) return () => false;
+	const hostPart = m[1];
+	if (hostPart === "*") return () => true;
 	if (hostPart.startsWith("*.")) {
 		const base = hostPart.slice(2).toLowerCase();
 		return (host) => host === base || host.endsWith(`.${base}`);

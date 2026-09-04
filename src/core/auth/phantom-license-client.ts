@@ -9,6 +9,7 @@
 import type { LicenseClient, LicenseResult, LicenseVerdict } from "@core/auth/license-client";
 import { TIMINGS } from "@core/constants/timings";
 import { URLS } from "@core/constants/urls";
+import { errorMessage } from "@core/util/errors";
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -27,7 +28,11 @@ const VERDICTS: Readonly<Record<string, LicenseVerdict>> = {
 const isRecord = (v: unknown): v is Record<string, unknown> =>
 	typeof v === "object" && v !== null && !Array.isArray(v);
 
-/** First parseable `{…}` object in `text`, or `null`. */
+/**
+ * First parseable `{…}` object in `text`, or `null`. Braces are balanced
+ * without tracking string literals: a brace inside a JSON string only makes
+ * that candidate fail to parse, and scanning resumes at the next `{`.
+ */
 export function extractFirstJsonObject(text: string): Record<string, unknown> | null {
 	let from = 0;
 	for (;;) {
@@ -52,11 +57,6 @@ export function extractFirstJsonObject(text: string): Record<string, unknown> | 
 		}
 		from = start + 1;
 	}
-}
-
-function errorText(error: unknown): string {
-	if (error instanceof Error) return error.message || error.name;
-	return String(error);
 }
 
 function readExpiresAt(body: Record<string, unknown>): number | undefined {
@@ -94,7 +94,7 @@ export class PhantomLicenseClient implements LicenseClient {
 			httpStatus = response.status;
 			text = await response.text();
 		} catch (error) {
-			return { status: "network_error", message: errorText(error) };
+			return { status: "network_error", message: errorMessage(error) };
 		}
 		if (!ok) return { status: "network_error", message: `HTTP ${httpStatus}` };
 		const body = extractFirstJsonObject(text);

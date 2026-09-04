@@ -24,6 +24,7 @@ import {
 	UNKNOWN_LICENSE_STATE,
 } from "@core/storage/license-storage";
 import { dedupeAsync } from "@core/util/dedupe-async";
+import { errorMessage } from "@core/util/errors";
 import type { LicenseState } from "@typedefs/settings";
 
 export interface LicenseGateOptions {
@@ -31,11 +32,6 @@ export interface LicenseGateOptions {
 	/** Defaults to `LICENSE_FORCE_VALID`; injectable so tests can exercise real gating. */
 	forceValid?: boolean;
 	now?: () => number;
-}
-
-function errorText(error: unknown): string {
-	if (error instanceof Error) return error.message || error.name;
-	return String(error);
 }
 
 export class LicenseGate {
@@ -99,7 +95,7 @@ export class LicenseGate {
 		try {
 			result = await this.client.validate(key);
 		} catch (error) {
-			result = { status: "network_error", message: errorText(error) };
+			result = { status: "network_error", message: errorMessage(error) };
 		}
 		const next = this.nextState(previous, result);
 		await setLicenseState(next);

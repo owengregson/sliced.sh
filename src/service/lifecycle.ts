@@ -51,10 +51,33 @@ const MIN_LEGACY_WAIT_S = 0.5;
 
 const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 
+/**
+ * The 1.x popup stored its range sliders as strings (`event.target.value`)
+ * while `background.js` seeded numeric defaults, so both shapes exist in the
+ * wild. Returns a finite number or `null`.
+ */
+function toNumber(v: unknown): number | null {
+	if (finite(v)) return v;
+	if (typeof v === "string" && v.trim() !== "") {
+		const n = Number(v);
+		return Number.isFinite(n) ? n : null;
+	}
+	return null;
+}
+
+/** Toggles were stored as booleans (`event.target.checked`); accept "true"/"false" defensively. */
+function toBool(v: unknown): boolean | undefined {
+	if (typeof v === "boolean") return v;
+	if (v === "true") return true;
+	if (v === "false") return false;
+	return undefined;
+}
+
 /** `targetElo = 1320 + (elo-1) * (3190-1320)/19`, rounded to 10; `null` for a non-number. */
 export function legacyEloToTargetElo(elo: unknown): number | null {
-	if (!finite(elo)) return null;
-	const level = clamp(elo, LEGACY_ELO_MIN, LEGACY_ELO_MAX);
+	const value = toNumber(elo);
+	if (value === null) return null;
+	const level = clamp(value, LEGACY_ELO_MIN, LEGACY_ELO_MAX);
 	const span = LIMITS.engineEloMax - LIMITS.engineEloMin;
 	const raw =
 		LIMITS.engineEloMin + ((level - LEGACY_ELO_MIN) * span) / (LEGACY_ELO_MAX - LEGACY_ELO_MIN);
@@ -67,15 +90,24 @@ export function legacyEloToTargetElo(elo: unknown): number | null {
  * (Task 16's migration rule), rounded to 2 decimals. `null` for a non-number.
  */
 export function legacyMaxWaitToSpeedScale(maxWaitTime: unknown): number | null {
-	if (!finite(maxWaitTime)) return null;
-	const ratio = Math.max(maxWaitTime, MIN_LEGACY_WAIT_S) / LEGACY_DEFAULT_MAX_WAIT_S;
+	const value = toNumber(maxWaitTime);
+	if (value === null) return null;
+	const ratio = Math.max(value, MIN_LEGACY_WAIT_S) / LEGACY_DEFAULT_MAX_WAIT_S;
 	const offset = clamp(Math.log(ratio), -SPEED_LOG_CLAMP, SPEED_LOG_CLAMP);
 	return Math.round(Math.exp(offset) * 100) / 100;
 }
 
-/** Legacy keybinds were stored as `KeyboardEvent.code`; derive `key` from it, no modifiers. */
-function legacyCodeToKeybind(code: unknown): Keybind | null {
-	if (typeof code !== "string" || code === "") return null;
+/**
+ * Legacy keybinds were stored as `KeyboardEvent.code` (popup capture), but
+ * `background.js` seeded the bare defaults `"A"` / `"W"`, so a single letter
+ * or digit is normalised to its `Key*` / `Digit*` code. `key` is derived, no
+ * modifiers.
+ */
+export function legacyCodeToKeybind(raw: unknown): Keybind | null {
+	if (typeof raw !== "string" || raw === "") return null;
+	let code = raw;
+	if (/^[A-Za-z]$/.test(raw)) code = `Key${raw.toUpperCase()}`;
+	else if (/^\d$/.test(raw)) code = `Digit${raw}`;
 	let key = code;
 	if (code === "Space") key = " ";
 	else if (/^Key[A-Z]$/.test(code)) key = code.slice(3).toLowerCase();
@@ -83,27 +115,26 @@ function legacyCodeToKeybind(code: unknown): Keybind | null {
 	return { key, code, altKey: false, ctrlKey: false, metaKey: false, shiftKey: false };
 }
 
-const bool = (v: unknown): boolean | undefined => (typeof v === "boolean" ? v : undefined);
-
 function buildLegacyPatch(legacy: Record<string, unknown>): SettingsPatch {
 	const patch: SettingsPatch = {};
-	const enabled = bool(legacy.extensionActive);
+	const enabled = toBool(legacy.extensionActive);
 	if (enabled !== undefined) patch.enabled = enabled;
 
 	const targetElo = legacyEloToTargetElo(legacy.elo);
 	if (targetElo !== null) patch.strength = { targetElo };
 
-	if (finite(legacy.depthValue)) patch.engine = { depthCap: legacy.depthValue };
+	const depthCap = toNumber(legacy.depthValue);
+	if (depthCap !== null) patch.engine = { depthCap };
 
 	const speedScale = legacyMaxWaitToSpeedScale(legacy.maxWaitTime);
 	if (speedScale !== null) patch.timing = { speedScale };
 
 	const automation: SettingsPatch["automation"] = {};
-	const highlight = bool(legacy.highlightMoves);
+	const highlight = toBool(legacy.highlightMoves);
 	if (highlight !== undefined) automation.highlightMoves = highlight;
-	const autoMove = bool(legacy.automove);
+	const autoMove = toBool(legacy.automove);
 	if (autoMove !== undefined) automation.autoMove = autoMove;
-	const autoQueue = bool(legacy.autoPlayNewGame);
+	const autoQueue = toBool(legacy.autoPlayNewGame);
 	if (autoQueue !== undefined) automation.autoQueue = autoQueue;
 	if (Object.keys(automation).length > 0) patch.automation = automation;
 
@@ -122,6 +153,8 @@ function buildLegacyPatch(legacy: Record<string, unknown>): SettingsPatch {
 export interface MigrationResult {
 	/** `true` when at least one legacy key was present (and has now been removed). */
 	migrated: boolean;
+	/** `true` when a non-empty legacy `key` was written to `LOCAL_KEYS.licenseKey`. */
+	keyImported: boolean;
 	settings: Settings | null;
 }
 
@@ -129,13 +162,15 @@ export interface MigrationResult {
 export async function migrateLegacySettings(): Promise<MigrationResult> {
 	const legacy = await chromeLocalGetRaw(LEGACY_KEYS);
 	const present = LEGACY_KEYS.filter((k) => legacy[k] !== undefined);
-	if (present.length === 0) return { migrated: false, settings: null };
+	if (present.length === 0) return { migrated: false, keyImported: false, settings: null };
 
 	const settings = await setSettings(buildLegacyPatch(legacy));
-	if (typeof legacy.key === "string" && legacy.key !== "") await setLicenseKey(legacy.key);
+	const importedKey = typeof legacy.key === "string" ? legacy.key.trim() : "";
+	const keyImported = importedKey !== "";
+	if (keyImported) await setLicenseKey(importedKey);
 	await chromeLocalRemoveRaw(present);
-	log.info("lifecycle: migrated legacy settings", { keys: present });
-	return { migrated: true, settings };
+	log.info("lifecycle: migrated legacy settings", { keys: present, keyImported });
+	return { migrated: true, keyImported, settings };
 }
 
 // ---------------------------------------------------------------------------
@@ -162,7 +197,12 @@ export function wireServiceLifecycle(options: LifecycleOptions): ServiceLifecycl
 	const { systems } = options;
 	const now = options.now ?? (() => Date.now());
 	const alarmHandlers = new Map<AlarmName, AlarmHandler>([
-		[ALARM_NAMES.licenseRevalidate, () => void systems.license.revalidate()],
+		[
+			ALARM_NAMES.licenseRevalidate,
+			async () => {
+				await systems.license.revalidate();
+			},
+		],
 		[ALARM_NAMES.keepalive, () => systems.keepalive.onAlarm()],
 		[ALARM_NAMES.timingLogFlush, () => log.debug("lifecycle: timing-log flush (no handler yet)")],
 	]);
@@ -172,13 +212,18 @@ export function wireServiceLifecycle(options: LifecycleOptions): ServiceLifecycl
 			reason: details.reason,
 			previousVersion: details.previousVersion ?? null,
 		});
+		let keyImported = false;
 		if (details.reason === "install") {
 			await chromeLocalSet(LOCAL_KEYS.installedAt, now());
 			await setSettings({});
 		} else if (details.reason === "update" && isLegacyVersion(details.previousVersion)) {
-			await migrateLegacySettings();
+			keyImported = (await migrateLegacySettings()).keyImported;
 		}
+		// `ensure()` may already be in flight from SW boot with the pre-migration (empty)
+		// key: wait for it, then validate the imported key so the user is not shown
+		// `rawStatus: "invalid"` (or locked out when enforcing) until the 6 h alarm.
 		await systems.license.ensure();
+		if (keyImported) await systems.license.revalidate();
 	}
 
 	async function handleCommand(command: string): Promise<void> {

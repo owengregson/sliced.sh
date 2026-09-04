@@ -16,6 +16,7 @@
 import { onRuntimeMessage } from "@core/chrome/runtime";
 import type { MessageType } from "@core/constants/messages";
 import { log } from "@core/logger";
+import { errorMessage } from "@core/util/errors";
 import type { MessageEnvelope, MessageResponseMap, TypedMessage } from "./typed-messages";
 
 export type MessageHandler<T extends MessageType> = (
@@ -44,11 +45,6 @@ export interface MessageRouter {
 		message: unknown,
 		sender: chrome.runtime.MessageSender
 	): Promise<MessageEnvelope> | undefined;
-}
-
-function errorMessage(error: unknown): string {
-	if (error instanceof Error) return error.message || String(error);
-	return String(error);
 }
 
 function isPromiseLike(value: unknown): value is Promise<unknown> {

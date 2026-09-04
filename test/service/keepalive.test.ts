@@ -55,6 +55,23 @@ describe("Keepalive", () => {
 		expect(fired).toHaveLength(2);
 		expect(() => k.onAlarm()).not.toThrow();
 	});
+	it("an orphaned alarm (SW restarted, reasons lost) is cleared on its next tick", async () => {
+		const before = new Keepalive();
+		await before.hold("game");
+		expect(keepaliveAlarms()).toHaveLength(1);
+		// SW eviction: in-memory reasons vanish, chrome.alarms persists.
+		const after = new Keepalive();
+		await sim.time.advance(ALARM_CADENCE_MINUTES.keepalive * 60_000);
+		expect(sim.alarms.fired().filter((a) => a.name === ALARM_NAMES.keepalive)).toHaveLength(1);
+		after.onAlarm(); // what the lifecycle dispatcher calls
+		await sim.time.runMicrotasks();
+		expect(keepaliveAlarms()).toHaveLength(0);
+		// a tick while held leaves the alarm alone
+		await after.hold("debugger");
+		after.onAlarm();
+		await sim.time.runMicrotasks();
+		expect(keepaliveAlarms()).toHaveLength(1);
+	});
 	it("dispose releases every reason and clears the alarm", async () => {
 		const k = new Keepalive();
 		await k.hold("game");

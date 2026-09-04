@@ -1,6 +1,9 @@
 /** License validation contract (§3.6). `PhantomLicenseClient` is the default implementation. */
 
-export type LicenseVerdict = "valid" | "invalid" | "ip_limit" | "network_error";
+import type { LicenseState } from "@typedefs/settings";
+
+/** What the endpoint can say — `LicenseState` adds the gate-only `unknown` / `expired`. */
+export type LicenseVerdict = Exclude<LicenseState["status"], "unknown" | "expired">;
 
 export interface LicenseResult {
 	status: LicenseVerdict;
