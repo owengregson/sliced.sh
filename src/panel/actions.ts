@@ -24,7 +24,11 @@ export interface ActionHost {
 export type UrlKey = keyof typeof URLS;
 
 function resolveUrl(raw: string): string | null {
-	if (Object.hasOwn(URLS, raw)) return URLS[raw as UrlKey];
+	if (Object.hasOwn(URLS, raw)) {
+		// Only string entries are navigable; the registry also holds match-pattern lists.
+		const value: unknown = URLS[raw as UrlKey];
+		return typeof value === "string" ? value : null;
+	}
 	return /^https:\/\//.test(raw) ? raw : null;
 }
 
