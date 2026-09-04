@@ -1,10 +1,15 @@
 // test/pagescript/spoof.test.ts
 import { describe, expect, it } from "bun:test";
-import { DEV_SPOOF_SEED, deriveToken, resolveSpoofSeed } from "@pagescript/spoof";
+import { deriveToken } from "@core/spoof";
+import { DEV_SPOOF_SEED, deriveToken as reexported, resolveSpoofSeed } from "@pagescript/spoof";
 
 const IDENT = /^[a-z][a-z0-9]*$/;
 
 describe("deriveToken", () => {
+	it("is the runtime-safe @core/spoof implementation, re-exported for the emitter", () => {
+		expect(reexported).toBe(deriveToken);
+	});
+
 	it("is deterministic per (seed, purpose)", () => {
 		expect(deriveToken("seed-a", "ready")).toBe(deriveToken("seed-a", "ready"));
 		expect(deriveToken("seed-a", "ready")).not.toBe(deriveToken("seed-b", "ready"));

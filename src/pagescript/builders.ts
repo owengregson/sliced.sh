@@ -26,6 +26,7 @@ import {
 	type IfStatement,
 	isBindingName,
 	isIdentifierName,
+	isParamName,
 	isSpoofName,
 	type Literal,
 	type LogicalExpression,
@@ -177,15 +178,20 @@ export const js = {
 		kind: "let",
 		declarations: [{ type: "VariableDeclarator", id: binding(name, "js.let_"), init: init ?? null }],
 	}),
-	assign: (target: Expression, value: Expression): ExpressionStatement => ({
-		type: "ExpressionStatement",
-		expression: {
-			type: "AssignmentExpression",
-			operator: "=",
-			left: target as MemberExpression | Identifier,
-			right: value,
-		},
-	}),
+	assign: (target: Expression, value: Expression): ExpressionStatement => {
+		const assignable =
+			target.type === "MemberExpression" ||
+			(target.type === "Identifier" && !isParamName(target.name));
+		if (!assignable) {
+			throw new PagescriptError(
+				`js.assign: target must be an identifier or member, got ${target.type}`
+			);
+		}
+		return {
+			type: "ExpressionStatement",
+			expression: { type: "AssignmentExpression", operator: "=", left: target, right: value },
+		};
+	},
 	if_: (test: Expression, then: Statement[], else_?: Statement[]): IfStatement => ({
 		type: "IfStatement",
 		test,

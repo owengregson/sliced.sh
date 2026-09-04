@@ -1,7 +1,7 @@
 // test/pagescript/std.test.ts
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { SPOOF_PURPOSES } from "@core/constants/spoof";
 import { defineProgram, deriveToken, emit, js, std } from "@pagescript";
-import { MESSAGE_KEY_PURPOSE } from "@pagescript/std";
 import { installDom } from "../dom";
 
 let dom: ReturnType<typeof installDom>;
@@ -50,13 +50,13 @@ describe("std.postToExtension / std.onExtensionMessage", () => {
 		} finally {
 			win.postMessage = original;
 		}
-		const key = deriveToken(seed, MESSAGE_KEY_PURPOSE);
+		const key = deriveToken(seed, SPOOF_PURPOSES.messageKey);
 		expect(posted).toEqual([[{ [key]: "tok-1", type: "move", san: "e4" }, win.location.origin]]);
 	});
 
 	it("onExtensionMessage only invokes the handler for same-window messages carrying the token", () => {
 		const win = dom.window;
-		const key = deriveToken(seed, MESSAGE_KEY_PURPOSE);
+		const key = deriveToken(seed, SPOOF_PURPOSES.messageKey);
 		const seen: unknown[] = [];
 		(globalThis as Record<string, unknown>).__seen = seen;
 		try {

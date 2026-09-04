@@ -5,19 +5,23 @@
  * executes at build time.
  *
  * Build/test-time only: nothing under `src/pagescript/` is imported by a
- * runtime entry bundle (§5.4).
+ * runtime entry bundle (§5.4); only `@core/spoof` and the `SPOOF_PURPOSES`
+ * registry are shared with runtime code. The registry is imported by file,
+ * not via the `@core/constants` barrel: the barrel pulls in `limits.ts`,
+ * which reads a bundler define at load time and so cannot run inside the
+ * plain-bun build process that hosts the generator.
  */
 
+import { SPOOF_PURPOSES } from "@core/constants/spoof";
 import { js, property } from "./builders";
 import type { CallExpression, Expression, Statement } from "./nodes";
 
 /**
- * Spoof purpose of the property that tags extension messages posted through
- * `window.postMessage`. Both directions (`postToExtension`, `onExtensionMessage`)
- * derive the same token from it, so the ISOLATED-world side must use
- * `deriveToken(seed, MESSAGE_KEY_PURPOSE)` — never a literal.
+ * Both message directions (`postToExtension`, `onExtensionMessage`) tag the
+ * envelope with `deriveToken(seed, SPOOF_PURPOSES.messageKey)`; the
+ * ISOLATED-world side derives the same key via `@core/spoof` — never a literal.
  */
-export const MESSAGE_KEY_PURPOSE = "msgKey";
+const MESSAGE_KEY = SPOOF_PURPOSES.messageKey;
 
 const doc = js.id("document");
 const win = js.id("window");
@@ -37,7 +41,7 @@ export const std = {
 			js.member(win, "postMessage"),
 			{
 				type: "ObjectExpression",
-				properties: [property(js.spoof(MESSAGE_KEY_PURPOSE), token), js.spread(payload)],
+				properties: [property(js.spoof(MESSAGE_KEY), token), js.spread(payload)],
 			},
 			js.member(js.id("location"), "origin")
 		),
@@ -66,7 +70,7 @@ export const std = {
 							js.not(data),
 							js.or(
 								js.op(js.typeof_(data), "!==", js.str("object")),
-								js.op(js.member(data, js.spoof(MESSAGE_KEY_PURPOSE)), "!==", token)
+								js.op(js.member(data, js.spoof(MESSAGE_KEY)), "!==", token)
 							)
 						),
 						[js.ret()]

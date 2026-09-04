@@ -1,6 +1,6 @@
 // test/scripts/gen-pagescript.test.ts
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -8,6 +8,8 @@ import { bindCode, DEV_SPOOF_SEED, defineProgram, emit, js, std } from "@pagescr
 import {
 	generatePagescript,
 	generatePrograms,
+	parseSeedArg,
+	ROOT,
 	renderEntry,
 	renderModule,
 } from "../../scripts/gen-pagescript";
@@ -71,6 +73,7 @@ describe("generatePagescript", () => {
 		expect(src).not.toMatch(/^\s*import\b/m);
 		expect(src).toContain("export const code = ");
 		expect(src).toContain("export function bind(args: Args): string");
+		expect(src).toContain("export const params: readonly ParamSpec[] = ");
 		expect(src).toContain("sel: string;");
 		expect(src).toContain("depth: number;");
 		expect(src).toContain("on: boolean;");
@@ -90,6 +93,7 @@ describe("generatePagescript", () => {
 		const bound = mod.bind(args);
 		expect(bound).toBe(bindCode(expected.code, expected.params, args));
 		expect(new Function(bound)()).toEqual(['a"b', 3, false, { c: [1, null] }, "undefined"]);
+		expect(bound).toContain('("a\\"b")');
 		expect(() => mod.bind({ sel: 1, depth: 3, on: false, cfg: null })).toThrow(/string/);
 		expect(() => mod.bind({ depth: 3, on: false, cfg: null })).toThrow(/sel/);
 	});
@@ -137,6 +141,45 @@ describe("generatePagescript", () => {
 		await expect(
 			generatePagescript(dist, { programs: [bare, bare], generatedDir, seed: "s" })
 		).rejects.toThrow(/duplicate/);
+	});
+
+	it("generated modules type-check under strict tsc, including a zero-parameter program", async () => {
+		const dist = path.join(root, "tsc-dist");
+		const generatedDir = path.join(root, "tsc-gen");
+		await generatePrograms(dist, { programs: [bare, probe], generatedDir, seed: "s" });
+		await writeFile(
+			path.join(generatedDir, "tsconfig.json"),
+			JSON.stringify({
+				compilerOptions: {
+					target: "ES2022",
+					module: "esnext",
+					moduleResolution: "bundler",
+					lib: ["ES2022"],
+					types: [],
+					strict: true,
+					noUncheckedIndexedAccess: true,
+					exactOptionalPropertyTypes: true,
+					noEmit: true,
+					skipLibCheck: true,
+				},
+				include: ["*.ts"],
+			})
+		);
+		const tsc = Bun.spawnSync(["bun", "x", "tsc", "-p", path.join(generatedDir, "tsconfig.json")], {
+			cwd: ROOT,
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+		const output = `${tsc.stdout.toString()}${tsc.stderr.toString()}`;
+		expect(output).not.toContain("error TS");
+		expect(tsc.exitCode).toBe(0);
+	}, 60_000);
+
+	it("parseSeedArg reads --seed and rejects a missing value", () => {
+		expect(parseSeedArg([])).toBeUndefined();
+		expect(parseSeedArg(["--seed", "abc"])).toBe("abc");
+		expect(() => parseSeedArg(["--seed"])).toThrow(/--seed/);
+		expect(() => parseSeedArg(["--seed", "--other"])).toThrow(/--seed/);
 	});
 
 	it("renderModule / renderEntry are pure templates", () => {

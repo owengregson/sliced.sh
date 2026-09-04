@@ -11,8 +11,9 @@
 // only the generated modules. With an empty registry the directories are still
 // created and the step succeeds.
 //
-// Seed: `--seed <value>` / `SL_SPOOF_SEED` env (the build passes its
-// `__SL_SPOOF_SEED__`), else the fixed dev seed.
+// Seed: `--seed <value>` / `SL_SPOOF_SEED` env, else the fixed dev seed.
+// Handing the build's `__SL_SPOOF_SEED__` to this step (so page programs and
+// the content bundle agree) is deferred to Task 21 together with the bridges.
 
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -23,7 +24,7 @@ import {
 	emit,
 	type ParamSpec,
 	type ParamType,
-	paramPlaceholder,
+	PLACEHOLDER_RE,
 } from "../src/pagescript";
 
 export const ROOT = path.resolve(import.meta.dir, "..");
@@ -63,9 +64,10 @@ export function renderModule(name: string, params: readonly ParamSpec[], code: s
 		"// Runtime-safe: no imports. `bind` mirrors src/pagescript/bind.ts.",
 		"",
 		"type Json = string | number | boolean | null | readonly Json[] | { readonly [key: string]: Json };",
+		'type ParamSpec = { name: string; type: "string" | "number" | "boolean" | "json" };',
 		"",
 		`export const name = ${JSON.stringify(name)};`,
-		`export const params = ${JSON.stringify(params)} as const;`,
+		`export const params: readonly ParamSpec[] = ${JSON.stringify(params)};`,
 		`export const code = ${JSON.stringify(code)};`,
 		`export type Args = ${argsType};`,
 		"",
@@ -90,13 +92,16 @@ export function renderModule(name: string, params: readonly ParamSpec[], code: s
 		"",
 		"export function bind(args: Args): string {",
 		"\tconst values: Record<string, unknown> = args;",
-		"\tlet out = code;",
+		"\tconst encoded = new Map<string, string>();",
 		"\tfor (const p of params) {",
 		'\t\tif (!(p.name in values)) throw new TypeError("bind: missing argument " + JSON.stringify(p.name));',
-		"\t\tconst encoded = encode(p.name, p.type, values[p.name]);",
-		`\t\tout = out.replaceAll(${JSON.stringify(paramPlaceholder("").slice(0, -1))} + p.name + '"', () => encoded);`,
+		'\t\tencoded.set(p.name, "(" + encode(p.name, p.type, values[p.name]) + ")");',
 		"\t}",
-		"\treturn out;",
+		`\treturn code.replace(${PLACEHOLDER_RE.toString()}, (match, name: string) => {`,
+		"\t\tconst value = encoded.get(name);",
+		'\t\tif (value === undefined) throw new TypeError("bind: undeclared placeholder " + match);',
+		"\t\treturn value;",
+		"\t});",
 		"}",
 		"",
 	].join("\n");
@@ -107,9 +112,15 @@ export function renderEntry(boundCode: string): string {
 	return `(() => {\n${boundCode}\n})();\n`;
 }
 
-function parseSeedArg(argv: readonly string[]): string | undefined {
+/** `--seed <value>` from argv; a trailing `--seed` with no value is an error. */
+export function parseSeedArg(argv: readonly string[]): string | undefined {
 	const i = argv.indexOf("--seed");
-	return i >= 0 ? argv[i + 1] : undefined;
+	if (i < 0) return undefined;
+	const value = argv[i + 1];
+	if (value === undefined || value.startsWith("--")) {
+		throw new Error("gen-pagescript: --seed requires a value");
+	}
+	return value;
 }
 
 /** Compile the registry (or `options.programs`) and write the generated files. */

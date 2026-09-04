@@ -4,6 +4,7 @@ export * from "./limits";
 export * from "./messages";
 export * from "./ports";
 export * from "./sounds";
+export * from "./spoof";
 export * from "./storage-keys";
 export * from "./timings";
 export * from "./urls";

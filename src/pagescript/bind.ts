@@ -2,9 +2,16 @@
 /**
  * `defineProgram` and `bind` (§5.4). `emit` prints every `$$param:x` slot as
  * the quoted placeholder literal `"$$param:x"`; `bindCode` replaces each
- * placeholder — quotes included — with `JSON.stringify(args.x)`, so string
+ * placeholder — quotes included — with `(JSON.stringify(args.x))`, so string
  * parameters land as JS string literals, `json` parameters as object/array
- * literals, and `number` / `boolean` parameters as bare literals.
+ * literals, and `number` / `boolean` parameters as bare literals. The
+ * parentheses keep every substitution an expression (`() => ({...})`,
+ * `(-3) ** 2`); substitution is a single regex pass with a lookup, so a value
+ * that itself contains placeholder text can never be re-substituted.
+ *
+ * Encoding note: `JSON.stringify` output may contain U+2028/U+2029 or
+ * `</script>`; both are legal inside JS string literals on Chrome >= 128 and
+ * irrelevant for our delivery paths (script files and CDP evaluate).
  *
  * The generator (`scripts/gen-pagescript.ts`) inlines an equivalent of
  * `bindCode` into each generated module so shipped code never imports this
@@ -61,6 +68,9 @@ export function paramPlaceholder(name: string): string {
 	return JSON.stringify(PARAM_PREFIX + name);
 }
 
+/** Matches one printed placeholder; group 1 is the parameter name. */
+export const PLACEHOLDER_RE = /"\$\$param:(\w+)"/g;
+
 function encode(spec: ParamSpec, value: unknown): string {
 	const fail = (): never => {
 		throw new TypeError(
@@ -87,13 +97,16 @@ export function bindCode(
 	params: readonly ParamSpec[],
 	args: Readonly<Record<string, unknown>>
 ): string {
-	let out = code;
+	const encoded = new Map<string, string>();
 	for (const spec of params) {
 		if (!(spec.name in args)) throw new TypeError(`bind: missing argument "${spec.name}"`);
-		const encoded = encode(spec, args[spec.name]);
-		out = out.replaceAll(paramPlaceholder(spec.name), () => encoded);
+		encoded.set(spec.name, `(${encode(spec, args[spec.name])})`);
 	}
-	return out;
+	return code.replace(PLACEHOLDER_RE, (match, name: string) => {
+		const value = encoded.get(name);
+		if (value === undefined) throw new TypeError(`bind: undeclared placeholder ${match}`);
+		return value;
+	});
 }
 
 export function defineProgram<P extends ParamMap>(def: ProgramDef<P>): PageProgram<P> {
@@ -104,6 +117,9 @@ export function defineProgram<P extends ParamMap>(def: ProgramDef<P>): PageProgr
 		if (!isBindingName(name)) {
 			throw new PagescriptError(`defineProgram "${def.name}": invalid parameter name "${name}"`);
 		}
+	}
+	if (def.entryArgs !== undefined && def.entry !== true) {
+		throw new PagescriptError(`defineProgram "${def.name}": entryArgs requires entry: true`);
 	}
 	const specs: ParamSpec[] = Object.entries(def.params).map(([name, type]) => ({ name, type }));
 	const program: PageProgram<P> = {

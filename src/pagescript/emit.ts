@@ -85,13 +85,16 @@ function transform(
 		return { type: "Identifier", name };
 	}
 
-	if (
-		value.type === "Literal" &&
-		typeof value.value === "string" &&
-		value.value.includes(PARAM_PREFIX)
-	) {
+	const text =
+		value.type === "Literal" && typeof value.value === "string"
+			? value.value
+			: value.type === "TemplateElement"
+				? (value.value as { raw?: unknown }).raw
+				: undefined;
+	if (typeof text === "string" && text.includes(PARAM_PREFIX)) {
+		const what = value.type === "Literal" ? "string literal" : "template text";
 		throw new PagescriptError(
-			`program "${ctx.program}": string literal ${JSON.stringify(value.value)} collides with the parameter placeholder syntax`
+			`program "${ctx.program}": ${what} ${JSON.stringify(text)} collides with the parameter placeholder syntax`
 		);
 	}
 

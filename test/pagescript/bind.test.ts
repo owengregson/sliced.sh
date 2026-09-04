@@ -2,6 +2,8 @@
 import { describe, expect, it } from "bun:test";
 import { bindCode, defineProgram, emit, js, paramPlaceholder } from "@pagescript";
 
+const P = { name: "x", type: "json" } as const;
+
 const seed = "bind-seed";
 
 describe("bindCode", () => {
@@ -14,7 +16,7 @@ describe("bindCode", () => {
 			{ name: "j", type: "json" },
 		] as const;
 		const out = bindCode(code, params, { s: "wc-chess-board", n: 3, b: false, j: { a: [1, "x"] } });
-		expect(out).toBe('f("wc-chess-board", 3, false, {"a":[1,"x"]})');
+		expect(out).toBe('f(("wc-chess-board"), (3), (false), ({"a":[1,"x"]}))');
 	});
 
 	it("escapes strings safely (quotes, backslashes, newlines, $ patterns)", () => {
@@ -22,12 +24,42 @@ describe("bindCode", () => {
 		const value = 'say "hi"\\ $& $1 $$ \n end';
 		const out = bindCode(code, [{ name: "s", type: "string" }], { s: value });
 		expect(new Function(`return ${out.slice(2, -1)};`)()).toBe(value);
-		expect(out).toBe(`g(${JSON.stringify(value)})`);
+		expect(out).toBe(`g((${JSON.stringify(value)}))`);
 	});
 
 	it("replaces every occurrence of a placeholder", () => {
 		const code = `[${paramPlaceholder("x")}, ${paramPlaceholder("x")}]`;
-		expect(bindCode(code, [{ name: "x", type: "number" }], { x: 7 })).toBe("[7, 7]");
+		expect(bindCode(code, [{ name: "x", type: "number" }], { x: 7 })).toBe("[(7), (7)]");
+	});
+
+	it("parenthesises substitutions so object bodies and unary operands stay expressions", () => {
+		const arrowProg = defineProgram({
+			name: "arrow",
+			params: { cfg: "json" },
+			build: (p) => js.program([js.ret(js.call(js.arrow([], p.cfg)))]),
+		});
+		expect(new Function(arrowProg.bind({ cfg: { a: 1 } }))()).toEqual({ a: 1 });
+		const powProg = defineProgram({
+			name: "pow",
+			params: { n: "number" },
+			build: (p) => js.program([js.ret(js.op(p.n, "**", js.num(2)))]),
+		});
+		expect(new Function(powProg.bind({ n: -3 }))()).toBe(9);
+	});
+
+	it("substitutes in a single pass: a value containing placeholder text is not re-substituted", () => {
+		const code = `[${paramPlaceholder("a")}, ${paramPlaceholder("b")}]`;
+		const params = [
+			{ name: "a", type: "json" },
+			{ name: "b", type: "string" },
+		] as const;
+		const out = bindCode(code, params, { a: { s: '"$$param:b"' }, b: "safe" });
+		expect(new Function(`return ${out};`)()).toEqual([{ s: '"$$param:b"' }, "safe"]);
+		expect(out.split("safe")).toHaveLength(2);
+	});
+
+	it("rejects a placeholder in the code that no declared parameter covers", () => {
+		expect(() => bindCode(`f(${paramPlaceholder("ghost")})`, [P], { x: 1 })).toThrow(/ghost/);
 	});
 
 	it("rejects a missing argument and a wrongly typed argument", () => {
@@ -84,6 +116,17 @@ describe("defineProgram", () => {
 		});
 		expect(prog.entry).toBe(true);
 		expect(prog.entryArgs).toEqual({ sel: "cg-board" });
+	});
+
+	it("rejects entryArgs on a program that is not an entry", () => {
+		expect(() =>
+			defineProgram({
+				name: "x",
+				params: { sel: "string" },
+				entryArgs: { sel: "a" },
+				build: () => js.program([]),
+			})
+		).toThrow(/entry/);
 	});
 
 	it("rejects a param name that is not a valid identifier", () => {

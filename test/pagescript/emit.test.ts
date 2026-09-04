@@ -114,6 +114,12 @@ describe("emit", () => {
 			build: () => js.program([js.ret(js.str("$$param:sel"))]),
 		});
 		expect(() => emit(prog, { seed: "seed" })).toThrow(/placeholder/i);
+		const tpl = defineProgram({
+			name: "collide-tpl",
+			params: { sel: "string" },
+			build: () => js.program([js.ret(js.tpl(["x $$param:sel ", ""], js.id("y")))]),
+		});
+		expect(() => emit(tpl, { seed: "seed" })).toThrow(/placeholder/i);
 	});
 
 	it("returns the declared params in declaration order", () => {

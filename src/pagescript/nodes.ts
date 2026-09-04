@@ -6,7 +6,8 @@
  * `@types/estree` rather than redeclared.
  *
  * Build/test-time only: nothing under `src/pagescript/` is imported by a
- * runtime entry bundle (§5.4). Page programs ship as generated strings.
+ * runtime entry bundle (§5.4). Page programs ship as generated strings; the
+ * only runtime-safe pieces are `src/core/spoof.ts` and `SPOOF_PURPOSES`.
  *
  * Placeholders are plain Identifiers with a reserved name prefix:
  *   `$$param:<name>`   — a bind-time parameter, substituted by `bind()`

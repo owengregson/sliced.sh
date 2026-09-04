@@ -92,6 +92,10 @@ describe("js builders: statements", () => {
 		expect(print(js.assign(js.member(js.id("a"), "b"), js.num(3)))).toBe("a.b = 3;");
 		expect(print(js.expr(js.call(js.id("f"))))).toBe("f();");
 		expect(() => js.const_("not ident", js.num(1))).toThrow();
+		expect(print(js.assign(js.id("a"), js.num(3)))).toBe("a = 3;");
+		expect(() => js.assign(js.param("p"), js.num(1))).toThrow(/target/);
+		expect(() => js.assign(js.str("s"), js.num(1))).toThrow(/target/);
+		expect(() => js.assign(js.call(js.id("f")), js.num(1))).toThrow(/target/);
 	});
 
 	it("if_ / forOf / while_", () => {

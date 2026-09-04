@@ -17,6 +17,7 @@ export {
 	type ParamArgs,
 	type ParamMap,
 	type ParamSlots,
+	PLACEHOLDER_RE,
 	type ProgramDef,
 	paramPlaceholder,
 } from "./bind";
@@ -37,4 +38,4 @@ export type {
 } from "./nodes";
 export { PagescriptError } from "./nodes";
 export { DEV_SPOOF_SEED, deriveToken, resolveSpoofSeed } from "./spoof";
-export { MESSAGE_KEY_PURPOSE, std } from "./std";
+export { std } from "./std";
