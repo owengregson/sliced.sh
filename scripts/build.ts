@@ -68,6 +68,25 @@ export const steps: Step[] = [
 	},
 ];
 
+/**
+ * `import html from "./x.html?raw"` — the `?raw` suffix disambiguates the TypeScript declaration
+ * (see `src/types/chrome-ext.d.ts`); the bundler strips it and loads the file as text, mirroring
+ * `test/raw-loader.ts`.
+ */
+const rawHtmlPlugin: import("bun").BunPlugin = {
+	name: "raw-html",
+	setup(build) {
+		build.onResolve({ filter: /\.html\?raw$/ }, (args) => ({
+			path: path.resolve(path.dirname(args.importer), args.path.replace(/\?raw$/, "")),
+			namespace: "raw-html",
+		}));
+		build.onLoad({ filter: /.*/, namespace: "raw-html" }, async (args) => ({
+			contents: await Bun.file(args.path).text(),
+			loader: "text",
+		}));
+	},
+};
+
 async function bundle(o: BuildOptions): Promise<void> {
 	const define = {
 		__SL_VERSION__: JSON.stringify(pkg.version),
@@ -85,6 +104,7 @@ async function bundle(o: BuildOptions): Promise<void> {
 		sourcemap: o.dev ? ("linked" as const) : ("none" as const),
 		splitting: false,
 		loader: { ".html": "text" as const },
+		plugins: [rawHtmlPlugin],
 	};
 	// Explicit per-entry output names: two entrypoints are both `index.ts`, so a
 	// shared `[name].js` pattern would collide. §11.2 fixes these filenames.

@@ -213,6 +213,23 @@ body.sl-shell::-webkit-scrollbar-track,
 	}
 }
 
+/* The same, when the user forces it from Settings › Display (`theme.ts` sets the attribute). */
+
+[data-reduced-motion="true"],
+[data-reduced-motion="true"] *,
+[data-reduced-motion="true"] *::before,
+[data-reduced-motion="true"] *::after {
+	animation-duration: var(--sl-motion-duration-2-5) !important;
+	animation-iteration-count: 1 !important;
+	transition-duration: var(--sl-motion-duration-2-5) !important;
+	transition-property: opacity, visibility, color, background-color, border-color, box-shadow !important;
+	scroll-behavior: auto !important;
+}
+
+[data-reduced-motion="true"] .fa-spin {
+	animation: none !important;
+}
+
 /* ---- forced colours (Appendix F §8.4) ------------------------------------------------------ */
 
 @media (forced-colors: active) {

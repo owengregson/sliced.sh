@@ -69,6 +69,9 @@ export const ICONS = {
 
 export type IconName = keyof typeof ICONS;
 
+/** The base class every icon element carries (templates write `<i class="sl-icon" data-icon>`). */
+export const ICON_CLASS = "sl-icon";
+
 /** Font Awesome style/utility classes that are not glyph names (Appendix F §2.6 rules). */
 export const ICON_STYLE_CLASSES = [
 	"fa-solid",

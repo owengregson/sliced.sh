@@ -70,6 +70,17 @@ export function tabsGet(tabId: number): Promise<chrome.tabs.Tab> {
 	);
 }
 
+/** Open a new tab. Rejects with `lastError`. Never called while a game is live (§13.4). */
+export function tabsCreate(properties: chrome.tabs.CreateProperties): Promise<chrome.tabs.Tab> {
+	return new Promise((resolve, reject) =>
+		chrome.tabs.create(properties, (tab) => {
+			const err = chrome.runtime.lastError;
+			if (err) return reject(new Error(err.message));
+			resolve(tab);
+		})
+	);
+}
+
 export type TabUpdatedHandler = (
 	tabId: number,
 	changeInfo: chrome.tabs.OnUpdatedInfo,

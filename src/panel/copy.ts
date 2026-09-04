@@ -1,0 +1,263 @@
+/**
+ * Every user-visible string of the panel, transcribed once from Appendix F §7 (tone: crisp,
+ * sentence case, no emojis, no exclamation marks). Parameterised strings are functions so the
+ * numbers stay specific ("4.2s", "d18"). Views and components import from here; no string
+ * literal shown to the user may live anywhere else under `src/panel/`.
+ */
+
+import type { PersonaId } from "@typedefs/settings";
+
+export const COPY = {
+	brand: {
+		name: "sliced",
+		product: "sliced.gg",
+		tagline: "Chess assistant for chess.com and lichess",
+	},
+	nav: { game: "Game", settings: "Settings", engine: "Engine", viewSwitch: "View" },
+	login: {
+		title: "sliced",
+		subtitle: "Chess assistant for chess.com and lichess",
+		fieldLabel: "License key",
+		hint: "Keys look like SL-XXXX-XXXX-XXXX.",
+		button: "Continue",
+		loading: "Checking key…",
+		invalid: "That key isn't valid. Check for typos, or copy it from your sliced.gg account.",
+		deviceLimit: (n: number): string =>
+			`This key is already active on ${n} devices. Sign out on one of them, or manage devices at sliced.gg.`,
+		offline: "Can't reach sliced.gg. Check your connection and try again.",
+		expired: (date: string): string => `This key expired on ${date}.`,
+		link: "Don't have a key? Get one at sliced.gg",
+		reveal: "Show key",
+		hide: "Hide key",
+	},
+	unsupported: {
+		title: "Open a game to get started",
+		body:
+			"sliced works on chess.com and lichess. Open one of them in this tab and the panel will follow along.",
+		note: "Auto-play stays off until a game starts.",
+	},
+	nonGame: {
+		title: "This page isn't a game.",
+		body: "Start or join a game and the panel will pick it up.",
+	},
+	waiting: {
+		title: "Waiting for a game",
+		meta: (site: string, engine: string): string => `On ${site} · ${engine}`,
+		engineReady: "engine ready",
+		engineLoading: "engine loading",
+		watching: "Watching this tab",
+		reading: "Reading the board…",
+		autoplayTooltip: "Turns on when a game starts",
+		preArmed: "Armed for next game",
+	},
+	move: {
+		headerYours: (color: string): string => `Your move · ${color}`,
+		headerTheirs: "Opponent to move",
+		thinking: "Thinking…",
+		engineStopped: "Engine stopped",
+		noteBook: "Book move",
+		noteOnly: "Only move",
+		noteMate: (n: number): string => `Mate in ${n}`,
+		noteForced: "Forced",
+		disabled: "Assistant off · press D to resume",
+		plan: (seconds: string, method: string, premove: boolean): string =>
+			`thinking ${seconds}s · ${method}${premove ? " · premove" : ""}`,
+		play: "Play move",
+		playShort: "Play",
+		armed: (seconds: string): string => `Auto-playing in ${seconds}s`,
+		cancel: "Cancel this move",
+		executing: "Playing…",
+		ariaRecommended: (spoken: string, uci: string): string => `Recommended: ${spoken}, ${uci}`,
+		ariaArmed: (spoken: string, seconds: number): string =>
+			`Auto-playing ${spoken} in ${seconds} ${seconds === 1 ? "second" : "seconds"}. Activate to cancel.`,
+		white: "white",
+		black: "black",
+	},
+	lines: { header: "Lines", empty: "No lines yet", depth: (d: number): string => `d${d}` },
+	strength: {
+		card: (elo: number, band: string, persona: string): string => `${elo} ${band} · ${persona}`,
+		popoverFooter: "Applies from next move",
+		bands: { casual: "Casual", club: "Club", expert: "Expert", master: "Master", elite: "Elite" },
+		warning: "Very high ratings draw attention. Keep it plausible for your account.",
+	},
+	persona: {
+		cautious: "Cautious: prefers solid moves and longer thinks.",
+		balanced: "Balanced: plays like a typical club player.",
+		aggressive: "Aggressive: favours sharp lines and faster replies.",
+		blitz: "Blitz-demon: fast, confident, occasionally reckless.",
+	} satisfies Record<PersonaId, string>,
+	personaName: {
+		cautious: "Cautious",
+		balanced: "Balanced",
+		aggressive: "Aggressive",
+		blitz: "Blitz-demon",
+	} satisfies Record<PersonaId, string>,
+	toggle: {
+		autoplay: "Auto-play",
+		highlight: "Highlight",
+		autoqueue: "Auto-queue",
+		arming: "Hold to turn on",
+		armed: "Auto-play on",
+		off: "Auto-play off",
+		armTooltip: "Hold for a moment to turn on auto-play",
+		locked: "Locked",
+	},
+	session: (games: number, pct: number, avg: string): string =>
+		`${games} games · ${pct}% vs target · ${avg}s avg move`,
+	telemetry: { clean: "clean", blur: "blur seen", mouse: "mouse touched", label: "Telemetry" },
+	executor: { attached: "Attached", detached: "Detached", notStarted: "Not started" },
+	engine: {
+		idle: "Idle",
+		thinking: (depth: number): string => `Thinking · d${depth}`,
+		locked: "Locked",
+		stopped: "Stopped",
+		loading: "Loading…",
+		rows: {
+			version: (v: string, nnue: string): string => `Stockfish ${v} · ${nnue}`,
+			nnueLoaded: "NNUE loaded",
+			resources: (threads: number, hashMb: number): string => `Threads ${threads} · Hash ${hashMb} MB`,
+		},
+		logKinds: { plan: "plan", exec: "exec", verify: "verify", warn: "warn" },
+	},
+	toast: {
+		played: (san: string, seconds: string, method: string): string =>
+			`Played ${san} · ${seconds}s · ${method}`,
+		skipped: (san: string): string => `Skipped ${san} · auto-play stays on`,
+		disarmed: (san: string): string => `Auto-play off · ${san} not played`,
+		verifyFailed: (san: string): string =>
+			`Played ${san} but the board looks different. Auto-play turned off.`,
+		playFailed: "Couldn't play the move. Auto-play turned off.",
+		keybind: (action: string, key: string): string => `${action} is now ${key}`,
+		preArm: (key: string): string => `Turning on auto-play… press ${key} again to cancel`,
+		reattached: "Auto-play back on",
+		settingsSaved: "Settings saved",
+		notVerified: "Move not verified — board differs from expected",
+	},
+	banner: {
+		detached: "Auto-play paused. Chrome's debugging session was closed.",
+		reattach: "Reattach",
+		dismiss: "Dismiss",
+		failures: "Auto-play turned off after two failed moves. Check Engine for details.",
+		openEngine: "Open Engine",
+		engineStopped: "The engine stopped.",
+		restartEngine: "Restart engine",
+		update: (version: string): string => `sliced ${version} is ready`,
+		updateAction: "Update",
+		debugger: "Chrome will show a 'sliced is debugging this browser' bar. Don't click Cancel.",
+		gotIt: "Got it",
+		handsOff:
+			"Hands off during a game — clicking here takes focus from the board, and the hand owns the mouse until you stop it. Shift+A arm/disarm · Space play now · Shift+X stop.",
+		focus: "Board window not focused — click into the board once, then keep your hands off",
+	},
+	update: {
+		title: (version: string): string => `sliced ${version} is ready`,
+		primary: "Restart and update",
+		later: "Later",
+		note: "Updating restarts the extension. A game in progress is not affected.",
+	},
+	expired: {
+		title: "Your license expired",
+		body: (date: string): string =>
+			`sliced stopped assisting on ${date}. Renew to pick up where you left off — your settings are kept.`,
+		renew: "Renew at sliced.gg",
+		differentKey: "Enter a different key",
+		revokedTitle: "This key is no longer valid",
+		revokedBody: "It may have been revoked or replaced. Check your sliced.gg account.",
+		ipLimitTitle: "This key is active on too many devices",
+	},
+	keybind: {
+		capturing: "Press a key…",
+		notSet: "Not set",
+		conflict: (action: string): string =>
+			`Already used for ${action} — press another key, or Enter to swap`,
+		global: "Global shortcuts need Ctrl or Alt.",
+		clear: "Clear",
+		actions: {
+			playMove: "Play move",
+			toggleAutoMove: "Toggle auto-play",
+			disable: "Disable assistant",
+			speakMove: "Speak move",
+		},
+		keys: {
+			space: "Space",
+			enter: "Enter",
+			escape: "Esc",
+			backspace: "Backspace",
+			delete: "Del",
+			tab: "Tab",
+			up: "↑",
+			down: "↓",
+			left: "←",
+			right: "→",
+			ctrl: "Ctrl",
+			alt: "Alt",
+			shift: "Shift",
+			meta: "Cmd",
+			more: "…",
+		},
+	},
+	timing: {
+		detected: (label: string): string => `Detected: ${label}`,
+		overrides: "Overrides detection for this game",
+		manualOnly: "Never auto-plays; shows recommendations only.",
+	},
+	execution: {
+		debugger:
+			'Chrome shows a "sliced is debugging this browser" bar while auto-play is on. Don\'t click Cancel — that closes the session and pauses auto-play. You can hide the bar by keeping the debugger attached between games.',
+		verify: "After each move, checks the board matches the expected position.",
+		drag: "drag",
+		click: "click",
+	},
+	account: {
+		license: "License",
+		plan: "Plan",
+		device: "This device",
+		signOut: "Sign out",
+		signOutConfirm: "Sign out on this device? Your settings stay.",
+		resetConfirm: "Reset all settings to defaults? Keybinds and strength included.",
+		reset: "Reset",
+		cancel: "Cancel",
+		clearLog: "Clear log",
+	},
+	clock: { unavailable: "clock unavailable", unknown: "—:—" },
+	eval: {
+		valueText: (score: string, win: number, draw: number, loss: number): string =>
+			`${score}, ${win}% win, ${draw}% draw, ${loss}% loss`,
+		mateFor: (n: number, side: string): string => `Mate in ${n} for ${side}`,
+		mateShort: (n: number): string => `M${n}`,
+		whiteName: "White",
+		blackName: "Black",
+	},
+	ring: { remaining: (seconds: string): string => `in ${seconds}s` },
+	footer: (version: string, build: string): string => `sliced v${version} · build ${build}`,
+	common: {
+		close: "Close",
+		back: "Back",
+		loading: "Loading…",
+		on: "On",
+		off: "Off",
+		popoverClose: "Close",
+	},
+	a11y: {
+		pieces: { N: "knight", B: "bishop", R: "rook", Q: "queen", K: "king" },
+		takes: "takes",
+		check: "check",
+		checkmate: "checkmate",
+		castleKing: "castles kingside",
+		castleQueen: "castles queenside",
+		promotes: "promotes to",
+		toggleHoldHint: "Hold for a moment to turn on auto-play",
+	},
+} as const;
+
+/** Heading shown by the placeholder view registry until Tasks 23–26 land the real views. */
+export const VIEW_TITLES = {
+	login: COPY.login.title,
+	expired: COPY.expired.title,
+	unsupported: COPY.unsupported.title,
+	waiting: COPY.waiting.title,
+	live: COPY.nav.game,
+	settings: COPY.nav.settings,
+	engine: COPY.nav.engine,
+	update: COPY.update.title("2.1"),
+} as const;

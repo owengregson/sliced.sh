@@ -289,6 +289,8 @@ export const tokens = {
 			standard: "cubic-bezier(0.2, 0, 0, 1)",
 			emphasized: "cubic-bezier(0.32, 0.72, 0, 1)",
 			exit: "cubic-bezier(0.4, 0, 1, 1)",
+			/** Real-time only (Appendix F §5.10, §6.1): the countdown ring and the arm-hold fill. */
+			linear: "linear",
 			spring:
 				"linear(0, 0.006, 0.025 2.8%, 0.101 6.1%, 0.539 18.9%, 0.721 25.3%, 0.849 31.5%, 0.937 38.1%, 0.968 41.8%, 0.991 45.7%, 1.006 50.1%, 1.015 55%, 1.017 63.9%, 1.001)",
 		},
