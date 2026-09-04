@@ -33,3 +33,24 @@ export function debuggerSend(
 		})
 	);
 }
+
+export function debuggerGetTargets(): Promise<chrome.debugger.TargetInfo[]> {
+	return new Promise((resolve, reject) =>
+		chrome.debugger.getTargets((targets) => {
+			const err = chrome.runtime.lastError;
+			if (err) return reject(new Error(err.message));
+			resolve(targets);
+		})
+	);
+}
+
+export type DebuggerDetachHandler = (
+	source: chrome.debugger.Debuggee,
+	reason: `${chrome.debugger.DetachReason}`
+) => void;
+
+/** Subscribe to `chrome.debugger.onDetach` (infobar Cancel, DevTools, tab closed); returns the unsubscribe. */
+export function onDebuggerDetach(handler: DebuggerDetachHandler): () => void {
+	chrome.debugger.onDetach.addListener(handler);
+	return () => chrome.debugger.onDetach.removeListener(handler);
+}

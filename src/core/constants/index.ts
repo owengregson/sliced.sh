@@ -1,6 +1,7 @@
 export * from "./alarms";
 export * from "./books";
 export * from "./bridge";
+export * from "./cdp";
 export * from "./defaults";
 export * from "./engine-files";
 export * from "./images";

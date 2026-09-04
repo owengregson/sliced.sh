@@ -7,6 +7,7 @@
  */
 
 import type { ExecutionResult, PromoPiece, Site, Square } from "@typedefs/game";
+import type { PersonaId } from "@typedefs/settings";
 
 export type { ExecutionResult };
 
@@ -75,6 +76,7 @@ export interface MotorProfile {
 
 export type HandState =
 	| "rest"
+	| "orientation"
 	| "exploring"
 	| "approaching"
 	| "grabbing"
@@ -155,6 +157,17 @@ export interface HandAction {
 	preview?: PreviewSelection;
 }
 
+/** What the exploration planner needs beyond the committed move (Task 18 hand controller). */
+export interface ExplorationInput {
+	candidates: readonly MoveCandidate[];
+	nReasonable: number;
+	myClockMs: number;
+	persona: PersonaId;
+	/** `Settings.execution.previewSelectScale`, 0 when previews are off. */
+	previewScale: number;
+	legalDestinations(sq: Square): Square[];
+}
+
 export interface ExecutionPlan {
 	tabId: number;
 	site: Site;
@@ -167,4 +180,6 @@ export interface ExecutionPlan {
 	startPoint?: Pt;
 	expected: { san?: string; uci: string; premove: boolean };
 	timeoutMs?: number;
+	/** Absent → the pre-touch window is a plain rest (no hovers, no previews). */
+	exploration?: ExplorationInput;
 }

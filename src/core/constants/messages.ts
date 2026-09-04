@@ -5,8 +5,8 @@
  * `src/core/messaging/typed-messages.ts` (Task 4).
  */
 
-import type { Rect } from "@content/adapters/adapter";
 import type { LogEntry } from "@core/logger";
+import type { Occupancy, Rect } from "@core/motor/types";
 import type { EngineStatus, EngineVariant, EvalLine } from "@typedefs/engine";
 import type {
 	ChosenMove,
@@ -94,6 +94,28 @@ export interface PanelSnapshot {
 
 // Port payloads
 
+/**
+ * Task 18 request/reply pairs over the game port, correlated by `id`
+ * (`ContentLink.request`). Geometry is read on demand right before the
+ * approach (§9.5), never cached across scroll/resize; `promotion` carries the
+ * picker rect once it is visible (`null` = never appeared, e.g. auto-queen).
+ */
+export interface BoardGeometryReply {
+	boardRect: Rect;
+	/** Per-square rects when the adapter has them; else derived from `boardRect` + `flipped`. */
+	squares?: Partial<Record<Square, Rect>>;
+	flipped: boolean;
+	/** Adapter placement for the preview planner's deselect choice (§9.3a). */
+	occupancy?: Partial<Record<Square, Occupancy>>;
+	promotion?: Rect | null;
+}
+
+export interface ExpectedMove {
+	from: Square;
+	to: Square;
+	promotion?: PromoPiece;
+}
+
 /** SW → panel */
 export type PanelPortMessage =
 	| { kind: "snapshot"; snapshot: PanelSnapshot }
@@ -113,7 +135,7 @@ export type GamePortMessage =
 	/** V2 §13.6: opponent identity for matchOpponentRating */
 	| { kind: "opponent"; isBot: boolean; name: string; ratingEstimate: number | null }
 	| { kind: "moveObserved"; san: string; ply: number; byMe: boolean; atMs: number }
-	/** Reply to `observeMove` (Task 18 executor ↔ Task 21 content). */
+	/** Task 18: reply to `observeMove` — `ok` once the board/move list shows the move. */
 	| { kind: "observeMoveResult"; id: string; ok: boolean; reason?: string }
 	/**
 	 * Reply to `cursorProbe` (the canonical §5.5 `cursor-probe` path, Task 21): the last
@@ -124,15 +146,8 @@ export type GamePortMessage =
 			id: string;
 			position: { x: number; y: number; t: number; real: true } | null;
 	  }
-	/** Reply to `geometry`: the 8×8 board rect, every square, orientation, open promotion picker. */
-	| {
-			kind: "geometryResult";
-			id: string;
-			boardRect: Rect;
-			squares?: Record<Square, Rect>;
-			flipped: boolean;
-			promotion?: Rect[];
-	  };
+	/** Task 18: reply to `geometry`. */
+	| ({ kind: "geometryResult"; id: string } & BoardGeometryReply);
 
 /** SW → content */
 export type GamePortCommand =
@@ -144,15 +159,10 @@ export type GamePortCommand =
 	| { kind: "speak"; text: string }
 	/** Settings the content script acts on (`automation.highlightMoves`, §13.3 rule 4); default off until sent. */
 	| { kind: "settings"; highlightMoves: boolean }
-	/** Ask the adapter to watch for `expected` landing (Task 18 executor); answered by `observeMoveResult`. */
-	| {
-			kind: "observeMove";
-			id: string;
-			expected: { from: Square; to: Square; promotion?: PromoPiece };
-			timeoutMs: number;
-	  }
-	/** Ask for the board geometry; answered by `geometryResult`. */
-	| { kind: "geometry"; id: string }
+	/** Task 18: MutationObserver on board + move list; `ok` early, `false` if the piece snapped back. */
+	| { kind: "observeMove"; id: string; expected: ExpectedMove; timeoutMs: number }
+	/** Task 18: square/board/promotion rects on demand (`promotion` = wait for that picker). */
+	| { kind: "geometry"; id: string; promotion?: PromoPiece; timeoutMs?: number }
 	/** Ask for the last known trusted pointer position; answered by `cursorProbeResult`. */
 	| { kind: "cursorProbe"; id: string };
 
