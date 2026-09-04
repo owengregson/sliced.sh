@@ -40,12 +40,15 @@ export function cacheKey(
 }
 
 /**
- * A result is cacheable when it ended normally or was superseded (a ponder
- * cancelled by the next `analyse` is the common case) AND its final depth
- * iteration completed — never a failed or partial-iteration result.
+ * Every `complete` result is cacheable (a movetime search that stopped
+ * mid-iteration still carries the best lines so far; `get`'s `minDepth` is the
+ * quality gate). A `superseded` result (a ponder cancelled by the next
+ * `analyse` is the common case) is cacheable only when its final depth
+ * iteration completed. Failed results never are.
  */
 export function isCacheable(result: AnalysisResult): boolean {
-	return (result.status === "complete" || result.status === "superseded") && result.final.complete;
+	if (result.status === "complete") return true;
+	return result.status === "superseded" && result.final.complete;
 }
 
 export class AnalysisCache {

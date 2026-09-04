@@ -104,7 +104,7 @@ describe("AnalysisCache", () => {
 		expect(c.get(START, 6, 8)).toBe(shallow);
 		expect(c.get(START, 8, 8)).toBeUndefined();
 	});
-	it("caches complete and superseded results only when their final iteration completed", () => {
+	it("caches every complete result, superseded ones only with a complete final iteration", () => {
 		const c = new AnalysisCache();
 		// a ponder cancelled by the next analyse, with a complete depth-20 iteration → cached
 		const ponder = result(START, 20, { status: "superseded", limit: { infinite: true } });
@@ -116,11 +116,18 @@ describe("AnalysisCache", () => {
 		expect(isCacheable(early)).toBe(false);
 		c.set(early);
 		expect(c.get(OTHER, 4, 1)).toBeUndefined();
-		// a normal end mid-iteration → not cached either; failed → never
-		c.set(result(OTHER, 12, { finalComplete: false }));
+		// failed → never
 		c.set(result(OTHER, 20, { status: "failed", limit: { depth: 20 } }));
 		expect(c.get(OTHER, 4, 1)).toBeUndefined();
 		expect(c.size).toBe(1);
+		// a movetime search that stopped mid-iteration is still a complete result → cached;
+		// get's minDepth is the quality gate
+		const partial = result(OTHER, 12, { finalComplete: false });
+		expect(isCacheable(partial)).toBe(true);
+		c.set(partial);
+		expect(c.get(OTHER, 4, 12)).toBe(partial);
+		expect(c.get(OTHER, 4, 13)).toBeUndefined();
+		expect(c.size).toBe(2);
 	});
 	it("replaces an entry with the same key", () => {
 		const c = new AnalysisCache();
