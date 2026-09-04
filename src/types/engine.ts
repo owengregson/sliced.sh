@@ -29,4 +29,9 @@ export interface EvalLine {
 	depth: number;
 	pvUci: string[];
 	pvSan: string[];
+	seldepth?: number;
+	/** Per-mille win/draw/loss from the side to move (`UCI_ShowWDL`). */
+	wdl?: [number, number, number];
+	/** Set when the line is a fail-high/low interim report (only kept for multipv > 1). */
+	bound?: "lower" | "upper";
 }

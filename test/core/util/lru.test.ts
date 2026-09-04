@@ -32,6 +32,15 @@ describe("LruCache", () => {
 		expect(c.get("a")).toBe(10);
 		expect(c.size).toBe(2);
 	});
+	it("peek() reads without refreshing recency", () => {
+		const c = new LruCache<string, number>(2);
+		c.set("a", 1);
+		c.set("b", 2);
+		expect(c.peek("a")).toBe(1);
+		expect(c.peek("zz")).toBeUndefined();
+		c.set("c", 3);
+		expect(c.has("a")).toBe(false);
+	});
 	it("has() does not refresh recency", () => {
 		const c = new LruCache<string, number>(2);
 		c.set("a", 1);

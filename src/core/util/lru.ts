@@ -28,6 +28,11 @@ export class LruCache<K, V> {
 		return this;
 	}
 
+	/** Read without refreshing recency. */
+	peek(key: K): V | undefined {
+		return this.map.get(key);
+	}
+
 	/** Does not refresh recency. */
 	has(key: K): boolean {
 		return this.map.has(key);
