@@ -9,6 +9,7 @@
  */
 
 import { applyMoves, pvToSan } from "@core/chess/san";
+import { LIMITS } from "@core/constants/limits";
 import { TIMINGS } from "@core/constants/timings";
 import { newId } from "@core/util/ids";
 import type { Eval, EvalLine } from "@typedefs/engine";
@@ -37,8 +38,8 @@ import {
 	parseOption,
 } from "./uci-parser";
 
-/** The timing model's fixed feature depth `D_f` (§6.5, Appendix D §2). */
-export const FEATURE_DEPTH = 10;
+/** The timing model's fixed feature depth `D_f` (§6.5, Appendix D §2); lives in `LIMITS`. */
+export const FEATURE_DEPTH: number = LIMITS.featureDepth;
 
 /** `cpEquivalent` of a mate: `±(MATE_CP − MATE_CP_PER_PLY · plies)`. */
 const MATE_CP = 2000;

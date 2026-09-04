@@ -26,6 +26,8 @@ export const LIMITS = {
 	cpClamp: 1000,
 	/** Lichess win-probability logistic `win(cp) = 1/(1+e^(−k·cp))` (§7.2, Appendix E §7.2). */
 	winProbK: 0.00368208,
+	/** The timing model's fixed feature depth `D_f` (§6.5, Appendix D §2). */
+	featureDepth: 10,
 	/** Smallnet weights bundled in `assets/engine/` (§6.1); `nn-<sha256[0:12]>.nnue`. */
 	nnueSmallName: "nn-4ca89e4b3abf.nnue",
 	/** Full-strength `sf_18` dual nets `[big, small]`, fetched on demand into OPFS (Task 12). */

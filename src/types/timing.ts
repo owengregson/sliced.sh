@@ -9,6 +9,19 @@ import type { PersonaId } from "@typedefs/settings";
 
 export type TimingMode = "premove" | "instant" | "normal" | "long";
 
+/**
+ * §8.4b item 3: the move window as one generative process. The phase budgets
+ * sum exactly to `thinkMs`; the approach (grab → drag → release) is always
+ * last and the decision pause (no pointer motion) precedes it.
+ */
+export interface MoveWindowBudget {
+	orientationMs: number;
+	scanMs: number;
+	previewMs: number;
+	decisionMs: number;
+	approachMs: number;
+}
+
 export interface TimingPlan {
 	thinkMs: number;
 	mode: TimingMode;
@@ -19,6 +32,10 @@ export interface TimingPlan {
 	deadlineMs: number;
 	rationale: string[];
 	features: Record<string, number>;
+	/** §8.4b item 2: perceptual latency at the start of the window (part of `thinkMs`). */
+	orientationMs: number;
+	/** §8.4b item 3: phase allocation of `thinkMs` (Tasks 17/18 consume these budgets). */
+	window: MoveWindowBudget;
 }
 
 /** One row of the `LOCAL_KEYS.timingLog` ring buffer (§8.6). */
