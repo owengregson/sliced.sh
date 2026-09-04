@@ -4,7 +4,7 @@
 import { describe, expect, it } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { ENGINE_DIR, ENGINE_FILES, LIMITS } from "@core/constants";
+import { BOOKS, ENGINE_DIR, ENGINE_FILES, LIMITS } from "@core/constants";
 import {
 	nnueHashPrefix,
 	packageFiles,
@@ -71,5 +71,21 @@ describe("ENGINE_FILES registry", () => {
 			[full.js, full.wasm],
 		];
 		for (const [js, wasm] of pairs) expect(wasm).toBe(js.replace(/\.js$/, ".wasm"));
+	});
+});
+
+describe("docs/third-party.md books section (Task 15)", () => {
+	const doc = readFileSync(path.join(ROOT, "docs", "third-party.md"), "utf8");
+
+	it("lists both bundled Polyglot books with their current SHA-256", () => {
+		for (const name of [BOOKS.gm2600, BOOKS.club]) {
+			const file = path.join(ROOT, BOOKS.dir, name);
+			expect(existsSync(file)).toBe(true);
+			const sha = sha256Hex(new Uint8Array(readFileSync(file)));
+			expect(doc).toContain(`| \`${name}\` |`);
+			expect(doc).toContain(sha);
+		}
+		expect(doc).toContain("CC0");
+		expect(doc).toContain("random64.ts");
 	});
 });

@@ -17,6 +17,8 @@ export const TIMINGS = {
 	executorRetryDelayMs: [250, 600],
 	debuggerIdleDetachMs: 180_000,
 	licenseValidateTimeoutMs: 8_000,
+	/** Lichess opening-explorer request timeout (§7.3 item 1, Task 15). */
+	explorerTimeoutMs: 1_200,
 	autoQueueDelayRangeMs: [900, 2_600],
 	keybindDebounceMs: 150,
 	/** `connectPort` reconnect backoff: base, doubling up to the cap (Task 4). */

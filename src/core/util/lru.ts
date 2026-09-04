@@ -45,4 +45,9 @@ export class LruCache<K, V> {
 	clear(): void {
 		this.map.clear();
 	}
+
+	/** Entries from least to most recently used. */
+	entries(): IterableIterator<[K, V]> {
+		return this.map.entries();
+	}
 }

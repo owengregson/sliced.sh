@@ -5,6 +5,7 @@
  */
 
 import { LOCAL_KEYS, SESSION_KEYS } from "@core/constants/storage-keys";
+import type { ExplorerCacheStore } from "@core/strength/book/explorer";
 import type { SessionStats } from "@typedefs/game";
 import type { LicenseState, PersonaId, Settings } from "@typedefs/settings";
 import type { TimingLogEntry } from "@typedefs/timing";
@@ -45,8 +46,8 @@ export interface LocalStorageSchema {
 	[LOCAL_KEYS.motorTraces]: unknown[];
 	/** Task 19 defines `MotorProfile`. */
 	[LOCAL_KEYS.motorProfile]: unknown;
-	/** Task 15 defines the explorer cache entry shape. */
-	[LOCAL_KEYS.explorerCache]: Record<string, unknown>;
+	/** Opening-explorer responses keyed by `(fen, ratings, speeds)` (Task 15). */
+	[LOCAL_KEYS.explorerCache]: ExplorerCacheStore;
 }
 
 export interface SessionStorageSchema {
