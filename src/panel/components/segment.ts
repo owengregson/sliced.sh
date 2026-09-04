@@ -5,7 +5,7 @@
  */
 
 import type { IconName } from "@design/icons";
-import { applyIcon } from "../icons-mount";
+import { setOptionalIcon } from "../icons-mount";
 import { instantiate, part } from "../template";
 import html from "../views/templates/components/segment.html?raw";
 import itemHtml from "../views/templates/components/segment-item.html?raw";
@@ -50,11 +50,7 @@ export function createSegment<T extends string>(
 		const button = instantiate<HTMLButtonElement>(itemHtml);
 		button.dataset.value = item.id;
 		part(button, ".sl-segment__label").textContent = item.label;
-		if (item.icon) {
-			const icon = part(button, ".sl-segment__icon");
-			applyIcon(icon, item.icon);
-			icon.hidden = false;
-		}
+		setOptionalIcon(part(button, ".sl-segment__icon"), item.icon);
 		tooltips.push(attachTooltip(button, item.tooltip ?? item.label));
 		el.append(button);
 		buttons.set(item.id, button);

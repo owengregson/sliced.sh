@@ -7,7 +7,7 @@
 import { UI_TIMINGS } from "@core/constants/ui";
 import type { IconName } from "@design/icons";
 import { COPY } from "../copy";
-import { applyIcon } from "../icons-mount";
+import { setOptionalIcon } from "../icons-mount";
 import { playUiSound } from "../sounds";
 import { instantiate, part } from "../template";
 import html from "../views/templates/components/toggle.html?raw";
@@ -68,6 +68,8 @@ export function createToggle(host: HTMLElement | null, options: ToggleOptions): 
 	/** The click that ends an arming gesture (or a completed arm) must not toggle. */
 	let swallowClick = false;
 	let holdHint: HTMLElement | null = null;
+	/** §6.1 step 4: after a disarm the label reads "Auto-play off" until the next update/arm. */
+	let disarmed = false;
 
 	if (armedVariant) {
 		el.classList.add("sl-toggle--armable");
@@ -101,12 +103,19 @@ export function createToggle(host: HTMLElement | null, options: ToggleOptions): 
 		else el.removeAttribute("aria-disabled");
 		lock.hidden = !locked;
 		labelEl.textContent =
-			s === "arming" ? COPY.toggle.arming : s === "armed" ? COPY.toggle.armed : baseLabel;
+			s === "arming"
+				? COPY.toggle.arming
+				: s === "armed"
+					? COPY.toggle.armed
+					: armedVariant && disarmed
+						? COPY.toggle.off
+						: baseLabel;
 	}
 
 	function setChecked(next: boolean, emit: boolean): void {
 		if (checked === next) return;
 		checked = next;
+		disarmed = armedVariant && emit && !next;
 		render();
 		if (emit) {
 			if (armedVariant) playUiSound(next ? "arm" : "disarm");
@@ -195,10 +204,7 @@ export function createToggle(host: HTMLElement | null, options: ToggleOptions): 
 	el.addEventListener("keydown", onKeyDown);
 	el.addEventListener("keyup", onKeyUp);
 
-	if (options.icon) {
-		applyIcon(icon, options.icon);
-		icon.hidden = false;
-	}
+	setOptionalIcon(icon, options.icon);
 	if (options.hint) {
 		hintEl.textContent = options.hint;
 		hintEl.hidden = false;
@@ -229,6 +235,7 @@ export function createToggle(host: HTMLElement | null, options: ToggleOptions): 
 			if (patch.checked !== undefined) {
 				if (holding) cancelHold();
 				checked = patch.checked;
+				disarmed = false;
 			}
 			swallowClick = false;
 			render();

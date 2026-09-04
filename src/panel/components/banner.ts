@@ -11,7 +11,8 @@ import { instantiate, part } from "../template";
 import html from "../views/templates/components/banner.html?raw";
 import { createButton } from "./button";
 
-export type BannerKind = "info" | "warn" | "danger";
+/** `hands-off` (§13.4) outranks everything: it must stay visible for the whole game. */
+export type BannerKind = "info" | "warn" | "danger" | "hands-off";
 
 export interface BannerAction {
 	label: string;
@@ -33,11 +34,12 @@ export interface BannerHandle {
 	dismiss(): void;
 }
 
-const RANK: Readonly<Record<BannerKind, number>> = { info: 0, warn: 1, danger: 2 };
+const RANK: Readonly<Record<BannerKind, number>> = { info: 0, warn: 1, danger: 2, "hands-off": 3 };
 const ICON: Readonly<Record<BannerKind, IconName>> = {
 	info: "feedback.info",
 	warn: "feedback.warning",
 	danger: "feedback.danger",
+	"hands-off": "exec.drag",
 };
 
 interface Entry {

@@ -10,8 +10,8 @@ import { instantiate, part } from "../template";
 import { isReducedMotion } from "../theme";
 import html from "../views/templates/components/ring.html?raw";
 
-/** Matches `r="10"` in `ring.html` (viewBox 24 with a 2 px stroke). */
-export const RING_RADIUS = 10;
+/** Read from `ring.html` (`<circle r="…">`, viewBox 24 with a 2 px stroke) so the two never drift. */
+export const RING_RADIUS = Number(/\br="(\d+(?:\.\d+)?)"/.exec(html)?.[1] ?? 0);
 export const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
 const MS_PER_SECOND = 1000;
 

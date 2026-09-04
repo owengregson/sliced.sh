@@ -5,7 +5,7 @@
  */
 
 import { runtimeGetURL } from "@core/chrome/runtime";
-import { SOUNDS } from "@core/constants/sounds";
+import { SOUNDS, SOUNDS_DIR } from "@core/constants/sounds";
 import { log } from "@core/logger";
 
 export type UiSoundEvent =
@@ -33,8 +33,6 @@ export const UI_SOUND_MAP: Readonly<Record<UiSoundEvent, keyof typeof SOUNDS>> =
 	assistantDisabled: "slamLow",
 	assistantEnabled: "guiOpen",
 };
-
-export const SOUNDS_DIR = "assets/sounds/";
 
 export interface SoundSource {
 	play(): Promise<void> | void;

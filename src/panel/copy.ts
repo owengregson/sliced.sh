@@ -251,13 +251,26 @@ export const COPY = {
 } as const;
 
 /** Heading shown by the placeholder view registry until Tasks 23–26 land the real views. */
-export const VIEW_TITLES = {
-	login: COPY.login.title,
-	expired: COPY.expired.title,
-	unsupported: COPY.unsupported.title,
-	waiting: COPY.waiting.title,
-	live: COPY.nav.game,
-	settings: COPY.nav.settings,
-	engine: COPY.nav.engine,
-	update: COPY.update.title("2.1"),
-} as const;
+export function viewTitle(
+	name: "login" | "expired" | "unsupported" | "waiting" | "live" | "settings" | "engine" | "update",
+	version: string
+): string {
+	switch (name) {
+		case "login":
+			return COPY.login.title;
+		case "expired":
+			return COPY.expired.title;
+		case "unsupported":
+			return COPY.unsupported.title;
+		case "waiting":
+			return COPY.waiting.title;
+		case "live":
+			return COPY.nav.game;
+		case "settings":
+			return COPY.nav.settings;
+		case "engine":
+			return COPY.nav.engine;
+		case "update":
+			return COPY.update.title(version);
+	}
+}

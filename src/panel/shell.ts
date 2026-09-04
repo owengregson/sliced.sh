@@ -6,9 +6,11 @@
  * and the update-interrupt dismissal; `Alt+1/2/3` switch tabs.
  *
  * Hands-off mode (§13.4): while a game is live the root carries `.sl-hands-off` (CSS turns
- * every interactive control to `pointer-events: none`), the content region is `aria-disabled`,
- * the view switch is disabled and the persistent banner explains why. The shell never calls
- * `focus()`, `alert()` or `autofocus`.
+ * every interactive control to `pointer-events: none`), a capture-phase keyboard guard on the
+ * content swallows activation keys, every focusable in the content gets `aria-disabled="true"`
+ * + `tabindex="-1"` (restored on exit; a MutationObserver covers views mounted meanwhile), the
+ * view switch is disabled, the update banner is suspended and the top-ranked hands-off banner
+ * explains why. The shell never calls `focus()`, `alert()` or `autofocus`.
  */
 
 import { chromeLocalGet, onStorageChanged } from "@core/chrome/storage";
@@ -62,6 +64,27 @@ export interface PanelShell {
 }
 
 const VIEWS_WITHOUT_TOPBAR: ReadonlySet<ViewName> = new Set(["login"]);
+
+/** Everything a keyboard could activate inside the content while hands-off (§13.4). */
+const FOCUSABLE_SELECTOR =
+	'a[href], button, input, select, textarea, [tabindex], [role="switch"], [role="slider"], [role="tab"]';
+const ACTIVATION_KEYS: ReadonlySet<string> = new Set([
+	"Enter",
+	" ",
+	"ArrowUp",
+	"ArrowDown",
+	"ArrowLeft",
+	"ArrowRight",
+	"Home",
+	"End",
+	"PageUp",
+	"PageDown",
+]);
+
+interface SavedFocusable {
+	ariaDisabled: string | null;
+	tabindex: string | null;
+}
 
 function enginePill(snapshot: PanelSnapshot): { variant: PillVariant; text: string } {
 	const { engine } = snapshot;
@@ -137,6 +160,7 @@ export function bootShell(root: HTMLElement, options: ShellOptions): PanelShell 
 				topbar.hidden = VIEWS_WITHOUT_TOPBAR.has(name);
 				clearToasts(); // §3.3: the toast queue is cleared on view change
 				closePopovers();
+				lockFocusables(); // a view mounted while hands-off starts disabled
 			},
 		}
 	);
@@ -146,28 +170,88 @@ export function bootShell(root: HTMLElement, options: ShellOptions): PanelShell 
 		router.resolve(snapshot, ui).catch((error: unknown) => log.warn("shell: resolve failed", error));
 	}
 
+	// ── hands-off (§13.4): pointer (CSS), keyboard (capture guard) and AT (aria/tabindex) ──
+	const lockedFocusables = new Map<Element, SavedFocusable>();
+	let focusObserver: MutationObserver | null = null;
+
+	function lockFocusables(): void {
+		if (!handsOff) return;
+		for (const el of content.querySelectorAll(FOCUSABLE_SELECTOR)) {
+			if (lockedFocusables.has(el)) continue;
+			lockedFocusables.set(el, {
+				ariaDisabled: el.getAttribute("aria-disabled"),
+				tabindex: el.getAttribute("tabindex"),
+			});
+			el.setAttribute("aria-disabled", "true");
+			el.setAttribute("tabindex", "-1");
+		}
+	}
+
+	function unlockFocusables(): void {
+		for (const [el, saved] of lockedFocusables) {
+			if (saved.ariaDisabled === null) el.removeAttribute("aria-disabled");
+			else el.setAttribute("aria-disabled", saved.ariaDisabled);
+			if (saved.tabindex === null) el.removeAttribute("tabindex");
+			else el.setAttribute("tabindex", saved.tabindex);
+		}
+		lockedFocusables.clear();
+	}
+
+	const keyboardGuard = (event: KeyboardEvent): void => {
+		if (!handsOff || !ACTIVATION_KEYS.has(event.key)) return;
+		event.preventDefault();
+		event.stopImmediatePropagation();
+	};
+	content.addEventListener("keydown", keyboardGuard, true);
+	content.addEventListener("keyup", keyboardGuard, true);
+	// A control added after the lock (before the observer delivers) is locked the moment it is
+	// focused, so Tab + Enter can never activate it.
+	const focusGuard = (): void => lockFocusables();
+	content.addEventListener("focusin", focusGuard, true);
+
 	function applyHandsOff(next: boolean): void {
 		if (handsOff === next) return;
 		handsOff = next;
 		root.classList.toggle("sl-hands-off", next);
-		if (next) content.setAttribute("aria-disabled", "true");
-		else content.removeAttribute("aria-disabled");
 		viewSwitch.update({ disabled: next });
 		if (next) {
-			handsOffBanner = showBanner("info", COPY.banner.handsOff, [], { key: "hands-off" });
+			content.setAttribute("aria-disabled", "true");
+			lockFocusables();
+			if (typeof MutationObserver === "function") {
+				focusObserver = new MutationObserver(() => lockFocusables());
+				focusObserver.observe(content, { childList: true, subtree: true });
+			}
+			// The hands-off banner outranks every other banner; the update banner is suspended.
+			updateBanner?.dismiss();
+			updateBanner = null;
+			handsOffBanner = showBanner("hands-off", COPY.banner.handsOff, [], { key: "hands-off" });
 		} else {
+			content.removeAttribute("aria-disabled");
+			focusObserver?.disconnect();
+			focusObserver = null;
+			unlockFocusables();
 			handsOffBanner?.dismiss();
 			handsOffBanner = null;
+			applyUpdateBanner();
 		}
 	}
 
 	function applyUpdateBanner(): void {
-		const wanted = ui.updateAvailable && ui.updateDismissed;
+		const wanted = ui.updateAvailable && ui.updateDismissed && !handsOff;
 		if (wanted && !updateBanner) {
 			updateBanner = showBanner(
 				"info",
 				COPY.banner.update(version),
-				[{ label: COPY.banner.updateAction, onClick: () => options.onUpdate?.(), keepOpen: true }],
+				[
+					{
+						label: COPY.banner.updateAction,
+						onClick: () => {
+							if (handsOff) return; // never mid-game (§13.4)
+							options.onUpdate?.();
+						},
+						keepOpen: true,
+					},
+				],
 				{ key: "update" }
 			);
 		} else if (!wanted && updateBanner) {
@@ -267,6 +351,12 @@ export function bootShell(root: HTMLElement, options: ShellOptions): PanelShell 
 			unsubscribeStorage();
 			uninstallActions();
 			doc.removeEventListener("keydown", onKeyDown);
+			content.removeEventListener("keydown", keyboardGuard, true);
+			content.removeEventListener("keyup", keyboardGuard, true);
+			content.removeEventListener("focusin", focusGuard, true);
+			focusObserver?.disconnect();
+			focusObserver = null;
+			lockedFocusables.clear();
 			router.dispose();
 			viewSwitch.dispose();
 			pill.dispose();

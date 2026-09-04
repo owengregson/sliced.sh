@@ -157,15 +157,17 @@ export function createMoveCard(
 
 	function renderButton(): void {
 		const armed = data.armed === true && data.state === "your-move";
+		if (!armed) stopCounting();
 		button.update({
 			armed,
 			kbd: data.kbd ?? null,
 			disabled: data.handsOff === true || data.state !== "your-move",
-			icon: "action.play",
-			label: data.compact ? COPY.move.playShort : COPY.move.play,
-			ariaLabel: null,
+			icon: counting && hovering ? "action.cancel" : "action.play",
+			// A running countdown owns the label and the spoken aria-label (§6.2).
+			...(counting
+				? {}
+				: { label: data.compact ? COPY.move.playShort : COPY.move.play, ariaLabel: null }),
 		});
-		if (!armed) stopCounting();
 	}
 
 	function update(next: MoveCardData): void {

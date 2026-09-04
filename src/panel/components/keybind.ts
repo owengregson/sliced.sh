@@ -5,7 +5,6 @@
  * swaps, and global scope refuses combos without Ctrl or Alt. Saved keys pulse and tick.
  */
 
-import { UI_TIMINGS } from "@core/constants/ui";
 import { TOKENS } from "@design/tokens.generated";
 import type { Keybind } from "@typedefs/settings";
 import { COPY } from "../copy";
@@ -14,7 +13,6 @@ import { playUiSound } from "../sounds";
 import { instantiate, part } from "../template";
 import html from "../views/templates/components/keybind.html?raw";
 
-const UI_TIMINGS_MIN_CH = UI_TIMINGS.keybindChipMinCh;
 /** §6.4 step 4: the chip pulses `brand-tint` over `duration.4`. */
 const SAVED_PULSE_MS = TOKENS.motion.durationMs[4];
 
@@ -119,7 +117,6 @@ export function createKeybindCapture(
 	let pulseTimer: ReturnType<typeof setTimeout> | null = null;
 
 	labelEl.textContent = options.label;
-	chip.style.minWidth = `${UI_TIMINGS_MIN_CH}ch`;
 
 	function setHint(text: string | null): void {
 		hint.textContent = text ?? "";

@@ -5,7 +5,7 @@
  * testable end to end.
  */
 
-import { VIEW_TITLES } from "../copy";
+import { viewTitle } from "../copy";
 import { instantiate, part } from "../template";
 import { VIEW_NAMES, type View, type ViewName, type ViewRegistry } from "../view";
 import stubHtml from "./templates/stub.html?raw";
@@ -15,7 +15,7 @@ export function createStubView(name: ViewName): View {
 		mount(ctx) {
 			const el = instantiate(stubHtml);
 			el.dataset.view = name;
-			part(el, ".sl-view__title").textContent = VIEW_TITLES[name];
+			part(el, ".sl-view__title").textContent = viewTitle(name, __SL_VERSION__);
 			ctx.container.append(el);
 			return () => el.remove();
 		},

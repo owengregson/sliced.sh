@@ -88,7 +88,7 @@ export class PanelRouter implements Router {
 
 	async resolve(snapshot: PanelSnapshot, ui: PanelUiState): Promise<void> {
 		this.lastSnapshot = snapshot;
-		this.lastUi = { ...ui };
+		this.lastUi = ui; // the live object: views read `ctx.ui.tab` etc. as it changes
 		const target = resolveView(snapshot, ui);
 		await this.switch(target, { transition: transitionFor(this.current, target) });
 	}

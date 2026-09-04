@@ -111,10 +111,11 @@ describe("createToggle", () => {
 		click(root); // the click that ends the arming gesture is swallowed
 		expect(root.dataset.state).toBe("armed");
 
-		// One click disarms instantly.
+		// One click disarms instantly; the label says so (§6.1 step 4).
 		click(root);
 		expect(root.dataset.state).toBe("off");
 		expect(root.getAttribute("aria-checked")).toBe("false");
+		expect(root.querySelector(".sl-toggle__label")?.textContent).toBe(COPY.toggle.off);
 		expect(events).toEqual(["arm", "disarm"]);
 
 		// Keyboard: holding Space arms; a short press does not.

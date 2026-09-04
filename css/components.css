@@ -49,10 +49,6 @@
 	border-bottom: var(--sl-hairline) solid var(--sl-color-border-subtle);
 }
 
-.sl-topbar[hidden] {
-	display: none;
-}
-
 .sl-topbar__brand {
 	display: flex;
 	align-items: center;
@@ -95,6 +91,8 @@
 .sl-hands-off .sl-app__content [role="tab"],
 .sl-hands-off .sl-app__content .sl-keybind__key,
 .sl-hands-off .sl-app__content .sl-pv,
+.sl-hands-off .sl-app__banner .sl-button,
+.sl-hands-off .sl-app__toasts .sl-button,
 .sl-hands-off .sl-topbar__switch {
 	pointer-events: none;
 }
@@ -603,9 +601,10 @@
 	color: var(--sl-color-text-primary);
 }
 
-/* chip: kbd, mono, min width 6ch (set inline from UI_TIMINGS), control.sm */
+/* chip: kbd, mono, min width 6ch, control.sm */
 .sl-keybind__key {
 	display: inline-flex;
+	min-width: 6ch;
 	align-items: center;
 	justify-content: center;
 	height: var(--sl-size-control-sm);
@@ -825,10 +824,6 @@
 	align-items: center;
 	gap: var(--sl-space-2);
 	color: var(--sl-color-text-secondary);
-}
-
-.sl-move__plan[hidden] {
-	display: none;
 }
 
 .sl-move__action {
@@ -1133,10 +1128,6 @@
 	width: 100%;
 	height: 100%;
 	transform: rotate(-90deg);
-}
-
-.sl-ring__svg[hidden] {
-	display: none;
 }
 
 .sl-ring__track,
@@ -1642,6 +1633,14 @@
 
 .sl-banner--danger .sl-banner__icon {
 	color: var(--sl-color-danger-text);
+}
+
+.sl-banner--hands-off {
+	background: var(--sl-color-brand-tint);
+}
+
+.sl-banner--hands-off .sl-banner__icon {
+	color: var(--sl-color-brand-text);
 }
 
 /* ==== keyframes (digit-free names; durations from tokens at the use site) =================== */

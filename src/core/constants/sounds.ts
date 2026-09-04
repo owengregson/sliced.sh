@@ -1,4 +1,7 @@
-/** File names under `assets/sounds/`. */
+/** Directory of every UI sound, relative to the extension root. */
+export const SOUNDS_DIR = "assets/sounds/";
+
+/** File names under `SOUNDS_DIR`. */
 export const SOUNDS = {
 	clickLight: "click_light.wav",
 	clickHeavy: "click_heavy.wav",

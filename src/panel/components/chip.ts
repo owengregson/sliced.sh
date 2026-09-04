@@ -4,7 +4,7 @@
  */
 
 import type { IconName } from "@design/icons";
-import { applyIcon } from "../icons-mount";
+import { setOptionalIcon } from "../icons-mount";
 import { instantiate, part } from "../template";
 import html from "../views/templates/components/chip.html?raw";
 
@@ -48,11 +48,7 @@ export function createChipGroup<T extends string>(
 		const chip = instantiate<HTMLButtonElement>(html);
 		chip.dataset.value = item.id;
 		part(chip, ".sl-chip__label").textContent = item.label;
-		if (item.icon) {
-			const icon = part(chip, ".sl-chip__icon");
-			applyIcon(icon, item.icon);
-			icon.hidden = false;
-		}
+		setOptionalIcon(part(chip, ".sl-chip__icon"), item.icon);
 		if (item.disabled) chip.setAttribute("aria-disabled", "true");
 		el.append(chip);
 		chips.set(item.id, chip);

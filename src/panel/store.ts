@@ -4,14 +4,15 @@
  * Connects `PORT_NAMES.panel` through `connectPort` (which reconnects on its own with backoff)
  * and requests `MSG.PANEL_GET_SNAPSHOT` through `sendTyped` on boot and after every disconnect:
  * a message flushed over the port to a dead receiver is dropped (Task 4), so the handshake is a
- * request/response that is retried with backoff until the restarted service worker answers.
+ * request/response that is retried with the port's own backoff (`TIMINGS.portReconnect*`) until
+ * the restarted service worker answers.
  * `subscribe` replays the latest snapshot to late subscribers; `dispatch` is a typed send.
  */
 
 import type { PanelPortMessage, PanelSnapshot } from "@core/constants/messages";
 import { type MessageType, MSG } from "@core/constants/messages";
 import { PORT_NAMES } from "@core/constants/ports";
-import { UI_TIMINGS } from "@core/constants/ui";
+import { TIMINGS } from "@core/constants/timings";
 import { log } from "@core/logger";
 import { type ConnectedPort, connectPort } from "@core/messaging/ports";
 import {
@@ -52,7 +53,7 @@ export function createPanelStore(): PanelStore {
 
 	// ── snapshot handshake with backoff ─────────────────────────────────────
 	let retryTimer: ReturnType<typeof setTimeout> | null = null;
-	let retryDelay: number = UI_TIMINGS.snapshotRetryBaseMs;
+	let retryDelay: number = TIMINGS.portReconnectBaseMs;
 	let generation = 0;
 
 	function set(next: PanelSnapshot): void {
@@ -80,7 +81,7 @@ export function createPanelStore(): PanelStore {
 		sendTyped({ type: MSG.PANEL_GET_SNAPSHOT }).then(
 			(result) => {
 				if (disposed || gen !== generation) return;
-				retryDelay = UI_TIMINGS.snapshotRetryBaseMs;
+				retryDelay = TIMINGS.portReconnectBaseMs;
 				connected = true; // the SW answered: it is reachable again
 				set(result);
 			},
@@ -88,7 +89,7 @@ export function createPanelStore(): PanelStore {
 				if (disposed || gen !== generation) return;
 				log.debug("panel store: snapshot request failed; retrying", { error });
 				const wait = retryDelay;
-				retryDelay = Math.min(retryDelay * 2, UI_TIMINGS.snapshotRetryMaxMs);
+				retryDelay = Math.min(retryDelay * 2, TIMINGS.portReconnectMaxMs);
 				retryTimer = setTimeout(() => {
 					retryTimer = null;
 					requestSnapshot();
@@ -104,7 +105,7 @@ export function createPanelStore(): PanelStore {
 			if (message.kind === "snapshot") {
 				cancelRetry();
 				generation += 1; // an in-flight request is superseded by the push
-				retryDelay = UI_TIMINGS.snapshotRetryBaseMs;
+				retryDelay = TIMINGS.portReconnectBaseMs;
 				set(message.snapshot);
 				return;
 			}

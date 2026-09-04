@@ -5,7 +5,7 @@
  */
 
 import type { IconName } from "@design/icons";
-import { applyIcon } from "../icons-mount";
+import { setOptionalIcon } from "../icons-mount";
 import { instantiate, part } from "../template";
 import html from "../views/templates/components/empty-state.html?raw";
 import { type ButtonOptions, createButton } from "./button";
@@ -37,12 +37,7 @@ export function createEmptyState(
 	let buttons: Array<ReturnType<typeof createButton>> = [];
 
 	function update(patch: Partial<EmptyStateOptions>): void {
-		if (patch.icon !== undefined) {
-			if (patch.icon) {
-				applyIcon(icon, patch.icon);
-				icon.hidden = false;
-			} else icon.hidden = true;
-		}
+		if (patch.icon !== undefined) setOptionalIcon(icon, patch.icon);
 		if (patch.title !== undefined) title.textContent = patch.title;
 		if (patch.body !== undefined) {
 			body.textContent = patch.body;

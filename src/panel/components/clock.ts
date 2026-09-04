@@ -54,8 +54,20 @@ export function createClock(host: HTMLElement | null): ClockHandle {
 		const known = ms !== null && Number.isFinite(ms);
 		const low = known && active && (ms as number) < UI_TIMINGS.clockLowMs;
 		el.dataset.state = !known ? "unknown" : low ? "low" : active ? "active" : "inactive";
-		tenths.hidden = !(known && (ms as number) < UI_TIMINGS.clockTenthsBelowMs);
-		tenths.textContent = tenths.hidden ? "" : COPY.clock.unavailable && "";
+		if (!known) {
+			// §5.9: the row says why the numeral is a dash.
+			tenths.textContent = COPY.clock.unavailable;
+			tenths.hidden = false;
+		} else if ((ms as number) < UI_TIMINGS.clockTenthsBelowMs) {
+			// Under 10 s the numeral shows whole seconds and the tenths sit in the label slot.
+			const [seconds, tenth] = formatClock(ms).split(".");
+			time.textContent = seconds ?? "";
+			tenths.textContent = `.${tenth ?? "0"}`;
+			tenths.hidden = false;
+		} else {
+			tenths.textContent = "";
+			tenths.hidden = true;
+		}
 	}
 
 	update({ ms: null });

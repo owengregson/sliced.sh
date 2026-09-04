@@ -1,11 +1,10 @@
 // test/panel/sounds.test.ts — Appendix F §6.6 mapping, gated by display.uiSounds, played from
 // chrome.runtime.getURL("assets/sounds/…").
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { SOUNDS } from "@core/constants";
+import { SOUNDS, SOUNDS_DIR } from "@core/constants";
 import {
 	createSoundPlayer,
 	playUiSound,
-	SOUNDS_DIR,
 	setUiSoundPlayer,
 	setUiSoundsEnabled,
 	UI_SOUND_MAP,

@@ -88,13 +88,10 @@ export function evalValueText(score: Eval, wdl?: Wdl): string {
 			score.mate > 0 ? COPY.eval.whiteName : COPY.eval.blackName
 		);
 	}
-	const cp = score.cp ?? 0;
-	const side = cp < 0 ? COPY.eval.blackName : COPY.eval.whiteName;
-	const magnitude = `+${(Math.abs(cp) / CP_PER_PAWN).toFixed(2)}`;
-	const label = `${side} ${cp === 0 ? (0).toFixed(2) : magnitude}`;
+	// Always White-relative ("White −0.80, 33% win, …"), like the score and the WDL (§7.4).
+	const label = `${COPY.eval.whiteName} ${formatScore(score)}`;
 	if (!wdl) return label;
 	const [w, d, l] = roundPercentages(wdl);
-	// Percentages are from the advantaged side's point of view? No — always White's (§7.4 example).
 	return COPY.eval.valueText(label, w, d, l);
 }
 

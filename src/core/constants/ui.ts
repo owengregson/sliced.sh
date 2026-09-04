@@ -27,11 +27,6 @@ export const UI_TIMINGS = {
 	evalJumpFraction: 0.3,
 	/** §5.3: slider keyboard step multiplier with Shift / PageUp / PageDown. */
 	sliderCoarseMultiplier: 10,
-	/** §5.4: keybind chip minimum width in ch. */
-	keybindChipMinCh: 6,
 	/** §5.3: strength value from which the danger-zone hint shows. */
 	strengthDangerElo: 2_600,
-	/** Store: snapshot re-request backoff after a service-worker restart (base, cap). */
-	snapshotRetryBaseMs: 250,
-	snapshotRetryMaxMs: 4_000,
 } as const;

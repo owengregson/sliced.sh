@@ -60,11 +60,13 @@ describe("createEvalBar", () => {
 		expect(root.querySelector(".sl-evalbar__mate")?.hasAttribute("hidden")).toBe(true);
 	});
 
-	it("rounds percentages so they sum to 100 and words Black's advantage", () => {
+	it("rounds percentages so they sum to 100 and stays White-relative for negative scores", () => {
 		const el = mount(document.createElement("div"));
 		handle = createEvalBar(el);
 		handle.update({ score: { cp: -80 }, wdl: [0.333, 0.333, 0.334] });
-		expect(handle.el.getAttribute("aria-valuetext")).toBe("Black +0.80, 33% win, 33% draw, 34% loss");
+		expect(handle.el.getAttribute("aria-valuetext")).toBe("White −0.80, 33% win, 33% draw, 34% loss");
+		handle.update({ score: { cp: 0 }, wdl: [0.2, 0.6, 0.2] });
+		expect(handle.el.getAttribute("aria-valuetext")).toBe("White 0.00, 20% win, 60% draw, 20% loss");
 	});
 
 	it("mate states pin the fill, show the label, and word the side", () => {

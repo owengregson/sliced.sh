@@ -142,6 +142,12 @@ canvas {
 	max-width: 100%;
 }
 
+/* `hidden` must win over any author `display` on component parts (Appendix F §5: parts are
+   toggled with the attribute; never with inline styles). */
+[hidden] {
+	display: none !important;
+}
+
 hr {
 	border: 0;
 	border-top: var(--sl-hairline) solid var(--sl-color-border-subtle);

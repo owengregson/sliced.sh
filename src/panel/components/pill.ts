@@ -5,7 +5,7 @@
 
 import type { IconName } from "@design/icons";
 import { ANIM } from "../animation-manager";
-import { applyIcon } from "../icons-mount";
+import { setOptionalIcon } from "../icons-mount";
 import { instantiate, part } from "../template";
 import html from "../views/templates/components/pill.html?raw";
 
@@ -38,14 +38,10 @@ export function createPill(host: HTMLElement | null, initial: PillState = {}): P
 			variant = state.variant;
 			for (const v of VARIANTS) el.classList.toggle(`sl-pill--${v}`, v === variant);
 		}
-		if (state.icon !== undefined) {
-			if (state.icon) {
-				applyIcon(icon, state.icon, {
-					spin: variant === "thinking" && state.icon === "status.thinking",
-				});
-				icon.hidden = false;
-			} else icon.hidden = true;
-		}
+		if (state.icon !== undefined)
+			setOptionalIcon(icon, state.icon, {
+				spin: variant === "thinking" && state.icon === "status.thinking",
+			});
 		if (state.text !== undefined && state.text !== text.textContent) {
 			text.textContent = state.text;
 			void ANIM.fade(text, "in");

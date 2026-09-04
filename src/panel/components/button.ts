@@ -5,7 +5,7 @@
  */
 
 import type { IconName } from "@design/icons";
-import { applyIcon } from "../icons-mount";
+import { setOptionalIcon } from "../icons-mount";
 import { instantiate, part } from "../template";
 import html from "../views/templates/components/button.html?raw";
 import { type CountdownRingHandle, createCountdownRing } from "./countdown-ring";
@@ -43,6 +43,7 @@ export interface ButtonState {
 
 export interface ButtonHandle {
 	readonly el: HTMLButtonElement;
+	/** Play-button countdown ring (created lazily on first use / first `armed: true`). */
 	readonly ring: CountdownRingHandle;
 	update(state: ButtonState): void;
 	dispose(): void;
@@ -60,7 +61,7 @@ export function createButton(host: HTMLElement | null, options: ButtonOptions): 
 	const label = part(el, ".sl-button__label");
 	const kbd = part(el, ".sl-button__kbd");
 	const ringHost = part(el, ".sl-button__ring");
-	const ring = createCountdownRing(ringHost, { size: "md" });
+	let ring: CountdownRingHandle | null = null; // created on the first `armed: true`
 	let loading = false;
 	let lockedWidth: string | null = null;
 
@@ -78,13 +79,6 @@ export function createButton(host: HTMLElement | null, options: ButtonOptions): 
 	};
 	el.addEventListener("click", onClick);
 
-	function setIconName(name: IconName | null | undefined): void {
-		if (name) {
-			applyIcon(icon, name);
-			icon.hidden = false;
-		} else icon.hidden = true;
-	}
-
 	function setDisabled(disabled: boolean): void {
 		if (disabled) el.setAttribute("aria-disabled", "true");
 		else el.removeAttribute("aria-disabled");
@@ -92,7 +86,7 @@ export function createButton(host: HTMLElement | null, options: ButtonOptions): 
 
 	function update(state: ButtonState): void {
 		if (state.label !== undefined && !loading) label.textContent = state.label;
-		if (state.icon !== undefined) setIconName(state.icon);
+		if (state.icon !== undefined) setOptionalIcon(icon, state.icon);
 		if (state.kbd !== undefined) {
 			kbd.textContent = state.kbd ?? "";
 			kbd.hidden = !state.kbd;
@@ -123,6 +117,7 @@ export function createButton(host: HTMLElement | null, options: ButtonOptions): 
 		}
 		if (state.armed !== undefined) {
 			el.classList.toggle("sl-button--armed", state.armed);
+			if (state.armed && !ring) ring = createCountdownRing(ringHost, { size: "md" });
 			ringHost.hidden = !state.armed;
 		}
 	}
@@ -138,11 +133,14 @@ export function createButton(host: HTMLElement | null, options: ButtonOptions): 
 
 	return {
 		el,
-		ring,
+		get ring() {
+			if (!ring) ring = createCountdownRing(ringHost, { size: "md" });
+			return ring;
+		},
 		update,
 		dispose() {
 			el.removeEventListener("click", onClick);
-			ring.dispose();
+			ring?.dispose();
 			el.remove();
 		},
 	};

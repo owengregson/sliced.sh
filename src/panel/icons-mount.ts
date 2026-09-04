@@ -35,6 +35,18 @@ export function setIcon(el: Element, name: string, options: { spin?: boolean } =
 	return true;
 }
 
+/** Apply `name` and unhide, or hide the slot when there is no icon (optional icon parts). */
+export function setOptionalIcon(
+	el: HTMLElement,
+	name: IconName | null | undefined,
+	options: { spin?: boolean } = {}
+): void {
+	if (name) {
+		applyIcon(el, name, options);
+		el.hidden = false;
+	} else el.hidden = true;
+}
+
 /** Resolve every `[data-icon]` under `root` (including `root` itself). Returns the count. */
 export function mountIcons(root: ParentNode | Element): number {
 	let n = 0;

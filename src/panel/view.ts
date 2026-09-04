@@ -53,6 +53,7 @@ export interface ViewContext {
 	store: PanelStore;
 	/** The snapshot the view was mounted with (views subscribe to `store` for updates). */
 	snapshot: PanelSnapshot | null;
+	/** The shell's live UI state object (mutated in place; never a copy). */
 	ui: PanelUiState;
 	/** Aborted when the view is unmounted. Views should honour this for async work. */
 	signal: AbortSignal;
