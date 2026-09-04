@@ -54,6 +54,8 @@ export const PATH = {
 	capHeadroom: 0.92,
 	/** Steps that would exceed the cap are shortened to `maxStep − stepLimitMarginPx`. */
 	stepLimitMarginPx: 1,
+	/** Cap-limited steps allowed to reach the exact landing point after a segment. */
+	settleMaxSteps: 64,
 	overshoot: {
 		/** Probability × min(maxFactor, D / distScalePx). */
 		distScalePx: 250,
@@ -119,7 +121,10 @@ export const CLICK = {
 
 export const PROMOTION_LOOK_DELAY_MS: MsRange = [150, 400];
 
-/** §9.3a preview-selection model. */
+/**
+ * §9.3a preview-selection model: `p_preview = clamp(base · f · g · scale, 0, cap)` —
+ * the settings scale is applied BEFORE the cap (ruling), so `scale > 1` cannot exceed it.
+ */
 export const PREVIEW = {
 	base: { cautious: 0.04, balanced: 0.07, aggressive: 0.1, blitz: 0.05 } satisfies Record<
 		PersonaId,
@@ -143,6 +148,8 @@ export const PREVIEW = {
 	dragDisplacementPx: [8, 40] as MsRange,
 	/** Drag previews release within this distance of the press, inside the origin square. */
 	dragReturnSigmaPx: 3,
+	/** Target rect for the outbound leg of a drag preview. */
+	dragTargetRectPx: 6,
 	/** Deselect squares within this king-distance of the piece are preferred. */
 	deselectMaxDistance: 3,
 	/** Time reserved for the preview before the scan phase spends the budget. */

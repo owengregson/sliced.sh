@@ -93,8 +93,14 @@ export interface PreviewSelection {
 	piece: Square;
 	pieceRect: Rect;
 	style: ClickStyle;
-	/** `switch`: the next press is the committed piece; `deselect`: click `deselect` first. */
-	resolve: "switch" | "deselect";
+	/**
+	 * `switch`: the next press (the committed piece) switches the selection;
+	 * `deselect`: click an empty / enemy square first, clearing the selection;
+	 * `switch-to-idle`: the only safe square was an own piece with no legal moves —
+	 * the click selects it (a third selection), and the committed press switches again.
+	 * In every mode no press can fire a move other than the committed one.
+	 */
+	resolve: "switch" | "deselect" | "switch-to-idle";
 	/** The previewed piece's destination square the hand drifts over. */
 	hoverSquare: Square;
 	hoverPoint: Pt;
@@ -107,7 +113,15 @@ export interface PreviewSelection {
 	dwellMs: number;
 	/** Drag style only: out 8–40 px and back, dispatched while the button is held. */
 	dragPath?: PathPoint[];
-	deselect?: { square: Square; press: Pt; release: Pt; path: PathPoint[]; holdMs: number };
+	deselect?: {
+		square: Square;
+		press: Pt;
+		release: Pt;
+		path: PathPoint[];
+		holdMs: number;
+		/** Known when the caller supplied `occupancy`. */
+		occupancy?: Occupancy;
+	};
 	/** Hesitation form: the previewed piece is the committed piece itself. */
 	isCommittedPiece: boolean;
 	/** Every phase after the approach path (hold, drag, hover, dwell, deselect). */
@@ -118,8 +132,10 @@ export interface PreviewSelection {
 export interface BoardGeometry {
 	boardRect: Rect;
 	squareRect(sq: Square): Rect;
-	flipped: boolean;
 }
+
+/** What a square holds, from the adapter's placement (used to pick safe deselect clicks). */
+export type Occupancy = "own" | "enemy" | "empty";
 
 /** A MultiPV candidate with its selection probability (§9.3). */
 export interface MoveCandidate {

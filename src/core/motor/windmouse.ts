@@ -7,6 +7,7 @@
 
 import type { Rng } from "@core/rng";
 import { WIND } from "./constants";
+import { sampleRange } from "./geometry";
 import type { MotorProfile, PathPoint, Pt } from "./types";
 
 export interface WindMouseParams {
@@ -83,10 +84,6 @@ export function windMousePath(
 	return out;
 }
 
-function uniform(range: readonly [number, number], rng: Rng): number {
-	return range[0] + rng.next() * (range[1] - range[0]);
-}
-
 /**
  * One WindMouse run from `a` to `b` with SRL-style randomised parameters,
  * rescaled so that Σdt ≈ `durMs` while no sample exceeds the profile's peak
@@ -105,12 +102,12 @@ export function windMouseSegment(
 		b.x,
 		b.y,
 		{
-			gravity: uniform(WIND.gravity, rng),
-			wind: uniform(WIND.wind, rng),
+			gravity: sampleRange(WIND.gravity, rng),
+			wind: sampleRange(WIND.wind, rng),
 			minWaitMs: WIND.minWaitMs,
 			maxWaitMs: WIND.maxWaitMs,
-			maxStep: uniform(WIND.maxStep, rng),
-			targetArea: uniform(WIND.targetArea, rng),
+			maxStep: sampleRange(WIND.maxStep, rng),
+			targetArea: sampleRange(WIND.targetArea, rng),
 		},
 		rng
 	);

@@ -4,8 +4,10 @@
  * (hover 1–3 candidate from-squares weighted by selection probability, dwell
  * with micro-drift, occasional trace toward the to-square or a feint over the
  * piece without pressing) → [preview selections at the §9.3a rate] → decision
- * pause (15–40 %) with idle tremor. Total ≤ `waitMs − reactionMs`; too short a
- * window yields `[rest]` only. Every action is continuous with the previous one.
+ * pause (15–40 % of the budget) with idle tremor. Surplus budget lengthens the
+ * orientation and hover dwells rather than the pause. Total = `waitMs −
+ * reactionMs`; too short a window yields `[rest]` only. Every action is
+ * continuous with the previous one.
  */
 
 import type { Rng } from "@core/rng";
@@ -13,16 +15,17 @@ import type { Square } from "@typedefs/game";
 import type { PersonaId } from "@typedefs/settings";
 import type { TimingMode } from "@typedefs/timing";
 import { EXPLORATION, PREVIEW, SAMPLING } from "./constants";
-import { sampleRange } from "./motor-profile";
+import { lastPoint, pathMs, sampleRange, smallRect } from "./geometry";
 import { generatePath, idleTremor } from "./path-generator";
-import { planPreview, previewProbability } from "./preview-select";
-import { plausibleStart, pointInBand, samplePointInRect } from "./sampling";
+import { planPreview, previewProbability, selectedAfter } from "./preview-select";
+import { pointInBand, samplePointInRect } from "./sampling";
 import type {
 	BoardGeometry,
 	HandAction,
 	MotorProfile,
 	MoveCandidate,
-	PathPoint,
+	Occupancy,
+	PreviewSelection,
 	Pt,
 	Rect,
 	RestStyle,
@@ -40,14 +43,10 @@ export interface ExplorationOptions {
 	previewScale: number;
 	committed: { from: Square; to: Square };
 	legalDestinations(sq: Square): Square[];
-	/** Where the hand is now (it owns the pointer, §13.5); defaults to a plausible start. */
-	cursor?: Pt;
-}
-
-function pathMs(path: readonly PathPoint[] | undefined): number {
-	let t = 0;
-	for (const p of path ?? []) t += p.dtMs;
-	return t;
+	/** Adapter placement (Task 18); lets previews pick truly empty squares to deselect. */
+	occupancy?: (sq: Square) => Occupancy;
+	/** Where the hand is now — it owns the pointer (§13.5), so the caller always knows. */
+	cursor: Pt;
 }
 
 export function actionDurationMs(a: HandAction): number {
@@ -65,10 +64,6 @@ export function actionEnd(a: HandAction, before: Pt): Pt {
 	if (a.preview) return a.preview.deselect ? a.preview.deselect.release : a.preview.hoverPoint;
 	const last = a.path?.[a.path.length - 1];
 	return last ? { x: last.x, y: last.y } : before;
-}
-
-function smallRect(p: Pt, size: number): Rect {
-	return { left: p.x - size / 2, top: p.y - size / 2, width: size, height: size };
 }
 
 /** P(any hover): rises with `n_reasonable` and the wait window. */
@@ -109,6 +104,7 @@ export function restPoint(
 interface Budget {
 	spent: number;
 	explore: number;
+	pauseMs: number;
 }
 
 export class ExplorationPlanner {
@@ -122,13 +118,12 @@ export class ExplorationPlanner {
 	): HandAction[] {
 		const reaction = sampleRange(profile.reactionMs, rng);
 		const budget = waitMs - reaction;
-		const fromRect = geometry.squareRect(opts.committed.from);
-		let cursor = opts.cursor ?? plausibleStart(geometry.boardRect, rng, fromRect);
+		let cursor = opts.cursor;
 		if (budget < EXPLORATION.minWindowMs) return [{ kind: "rest", dwellMs: Math.max(0, budget) }];
 
 		const actions: HandAction[] = [];
 		const pauseMs = sampleRange(EXPLORATION.decisionPauseFrac, rng) * budget;
-		const b: Budget = { spent: 0, explore: budget - pauseMs };
+		const b: Budget = { spent: 0, explore: budget - pauseMs, pauseMs };
 		const push = (a: HandAction): void => {
 			actions.push(a);
 			b.spent += actionDurationMs(a);
@@ -141,7 +136,7 @@ export class ExplorationPlanner {
 		push({ kind: "drift", path: drift, dwellMs: orientMs - pathMs(drift) });
 
 		// Preview decision up front so the scan phase leaves room for it.
-		const pPreview = previewProbability(opts);
+		const pPreview = previewProbability({ ...opts, previewBase: profile.exploration.previewBase });
 		const wantPreview = rng.chance(pPreview);
 		const wantSecond = wantPreview && rng.chance(pPreview * PREVIEW.secondPreviewFactor);
 		const reserve = wantPreview ? PREVIEW.reserveMs * (wantSecond ? 2 : 1) : 0;
@@ -164,7 +159,7 @@ export class ExplorationPlanner {
 					EXPLORATION.hoverDwellMs[0]
 				);
 				if (dwell === null) break;
-				push({ kind: "hover", target: endOf(path, target), rect, path, dwellMs: dwell });
+				push({ kind: "hover", target: lastPoint(path, target), rect, path, dwellMs: dwell });
 				if (!rng.chance(profile.exploration.feintProb)) continue;
 				const feint = cand.from === opts.committed.from && rng.chance(0.5);
 				const extra = feint
@@ -180,20 +175,48 @@ export class ExplorationPlanner {
 		// Preview selections (§9.3a): at most one at default rates, a second with p·0.25.
 		// The decision pause may shrink to its minimum to make room for a preview.
 		if (wantPreview) {
-			b.explore = budget - EXPLORATION.decisionPauseFrac[0] * budget;
-			const first = this.preview(cursor, candidates, geometry, profile, rng, opts, b, []);
+			b.pauseMs = EXPLORATION.decisionPauseFrac[0] * budget;
+			b.explore = budget - b.pauseMs;
+			const first = this.preview(cursor, candidates, geometry, profile, rng, opts, b, [], null);
 			if (first) {
 				push(first.action);
 				if (wantSecond) {
-					const second = this.preview(cursor, candidates, geometry, profile, rng, opts, b, [
-						first.piece,
-					]);
+					// The first piece may still be selected: its destinations are banned for the second.
+					const second = this.preview(
+						cursor,
+						candidates,
+						geometry,
+						profile,
+						rng,
+						opts,
+						b,
+						[first.piece],
+						selectedAfter(first.selection)
+					);
 					if (second) push(second.action);
 				}
 			}
 		}
 
-		// Decision pause: rest with idle tremor for whatever remains.
+		// Surplus (budget − spent − pause) lengthens hover dwells, then the orientation drift,
+		// so the decision pause stays inside its 15–40 % band.
+		let surplus = budget - b.spent - b.pauseMs;
+		for (const a of actions) {
+			if (surplus <= 0) break;
+			if (a.kind !== "hover") continue;
+			const add = Math.min(surplus, EXPLORATION.hoverDwellMs[1] - a.dwellMs);
+			if (add <= 0) continue;
+			a.dwellMs += add;
+			surplus -= add;
+		}
+		const orientation = actions[0];
+		if (surplus > 0 && orientation?.kind === "drift") {
+			extendDrift(orientation, surplus, profile, rng);
+			surplus = 0;
+		}
+		b.spent = planDurationMs(actions);
+
+		// Decision pause: rest with idle tremor for whatever remains (= the pause).
 		const restMs = Math.max(0, budget - b.spent);
 		const tremor = idleTremor(cursor, restMs * EXPLORATION.restTremorFrac, profile, rng);
 		const rest: HandAction = { kind: "rest", dwellMs: restMs - pathMs(tremor) };
@@ -210,24 +233,24 @@ export class ExplorationPlanner {
 		rng: Rng,
 		opts: ExplorationOptions,
 		b: Budget,
-		exclude: Square[]
-	): { action: HandAction; piece: Square } | null {
-		const pv = planPreview(
-			{
-				cursor,
-				candidates,
-				committed: opts.committed,
-				geometry,
-				legalDestinations: opts.legalDestinations,
-				profile,
-				maxMs: b.explore - b.spent,
-				exclude,
-			},
-			rng
-		);
+		exclude: Square[],
+		selected: Square | null
+	): { action: HandAction; piece: Square; selection: PreviewSelection } | null {
+		const input: Parameters<typeof planPreview>[0] = {
+			cursor,
+			candidates,
+			committed: opts.committed,
+			geometry,
+			legalDestinations: opts.legalDestinations,
+			profile,
+			maxMs: b.explore - b.spent,
+			exclude,
+			selected,
+		};
+		if (opts.occupancy) input.occupancy = opts.occupancy;
+		const pv = planPreview(input, rng);
 		if (!pv) return null;
 		return {
-			piece: pv.piece,
 			action: {
 				kind: "preview",
 				target: pv.press,
@@ -236,6 +259,8 @@ export class ExplorationPlanner {
 				dwellMs: pv.totalAfterApproachMs,
 				preview: pv,
 			},
+			piece: pv.piece,
+			selection: pv,
 		};
 	}
 
@@ -256,7 +281,7 @@ export class ExplorationPlanner {
 		);
 		return {
 			kind: "trace",
-			target: endOf(path, end),
+			target: lastPoint(path, end),
 			rect: toRect,
 			path,
 			dwellMs: sampleRange(EXPLORATION.traceDwellMs, rng),
@@ -278,13 +303,31 @@ export class ExplorationPlanner {
 		const hold = sampleRange(EXPLORATION.feintDwellMs, rng);
 		const first = path[0];
 		if (first) first.dtMs += hold;
-		return { kind: "feint", target: endOf(path, end), rect, path, dwellMs: 0 };
+		return { kind: "feint", target: lastPoint(path, end), rect, path, dwellMs: 0 };
 	}
 }
 
-function endOf(path: readonly PathPoint[], fallback: Pt): Pt {
-	const p = path[path.length - 1];
-	return p ? { x: p.x, y: p.y } : { x: Math.round(fallback.x), y: Math.round(fallback.y) };
+/** Lengthen a drift action by `extraMs` with more idle tremor that ends where the drift ended. */
+function extendDrift(drift: HandAction, extraMs: number, profile: MotorProfile, rng: Rng): void {
+	const path = drift.path ?? [];
+	const end = path[path.length - 1];
+	if (!end) {
+		drift.dwellMs += extraMs;
+		return;
+	}
+	const extra = idleTremor(end, extraMs * EXPLORATION.restTremorFrac, profile, rng);
+	const tail = extra[extra.length - 1];
+	if (tail) {
+		// Return to the original end point so the next action's path still starts there.
+		const prev = extra[extra.length - 2] ?? end;
+		if (prev.x === end.x && prev.y === end.y) extra.pop();
+		else {
+			tail.x = end.x;
+			tail.y = end.y;
+		}
+	}
+	drift.path = [...path, ...extra];
+	drift.dwellMs += extraMs - pathMs(extra);
 }
 
 /** Dwell that fits in `room` (shrunk to `min` at most), else `null`. */

@@ -14,7 +14,7 @@ export function squareRect(sq: Square, flipped = false, board: Rect = BOARD): Re
 }
 
 export function geometry(flipped = false, board: Rect = BOARD) {
-	return { boardRect: board, squareRect: (sq: Square) => squareRect(sq, flipped, board), flipped };
+	return { boardRect: board, squareRect: (sq: Square) => squareRect(sq, flipped, board) };
 }
 
 export function centre(r: Rect): Pt {

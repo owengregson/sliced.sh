@@ -1,20 +1,16 @@
-// test/core/motor/invariants.test.ts — Step 5 / §9.6a: 500 random simulated moves.
+// test/core/motor/invariants.test.ts — Step 5 / §9.6a: 500 random simulated moves with a
+// site-faithful selection model (chessground / chess.com: a press on a legal destination of
+// the selected piece plays that move; a press on an own piece selects it; anything else clears).
 import { describe, expect, it } from "bun:test";
 import { CLICK, MOTOR_DEFAULTS, PROFILE_NOISE, SAMPLING } from "@core/motor/constants";
 import { ExplorationPlanner } from "@core/motor/exploration";
 import { perGameProfile, perMoveProfile, sampleRange } from "@core/motor/motor-profile";
 import { generatePath, grabWobble } from "@core/motor/path-generator";
 import { clickReleasePoint, plausibleStart, samplePointInRect } from "@core/motor/sampling";
-import type { MotorProfile, PathPoint, Pt } from "@core/motor/types";
+import type { MotorProfile, Occupancy, PathPoint, Pt } from "@core/motor/types";
 import { createRng, type Rng } from "@core/rng";
 import type { Square } from "@typedefs/game";
 import { ALL_SQUARES, BOARD, dist, geometry, inside, squareRect } from "./fixtures";
-
-interface Press {
-	at: Pt;
-	square: Square;
-	kind: "committed-from" | "committed-to" | "preview" | "preview-deselect";
-}
 
 const GEO = geometry();
 const NUMERIC_KEYS = [
@@ -28,16 +24,31 @@ const NUMERIC_KEYS = [
 	"microCorrectionProb",
 ] as const;
 
-function randomPosition(rng: Rng) {
+interface Position {
+	candidates: Array<{ from: Square; to: Square; probability: number; uci: string }>;
+	committed: { from: Square; to: Square };
+	legalDestinations(sq: Square): Square[];
+	occupancy(sq: Square): Occupancy;
+}
+
+/** Six own pieces, six enemy pieces; own destinations may include own squares (castling-like). */
+function randomPosition(rng: Rng): Position | null {
 	const squares = [...ALL_SQUARES];
+	const take = (): Square => squares.splice(rng.int(0, squares.length - 1), 1)[0]!;
 	const own: Square[] = [];
-	for (let i = 0; i < 6; i++) own.push(squares.splice(rng.int(0, squares.length - 1), 1)[0]!);
+	const enemy: Square[] = [];
+	for (let i = 0; i < 6; i++) own.push(take());
+	for (let i = 0; i < 6; i++) enemy.push(take());
+	const occ = new Map<Square, Occupancy>();
+	for (const s of own) occ.set(s, "own");
+	for (const s of enemy) occ.set(s, "enemy");
 	const dests = new Map<Square, Square[]>();
 	for (const sq of own) {
 		const n = rng.int(0, 5);
-		const pool = ALL_SQUARES.filter((s) => !own.includes(s));
+		const pool = ALL_SQUARES.filter((s) => occ.get(s) !== "own");
 		const d: Square[] = [];
 		for (let i = 0; i < n; i++) d.push(pool.splice(rng.int(0, pool.length - 1), 1)[0]!);
+		if (rng.chance(0.4)) d.push(rng.pick(own.filter((s) => s !== sq))); // king → rook style
 		dests.set(sq, d);
 	}
 	const movable = own.filter((s) => (dests.get(s)?.length ?? 0) > 0);
@@ -49,7 +60,8 @@ function randomPosition(rng: Rng) {
 	return {
 		candidates: cands,
 		committed: cands[0]!,
-		legalDestinations: (sq: Square) => dests.get(sq) ?? [],
+		legalDestinations: (sq) => dests.get(sq) ?? [],
+		occupancy: (sq) => occ.get(sq) ?? "empty",
 	};
 }
 
@@ -58,11 +70,20 @@ function checkPath(start: Pt, path: PathPoint[], m: MotorProfile) {
 	for (const p of path) {
 		expect(Number.isInteger(p.x) && Number.isInteger(p.y)).toBe(true);
 		expect(p.dtMs).toBeGreaterThan(0);
-		if (p.x === prev.x && p.y === prev.y) expect(p.dtMs).toBeGreaterThan(0);
 		expect((dist(prev, p) / p.dtMs) * 1000).toBeLessThanOrEqual(m.peakSpeedCapPxPerS + 1e-6);
 		expect(dist(prev, p)).toBeLessThanOrEqual((m.peakSpeedCapPxPerS * m.sampleIntervalMs) / 1000 + 1);
 		prev = p;
 	}
+}
+
+/** Site selection model; returns true when the press plays a move. */
+function press(sel: { selected: Square | null }, square: Square, pos: Position): boolean {
+	if (sel.selected !== null && pos.legalDestinations(sel.selected).includes(square)) {
+		sel.selected = null;
+		return true;
+	}
+	sel.selected = pos.occupancy(square) === "own" ? square : null;
+	return false;
 }
 
 describe("motor invariants (500 random moves)", () => {
@@ -73,6 +94,8 @@ describe("motor invariants (500 random moves)", () => {
 		const seenPaths = new Set<string>();
 		let cursor: Pt = plausibleStart(BOARD, rng);
 		let previews = 0;
+		let idleSwitches = 0;
+		let switches = 0;
 		let moves = 0;
 		while (moves < 500) {
 			const pos = randomPosition(rng);
@@ -84,24 +107,25 @@ describe("motor invariants (500 random moves)", () => {
 				expect(r).toBeGreaterThanOrEqual(1 - PROFILE_NOISE.perMoveClamp - 1e-9);
 				expect(r).toBeLessThanOrEqual(1 + PROFILE_NOISE.perMoveClamp + 1e-9);
 			}
-			const presses: Press[] = [];
 			const fromRect = squareRect(pos.committed.from);
 			const toRect = squareRect(pos.committed.to);
 			const style = rng.chance(0.6) ? "drag" : "click";
+			const sel = { selected: null as Square | null };
+			let pressCount = 0;
 
 			// Exploration (pre-touch window) — previews are the only non-committed presses.
 			const actions = planner.plan(rng.int(300, 5000), pos.candidates, GEO, m, rng, {
-				thinkMs: rng.int(300, 8000),
+				thinkMs: rng.int(300, 10_000),
 				mode: rng.pick(["normal", "long", "premove", "instant"] as const),
 				nReasonable: pos.candidates.length,
 				myClockMs: rng.int(5_000, 120_000),
 				persona: "balanced",
-				previewScale: 1,
+				previewScale: rng.chance(0.5) ? 2 : 1,
 				committed: pos.committed,
 				legalDestinations: pos.legalDestinations,
+				occupancy: pos.occupancy,
 				cursor,
 			});
-			let selected: Square | null = null;
 			for (const a of actions) {
 				if (a.path) {
 					checkPath(cursor, a.path, m);
@@ -111,42 +135,56 @@ describe("motor invariants (500 random moves)", () => {
 				const pv = a.preview;
 				if (!pv) continue;
 				previews++;
-				expect(selected).toBeNull();
+				pressCount++;
 				expect(inside(pv.press, pv.pieceRect)).toBe(true);
-				presses.push({ at: pv.press, square: pv.piece, kind: "preview" });
-				selected = pv.piece;
-				const dests = pos.legalDestinations(pv.piece);
+				expect(pos.occupancy(pv.piece)).toBe("own");
+				// The preview press must select, never play a move.
+				expect(press(sel, pv.piece, pos)).toBe(false);
+				expect(sel.selected).toBe(pv.piece);
 				if (pv.dragPath) {
 					checkPath(pv.press, pv.dragPath, m);
 					expect(inside(pv.release, pv.pieceRect)).toBe(true);
 				} else expect(dist(pv.press, pv.release)).toBeLessThanOrEqual(2);
 				checkPath(pv.release, pv.hoverPath, m);
 				cursor = pv.hoverPoint;
-				if (pv.deselect) {
-					checkPath(cursor, pv.deselect.path, m);
-					expect(dests).not.toContain(pv.deselect.square);
-					expect(dist(pv.deselect.press, pv.deselect.release)).toBeLessThanOrEqual(2);
-					presses.push({ at: pv.deselect.press, square: pv.deselect.square, kind: "preview-deselect" });
-					selected = null;
-					cursor = pv.deselect.release;
+				const d = pv.deselect;
+				if (d) {
+					pressCount++;
+					checkPath(cursor, d.path, m);
+					expect(dist(d.press, d.release)).toBeLessThanOrEqual(2);
+					expect(inside(d.press, squareRect(d.square))).toBe(true);
+					expect(press(sel, d.square, pos)).toBe(false);
+					// The resolve label matches what the click actually did.
+					expect(d.occupancy).toBe(pos.occupancy(d.square));
+					if (pv.resolve === "switch-to-idle") {
+						idleSwitches++;
+						expect(d.occupancy).toBe("own");
+						expect(pos.legalDestinations(d.square)).toEqual([]);
+						expect(sel.selected).toBe(d.square);
+					} else {
+						expect(pv.resolve).toBe("deselect");
+						expect(d.occupancy === "empty" || d.occupancy === "enemy").toBe(true);
+						expect(sel.selected).toBeNull();
+					}
+					cursor = d.release;
 				} else {
+					switches++;
 					expect(pv.resolve).toBe("switch");
-					expect(dests).not.toContain(pos.committed.from);
-					expect(pv.piece).not.toBe(pos.committed.from);
+					expect(sel.selected).toBe(pv.piece);
 				}
 			}
-			// The committed press resolves any remaining (switch-mode) selection: it is never a
-			// legal destination of the selected piece, so it selects the committed piece.
-			if (selected !== null) expect(pos.legalDestinations(selected)).not.toContain(pos.committed.from);
+			// No pending selection can turn the committed press into a move.
+			if (sel.selected !== null)
+				expect(pos.legalDestinations(sel.selected)).not.toContain(pos.committed.from);
 
 			// Committed move.
-			const press = samplePointInRect(
+			const pressPt = samplePointInRect(
 				fromRect,
 				SAMPLING.press.sigmaFrac,
 				SAMPLING.press.innerFrac,
 				rng
 			);
-			const approach = generatePath(cursor, press, fromRect, m, rng);
+			const approach = generatePath(cursor, pressPt, fromRect, m, rng);
 			if (approach.length > 0) {
 				checkPath(cursor, approach, m);
 				expect(dist(cursor, approach[0]!)).toBeLessThanOrEqual(12);
@@ -156,7 +194,9 @@ describe("motor invariants (500 random moves)", () => {
 				seenPaths.add(JSON.stringify(approach));
 			}
 			expect(inside(cursor, fromRect)).toBe(true);
-			presses.push({ at: cursor, square: pos.committed.from, kind: "committed-from" });
+			pressCount++;
+			expect(press(sel, pos.committed.from, pos)).toBe(false);
+			expect(sel.selected).toBe(pos.committed.from);
 			if (style === "drag") {
 				const wobble = grabWobble(cursor, m, rng);
 				checkPath(cursor, wobble, m);
@@ -189,7 +229,9 @@ describe("motor invariants (500 random moves)", () => {
 				const last = travel[travel.length - 1]!;
 				cursor = { x: last.x, y: last.y };
 				expect(inside(cursor, toRect)).toBe(true);
-				presses.push({ at: cursor, square: pos.committed.to, kind: "committed-to" });
+				pressCount++;
+				// The second click of the committed move is the only press that plays a move.
+				expect(press(sel, pos.committed.to, pos)).toBe(true);
 				const rel = clickReleasePoint(cursor, rng);
 				expect(dist(cursor, rel)).toBeLessThanOrEqual(2);
 				cursor = rel;
@@ -197,13 +239,11 @@ describe("motor invariants (500 random moves)", () => {
 					CLICK.interClickGapMs[0]
 				);
 			}
-			// Every press is the committed move or a modelled, resolved preview.
-			for (const p of presses)
-				expect(["committed-from", "committed-to", "preview", "preview-deselect"]).toContain(p.kind);
-			expect(presses.filter((p) => p.kind === "committed-from").length).toBe(1);
+			expect(pressCount).toBeLessThanOrEqual(2 + 2 * 2);
 		}
 		expect(moves).toBe(500);
 		expect(previews).toBeGreaterThan(0);
+		expect(switches).toBeGreaterThan(0);
 		expect(seenPaths.size).toBeGreaterThan(500);
 	});
 });

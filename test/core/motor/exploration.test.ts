@@ -108,6 +108,17 @@ describe("ExplorationPlanner.plan", () => {
 		expect(top / hovers).toBeGreaterThanOrEqual(0.6);
 	});
 
+	it("keeps the decision pause inside 15–40 % of the budget even without hovers", () => {
+		for (let seed = 0; seed < 300; seed++) {
+			const actions = plan(`pause${seed}`);
+			const total = planDurationMs(actions);
+			const rest = actionDurationMs(actions[actions.length - 1]!);
+			expect(total).toBeGreaterThanOrEqual(4000 - MOTOR_DEFAULTS.reactionMs[1] - 1e-6);
+			expect(rest / total).toBeGreaterThanOrEqual(0.15 - 1e-6);
+			expect(rest / total).toBeLessThanOrEqual(0.4 + 1e-6);
+		}
+	});
+
 	it("uses only [rest] when the window is too short", () => {
 		for (let seed = 0; seed < 50; seed++) {
 			const actions = plan(seed, 300);
@@ -200,6 +211,50 @@ describe("ExplorationPlanner.plan", () => {
 			expect(committedPiece / previews).toBeGreaterThan(0.1);
 			expect(committedPiece / previews).toBeLessThan(0.35);
 		});
+	});
+});
+
+describe("second previews with a castling position", () => {
+	// King e1 may be moved onto rook h1 (lichess castling by king-onto-rook); a switch-resolved
+	// king preview leaves e1 selected, so a second preview must never press h1/f1/g1.
+	const DESTS2: Partial<Record<Square, Square[]>> = {
+		e1: ["f1", "g1", "h1"],
+		h1: ["g1", "f1"],
+		e2: ["e3", "e4"],
+		d2: ["d3", "d4"],
+	};
+	const dests2 = (sq: Square): Square[] => DESTS2[sq] ?? [];
+	const own = new Set<Square>(["e1", "h1", "e2", "d2", "a1", "b1", "c1", "g1", "f2", "g2", "h2"]);
+	const occ = (sq: Square): "own" | "enemy" | "empty" => (own.has(sq) ? "own" : "empty");
+	const cands: ExplorationCandidate[] = [
+		{ from: "e2", to: "e4", probability: 0.4, uci: "e2e4" },
+		{ from: "e1", to: "g1", probability: 0.3, uci: "e1g1" },
+		{ from: "h1", to: "h3", probability: 0.2, uci: "h1h3" },
+		{ from: "d2", to: "d4", probability: 0.1, uci: "d2d4" },
+	];
+	it("never presses a destination of the selected piece; no selection can fire the committed press", () => {
+		let doubles = 0;
+		for (let seed = 0; seed < 6000; seed++) {
+			const actions = planner.plan(9000, cands, GEO, MOTOR_DEFAULTS, createRng(`castle${seed}`), {
+				...opts({ thinkMs: 10_000, previewScale: 2, nReasonable: 4, legalDestinations: dests2 }),
+				occupancy: occ,
+			});
+			let selected: Square | null = null;
+			const pvs = actions.filter((a) => a.kind === "preview");
+			if (pvs.length > 1) doubles++;
+			for (const a of pvs) {
+				const pv = a.preview!;
+				if (selected !== null) expect(dests2(selected)).not.toContain(pv.piece);
+				selected = pv.piece;
+				if (pv.deselect) {
+					expect(dests2(selected)).not.toContain(pv.deselect.square);
+					selected = occ(pv.deselect.square) === "own" ? pv.deselect.square : null;
+					if (selected !== null) expect(pv.resolve).toBe("switch-to-idle");
+				}
+			}
+			if (selected !== null) expect(dests2(selected)).not.toContain("e2");
+		}
+		expect(doubles).toBeGreaterThan(30);
 	});
 });
 

@@ -118,6 +118,73 @@ describe("planPreview", () => {
 		expect(planPreview(input({ legalDestinations: () => [] as Square[] }), createRng(1))).toBeNull();
 	});
 
+	it("never previews a legal destination of a piece still selected from an earlier preview", () => {
+		// e1 (king) is selected from a switch-resolved first preview; its destinations include h1.
+		for (let seed = 0; seed < 300; seed++) {
+			const pv = planPreview(
+				input({
+					candidates: [
+						{ from: "h1", to: "h3", probability: 0.5, uci: "h1h3" },
+						{ from: "d2", to: "d4", probability: 0.3, uci: "d2d4" },
+						{ from: "e1", to: "g1", probability: 0.2, uci: "e1g1" },
+					],
+					committed: { from: "d2", to: "d4" },
+					exclude: ["e1"],
+					selected: "e1",
+				}),
+				createRng(seed)
+			);
+			if (!pv) continue;
+			expect(legalDestinations("e1")).not.toContain(pv.piece);
+			expect(pv.piece).toBe("d2");
+		}
+		// With every candidate banned, nothing is previewed.
+		expect(
+			planPreview(
+				input({
+					candidates: [{ from: "h1", to: "h3", probability: 1, uci: "h1h3" }],
+					committed: { from: "h1", to: "h3" },
+					selected: "e1",
+				}),
+				createRng(1)
+			)
+		).toBeNull();
+	});
+
+	it("uses occupancy to deselect on empty squares first, labelling own-piece fallbacks truthfully", () => {
+		const own = new Set<Square>(["e1", "h1", "e2", "g1", "d2", "a1", "b1", "c1"]);
+		const enemy = new Set<Square>(["e8", "d8", "a7"]);
+		const occupancy = (sq: Square): "own" | "enemy" | "empty" =>
+			own.has(sq) ? "own" : enemy.has(sq) ? "enemy" : "empty";
+		let deselects = 0;
+		for (let seed = 0; seed < 400; seed++) {
+			const pv = planPreview(input({ occupancy }), createRng(seed));
+			if (!pv?.deselect) continue;
+			deselects++;
+			expect(pv.resolve).toBe("deselect");
+			expect(pv.deselect.occupancy).toBe("empty");
+			expect(occupancy(pv.deselect.square)).toBe("empty");
+		}
+		expect(deselects).toBeGreaterThan(50);
+		// Only own immobile pieces remain → a truthful "switch-to-idle" on a moveless own piece.
+		const crowded = (): "own" | "enemy" | "empty" => "own";
+		const dests = (sq: Square): Square[] => (sq === "e2" ? ["e3", "e4"] : sq === "g1" ? ["f3"] : []);
+		let idle = 0;
+		for (let seed = 0; seed < 100; seed++) {
+			const pv = planPreview(
+				input({ occupancy: crowded, legalDestinations: dests, exclude: ["g1", "d2"] }),
+				createRng(seed)
+			);
+			if (!pv?.deselect) continue;
+			idle++;
+			expect(pv.resolve).toBe("switch-to-idle");
+			expect(pv.deselect.occupancy).toBe("own");
+			expect(dests(pv.deselect.square)).toEqual([]);
+			expect(dests("e2")).not.toContain(pv.deselect.square);
+		}
+		expect(idle).toBeGreaterThan(20);
+	});
+
 	it("geometry: press on the piece, hover on a destination, release rules per style", () => {
 		for (let seed = 0; seed < 300; seed++) {
 			const pv = planPreview(input(), createRng(seed));

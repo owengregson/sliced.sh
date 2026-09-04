@@ -10,8 +10,8 @@
 
 import type { Rng } from "@core/rng";
 import { MIN_JERK, MOTOR_DEFAULTS, PATH } from "./constants";
-import { chooseStyle, sampleRange } from "./motor-profile";
-import { inRect } from "./sampling";
+import { clampIntoRect, inRect, sampleRange } from "./geometry";
+import { chooseStyle } from "./motor-profile";
 import type { MotorProfile, PathPoint, Pt, Rect } from "./types";
 import { windMouseSegment } from "./windmouse";
 
@@ -138,6 +138,13 @@ class Emitter {
 		this.pending = 0;
 		this.prev = p;
 	}
+	/** Walk the remaining distance to `target` in cap-limited steps so the path really lands there. */
+	settle(target: Pt, dtMs: number): void {
+		for (let i = 0; i < PATH.settleMaxSteps; i++) {
+			if (this.prev.x === target.x && this.prev.y === target.y) return;
+			this.push(target, dtMs);
+		}
+	}
 	/** Fold any unspent delay into the last emitted point (a slower final approach). */
 	flush(): void {
 		const last = this.out[this.out.length - 1];
@@ -161,7 +168,7 @@ function bezierSegment(b: Pt, durMs: number, m: MotorProfile, rng: Rng, em: Emit
 	for (let i = 1; i <= n; i++) {
 		const tau = i / n;
 		if (i === n) {
-			em.push(target, m.sampleIntervalMs);
+			em.settle(target, m.sampleIntervalMs);
 			break;
 		}
 		const p = cubicBezier(a, c1, c2, b, tAtArc(table, minJerk(tau)));
@@ -175,7 +182,7 @@ function bezierSegment(b: Pt, durMs: number, m: MotorProfile, rng: Rng, em: Emit
 /** WindMouse alternate style for the primary segment, scaled to `durMs`. */
 function windSegment(b: Pt, durMs: number, m: MotorProfile, rng: Rng, em: Emitter): void {
 	for (const p of windMouseSegment(em.position, b, durMs, m, rng)) em.push(p, p.dtMs);
-	em.push({ x: Math.round(b.x), y: Math.round(b.y) }, m.sampleIntervalMs);
+	em.settle({ x: Math.round(b.x), y: Math.round(b.y) }, m.sampleIntervalMs);
 }
 
 /**
@@ -227,11 +234,13 @@ export function generatePath(
 		}
 	}
 	em.flush();
-	// Safety: the final point must remain inside the target rect.
+	// Safety: the final point must remain inside the target rect — pull it to the nearest
+	// interior point rather than snapping to the centre.
 	const last = out[out.length - 1];
 	if (last && !inRect(last, targetRect, PATH.targetPadPx)) {
-		last.x = Math.round(to.x);
-		last.y = Math.round(to.y);
+		const c = clampIntoRect(last, targetRect, PATH.targetPadPx + 1);
+		last.x = Math.round(c.x);
+		last.y = Math.round(c.y);
 	}
 	return out;
 }

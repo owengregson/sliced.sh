@@ -5,28 +5,10 @@
 
 import type { Rng } from "@core/rng";
 import { CLICK, SAMPLING } from "./constants";
+import { inRect, rectCentre, sampleRange } from "./geometry";
 import type { Pt, Rect } from "./types";
 
-export function rectCentre(r: Rect): Pt {
-	return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-}
-
-export function inRect(p: Pt, r: Rect, pad = 0): boolean {
-	return (
-		p.x >= r.left + pad &&
-		p.x <= r.left + r.width - pad &&
-		p.y >= r.top + pad &&
-		p.y <= r.top + r.height - pad
-	);
-}
-
-/** Nearest point to `p` at least `pad` inside `r`. */
-export function clampIntoRect(p: Pt, r: Rect, pad = 0): Pt {
-	return {
-		x: Math.min(r.left + r.width - pad, Math.max(r.left + pad, p.x)),
-		y: Math.min(r.top + r.height - pad, Math.max(r.top + pad, p.y)),
-	};
-}
+export { clampIntoRect, inRect, rectCentre } from "./geometry";
 
 /** Gaussian sample rejected outside `[lo, hi]`; falls back to the clamped mean. */
 export function truncGauss(mean: number, sigma: number, lo: number, hi: number, rng: Rng): number {
@@ -54,10 +36,6 @@ export function clickReleasePoint(press: Pt, rng: Rng): Pt {
 	return { x: Math.round(press.x) + rng.int(-d, d), y: Math.round(press.y) + rng.int(-d, d) };
 }
 
-function uniform(range: readonly [number, number], rng: Rng): number {
-	return range[0] + rng.next() * (range[1] - range[0]);
-}
-
 export type StartBand = "ownHalf" | "clock" | "offBoard";
 
 /** A random point in one of the §4 bands around the board (not yet rounded). */
@@ -80,12 +58,12 @@ export function pointInBand(boardRect: Rect, band: StartBand, rng: Rng): Pt {
 	}
 	if (band === "clock") {
 		return {
-			x: boardRect.left + boardRect.width + uniform(SAMPLING.clockBandPx, rng),
+			x: boardRect.left + boardRect.width + sampleRange(SAMPLING.clockBandPx, rng),
 			y: boardRect.top + rng.next() * boardRect.height,
 		};
 	}
 	const side = rng.int(0, 3);
-	const off = uniform(SAMPLING.offBoardPx, rng);
+	const off = sampleRange(SAMPLING.offBoardPx, rng);
 	const along = rng.next();
 	if (side === 0) return { x: boardRect.left + along * boardRect.width, y: boardRect.top - off };
 	if (side === 1)

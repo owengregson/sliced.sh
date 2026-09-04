@@ -16,12 +16,10 @@ import {
 	STYLE_MIX_PER_GAME,
 	TC_MODULATION,
 } from "./constants";
+import { sampleRange } from "./geometry";
 import type { MotorMoveKind, MotorProfile, MotorStyle, MsRange, TimeControlClass } from "./types";
 
-/** Uniform sample in the inclusive range. */
-export function sampleRange(range: MsRange, rng: Rng): number {
-	return range[0] + rng.next() * (range[1] - range[0]);
-}
+export { sampleRange };
 
 const FAST_TC: ReadonlySet<TimeControlClass> = new Set(["bullet", "blitz"]);
 
