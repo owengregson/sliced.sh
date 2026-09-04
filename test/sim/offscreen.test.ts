@@ -1,13 +1,17 @@
 // test/sim/offscreen.test.ts
-import { beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { offscreenClose, offscreenEnsure } from "@core/chrome/offscreen";
 import { createSimulator, type Simulator } from "@test/sim";
 import { NO_DOCUMENT_ERROR, SINGLE_DOCUMENT_ERROR } from "@test/sim/chrome/offscreen";
 
 let sim: Simulator;
+const prevChrome = (globalThis as Record<string, unknown>).chrome;
 beforeEach(() => {
 	sim = createSimulator();
 	(globalThis as Record<string, unknown>).chrome = sim.chrome;
+});
+afterEach(() => {
+	(globalThis as Record<string, unknown>).chrome = prevChrome;
 });
 
 const params: chrome.offscreen.CreateParameters = {

@@ -1,14 +1,18 @@
 // test/sim/debugger.test.ts
-import { beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { debuggerAttach, debuggerDetach, debuggerSend } from "@core/chrome/debugger";
 import { createSimulator, type Simulator } from "@test/sim";
 
 let sim: Simulator;
+const prevChrome = (globalThis as Record<string, unknown>).chrome;
 let tabId: number;
 beforeEach(() => {
 	sim = createSimulator({ startAt: 1_000_000 });
 	tabId = sim.openTab("https://www.chess.com/play/online").tabId;
 	(globalThis as Record<string, unknown>).chrome = sim.chrome;
+});
+afterEach(() => {
+	(globalThis as Record<string, unknown>).chrome = prevChrome;
 });
 
 describe("chrome.debugger fake", () => {
@@ -113,8 +117,13 @@ describe("chrome.debugger fake", () => {
 		expect(detaches).toEqual([`${tabId}:canceled_by_user`]);
 		expect(sim.debugger.isAttached(tabId)).toBe(false);
 		await debuggerAttach(other, "1.3");
-		sim.closeTab(other);
+		await sim.chrome.tabs.remove(other); // plain tabs.remove, not sim.closeTab
 		expect(detaches).toEqual([`${tabId}:canceled_by_user`, `${other}:target_closed`]);
+		expect(sim.debugger.isAttached(other)).toBe(false);
+		const third = sim.openTab("https://lichess.org/3", { active: false }).tabId;
+		await debuggerAttach(third, "1.3");
+		sim.closeTab(third);
+		expect(detaches.at(-1)).toBe(`${third}:target_closed`);
 	});
 
 	it("onEvent delivers CDP events emitted by the test", async () => {

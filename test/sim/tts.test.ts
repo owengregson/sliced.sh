@@ -6,6 +6,7 @@ import { createSimulator } from "@test/sim";
 describe("chrome.tts fake", () => {
 	it("records speak calls with options and timestamps, delivers start/end events, records stop", async () => {
 		const sim = createSimulator({ startAt: 5_000 });
+		const prevChrome = (globalThis as Record<string, unknown>).chrome;
 		(globalThis as Record<string, unknown>).chrome = sim.chrome;
 		const events: string[] = [];
 		await ttsSpeak("knight f3", { rate: 1.1, onEvent: (e) => void events.push(e.type) });
@@ -26,5 +27,6 @@ describe("chrome.tts fake", () => {
 		expect(viaCb).toHaveLength(2);
 		sim.tts.clear();
 		expect(sim.tts.calls).toEqual([]);
+		(globalThis as Record<string, unknown>).chrome = prevChrome;
 	});
 });

@@ -68,7 +68,8 @@ export async function bootOffscreenContext(
 		await sim.time.runMicrotasks();
 		await window.happyDOM.close();
 	};
-	const offClose = sim.offscreen.onClose(() => void teardown());
+	// Deferred like the content context's tab-removal teardown (see content-context.ts).
+	const offClose = sim.offscreen.onClose(() => queueMicrotask(() => void teardown()));
 
 	return {
 		kind: "offscreen",

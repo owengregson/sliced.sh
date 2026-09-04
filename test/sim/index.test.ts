@@ -35,7 +35,7 @@ describe("simulator façade", () => {
 		const installed = getSimulator();
 		expect(installed.tabs.activeTab()?.url).toBe("https://www.chess.com/play/online");
 		expect(installed.tabs.activeTab()?.status).toBe("complete");
-		expect(prevChrome).toBe(installed.chrome);
+		expect((globalThis as { __sim?: Simulator }).__sim).toBe(installed);
 	});
 
 	it("openTab creates a loaded tab with a DOM registered for CDP input; closeTab removes everything", async () => {

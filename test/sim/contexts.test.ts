@@ -92,7 +92,8 @@ describe("context booters", () => {
 		expect(globalThis.document.getElementById("root")).not.toBeNull();
 		expect(panel.window.location.href).toBe(`chrome-extension://${sim.extensionId}/pages/panel.html`);
 		expect(panel.chrome.tabs).toBe(sim.chrome.tabs);
-		expect((panel.chrome as { debugger?: unknown }).debugger).toBeUndefined();
+		expect(panel.chrome.debugger).toBe(sim.chrome.debugger); // extension pages have the full API
+		expect(panel.chrome.alarms).toBe(sim.chrome.alarms);
 		expect(await panel.send({ type: "hi" })).toEqual({
 			echo: { type: "hi" },
 			from: `chrome-extension://${sim.extensionId}/pages/panel.html`,
@@ -193,6 +194,49 @@ describe("context booters", () => {
 		expect(globalThis.chrome).toBe(sim.chrome);
 		booted.length = 0;
 		booted.push(sw);
+	});
+
+	it("SW teardown cancels the timers the SW armed; other contexts' timers survive", async () => {
+		sim.time.install();
+		try {
+			const sw = await bootSwContext(sim);
+			const fired: string[] = [];
+			setInterval(() => fired.push("sw-interval"), 10); // armed while the SW is active
+			setTimeout(() => fired.push("sw-timeout"), 25);
+			const panel = await bootPanelContext(sim);
+			booted.push(panel);
+			setTimeout(() => fired.push("panel-timeout"), 30); // armed while the panel is active
+			await sim.time.advance(15);
+			expect(fired).toEqual(["sw-interval"]);
+			await sw.teardown();
+			expect(sim.time.pendingTimers()).toBe(1);
+			await sim.time.advance(100);
+			expect(fired).toEqual(["sw-interval", "panel-timeout"]);
+			expect(sim.time.pendingTimers()).toBe(0);
+			booted.push(await bootSwContext(sim));
+		} finally {
+			sim.time.uninstall();
+		}
+	});
+
+	it("non-LIFO teardown (content booted first, torn down first) leaves the panel's globals intact and ends clean", async () => {
+		const sw = await bootSwContext(sim);
+		booted.push(sw);
+		const { tabId, dom } = sim.openTab("https://www.chess.com/play/online");
+		const content = await bootContentContext(sim, tabId);
+		const panel = await bootPanelContext(sim);
+		expect(globalThis.window as unknown).toBe(panel.window);
+		sim.closeTab(tabId); // tears the content context down while the panel is on top
+		await tick();
+		expect(globalThis.window as unknown).toBe(panel.window);
+		expect(globalThis.chrome as unknown).toBe(panel.chrome);
+		expect((globalThis as { document?: unknown }).document).toBe(panel.document);
+		await panel.teardown();
+		expect((globalThis as { window?: unknown }).window).not.toBe(dom.window);
+		expect("window" in globalThis).toBe(false);
+		expect(globalThis.chrome as unknown).toBe(sim.chrome);
+		await content.teardown(); // already torn down by the tab closing — must be a no-op
+		expect(globalThis.chrome as unknown).toBe(sim.chrome);
 	});
 
 	it("a failing entry unwinds the boot", async () => {

@@ -1,12 +1,16 @@
 // test/sim/side-panel.test.ts
-import { beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { sidePanelOpen, sidePanelSetBehavior, sidePanelSetOptions } from "@core/chrome/side-panel";
 import { createSimulator, type Simulator } from "@test/sim";
 
 let sim: Simulator;
+const prevChrome = (globalThis as Record<string, unknown>).chrome;
 beforeEach(() => {
 	sim = createSimulator();
 	(globalThis as Record<string, unknown>).chrome = sim.chrome;
+});
+afterEach(() => {
+	(globalThis as Record<string, unknown>).chrome = prevChrome;
 });
 
 describe("chrome.sidePanel fake", () => {

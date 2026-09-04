@@ -35,7 +35,12 @@ function matchPattern(pattern: string): RegExp {
 	return new RegExp(`^${scheme}://${host}${path}$`);
 }
 
-export function createTabsSubsystem(bus: Bus) {
+export interface TabsOptions {
+	/** Internal (not bus-owned) hook fired after a tab is removed; wires the debugger's target_closed detach. */
+	onTabRemoved?: (tabId: number) => void;
+}
+
+export function createTabsSubsystem(bus: Bus, options: TabsOptions = {}) {
 	let nextId = 1;
 	const tabs = new Map<number, VirtualTab>();
 	const onCreated = bus.event<[chrome.tabs.Tab]>();
@@ -168,7 +173,9 @@ export function createTabsSubsystem(bus: Bus) {
 			for (const id of ids) {
 				const tab = tabs.get(id);
 				tabs.delete(id);
-				if (tab) onRemoved.fire(id, { windowId: tab.windowId, isWindowClosing: false });
+				if (!tab) continue;
+				options.onTabRemoved?.(id);
+				onRemoved.fire(id, { windowId: tab.windowId, isWindowClosing: false });
 			}
 			return bus.settle(callback, undefined);
 		},

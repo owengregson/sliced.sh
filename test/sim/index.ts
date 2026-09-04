@@ -80,7 +80,7 @@ export interface Simulator {
 	getTabDom(tabId: number): TabDom | undefined;
 	/** What `chrome.runtime.getContexts` reports. */
 	extensionContexts(): chrome.runtime.ExtensionContext[];
-	/** The `chrome` object a context of `kind` sees: its own runtime + the fakes it may use. */
+	/** The `chrome` object a context of `kind` sees: its own runtime + the fakes it may use (full for sw/panel). */
 	chromeFor(kind: ContextKind, runtime: RuntimeSubsystem): typeof globalThis.chrome;
 	/** Uninstall fake timers and close every tab DOM. */
 	dispose(): Promise<void>;
@@ -99,7 +99,11 @@ export function createSimulator(options: SimulatorOptions = {}): Simulator {
 	const bus = createBus({ extensionId: SIM_EXTENSION_ID, now });
 
 	const storage = createStorageSubsystem(bus, options);
-	const tabs = createTabsSubsystem(bus);
+	const tabs = createTabsSubsystem(bus, {
+		// Chrome detaches the debugger when its target goes away (`debuggerSub` is assigned below;
+		// the hook only runs on a later `tabs.remove`).
+		onTabRemoved: (tabId) => debuggerSub.detachTargetClosed(tabId),
+	});
 	bus.setTabResolver(tabs.toApi);
 	const alarms = createAlarmsSubsystem(bus);
 	time.addSource(alarms.source);
@@ -154,8 +158,10 @@ export function createSimulator(options: SimulatorOptions = {}): Simulator {
 			runtime: rt.api,
 			storage: storage.api,
 		};
+		// Extension pages (SW, side panel) have the full API; content scripts and the offscreen
+		// document only `runtime` + `storage`.
 		const full =
-			kind === "sw"
+			kind === "sw" || kind === "panel"
 				? {
 						...shared,
 						tabs: tabs.api,
@@ -168,9 +174,7 @@ export function createSimulator(options: SimulatorOptions = {}): Simulator {
 						scripting: scripting.api,
 						windows: windows.api,
 					}
-				: kind === "panel"
-					? { ...shared, tabs: tabs.api, sidePanel: sidePanel.api, tts: tts.api, windows: windows.api }
-					: shared;
+				: shared;
 		return full as unknown as typeof globalThis.chrome;
 	}
 
@@ -184,6 +188,7 @@ export function createSimulator(options: SimulatorOptions = {}): Simulator {
 		};
 	};
 	time.setContextHook({ capture: bus.activeContextId, run: bus.runAs });
+	bus.onContextCleared((id) => void time.cancelOwner(id));
 	const tabDoms = new Map<number, TabDom>();
 
 	function openTab(url: string, opts: OpenTabOptions = {}): OpenedTab {
@@ -206,7 +211,6 @@ export function createSimulator(options: SimulatorOptions = {}): Simulator {
 	}
 
 	function closeTab(tabId: number): void {
-		if (debuggerSub.isAttached(tabId)) debuggerSub.detachTargetClosed(tabId);
 		input.unregisterTab(tabId);
 		const dom = tabDoms.get(tabId);
 		tabDoms.delete(tabId);

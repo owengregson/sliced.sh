@@ -1,7 +1,8 @@
 // test/sim/contexts/panel-context.ts
 /**
  * A side-panel page: its own `chrome.runtime` (so messages/ports cross the
- * bus to the SW), the shared fakes a panel may use, and a happy-dom window
+ * bus to the SW), the full shared API set (side-panel pages are extension
+ * pages, with the same API access as the SW), and a happy-dom window
  * at the panel URL installed as `window` / `document`. `send(message)` is
  * `chrome.runtime.sendMessage` from the panel, resolving with the reply.
  */

@@ -57,6 +57,8 @@ export interface TimeController {
 	/** Earliest due time across timers and sources, or `null`. */
 	nextDue(): number | null;
 	setContextHook(hook: ContextHook): void;
+	/** Drop every fake timer armed by `owner` (a torn-down context's timers never fire, as in Chrome). */
+	cancelOwner(owner: string): number;
 }
 
 const MAX_STEPS = 100_000;
@@ -251,6 +253,16 @@ export function createTimeController(startAt: number): TimeController {
 		nextDue,
 		setContextHook(next) {
 			hook = next;
+		},
+		cancelOwner(owner) {
+			let n = 0;
+			for (const [id, t] of timers) {
+				if (t.owner === owner) {
+					timers.delete(id);
+					n += 1;
+				}
+			}
+			return n;
 		},
 	};
 }

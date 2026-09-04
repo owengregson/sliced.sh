@@ -112,6 +112,34 @@ describe("bus: one-shot messages", () => {
 		await expect(sim.chrome.tabs.sendMessage(b, { type: "ping" })).rejects.toThrow(NO_RECEIVER_ERROR);
 	});
 
+	it("the sender's callback runs under the sender's globals even for a synchronous answer", () => {
+		const panel = runtimeFor(sim, "panel");
+		const panelChrome = { runtime: panel.api } as unknown as typeof chrome;
+		const ctx = sim.bus.getContext(panel.context.id)!;
+		ctx.activate = () => {
+			const restoreChrome = (globalThis as { chrome: unknown }).chrome;
+			(globalThis as { chrome: unknown }).chrome = panelChrome;
+			const restoreActive = sim.bus.activate(ctx.id);
+			return () => {
+				restoreActive();
+				(globalThis as { chrome: unknown }).chrome = restoreChrome;
+			};
+		};
+		sim.chrome.runtime.onMessage.addListener((_m, _s, send) => {
+			expect(globalThis.chrome).toBe(sim.chrome); // listener runs as the SW
+			send("ok");
+			return undefined;
+		});
+		let seenChrome: unknown;
+		sim.bus.runAs(ctx.id, () =>
+			panel.api.sendMessage({ type: "x" }, () => {
+				seenChrome = globalThis.chrome; // callback runs as the panel again
+			})
+		);
+		expect(seenChrome).toBe(panelChrome);
+		expect(globalThis.chrome).toBe(sim.chrome);
+	});
+
 	it("listeners that neither respond nor return true close the port", async () => {
 		const panel = runtimeFor(sim, "panel");
 		panel.api.onMessage.addListener(() => undefined);

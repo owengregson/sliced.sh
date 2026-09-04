@@ -80,14 +80,60 @@ export function jsonClone<T>(value: T): T {
 	return JSON.parse(JSON.stringify(value)) as T;
 }
 
-/** Swap `globalThis.chrome`; returns the restore (a no-op if someone else swapped it since). */
-export function installGlobalChrome(chrome: typeof globalThis.chrome): () => void {
+interface GlobalEntry {
+	token: symbol;
+	value: unknown;
+}
+interface GlobalStack {
+	base: { had: boolean; value: unknown };
+	entries: GlobalEntry[];
+}
+const globalStacks = new Map<string, GlobalStack>();
+
+/**
+ * Install globals on behalf of a context; returns the restore. Each global
+ * keeps a stack of installers so teardown may happen in any order: removing
+ * a lower entry leaves the current top in place, removing the top re-applies
+ * the next entry (or the value from before the first install).
+ */
+export function installGlobals(values: Record<string, unknown>): () => void {
 	const g = globalThis as Record<string, unknown>;
-	const prev = g.chrome;
-	g.chrome = chrome;
+	const token = Symbol("sim-globals");
+	for (const [name, value] of Object.entries(values)) {
+		let stack = globalStacks.get(name);
+		if (!stack) {
+			stack = { base: { had: name in g, value: g[name] }, entries: [] };
+			globalStacks.set(name, stack);
+		}
+		stack.entries.push({ token, value });
+		g[name] = value;
+	}
+	let restored = false;
 	return () => {
-		if (g.chrome === chrome) g.chrome = prev;
+		if (restored) return;
+		restored = true;
+		for (const name of Object.keys(values)) {
+			const stack = globalStacks.get(name);
+			if (!stack) continue;
+			const index = stack.entries.findIndex((e) => e.token === token);
+			if (index < 0) continue;
+			const wasTop = index === stack.entries.length - 1;
+			stack.entries.splice(index, 1);
+			if (!wasTop) continue; // a later context owns the global; it restores its own predecessor
+			const top = stack.entries[stack.entries.length - 1];
+			if (top) g[name] = top.value;
+			else {
+				if (stack.base.had) g[name] = stack.base.value;
+				else delete g[name];
+				globalStacks.delete(name);
+			}
+		}
 	};
+}
+
+/** Swap `globalThis.chrome` for a context; returns the restore (order-independent, see `installGlobals`). */
+export function installGlobalChrome(chrome: typeof globalThis.chrome): () => void {
+	return installGlobals({ chrome });
 }
 
 /** A plain `chrome.events.Event`-shaped fake (no ownership tracking). */
@@ -143,6 +189,8 @@ export interface Bus {
 	clearContext(id: string): void;
 	/** `clearContext` + remove the record. Never used on the default SW context. */
 	unregisterContext(id: string): void;
+	/** Called with the context id whenever a context is cleared (used to cancel its fake timers). */
+	onContextCleared(hook: (id: string) => void): () => void;
 	/** Lets `sender.tab` carry the real tab object for content contexts. */
 	setTabResolver(resolve: (tabId: number) => chrome.tabs.Tab | undefined): void;
 	senderFor(ctx: ContextRecord): chrome.runtime.MessageSender;
@@ -330,11 +378,14 @@ export function createBus(options: BusOptions): Bus {
 	}
 
 	function deliver(
+		fromId: string,
 		listeners: Target[],
 		sender: chrome.runtime.MessageSender,
 		message: unknown,
-		respond: Respond
+		reply: Respond
 	): void {
+		// The sender's callback runs under the sender's globals, even when a listener answers synchronously.
+		const respond: Respond = (value, error) => runAs(fromId, () => reply(value, error));
 		if (listeners.length === 0) {
 			respond(undefined, NO_RECEIVER_ERROR);
 			return;
@@ -361,7 +412,7 @@ export function createBus(options: BusOptions): Bus {
 			if (ctx.id === fromId || ctx.kind === "content") continue;
 			for (const listener of ctx.messageListeners) listeners.push({ ctxId: ctx.id, listener });
 		}
-		deliver(listeners, senderFor(from), message, respond);
+		deliver(fromId, listeners, senderFor(from), message, respond);
 	}
 
 	function dispatchToTab(fromId: string, tabId: number, message: unknown, respond: Respond): void {
@@ -372,7 +423,7 @@ export function createBus(options: BusOptions): Bus {
 			if (ctx.kind !== "content" || ctx.tabId !== tabId) continue;
 			for (const listener of ctx.messageListeners) listeners.push({ ctxId: ctx.id, listener });
 		}
-		deliver(listeners, senderFor(from), message, respond);
+		deliver(fromId, listeners, senderFor(from), message, respond);
 	}
 
 	// ── ports ───────────────────────────────────────────────────────────────
@@ -472,6 +523,8 @@ export function createBus(options: BusOptions): Bus {
 		return n;
 	}
 
+	const clearedHooks = new Set<(id: string) => void>();
+
 	function clearContext(id: string): void {
 		const ctx = contexts.get(id);
 		if (!ctx) return;
@@ -482,6 +535,7 @@ export function createBus(options: BusOptions): Bus {
 			const mine = channel.endpoints.find((ep) => ep.ownerId === id);
 			if (mine) closeChannel(channel, mine);
 		}
+		for (const hook of [...clearedHooks]) hook(id);
 	}
 
 	function unregisterContext(id: string): void {
@@ -512,6 +566,10 @@ export function createBus(options: BusOptions): Bus {
 		contexts: () => [...contexts.values()],
 		clearContext,
 		unregisterContext,
+		onContextCleared: (hook) => {
+			clearedHooks.add(hook);
+			return () => void clearedHooks.delete(hook);
+		},
 		setTabResolver: (resolve) => {
 			tabResolver = resolve;
 		},

@@ -13,9 +13,18 @@ quirk here and fix the simulator — never bend the test to the simulator.
   `bootXContext` / `ctx.activate()` / `ctx.run(fn)`. Callbacks the simulator
   itself invokes are re-homed to the context that registered them (fake
   timers, `chrome.*` event listeners, `onMessage` / `onConnect` listeners,
-  port deliveries, async `sendCommand` / `executeScript` callbacks). Code that
-  resumes after an `await` runs in whichever context is active at that moment;
-  wrap such flows in `ctx.run(...)` when it matters.
+  the sender's `sendMessage` callback, port deliveries, async `sendCommand` /
+  `executeScript` callbacks). Code that resumes after an `await` runs in
+  whichever context is active at that moment; wrap such flows in
+  `ctx.run(...)` when it matters. Teardown may happen in any order: every
+  installed global keeps a stack of installers (`installGlobals`), so removing
+  a lower context leaves the current top in place and removing the top
+  re-applies the next one. Teardowns triggered by simulator events (tab
+  removed, offscreen document closed) run on a microtask, after the event
+  listeners' re-homed activation has unwound.
+- **Side-panel pages get the full API** (`tabs`, `alarms`, `debugger`,
+  `sidePanel`, `offscreen`, `commands`, `tts`, `scripting`, `windows`) like
+  the SW; content and offscreen contexts get `runtime` + `storage` only.
 - **Callbacks are synchronous.** `chrome.storage.*`, `tabs.*`, `alarms.*`,
   `sidePanel.*`, `offscreen.*`, `tts.*`, `runtime.getContexts` and the
   one-shot message transports invoke their callback (or settle their Promise)
@@ -95,7 +104,7 @@ quirk here and fix the simulator — never bend the test to the simulator.
   prefix), `active`, `status`, `windowId`; `currentWindow` /
   `lastFocusedWindow` are ignored (single window).
 - Closing a tab (`sim.closeTab` / `tabs.remove`) tears down its content
-  context and detaches the debugger with `target_closed`.
+  context and detaches the debugger with `target_closed` (`onDetach` fires).
 
 ## Alarms and time
 
@@ -110,6 +119,16 @@ quirk here and fix the simulator — never bend the test to the simulator.
   order (ties: creation order, timers before alarms) and drains microtasks
   after each with a real macrotask hop; nothing runs unless the test
   advances or flushes. Zero-delay loops abort after 100 000 steps.
+- Fake timers remember the context that armed them: they fire under that
+  context's globals and are **cancelled when it is torn down** (a terminated
+  SW's timers never fire, as in Chrome). Timers armed with no context booted
+  belong to the default SW context.
+- happy-dom's `window.requestAnimationFrame` runs on real time, not the
+  virtual clock (it is happy-dom's own timer), and `TimeController` captures
+  the real `setTimeout`/`Date.now`/`performance.now` at construction — if two
+  controllers are installed and uninstalled out of LIFO order the earlier
+  one's `uninstall()` restores the originals it captured, which is fine, but
+  the later one's restores the first controller's fakes.
 - `CdpCommandRecord.at`, `TtsCallRecord.at`, `AttachmentRecord.at` and
   `DispatchedPointerEvent.at` are `sim.now()` at call time (ms epoch).
 

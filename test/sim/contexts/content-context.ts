@@ -68,9 +68,11 @@ export async function bootContentContext(
 		await sim.time.runMicrotasks();
 	};
 
-	// Closing the tab destroys its content script.
+	// Closing the tab destroys its content script. Deferred to a microtask: the listener runs
+	// re-homed under this context's globals, and tearing down from inside that activation would
+	// restore globals out of order.
 	const onRemoved = (removedId: number): void => {
-		if (removedId === tabId) void teardown();
+		if (removedId === tabId) queueMicrotask(() => void teardown());
 	};
 	sim.tabs.api.onRemoved.addListener(onRemoved);
 	const offRemoved = (): void => sim.tabs.api.onRemoved.removeListener(onRemoved);

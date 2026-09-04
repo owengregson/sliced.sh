@@ -8,6 +8,7 @@
  * all-zero `DOMRect`.
  */
 
+import { installGlobals } from "@test/sim/contexts/bus";
 import { type Document, type Element, Window } from "happy-dom";
 
 export interface LayoutRect {
@@ -153,27 +154,16 @@ const WINDOW_GLOBALS = [
 /**
  * Expose a happy-dom window as the page globals (`window`, `document`, the
  * DOM constructors above) for code that reads them bare, the way a page
- * script does. Returns the restore function; restore in LIFO order.
+ * script does. Returns the restore function (teardown order does not matter,
+ * see `installGlobals`).
  */
 export function installWindowGlobals(window: Window): () => void {
-	const g = globalThis as Record<string, unknown>;
-	const saved = new Map<string, { had: boolean; value: unknown }>();
-	const set = (name: string, value: unknown): void => {
-		saved.set(name, { had: name in g, value: g[name] });
-		g[name] = value;
-	};
-	set("window", window);
-	set("document", window.document);
+	const values: Record<string, unknown> = { window, document: window.document };
 	const w = window as unknown as Record<string, unknown>;
 	for (const name of WINDOW_GLOBALS) {
 		const value = w[name];
 		if (value === undefined) continue;
-		set(name, typeof value === "function" && !/^[A-Z]/.test(name) ? value.bind(window) : value);
+		values[name] = typeof value === "function" && !/^[A-Z]/.test(name) ? value.bind(window) : value;
 	}
-	return () => {
-		for (const [name, prev] of [...saved].reverse()) {
-			if (prev.had) g[name] = prev.value;
-			else delete g[name];
-		}
-	};
+	return installGlobals(values);
 }
