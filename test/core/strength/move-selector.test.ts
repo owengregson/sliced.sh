@@ -6,8 +6,10 @@ import { tauFor } from "@core/strength/elo-map";
 import {
 	cpEffective,
 	createSelectionState,
+	endgameTauFor,
 	hangsPiece,
 	resolvePriors,
+	resolvePriorsDetailed,
 	selectionParams,
 	selectMove,
 	winProb,
@@ -71,6 +73,33 @@ describe("selectMove — base policy (a)", () => {
 	});
 	it("throws on an empty line set", () => {
 		expect(() => selectMove([], ctx(), new Map())).toThrow(RangeError);
+	});
+	it("ignores lines without a move and throws only when none remain", () => {
+		const empty = { ...line(START, "e2e4", { cp: 999 }, 1), pvUci: [], pvSan: [] };
+		expect(() => selectMove([empty], ctx(), new Map())).toThrow(RangeError);
+		const m = selectMove(
+			[empty, ...TWO],
+			ctx({ targetElo: 2800, rng: createRng(4) }),
+			flatPrior(TWO)
+		);
+		expect(m.uci).toBe("e2e4");
+		expect(m.rankInLines).toBe(1);
+		expect(m.cpLoss).toBe(0);
+	});
+	it("runs the default heuristicPrior end to end when no prior map is supplied", () => {
+		const DEV = [line(START, "g1f3", { cp: 30 }, 1), line(START, "b1c3", { cp: 20 }, 2)];
+		const m = selectMove(DEV, ctx({ targetElo: 1500, rng: createRng("default-prior") }));
+		expect(["g1f3", "b1c3"]).toContain(m.uci);
+		expect(m.rationale.join(" ")).toContain("development ×1.4");
+		const detailed = resolvePriorsDetailed(DEV, ctx({ targetElo: 1500 }));
+		expect(detailed.values.get("g1f3")).toBeCloseTo(1.4, 12);
+		expect(detailed.terms.get("b1c3")).toEqual([{ rule: "development", factor: 1.4 }]);
+	});
+	it("formats b0 in the rationale", () => {
+		const m = selectMove(TWO, ctx({ targetElo: 1200, rng: createRng(6) }), flatPrior(TWO));
+		expect(m.rationale.join(" ")).toMatch(/b0=0\.055 /);
+		const mid = selectMove(TWO, ctx({ targetElo: 1300, rng: createRng(6) }), flatPrior(TWO));
+		expect(mid.rationale.join(" ")).toMatch(/b0=0\.0475 /);
 	});
 	it("gap cutoff G(E): at 2200+ a line 70 cp behind is outside the base pool", () => {
 		// σ(2800)=8 → jitter rarely closes a 70 cp gap below 60; second is chosen far under 10 %.
@@ -243,10 +272,11 @@ describe("selectMove — never-play filters (b)(c)", () => {
 		expect(hangsPiece({ ...uciCapture, pvUci: ["d7d5", "e4d5"], pvSan: [] }, 0.3, afterE4)).toBe(
 			true
 		);
-		// End to end: a hanging line (excluded by this rule and by G(E)) is never sampled.
+		// End to end: raw loss 0.30 ≥ 0.25 with a 370 cp gap inside G(800) = 500, so only this
+		// rail excludes it — and it is computed from the raw cp, so jitter cannot open it.
 		const HANG = [
-			line(START, "e2e4", { cp: 300 }, 1),
-			{ ...line(START, "g1f3", { cp: -600 }, 2), pvSan: ["Nf3", "Nxf3"] },
+			line(START, "e2e4", { cp: 20 }, 1),
+			{ ...line(START, "g1f3", { cp: -350 }, 2), pvSan: ["Nf3", "Nxf3"] },
 		];
 		const rng = createRng("hang");
 		for (let i = 0; i < 3000; i++) {
@@ -286,6 +316,42 @@ describe("selectMove — streak damper (f)", () => {
 		);
 		expect(played.rankInLines).toBe(2);
 		expect(state.top1Streak).toBe(0);
+	});
+});
+
+describe("selectMove — endgame technique by Elo (Appendix E §3.5)", () => {
+	it("τ ×1.5 in endgames below 1200, ×0.7 from 1800, unchanged between and outside endgames", () => {
+		const s = createSelectionState();
+		expect(selectionParams(1000, s, "endgame").tau).toBeCloseTo(1.5 * tauFor(1000), 12);
+		expect(selectionParams(2000, s, "endgame").tau).toBeCloseTo(0.7 * tauFor(2000), 12);
+		expect(selectionParams(1500, s, "endgame").tau).toBeCloseTo(tauFor(1500), 12);
+		expect(selectionParams(1000, s, "middlegame").tau).toBeCloseTo(tauFor(1000), 12);
+		expect(selectionParams(2000, s).tau).toBeCloseTo(tauFor(2000), 12);
+		expect(endgameTauFor(1199, "endgame")).toBe(1.5);
+		expect(endgameTauFor(1200, "endgame")).toBe(1);
+		expect(endgameTauFor(1800, "endgame")).toBe(0.7);
+		// Stacks with the streak term.
+		const streak = { ...createSelectionState(), top1Streak: 12 };
+		expect(selectionParams(1000, streak, "endgame").tau).toBeCloseTo(1.5 * 1.3 * tauFor(1000), 12);
+	});
+	it("shows the τ term and the won-endgame prior in the rationale", () => {
+		const ROOK_ENDGAME = "8/8/4k3/8/8/8/4P3/R3K3 w - - 0 40";
+		const WON = [
+			line(ROOK_ENDGAME, "e2e4", { cp: 600 }, 1),
+			line(ROOK_ENDGAME, "e1d2", { cp: 590 }, 2),
+		];
+		const m = selectMove(
+			WON,
+			ctx({ fen: ROOK_ENDGAME, targetElo: 2000, ply: 70, phase: "endgame", rng: createRng("won") })
+		);
+		const text = m.rationale.join(" ");
+		expect(text).toContain("endgame technique: τ×0.7");
+		expect(text).toContain("won-endgame-technique ×1.5");
+		const weak = selectMove(
+			WON,
+			ctx({ fen: ROOK_ENDGAME, targetElo: 1000, ply: 70, phase: "endgame", rng: createRng("won") })
+		);
+		expect(weak.rationale.join(" ")).toContain("endgame technique: τ×1.5");
 	});
 });
 

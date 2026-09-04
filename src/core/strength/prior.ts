@@ -13,7 +13,7 @@ import type { EvalLine } from "@typedefs/engine";
 import type { Color, Square } from "@typedefs/game";
 import type { Chess } from "chess.js";
 import { SELECTION_CONSTANTS as C } from "./constants";
-import { cpEffective, effectiveElo, eloRamp } from "./elo-map";
+import { cpEffective, effectiveElo, eloRamp, winProb } from "./elo-map";
 import type { PriorContext } from "./types";
 
 /** One PV ply after the candidate move; `matDiff` is our material balance change from the root. */
@@ -37,6 +37,8 @@ interface PriorEnv {
 	bestCp: number;
 	inCheck: boolean;
 	queensOn: { w: boolean; b: boolean };
+	/** Appendix E §3.5: an endgame with best ≥ +500 and no queens on the board. */
+	wonEndgame: boolean;
 	kingSquare: Square | null;
 }
 
@@ -236,6 +238,14 @@ function priorForLine(line: EvalLine, env: PriorEnv): PriorBreakdown {
 		env.E >= P.kingActivationElo
 	)
 		apply("king-activation", P.kingActivation);
+	// Appendix E §3.5 technique: in won endgames prefer pawn pushes / king moves that keep
+	// the raw loss ≤ 0.05 even if not top-1 (humans convert by the simplest path).
+	if (
+		env.wonEndgame &&
+		(cls.pieceType === "p" || (cls.pieceType === "k" && !cls.isCastle)) &&
+		winProb(env.bestCp) - winProb(cpEffective(line.score)) <= C.endgame.wonLossMax
+	)
+		apply("won-endgame-technique", C.endgame.wonTechnique);
 
 	// Appendix E §3.3 situational modifiers.
 	const recaptured = reply?.isCapture === true && reply.to === to;
@@ -279,6 +289,8 @@ export function heuristicPriorDetailed(
 	let bestCp = Number.NEGATIVE_INFINITY;
 	for (const line of lines) bestCp = Math.max(bestCp, cpEffective(line.score));
 	const prevOwnUci = ctx.state.previousOwnMoves[ctx.state.previousOwnMoves.length - 1];
+	const queensOn = { w: hasQueen(chess, "w"), b: hasQueen(chess, "b") };
+	const bestCpSafe = Number.isFinite(bestCp) ? bestCp : 0;
 	const env: PriorEnv = {
 		fen,
 		chess,
@@ -288,10 +300,12 @@ export function heuristicPriorDetailed(
 		phase: ctx.phase,
 		lastMove: ctx.lastMove,
 		prevOwn: prevOwnUci === undefined ? null : parseUci(prevOwnUci),
-		bestCp: Number.isFinite(bestCp) ? bestCp : 0,
+		bestCp: bestCpSafe,
 		inCheck: chess.inCheck(),
-		queensOn: { w: hasQueen(chess, "w"), b: hasQueen(chess, "b") },
+		queensOn,
 		kingSquare: findKing(chess, us),
+		wonEndgame:
+			ctx.phase === "endgame" && !queensOn.w && !queensOn.b && bestCpSafe >= C.endgame.wonCp,
 	};
 	for (const line of lines) {
 		const uci = line.pvUci[0];

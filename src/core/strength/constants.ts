@@ -119,9 +119,25 @@ export const SELECTION_CONSTANTS = deepFreeze({
 		sacrificePlies: 3,
 		sacrificePvWindow: 8,
 		backAndForth: 0.5,
+		/** Own moves remembered in `SelectionState.previousOwnMoves` for the back-and-forth row. */
+		previousOwnMovesKept: 4,
 		kingActivation: 1.5,
 		kingActivationElo: 1600,
 		kingActivationMinPly: 60,
+	},
+	/** Appendix E §3.5 endgame technique by Elo (§7.2 step 8 situational modifier). */
+	endgame: {
+		/** Below `weakElo`: τ ×`weakTau` in endgames; from `strongElo`: τ ×`strongTau`. */
+		weakElo: 1200,
+		weakTau: 1.5,
+		strongElo: 1800,
+		strongTau: 0.7,
+		/** "Won endgame": best raw cpEff ≥ `wonCp` with no queens on the board. */
+		wonCp: 500,
+		/** Pawn pushes / king moves keeping raw loss ≤ `wonLossMax` are preferred … */
+		wonLossMax: 0.05,
+		/** … by this prior multiplier. Design constant: Appendix E §3.5 gives the rule but no number. */
+		wonTechnique: 1.5,
 	},
 	/** Appendix E §3.3 simplify-when-ahead / complicate-when-behind. */
 	situational: {

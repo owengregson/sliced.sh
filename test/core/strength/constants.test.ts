@@ -42,6 +42,16 @@ describe("SELECTION_CONSTANTS transcribes §7.2 / Appendix E", () => {
 		expect(C.prior.backAndForth).toBe(0.5);
 		expect(C.prior.kingActivation).toBe(1.5);
 	});
+	it("endgame technique by Elo (Appendix E §3.5) and prior housekeeping", () => {
+		expect(C.endgame.weakElo).toBe(1200);
+		expect(C.endgame.weakTau).toBe(1.5);
+		expect(C.endgame.strongElo).toBe(1800);
+		expect(C.endgame.strongTau).toBe(0.7);
+		expect(C.endgame.wonCp).toBe(500);
+		expect(C.endgame.wonLossMax).toBe(0.05);
+		expect(C.endgame.wonTechnique).toBe(1.5);
+		expect(C.prior.previousOwnMovesKept).toBe(4);
+	});
 	it("situational modifiers (Appendix E §3.3)", () => {
 		expect(C.situational.aheadCp).toBe(300);
 		expect(C.situational.tradeWhenAhead).toBe(1.8);

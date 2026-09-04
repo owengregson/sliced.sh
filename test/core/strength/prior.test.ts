@@ -24,6 +24,8 @@ const DEFENDED = "n7/2n1k3/8/8/8/8/8/R3K3 w - - 0 1";
 /** Rook trade Rxd5 Kxd5. */
 const TRADE = "8/8/4k3/3r4/8/8/8/3RK3 w - - 0 1";
 const KP_ENDGAME = "8/8/4k3/8/8/8/4P3/4K3 w - - 0 40";
+/** Rook + pawn vs king: a won endgame with no queens. */
+const ROOK_ENDGAME = "8/8/4k3/8/8/8/4P3/R3K3 w - - 0 40";
 /** Italian after 3...Nc6: Bxf7+ is a piece sacrifice. */
 const SAC = "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4";
 
@@ -152,15 +154,70 @@ describe("heuristicPrior — Appendix E §3.4 table", () => {
 		const p = priors(
 			PROMO,
 			[
-				["a7a8q", 900],
+				["a7a8q", 400],
 				["a7a8n", 0],
-				["a7a8r", 500],
+				["a7a8r", 300],
 			],
 			{ phase: "endgame" }
 		);
 		expect(p.get("a7a8q")).toBe(1);
 		expect(p.get("a7a8n")).toBeCloseTo(0.05, 12);
 		expect(p.get("a7a8r")).toBeCloseTo(0.05, 12);
+		// In a won endgame (best ≥ +500, no queens) the zero-loss pawn move also earns ×1.5.
+		const won = priors(
+			PROMO,
+			[
+				["a7a8q", 900],
+				["a7a8n", 0],
+				["a7a8r", 500],
+			],
+			{ phase: "endgame" }
+		);
+		expect(won.get("a7a8q")).toBeCloseTo(1.5, 12);
+		expect(won.get("a7a8n")).toBeCloseTo(0.05, 12);
+		expect(won.get("a7a8r")).toBeCloseTo(0.05, 12);
+	});
+	it("won-endgame technique (Appendix E §3.5): pawn/king moves with raw loss ≤ 0.05 ×1.5", () => {
+		const over = { ply: 70, phase: "endgame" as const, targetElo: 1500 };
+		// e2e4 +600 (best), e1d2 +590 (loss ≈ 0.003), a1a7 +595 (rook: no), e2e3 +300 (loss ≈ 0.15: no).
+		const p = priors(
+			ROOK_ENDGAME,
+			[
+				["e2e4", 600],
+				["e1d2", 590],
+				["a1a7", 595],
+				["e2e3", 300],
+			],
+			over
+		);
+		expect(p.get("e2e4")).toBeCloseTo(1.5, 12);
+		expect(p.get("e1d2")).toBeCloseTo(1.5, 12);
+		expect(p.get("a1a7")).toBe(1);
+		expect(p.get("e2e3")).toBe(1);
+		// Not won (best < +500) → no term; middlegame → no term; queens on → no term.
+		expect(
+			priors(
+				ROOK_ENDGAME,
+				[
+					["e2e4", 400],
+					["e1d2", 390],
+				],
+				over
+			).get("e2e4")
+		).toBe(1);
+		expect(priors(ROOK_ENDGAME, [["e2e4", 600]], { ...over, phase: "middlegame" }).get("e2e4")).toBe(
+			1
+		);
+		expect(
+			priors(
+				QCHECK,
+				[
+					["e1d2", 600],
+					["h1h5", 590],
+				],
+				over
+			).get("e1d2")
+		).toBe(1);
 	});
 	it("piece sacrifice shown by the PV: ×0.5 below 1800, ×0.9 at ≥ 2200, interpolated between", () => {
 		const pv = ["e8f7", "d2d3", "g8f6", "b1c3"];

@@ -41,9 +41,10 @@ export function ctx(overrides: CtxOverrides = {}): SelectionContext {
 		oppClockMs: 180_000,
 		selectionMode: "persona-sampling",
 		blunderScale: 1,
-		rng: createRng("strength"),
 		state: createSelectionState(),
 		...overrides,
+		// Lazy: only build the default rng when the caller did not supply one.
+		rng: overrides.rng ?? createRng("strength"),
 	};
 }
 

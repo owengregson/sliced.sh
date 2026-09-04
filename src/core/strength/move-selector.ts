@@ -5,6 +5,7 @@
  */
 
 import { classifyMove } from "@core/chess/move-classify";
+import type { Phase } from "@core/chess/phase";
 import { applyMoves, parseUci, uciToSan } from "@core/chess/san";
 import { clamp } from "@core/util/clamp";
 import type { EvalLine } from "@typedefs/engine";
@@ -12,12 +13,10 @@ import type { ChosenMove } from "@typedefs/game";
 import { blunderTerms, drawTargetLoss, pickBlunder } from "./blunder-model";
 import { SELECTION_CONSTANTS as C } from "./constants";
 import { betaFor, cpEffective, effectiveElo, gapFor, sigmaFor, tauFor, winProb } from "./elo-map";
-import { heuristicPrior } from "./prior";
+import { heuristicPriorDetailed, type PriorTerm } from "./prior";
 import type { SelectionContext, SelectionState } from "./types";
 
 export { cpEffective, winProb } from "./elo-map";
-
-const PREVIOUS_OWN_MOVES_KEPT = 4;
 
 export function createSelectionState(): SelectionState {
 	return { top1Streak: 0, blunderDamperLeft: 0, previousOwnMoves: [] };
@@ -30,21 +29,75 @@ export interface SelectionParams {
 	beta: number;
 	/** True when the 12-consecutive-top-1 τ×1.3 term is active. */
 	streak: boolean;
+	/** Appendix E §3.5 endgame τ multiplier (1 outside endgames / inside the 1200–1800 band). */
+	endgameTau: number;
 }
 
-/** σ, τ (with the streak term), G and β for `E` and the current state (§7.2 steps 3 and 7). */
+/** Appendix E §3.5: τ ×1.5 in endgames below 1200, ×0.7 from 1800. */
+export function endgameTauFor(E: number, phase: Phase | undefined): number {
+	if (phase !== "endgame") return 1;
+	if (E < C.endgame.weakElo) return C.endgame.weakTau;
+	if (E >= C.endgame.strongElo) return C.endgame.strongTau;
+	return 1;
+}
+
+/**
+ * σ, τ (with the streak and endgame terms), G and β for `E`, the current state
+ * and phase (§7.2 steps 3 and 7; Appendix E §3.5).
+ */
 export function selectionParams(
 	E: number,
-	state: Pick<SelectionState, "top1Streak">
+	state: Pick<SelectionState, "top1Streak">,
+	phase?: Phase
 ): SelectionParams {
 	const streak = state.top1Streak >= C.tau.streakLength;
+	const endgameTau = endgameTauFor(E, phase);
 	return {
-		tau: tauFor(E) * (streak ? C.tau.streakMultiplier : 1),
+		tau: tauFor(E) * (streak ? C.tau.streakMultiplier : 1) * endgameTau,
 		sigma: sigmaFor(E),
 		gap: gapFor(E),
 		beta: betaFor(E),
 		streak,
+		endgameTau,
 	};
+}
+
+export interface ResolvedPriors {
+	values: Map<string, number>;
+	/** The multiplicative terms behind each value (heuristic rows, hybrid boost). */
+	terms: Map<string, PriorTerm[]>;
+}
+
+/** `resolvePriors` with the per-line terms kept for the rationale. */
+export function resolvePriorsDetailed(
+	lines: readonly EvalLine[],
+	ctx: SelectionContext,
+	prior?: ReadonlyMap<string, number>
+): ResolvedPriors {
+	const heuristic = prior === undefined ? heuristicPriorDetailed(ctx.fen, lines, ctx) : null;
+	const values = new Map<string, number>();
+	const terms = new Map<string, PriorTerm[]>();
+	for (const line of lines) {
+		const uci = line.pvUci[0];
+		if (uci === undefined) continue;
+		const lineTerms: PriorTerm[] = [];
+		let value: number;
+		if (heuristic) {
+			const b = heuristic.get(uci);
+			value = b?.value ?? 1;
+			lineTerms.push(...(b?.terms ?? []));
+		} else {
+			value = prior?.get(uci) ?? 1;
+			if (prior?.has(uci)) lineTerms.push({ rule: "supplied", factor: value });
+		}
+		if (ctx.selectionMode === "hybrid" && uci === ctx.engineBestmove) {
+			value *= C.hybridBestmovePrior;
+			lineTerms.push({ rule: "hybrid-bestmove", factor: C.hybridBestmovePrior });
+		}
+		values.set(uci, value);
+		terms.set(uci, lineTerms);
+	}
+	return { values, terms };
 }
 
 /**
@@ -56,19 +109,13 @@ export function resolvePriors(
 	ctx: SelectionContext,
 	prior?: ReadonlyMap<string, number>
 ): Map<string, number> {
-	const base = prior ?? heuristicPrior(ctx.fen, lines, ctx);
-	const out = new Map<string, number>();
-	for (const line of lines) {
-		const uci = line.pvUci[0];
-		if (uci === undefined) continue;
-		let value = base.get(uci) ?? 1;
-		if (ctx.selectionMode === "hybrid" && uci === ctx.engineBestmove) value *= C.hybridBestmovePrior;
-		out.set(uci, value);
-	}
-	return out;
+	return resolvePriorsDetailed(lines, ctx, prior).values;
 }
 
-/** Never-play rule 4: the PV shows the opponent capturing next and the line loses ≥ 0.25. */
+/**
+ * Never-play rule 4: the PV shows the opponent capturing next and the line
+ * loses ≥ 0.25. `loss` is the raw (unjittered) win-fraction loss so the rail is hard.
+ */
 export function hangsPiece(line: EvalLine, loss: number, fen: string): boolean {
 	if (loss < C.neverPlay.hangPieceLoss) return false;
 	const replySan = line.pvSan[1];
@@ -88,8 +135,12 @@ interface Candidate {
 	rank: number;
 	cpRaw: number;
 	cpEff: number;
+	/** Win-fraction loss from the jittered `cpEff` (policy). */
 	loss: number;
+	/** Win-fraction loss from the raw `cpRaw` (never-play rails). */
+	lossRaw: number;
 	prior: number;
+	terms: readonly PriorTerm[];
 	mate: number | undefined;
 }
 
@@ -122,7 +173,10 @@ function finish(
 	state.blunderDamperLeft =
 		source === "blunder" ? C.blunder.damperMoves : Math.max(0, state.blunderDamperLeft - 1);
 	state.previousOwnMoves.push(pick.uci);
-	if (state.previousOwnMoves.length > PREVIOUS_OWN_MOVES_KEPT) state.previousOwnMoves.shift();
+	while (state.previousOwnMoves.length > C.prior.previousOwnMovesKept)
+		state.previousOwnMoves.shift();
+	if (pick.terms.length > 0)
+		rationale.push(`prior: ${pick.terms.map((t) => `${t.rule} ×${fmt(t.factor)}`).join(", ")}`);
 	const san = pick.line.pvSan[0] ?? uciToSan(ctx.fen, pick.uci) ?? pick.uci;
 	const chosen: ChosenMove = {
 		uci: pick.uci,
@@ -147,7 +201,8 @@ export function selectMove(
 	ctx: SelectionContext,
 	prior?: ReadonlyMap<string, number>
 ): ChosenMove {
-	if (lines.length === 0) throw new RangeError("selectMove: no lines");
+	const usable = lines.filter((l) => l.pvUci[0] !== undefined);
+	if (usable.length === 0) throw new RangeError("selectMove: no lines with a move");
 	const { rng, state } = ctx;
 	const NP = C.neverPlay;
 
@@ -156,22 +211,28 @@ export function selectMove(
 	const rationale: string[] = [`E=${fmt(E, 1)} (target ${ctx.targetElo}, form ${fmt(ctx.form)})`];
 
 	// Rank by raw cpEff (1 = best); stable, so engine order breaks ties.
-	const ranked = lines
+	const ranked = usable
 		.map((line, i) => ({ line, i, cpRaw: cpEffective(line.score) }))
 		.sort((a, b) => b.cpRaw - a.cpRaw || a.i - b.i);
 	const topCpRaw = ranked[0]?.cpRaw ?? 0;
-	const priors = resolvePriors(lines, ctx, prior);
+	const winTopRaw = winProb(topCpRaw);
+	const priors = resolvePriorsDetailed(usable, ctx, prior);
 
-	const toCandidate = (r: (typeof ranked)[number], rank: number): Candidate => ({
-		line: r.line,
-		uci: r.line.pvUci[0] ?? "",
-		rank,
-		cpRaw: r.cpRaw,
-		cpEff: r.cpRaw,
-		loss: 0,
-		prior: priors.get(r.line.pvUci[0] ?? "") ?? 1,
-		mate: r.line.score.mate,
-	});
+	const toCandidate = (r: (typeof ranked)[number], rank: number): Candidate => {
+		const uci = r.line.pvUci[0] ?? "";
+		return {
+			line: r.line,
+			uci,
+			rank,
+			cpRaw: r.cpRaw,
+			cpEff: r.cpRaw,
+			loss: 0,
+			lossRaw: winTopRaw - winProb(r.cpRaw),
+			prior: priors.values.get(uci) ?? 1,
+			terms: priors.terms.get(uci) ?? [],
+			mate: r.line.score.mate,
+		};
+	};
 
 	// §7.1 `engine-elo`: play the engine's Elo-limited bestmove verbatim.
 	if (ctx.selectionMode === "engine-elo") {
@@ -182,12 +243,13 @@ export function selectMove(
 		return finish(toCandidate(r, (idx >= 0 ? idx : 0) + 1), "engine-elo", topCpRaw, ctx, rationale);
 	}
 
-	const params = selectionParams(E, state);
+	const params = selectionParams(E, state, ctx.phase);
 	rationale.push(
 		`σ=${fmt(params.sigma, 1)} τ=${fmt(params.tau)} G=${fmt(params.gap, 0)} β=${params.beta}`
 	);
 	if (params.streak)
 		rationale.push(`streak: ${state.top1Streak} top-1 picks, τ×${C.tau.streakMultiplier}`);
+	if (params.endgameTau !== 1) rationale.push(`endgame technique: τ×${params.endgameTau}`);
 	if (ctx.selectionMode === "hybrid" && ctx.engineBestmove !== undefined)
 		rationale.push(`hybrid: prior(${ctx.engineBestmove}) ×${C.hybridBestmovePrior}`);
 
@@ -244,7 +306,7 @@ export function selectMove(
 		rationale.push(
 			`mate: mate-in-≤${NP.mateInMax} missed (p=${fmt(p)}); loss ≥ ${NP.throwWinLoss} excluded`
 		);
-		throwsWin = (c) => c.loss >= NP.throwWinLoss;
+		throwsWin = (c) => c.lossRaw >= NP.throwWinLoss;
 	}
 
 	// Step 6: blunder channel.
@@ -256,7 +318,7 @@ export function selectMove(
 		state,
 	});
 	rationale.push(
-		`b=${fmt(terms.b, 4)} (b0=${terms.b0} f_clock=${fmt(terms.fClock, 2)} f_complexity=${terms.fComplexity} scale=${ctx.blunderScale}${terms.damper !== 1 ? ` damper×${terms.damper}` : ""})`
+		`b=${fmt(terms.b, 4)} (b0=${fmt(terms.b0, 4)} f_clock=${fmt(terms.fClock, 2)} f_complexity=${terms.fComplexity} scale=${ctx.blunderScale}${terms.damper !== 1 ? ` damper×${terms.damper}` : ""})`
 	);
 	if (terms.b > 0 && rng.chance(terms.b)) {
 		const { kind, target } = drawTargetLoss(rng);
@@ -275,7 +337,7 @@ export function selectMove(
 			!getsMated(c) &&
 			!throwsWin(c) &&
 			best - c.cpEff <= params.gap &&
-			!hangsPiece(c.line, c.loss, ctx.fen)
+			!hangsPiece(c.line, c.lossRaw, ctx.fen)
 	);
 	if (pool.length === 0) pool = cands.filter((c) => !getsMated(c));
 	if (pool.length === 0) pool = cands;
