@@ -11,35 +11,13 @@
 
 import { classifyMove } from "@core/chess/move-classify";
 import { applyMoves, legalMoves, parseUci } from "@core/chess/san";
-import type { ExplorerSpeed } from "@core/constants/books";
+import { type ExplorerSpeed, PREMOVE } from "@core/constants/books";
 import type { Rng } from "@core/rng";
 import { clamp } from "@core/util/clamp";
 import type { EvalLine } from "@typedefs/engine";
 import type { Square, TimeControl } from "@typedefs/game";
 import { speedFor } from "./book/explorer";
 import { cpEffective, winProb } from "./elo-map";
-
-/** §7.4 constants — the single definition. */
-export const PREMOVE = {
-	/** Premoves only in these Lichess speed classes ("bullet/blitz"; ultraBullet is bullet's faster sibling). */
-	speeds: ["ultraBullet", "bullet", "blitz"] as const satisfies readonly ExplorerSpeed[],
-	minElo: 1200,
-	/** `p = probBase + probRange·clamp((E − minElo)/probSpan, 0, 1)`. */
-	probBase: 0.35,
-	probRange: 0.5,
-	probSpan: 1200,
-	/** Opponent prediction when no `ponder` move is available: `go movetime 150` MultiPV 3. */
-	ponderMovetimeMs: 150,
-	ponderMultiPv: 3,
-	/** Reply-predictability gate: softmax temperature (win-fraction units) and threshold. */
-	replyTau: 0.06,
-	replyMinProb: 0.6,
-	/** Analysis after `m r`: `go movetime 120` MultiPV 2. */
-	replyMovetimeMs: 120,
-	replyMultiPv: 2,
-	/** Clear-only move: the second line loses at least this win-fraction. */
-	loss2ndMin: 0.25,
-} as const;
 
 export interface PremoveContext {
 	/** Position before our move. */
@@ -147,9 +125,11 @@ export async function premoveCandidate(
 	if (best === undefined || q === undefined) return null;
 	const facts = classifyMove(afterReply, q, reply);
 	if (!facts || facts.pieceType === "k" || facts.isCastle) return null;
+	// A recapture needs the opponent's reply to have captured on the square we now take back.
+	const replyCaptured = classifyMove(afterMove, reply)?.isCapture ?? false;
 
 	let reason: PremoveReason | null = null;
-	if (facts.isRecapture) reason = "recapture";
+	if (facts.isRecapture && replyCaptured) reason = "recapture";
 	else if (facts.isOnlyMove) reason = "only-move";
 	else {
 		const second = lines[1];

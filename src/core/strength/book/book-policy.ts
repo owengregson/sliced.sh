@@ -65,31 +65,45 @@ export function bookNameFor(E: number): BookName {
 	return E >= EXPLORER.gmBookElo ? "gm2600" : "club";
 }
 
-interface LineFacts {
+export interface LineFacts {
 	rank: number;
 	cpLoss: number;
 	/** Win-fraction loss vs the best line; `null` when the move is not among the lines. */
 	loss: number | null;
+	/**
+	 * Lower bound on the loss: exact when the move is in the lines, otherwise the loss of the
+	 * worst reported line (a move outside MultiPV loses at least that much). 0 without lines.
+	 */
+	lossLowerBound: number;
 }
 
 /** Rank, cp loss and win-fraction loss of `uci` relative to the best of `lines`. */
 export function lineFacts(uci: string, lines: readonly EvalLine[] | undefined): LineFacts {
-	if (!lines || lines.length === 0) return { rank: 0, cpLoss: 0, loss: null };
+	if (!lines || lines.length === 0) return { rank: 0, cpLoss: 0, loss: null, lossLowerBound: 0 };
 	let bestCp = Number.NEGATIVE_INFINITY;
-	for (const line of lines) bestCp = Math.max(bestCp, cpEffective(line.score));
+	let worstCp = Number.POSITIVE_INFINITY;
+	for (const line of lines) {
+		const cp = cpEffective(line.score);
+		bestCp = Math.max(bestCp, cp);
+		worstCp = Math.min(worstCp, cp);
+	}
 	const index = lines.findIndex((line) => line.pvUci[0] === uci);
-	if (index < 0) return { rank: 0, cpLoss: 0, loss: null };
+	if (index < 0) {
+		const bound = Math.max(0, winProb(bestCp) - winProb(worstCp));
+		return { rank: 0, cpLoss: 0, loss: null, lossLowerBound: bound };
+	}
 	const cp = cpEffective(lines[index]?.score ?? {});
-	return {
-		rank: index + 1,
-		cpLoss: Math.max(0, bestCp - cp),
-		loss: Math.max(0, winProb(bestCp) - winProb(cp)),
-	};
+	const loss = Math.max(0, winProb(bestCp) - winProb(cp));
+	return { rank: index + 1, cpLoss: Math.max(0, bestCp - cp), loss, lossLowerBound: loss };
 }
 
-/** §7.3: from E ≥ 1800 a book move losing ≥ 0.15 win-fraction vs the engine's best is a trap. */
+/**
+ * §7.3: from E ≥ 1800 a book move losing ≥ 0.15 win-fraction vs the engine's best is a trap.
+ * A move absent from the MultiPV lines is judged by its lower bound (it loses at least as much
+ * as the worst reported line); it is only allowed when that bound stays below the threshold.
+ */
 export function isTrap(E: number, facts: LineFacts): boolean {
-	return E >= EXPLORER.trapCheckElo && facts.loss !== null && facts.loss >= EXPLORER.trapLoss;
+	return E >= EXPLORER.trapCheckElo && facts.lossLowerBound >= EXPLORER.trapLoss;
 }
 
 function fmt(n: number): string {
@@ -156,7 +170,9 @@ export function createBookPolicy(deps: BookPolicyDeps = {}): BookPolicy {
 		const facts = lineFacts(pick.uci, ctx.lines);
 		const share = fmt(gamesOf(pick) / total);
 		if (isTrap(ctx.targetElo, facts)) {
-			rationale.push(`explorer: ${pick.san} (${share}) is a trap, loss ${fmt(facts.loss ?? 0)}`);
+			rationale.push(
+				`explorer: ${pick.san} (${share}) is a trap, loss ≥ ${fmt(facts.lossLowerBound)}`
+			);
 			return null;
 		}
 		rationale.push(
@@ -186,7 +202,7 @@ export function createBookPolicy(deps: BookPolicyDeps = {}): BookPolicy {
 		if (!pick) return null;
 		const facts = lineFacts(pick.uci, ctx.lines);
 		if (isTrap(E, facts)) {
-			rationale.push(`polyglot: ${pick.uci} is a trap, loss ${fmt(facts.loss ?? 0)}`);
+			rationale.push(`polyglot: ${pick.uci} is a trap, loss ≥ ${fmt(facts.lossLowerBound)}`);
 			return null;
 		}
 		const total = entries.reduce((sum, m) => sum + m.weight, 0);

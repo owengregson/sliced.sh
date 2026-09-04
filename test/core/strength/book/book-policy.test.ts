@@ -2,7 +2,12 @@
 import { describe, expect, it } from "bun:test";
 import { BOOKS, EXPLORER } from "@core/constants/books";
 import { createRng } from "@core/rng";
-import { type BookContext, createBookPolicy } from "@core/strength/book/book-policy";
+import {
+	type BookContext,
+	createBookPolicy,
+	isTrap,
+	lineFacts,
+} from "@core/strength/book/book-policy";
 import type { ExplorerMove, ExplorerQuery } from "@core/strength/book/explorer";
 import { encodePolyglotMove, polyglotKey } from "@core/strength/book/polyglot";
 import type { EvalLine } from "@typedefs/engine";
@@ -226,6 +231,40 @@ describe("bookMove exit conditions", () => {
 		const explorer = fakeExplorer([move("e2e5", 900)]);
 		const policy = createBookPolicy({ explorer, loadBook: async () => null });
 		expect(await policy.bookMove(ctx())).toBeNull();
+		policy.dispose();
+	});
+});
+
+describe("trap check for moves outside the engine lines", () => {
+	// Best line +30 cp; the worst reported line at −250 cp already loses ≈ 0.25 win-fraction.
+	const deepLines = [line("e2e4", 30, 1), line("d2d4", 20, 2), line("a2a4", -250, 3)];
+	// Worst reported line at −40 cp: a move outside the lines is only known to lose ≥ 0.06.
+	const shallowLines = [line("e2e4", 30, 1), line("d2d4", 20, 2), line("c2c4", -40, 3)];
+
+	it("lineFacts reports a lower bound from the worst line when the move is absent", () => {
+		const absent = lineFacts("g1f3", deepLines);
+		expect(absent.loss).toBeNull();
+		expect(absent.rank).toBe(0);
+		expect(absent.lossLowerBound).toBeGreaterThan(EXPLORER.trapLoss);
+		const present = lineFacts("d2d4", deepLines);
+		expect(present.loss).toBe(present.lossLowerBound);
+		expect(lineFacts("g1f3", shallowLines).lossLowerBound).toBeLessThan(EXPLORER.trapLoss);
+		expect(lineFacts("g1f3", undefined).lossLowerBound).toBe(0);
+	});
+
+	it("isTrap refuses an absent move whose bound reaches 0.15 from E ≥ 1800", () => {
+		expect(isTrap(2000, lineFacts("g1f3", deepLines))).toBe(true);
+		expect(isTrap(2000, lineFacts("g1f3", shallowLines))).toBe(false);
+		expect(isTrap(1600, lineFacts("g1f3", deepLines))).toBe(false);
+	});
+
+	it("bookMove refuses an explorer move outside deep lines but allows it outside shallow ones", async () => {
+		const explorer = fakeExplorer([move("g1f3", 900)]);
+		const policy = createBookPolicy({ explorer, loadBook: async () => null });
+		expect(await policy.bookMove(ctx({ targetElo: 2000, lines: deepLines }))).toBeNull();
+		const allowed = await policy.bookMove(ctx({ targetElo: 2000, lines: shallowLines }));
+		expect(allowed?.uci).toBe("g1f3");
+		expect(allowed?.rankInLines).toBe(0);
 		policy.dispose();
 	});
 });

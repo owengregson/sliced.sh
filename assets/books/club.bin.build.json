@@ -1,0 +1,25 @@
+{
+  "book": "club.bin",
+  "script": "scripts/build-club-book.py",
+  "inputs": [
+    "lichess_db_standard_rated_2013-01.pgn.zst",
+    "lichess_db_standard_rated_2013-02.pgn.zst",
+    "lichess_db_standard_rated_2013-03.pgn.zst"
+  ],
+  "filters": {
+    "min_elo": 1200,
+    "max_elo": 1800,
+    "max_ply": 30,
+    "min_count_requested": 15,
+    "min_count": 15,
+    "max_bytes": 3145728,
+    "max_games": 0,
+    "keep_bullet": false
+  },
+  "games_read": 403928,
+  "games_kept": 224429,
+  "positions": 4211199,
+  "entries": 13416,
+  "bytes": 214656,
+  "sha256": "5ec6fb099c2a3d7bff25cc86edef03db6b9f9e26108b04c2af15445473d59340"
+}

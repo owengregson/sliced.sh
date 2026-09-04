@@ -8,30 +8,40 @@ BOTH players, the first `--max-ply` plies of every game are counted, and each (p
 pair seen at least `--min-count` times becomes one 16-byte entry `{key, move, weight, learn}`
 with `weight` = the move's frequency (scaled to fit 16 bits per position) and `learn` = 0.
 Keys are the standard Polyglot Zobrist hash (`chess.polyglot.zobrist_hash`), castling is encoded
-king-takes-rook as the format requires, and entries are written sorted by key.
+king-takes-rook as the format requires, and entries are written sorted by key. Next to the book
+a `<book>.build.json` manifest records the inputs, flags, game counts and the book's SHA-256;
+`scripts/vendor-engine.ts` renders `docs/third-party.md` from those manifests.
 
-Examples (run offline; a month of the open database is a multi-GB download for recent months,
-so pick a small one — 2013-01 is ~17 MB — or the Lichess Elite subset for a strong book):
+The shipped books were built with exactly these invocations (inputs are the unmodified files
+from https://database.lichess.org/standard/ and https://database.nikonoel.fr/):
 
     uv run --with chess --with zstandard scripts/build-club-book.py \
         --input lichess_db_standard_rated_2013-01.pgn.zst \
-        --min-elo 1200 --max-elo 1800 --output assets/books/club.bin
+        --input lichess_db_standard_rated_2013-02.pgn.zst \
+        --input lichess_db_standard_rated_2013-03.pgn.zst \
+        --min-elo 1200 --max-elo 1800 --min-count 15 --output assets/books/club.bin
+    # → 224 429 games kept of 403 928; see assets/books/club.bin.build.json for the hash
 
     uv run --with chess --with zstandard scripts/build-club-book.py \
-        --input lichess_elite_2020-06.pgn --min-elo 2600 --max-bytes 360000 \
-        --output assets/books/gm2600.bin
+        --input lichess_elite_2020-06.zip --input lichess_elite_2020-07.zip \
+        --input lichess_elite_2020-08.zip \
+        --min-elo 2600 --min-count 5 --max-bytes 360000 --output assets/books/gm2600.bin
+    # → 34 468 games kept of 1 206 475; see assets/books/gm2600.bin.build.json for the hash
 
 `--max-bytes` raises `--min-count` until the book fits. Inputs may be `.pgn`, `.pgn.zst` or a
 `.zip` holding `.pgn` files; several `--input` flags are accepted. Bullet games are dropped
 unless `--keep-bullet`. Requires python-chess and zstandard (`uv run --with chess --with
-zstandard ...`). Record the sha256 of the output in `docs/third-party.md` by re-running
-`bun run vendor:engine`.
+zstandard ...`). A month of the open database is a multi-GB download for recent months, so pick
+a small one (2013-01 is ~17 MB) or the Lichess Elite subset for a strong book. After building,
+re-run `bun run vendor:engine` to refresh `docs/third-party.md`.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import io
+import json
 import re
 import struct
 import sys
@@ -232,7 +242,31 @@ def main() -> int:
             break
         min_count = int(min_count * 1.25) + 1
     write_book(entries, args.output)
+    manifest = {
+        "book": args.output.name,
+        "script": "scripts/build-club-book.py",
+        "inputs": [p.name for p in args.input],
+        "filters": {
+            "min_elo": args.min_elo,
+            "max_elo": args.max_elo if args.max_elo < 10_000 else None,
+            "max_ply": args.max_ply,
+            "min_count_requested": args.min_count,
+            "min_count": min_count,
+            "max_bytes": args.max_bytes,
+            "max_games": args.max_games,
+            "keep_bullet": args.keep_bullet,
+        },
+        "games_read": seen,
+        "games_kept": kept,
+        "positions": len(counts),
+        "entries": len(entries),
+        "bytes": size,
+        "sha256": hashlib.sha256(args.output.read_bytes()).hexdigest(),
+    }
+    manifest_path = args.output.with_name(args.output.name + ".build.json")
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     print(f"wrote {args.output} ({len(entries)} entries, {size} bytes, min-count {min_count})", file=sys.stderr)
+    print(f"wrote {manifest_path}", file=sys.stderr)
     return 0
 
 

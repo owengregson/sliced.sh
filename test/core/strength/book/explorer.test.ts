@@ -12,6 +12,8 @@ import {
 	explorerUrl,
 	type FetchLike,
 	gammaFor,
+	parseExplorerResponse,
+	positionKey,
 	ratingsFor,
 	sampleBookMove,
 	speedFor,
@@ -110,10 +112,14 @@ describe("ratingsFor", () => {
 	it("picks the three buckets around E (1500 → 1400,1600,1800)", () => {
 		expect(ratingsFor(1500)).toEqual([1400, 1600, 1800]);
 	});
-	it("dedupes at the edges of the bucket list", () => {
+	it("dedupes at the edges of the bucket list and always includes the group containing E", () => {
 		expect(ratingsFor(3000)).toEqual([2500]);
 		expect(ratingsFor(2400)).toEqual([2200, 2500]);
 		expect(ratingsFor(400)).toEqual([0, 1000]);
+		// 800 sits in the `0` group (0–999) although the nearest label is 1000.
+		expect(ratingsFor(800)).toEqual([0, 1000]);
+		expect(ratingsFor(999)).toEqual([0, 1000, 1200]);
+		expect(ratingsFor(1000)).toEqual([1000, 1200]);
 	});
 });
 
@@ -148,6 +154,28 @@ describe("explorerUrl", () => {
 		expect(url).toContain(`moves=${EXPLORER.moves}`);
 		expect(url).toContain("topGames=0");
 		expect(url).toContain("recentGames=0");
+	});
+});
+
+describe("parseExplorerResponse", () => {
+	it("accepts the documented shape and rejects malformed bodies", () => {
+		const ok = parseExplorerResponse({
+			white: 1,
+			draws: 2,
+			black: 3,
+			moves: [{ uci: "e2e4", san: "e4", white: 1, draws: 2, black: 3, averageRating: 1500 }],
+			opening: { eco: "B00", name: "King's Pawn" },
+		});
+		expect(ok?.moves[0]?.averageRating).toBe(1500);
+		expect(ok?.opening).toEqual({ eco: "B00", name: "King's Pawn" });
+		expect(parseExplorerResponse({})).toBeNull();
+		expect(parseExplorerResponse(null)).toBeNull();
+		expect(parseExplorerResponse("[]")).toBeNull();
+		expect(parseExplorerResponse({ white: 1, draws: 2, black: 3 })).toBeNull();
+		expect(
+			parseExplorerResponse({ white: 1, draws: 2, black: 3, moves: [{ uci: "e2e4" }] })
+		).toBeNull();
+		expect(parseExplorerResponse({ white: "1", draws: 2, black: 3, moves: [] })).toBeNull();
 	});
 });
 
@@ -211,6 +239,7 @@ describe("ExplorerClient", () => {
 		expect(call?.url).toBe(explorerUrl(START, 1500, tc));
 		expect(new Headers(call?.init?.headers).get("accept")).toBe("application/json");
 		expect(call?.init?.signal).toBeInstanceOf(AbortSignal);
+		await client.flush();
 		expect(storage.writes).toBe(1);
 		expect(Object.keys(storage.value ?? {}).length).toBe(1);
 
@@ -246,6 +275,7 @@ describe("ExplorerClient", () => {
 		expect(res?.moves[0]?.uci).toBe("g1f3");
 		expect(ff.calls.length).toBe(0);
 		await client.query("8/8/8/8/8/8/8/k6K w - - 0 1", 1500, tc); // forces a write
+		await client.flush();
 		expect(Object.keys(storage.value ?? {}).length).toBe(EXPLORER.cacheEntries);
 		expect(storage.value?.[ExplorerClient.cacheKey(START, 1500, tc)]).toBeDefined();
 		expect(storage.value?.k0).toBeUndefined();
@@ -317,10 +347,88 @@ describe("ExplorerClient", () => {
 		client.dispose();
 	});
 
+	it("returns null for a non-JSON body (HTML error page) without caching", async () => {
+		const calls: string[] = [];
+		const html: FetchLike = async (url) => {
+			calls.push(url);
+			return new Response("<html>oops</html>", {
+				status: 200,
+				headers: { "content-type": "text/html" },
+			});
+		};
+		const storage = memoryStorage();
+		const client = new ExplorerClient({ fetch: html, now: Date.now, storage });
+		expect(await client.query(START, 1500, tc)).toBeNull();
+		await client.flush();
+		expect(storage.writes).toBe(0);
+		expect(calls.length).toBe(1);
+		client.dispose();
+	});
+
+	it("keys the cache on the first four FEN fields only", async () => {
+		const ff = fakeFetch();
+		const client = new ExplorerClient({ fetch: ff.fetch, now: Date.now, storage: memoryStorage() });
+		await client.query(START, 1500, tc);
+		const sameMoveCounters = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 5 9";
+		expect(await client.query(sameMoveCounters, 1500, tc)).not.toBeNull();
+		expect(ff.calls.length).toBe(1);
+		expect(positionKey(sameMoveCounters)).toBe(positionKey(START));
+		expect(ExplorerClient.cacheKey(sameMoveCounters, 1500, tc)).toBe(
+			ExplorerClient.cacheKey(START, 1500, tc)
+		);
+		client.dispose();
+	});
+
+	it("resolves query() before the cache write and coalesces writes", async () => {
+		const ff = fakeFetch();
+		let release: (() => void) | null = null;
+		let writes = 0;
+		const storage = {
+			get: async () => null,
+			set: () =>
+				new Promise<void>((resolve) => {
+					writes++;
+					release = resolve;
+				}),
+		};
+		const client = new ExplorerClient({ fetch: ff.fetch, now: Date.now, storage });
+		expect(await client.query(START, 1500, tc)).not.toBeNull(); // resolves while the write hangs
+		expect(writes).toBe(1);
+		await client.query("8/8/8/8/8/8/8/k6K w - - 0 1", 1500, tc);
+		await client.query("8/8/8/8/8/8/8/k5K1 w - - 0 1", 1500, tc);
+		expect(writes).toBe(1); // queued behind the hanging write
+		const first = release as (() => void) | null;
+		first?.();
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(writes).toBe(2); // one coalesced follow-up write, not two
+		(release as (() => void) | null)?.();
+		await client.flush();
+		client.dispose();
+	});
+
+	it("dispose() aborts the in-flight request", async () => {
+		const ff = fakeFetch({ hang: true });
+		const client = new ExplorerClient({
+			fetch: ff.fetch,
+			now: Date.now,
+			storage: memoryStorage(),
+			timeoutSignal: () => new AbortController().signal, // never times out
+		});
+		const pending = client.query(START, 1500, tc);
+		await new Promise<void>((resolve) => setTimeout(resolve, 0)); // let the request start
+		expect(ff.calls.length).toBe(1);
+		client.dispose();
+		expect(await pending).toBeNull();
+		expect(ff.calls[0]?.init?.signal?.aborted).toBe(true);
+		expect(await client.query(START, 1500, tc)).toBeNull(); // disposed clients answer null
+	});
+
 	it("uses chrome.storage.local under LOCAL_KEYS.explorerCache by default", async () => {
 		const ff = fakeFetch();
 		const client = new ExplorerClient({ fetch: ff.fetch });
 		await client.query(START, 1500, tc);
+		await client.flush();
 		const stored = await new Promise<Record<string, unknown>>((resolve) =>
 			chrome.storage.local.get(LOCAL_KEYS.explorerCache, (items) => resolve(items))
 		);

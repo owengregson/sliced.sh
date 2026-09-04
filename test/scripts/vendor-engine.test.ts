@@ -9,6 +9,7 @@ import {
 	nnueHashPrefix,
 	packageFiles,
 	ROOT,
+	readBookManifests,
 	sha256Hex,
 	verifyNnueHash,
 } from "../../scripts/vendor-engine";
@@ -87,5 +88,18 @@ describe("docs/third-party.md books section (Task 15)", () => {
 		}
 		expect(doc).toContain("CC0");
 		expect(doc).toContain("random64.ts");
+	});
+
+	it("each book's build manifest matches the file and the doc records its invocation", async () => {
+		const books = await readBookManifests(path.join(ROOT, BOOKS.dir), [BOOKS.gm2600, BOOKS.club]);
+		expect(books.map((b) => b.manifest.book)).toEqual([BOOKS.gm2600, BOOKS.club]);
+		for (const { file, manifest } of books) {
+			expect(manifest.sha256).toBe(file.sha256);
+			expect(manifest.bytes).toBe(file.bytes);
+			expect(manifest.entries * 16).toBe(file.bytes);
+			expect(manifest.inputs.length).toBeGreaterThan(0);
+			for (const input of manifest.inputs) expect(doc).toContain(`--input ${input}`);
+			expect(doc).toContain(`--output ${BOOKS.dir}${manifest.book}`);
+		}
 	});
 });

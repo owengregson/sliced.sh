@@ -82,11 +82,32 @@ function nearestBucket(elo: number): number {
 	return best;
 }
 
-/** `ratings = [bucket(E − 200), bucket(E), bucket(E + 200)]`, deduped and ascending. */
+/** The explorer group that contains `elo`: the largest label ≤ elo (labels run up to the next). */
+function containingBucket(elo: number): number {
+	let found: number = EXPLORER.ratingBuckets[0];
+	for (const bucket of EXPLORER.ratingBuckets) if (bucket <= elo) found = bucket;
+	return found;
+}
+
+/**
+ * `ratings = [bucket(E − 200), bucket(E), bucket(E + 200)]` by nearest label (ties round up,
+ * so `1500 → 1400,1600,1800`), always including the group that contains E (matters at the
+ * low edge, where `0` covers 0–999 but the nearest label to 800 is 1000). Deduped, ascending.
+ */
 export function ratingsFor(E: number): number[] {
 	const span = EXPLORER.bucketSpanElo;
-	const out = new Set([nearestBucket(E - span), nearestBucket(E), nearestBucket(E + span)]);
+	const out = new Set([
+		containingBucket(E),
+		nearestBucket(E - span),
+		nearestBucket(E),
+		nearestBucket(E + span),
+	]);
 	return [...out].sort((a, b) => a - b);
+}
+
+/** Placement, turn, castling and en-passant: the fields that define the explorer position. */
+export function positionKey(fen: string): string {
+	return fen.trim().split(/\s+/).slice(0, 4).join(" ");
 }
 
 /** Lichess speed class of a time control (`base + 40·inc` seconds); blitz when unknown. */
@@ -233,9 +254,16 @@ export class ExplorerClient implements ExplorerQuery {
 	private readonly timeoutSignal: (ms: number) => AbortSignal;
 	private readonly cache = new LruCache<string, ExplorerCacheEntry>(EXPLORER.cacheEntries);
 	private loaded: Promise<void> | null = null;
-	private inFlight: { key: string; promise: Promise<ExplorerResponse | null> } | null = null;
+	private inFlight: {
+		key: string;
+		promise: Promise<ExplorerResponse | null>;
+		controller: AbortController;
+	} | null = null;
 	private backoffUntilMs = 0;
 	private disposed = false;
+	/** Coalesced cache write: at most one in progress, one queued. */
+	private writing: Promise<void> | null = null;
+	private dirty = false;
 
 	constructor(deps: ExplorerClientDeps = {}) {
 		this.fetchImpl = deps.fetch ?? ((input, init) => fetch(input, init));
@@ -244,8 +272,9 @@ export class ExplorerClient implements ExplorerQuery {
 		this.timeoutSignal = deps.timeoutSignal ?? ((ms) => AbortSignal.timeout(ms));
 	}
 
+	/** `(position, ratings, speeds)`; the move counters are not part of the position. */
 	static cacheKey(fen: string, E: number, timeControl: TimeControl | undefined): string {
-		return `${fen}|${ratingsFor(E).join(",")}|${speedsFor(timeControl).join(",")}`;
+		return `${positionKey(fen)}|${ratingsFor(E).join(",")}|${speedsFor(timeControl).join(",")}`;
 	}
 
 	/** `now()` value until which requests are suppressed after a 429 (0 when none). */
@@ -269,21 +298,30 @@ export class ExplorerClient implements ExplorerQuery {
 	): Promise<ExplorerResponse | null> {
 		if (this.disposed) return null;
 		await this.ensureLoaded();
+		if (this.disposed) return null;
 		const key = ExplorerClient.cacheKey(fen, E, timeControl);
 		const cached = this.cache.get(key);
 		if (cached && this.now() - cached.at < EXPLORER.cacheTtlMs) return cached.data;
 		if (cached) this.cache.delete(key);
 		if (this.inBackoff) return null;
 		if (this.inFlight) return this.inFlight.key === key ? this.inFlight.promise : null;
-		const promise = this.request(key, explorerUrl(fen, E, timeControl)).finally(() => {
+		const controller = new AbortController();
+		const promise = this.request(key, explorerUrl(fen, E, timeControl), controller).finally(() => {
 			if (this.inFlight?.promise === promise) this.inFlight = null;
 		});
-		this.inFlight = { key, promise };
+		this.inFlight = { key, promise, controller };
 		return promise;
 	}
 
+	/** Resolves once every pending cache write has settled (tests; the SW does not wait). */
+	flush(): Promise<void> {
+		return this.writing ?? Promise.resolve();
+	}
+
+	/** Aborts the in-flight request; later `query` calls resolve `null`. */
 	dispose(): void {
 		this.disposed = true;
+		this.inFlight?.controller.abort(new DOMException("explorer disposed", "AbortError"));
 		this.inFlight = null;
 	}
 
@@ -306,22 +344,45 @@ export class ExplorerClient implements ExplorerQuery {
 		return this.loaded;
 	}
 
-	private async persist(): Promise<void> {
-		const store: ExplorerCacheStore = {};
-		for (const [k, e] of this.cache.entries()) store[k] = e;
-		try {
-			await this.storage.set(store);
-		} catch (err) {
-			log.warn("explorer: cache write failed", err);
-		}
+	/** Fire-and-forget: marks the cache dirty and writes it once the current write (if any) ends. */
+	private persist(): void {
+		this.dirty = true;
+		if (this.writing) return;
+		const run = async (): Promise<void> => {
+			while (this.dirty) {
+				this.dirty = false;
+				const store: ExplorerCacheStore = {};
+				for (const [k, e] of this.cache.entries()) store[k] = e;
+				try {
+					await this.storage.set(store);
+				} catch (err) {
+					log.warn("explorer: cache write failed", err);
+				}
+			}
+		};
+		this.writing = run().finally(() => {
+			this.writing = null;
+		});
 	}
 
-	private async request(key: string, url: string): Promise<ExplorerResponse | null> {
+	/** The request signal: the timeout, or `controller` (dispose), whichever fires first. */
+	private requestSignal(controller: AbortController): AbortSignal {
+		const timeout = this.timeoutSignal(TIMINGS.explorerTimeoutMs);
+		if (timeout.aborted) controller.abort(timeout.reason);
+		else timeout.addEventListener("abort", () => controller.abort(timeout.reason), { once: true });
+		return controller.signal;
+	}
+
+	private async request(
+		key: string,
+		url: string,
+		controller: AbortController
+	): Promise<ExplorerResponse | null> {
 		let res: Response;
 		try {
 			res = await this.fetchImpl(url, {
 				headers: { accept: "application/json" },
-				signal: this.timeoutSignal(TIMINGS.explorerTimeoutMs),
+				signal: this.requestSignal(controller),
 			});
 		} catch (err) {
 			log.debug("explorer: request failed", err);
@@ -350,7 +411,7 @@ export class ExplorerClient implements ExplorerQuery {
 			return null;
 		}
 		this.cache.set(key, { at: this.now(), data });
-		await this.persist();
+		this.persist();
 		return data;
 	}
 }

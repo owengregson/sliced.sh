@@ -1,0 +1,25 @@
+{
+  "book": "gm2600.bin",
+  "script": "scripts/build-club-book.py",
+  "inputs": [
+    "lichess_elite_2020-06.zip",
+    "lichess_elite_2020-07.zip",
+    "lichess_elite_2020-08.zip"
+  ],
+  "filters": {
+    "min_elo": 2600,
+    "max_elo": null,
+    "max_ply": 30,
+    "min_count_requested": 5,
+    "min_count": 5,
+    "max_bytes": 360000,
+    "max_games": 0,
+    "keep_bullet": false
+  },
+  "games_read": 1206475,
+  "games_kept": 34468,
+  "positions": 544668,
+  "entries": 15012,
+  "bytes": 240192,
+  "sha256": "68aef21c2bb6b7f80a3858ff24a2565d95937ef52d5b23a6dd6bda0a3e1587d7"
+}

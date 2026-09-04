@@ -56,3 +56,25 @@ export const EXPLORER = {
 	/** `gm2600` from this E, `club` below (§7.3 item 2). */
 	gmBookElo: 1800,
 } as const;
+
+/** §7.4 premove-candidate constants (Task 15) — the single definition. */
+export const PREMOVE = {
+	/** Premoves only in these speed classes ("bullet/blitz"; ultraBullet is bullet's faster sibling). */
+	speeds: ["ultraBullet", "bullet", "blitz"] as const satisfies readonly ExplorerSpeed[],
+	minElo: 1200,
+	/** `p = probBase + probRange·clamp((E − minElo)/probSpan, 0, 1)`. */
+	probBase: 0.35,
+	probRange: 0.5,
+	probSpan: 1200,
+	/** Opponent prediction when no `ponder` move is available: `go movetime 150` MultiPV 3. */
+	ponderMovetimeMs: 150,
+	ponderMultiPv: 3,
+	/** Reply-predictability gate: softmax temperature (win-fraction units) and threshold. */
+	replyTau: 0.06,
+	replyMinProb: 0.6,
+	/** Analysis after `m r`: `go movetime 120` MultiPV 2. */
+	replyMovetimeMs: 120,
+	replyMultiPv: 2,
+	/** Clear-only move: the second line loses at least this win-fraction. */
+	loss2ndMin: 0.25,
+} as const;

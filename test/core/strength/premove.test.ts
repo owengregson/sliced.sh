@@ -1,8 +1,8 @@
 // test/core/strength/premove.test.ts
 import { describe, expect, it } from "bun:test";
+import { PREMOVE } from "@core/constants/books";
 import { createRng, type Rng } from "@core/rng";
 import {
-	PREMOVE,
 	type PremoveContext,
 	type PremoveDeps,
 	premoveCandidate,
@@ -119,6 +119,15 @@ describe("premoveCandidate", () => {
 		expect(a.calls.map((c) => c.moves)).toEqual([["e4d5"], ["e4d5", "d8d5"]]);
 		expect(a.calls[0]?.movetimeMs).toBe(PREMOVE.ponderMovetimeMs);
 		expect(a.calls[0]?.multiPv).toBe(PREMOVE.ponderMultiPv);
+	});
+
+	it("does not call a capture on the reply's square a recapture when the reply was quiet", async () => {
+		// 1. e4 e5 2. Nf3 Nc6 3. Bb5 (m); predictable quiet reply 3... a6 (r); 4. Bxa6?? lands on a6
+		// (the reply's destination) but nothing was captured there, and its loss_2nd is small.
+		const fen = "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3";
+		const opp = [line("a7a6", 0, 1), line("g8f6", -300, 2)];
+		const a = analysis(opp, [line("b5a6", 0, 1), line("b5a4", -10, 2)]);
+		expect(await premoveCandidate(ctx({ fen, move: "f1b5", ponder: "a7a6" }), a.deps)).toBeNull();
 	});
 
 	it("premoves the only legal move", async () => {
