@@ -1,0 +1,3 @@
+[test]
+preload = ["./test/raw-loader.ts", "./test/setup.ts"]
+timeout = 15000

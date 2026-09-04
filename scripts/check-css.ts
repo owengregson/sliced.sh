@@ -1,0 +1,1 @@
+export function checkCss(): void {}

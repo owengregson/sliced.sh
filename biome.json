@@ -1,0 +1,102 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.5.12/schema.json",
+	"vcs": {
+		"enabled": true,
+		"clientKind": "git",
+		"useIgnoreFile": true
+	},
+	"files": {
+		"includes": [
+			"src/**",
+			"scripts/**",
+			"test/**",
+			"pages/**",
+			"*.json",
+			"*.ts",
+			"!legacy",
+			"!dist",
+			"!assets",
+			"!src/page/generated",
+			"!src/design/tokens.generated.ts"
+		]
+	},
+	"formatter": {
+		"enabled": true,
+		"formatWithErrors": false,
+		"indentStyle": "tab",
+		"indentWidth": 1,
+		"lineWidth": 100,
+		"lineEnding": "lf"
+	},
+	"javascript": {
+		"formatter": {
+			"quoteStyle": "double",
+			"semicolons": "always",
+			"trailingCommas": "es5",
+			"arrowParentheses": "always"
+		}
+	},
+	"json": {
+		"formatter": {
+			"indentStyle": "tab",
+			"trailingCommas": "none"
+		}
+	},
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"preset": "recommended",
+			"correctness": {
+				"noUnusedVariables": "warn",
+				"noUnusedImports": "warn",
+				"noUnusedFunctionParameters": "warn",
+				"noInnerDeclarations": "warn",
+				"noUnknownTypeSelector": "warn",
+				"noVoidTypeReturn": "warn"
+			},
+			"style": {
+				"useConst": "warn",
+				"useTemplate": "off",
+				"noNonNullAssertion": "off",
+				"noParameterAssign": "warn"
+			},
+			"suspicious": {
+				"noExplicitAny": "off",
+				"noConsole": "error",
+				"noAssignInExpressions": "warn",
+				"useIterableCallbackReturn": "warn"
+			},
+			"complexity": {
+				"noForEach": "off",
+				"noUselessTypeConstraint": "warn",
+				"noBannedTypes": "warn",
+				"noStaticOnlyClass": "warn"
+			}
+		}
+	},
+	"overrides": [
+		{
+			"includes": ["scripts/**", "test/**"],
+			"linter": {
+				"rules": {
+					"suspicious": {
+						"noConsole": "off"
+					}
+				}
+			}
+		},
+		{
+			"includes": ["test/**"],
+			"linter": {
+				"rules": {
+					"correctness": {
+						"noUnusedVariables": "off"
+					},
+					"style": {
+						"noNonNullAssertion": "off"
+					}
+				}
+			}
+		}
+	]
+}
