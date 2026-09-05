@@ -10,7 +10,7 @@ import type { Rng } from "@core/rng";
 import { clamp } from "@core/util/clamp";
 import { TIMING_CONSTANTS } from "./constants";
 import { pareto, sigmoid } from "./distributions";
-import { longThinkCapSec, premoveLogit } from "./pressure";
+import { jitteredCap, longThinkCapSec, premoveLogit } from "./pressure";
 import type {
 	DistributionHead,
 	Features,
@@ -166,7 +166,7 @@ export class V1ParametricHead implements DistributionHead {
 			);
 			if (rng.next() < pLong) {
 				t *= L.paretoShift + pareto(rng, L.paretoAlpha, L.paretoXm);
-				t = Math.min(t, longThinkCapSec(f));
+				t = jitteredCap(t, longThinkCapSec(f), rng);
 				mode = "long";
 				why.push(`long think p=${pLong.toFixed(3)} crit=${crit.toFixed(2)}`);
 			}

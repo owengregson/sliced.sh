@@ -68,6 +68,8 @@ export interface WindowInputs {
 	motorMs: number;
 	/** Number of preview selections the planner intends (0 for none). */
 	previewCount: number;
+	/** Emergency regime (§8.5): the physical phases compress proportionally below their floors. */
+	emergency?: boolean;
 }
 
 /**
@@ -81,7 +83,12 @@ export function allocateWindow(input: WindowInputs, rng: Rng): MoveWindowBudget 
 	const think = Math.max(0, input.thinkMs);
 	if (input.mode === "premove")
 		return { orientationMs: 0, scanMs: 0, previewMs: 0, decisionMs: 0, approachMs: think };
-	const [orientationMs, approachMs] = compressPhysical(think, input.orientationMs, input.motorMs);
+	const [orientationMs, approachMs] = compressPhysical(
+		think,
+		input.orientationMs,
+		input.motorMs,
+		input.emergency === true
+	);
 	if (input.mode === "instant") {
 		// No scan, preview or decision pause: whatever is left is perceptual/reaction latency.
 		return { orientationMs: think - approachMs, scanMs: 0, previewMs: 0, decisionMs: 0, approachMs };
@@ -97,11 +104,21 @@ export function allocateWindow(input: WindowInputs, rng: Rng): MoveWindowBudget 
 }
 
 /** `[orientation, approach]` fitted into `think` with the 150 ms / 60 ms floors. */
-function compressPhysical(think: number, orientationMs: number, motorMs: number): [number, number] {
+function compressPhysical(
+	think: number,
+	orientationMs: number,
+	motorMs: number,
+	emergency: boolean
+): [number, number] {
 	if (think >= orientationMs + motorMs) return [orientationMs, motorMs];
-	const minO = TIMING_CONSTANTS.orientation.minMs;
 	const minM = M.minMotorMs;
 	const scale = think / Math.max(1e-9, orientationMs + motorMs);
+	if (emergency) {
+		// Minimal motor, everything else proportional — no orientation floor.
+		const a = Math.max(Math.min(minM, think), motorMs * scale);
+		return [Math.max(0, think - a), a];
+	}
+	const minO = TIMING_CONSTANTS.orientation.minMs;
 	let o = Math.max(minO, orientationMs * scale);
 	let a = Math.max(minM, motorMs * scale);
 	if (o + a > think) {

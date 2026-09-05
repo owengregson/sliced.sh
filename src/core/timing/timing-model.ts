@@ -19,7 +19,7 @@ import { computeFeatures, featuresToRecord, isBotPace } from "./features";
 import { allocateWindow, type MotorTimes, motorModel } from "./move-window";
 import { sampleOrientationMs } from "./orientation";
 import { samplePersona } from "./persona-latents";
-import { applyPressureAndCaps, hardCapSec } from "./pressure";
+import { applyPressureAndCaps, hardCapSec, jitteredCap } from "./pressure";
 import { buildTimingLogEntry } from "./timing-log";
 import type {
 	DistributionHead,
@@ -38,6 +38,12 @@ import type {
 } from "./types";
 
 const C = TIMING_CONSTANTS;
+
+/**
+ * Below this clock the `0.15·C` cap is under `minNormalMs`, so `planMove` runs the emergency
+ * regime (§8.5: minimal motor, no 250 ms floor). Derived, not a new literal.
+ */
+export const EMERGENCY_PLAN_CLOCK_S = C.minNormalMs / 1000 / C.caps.lowFraction;
 
 export type TimingSettings = Settings["timing"];
 
@@ -213,7 +219,7 @@ export class TimingModel {
 		const sample = this.sampleGuarded(f, alloc);
 		let { tSec, mode } = sample;
 		const why = [...sample.why];
-		const capped = applyPressureAndCaps(tSec, f);
+		const capped = applyPressureAndCaps(tSec, f, this.rng);
 		tSec = capped.tSec;
 		if (mode === "premove" && (!f.premove_eligible || this.forbidPremove)) {
 			mode = "instant";
@@ -228,19 +234,23 @@ export class TimingModel {
 		const motor = this.motorFor(f, ctx, mode);
 		const orientationMs = mode === "premove" ? 0 : sampleOrientationMs(f, this.rng);
 		const physicalS = orientationMs / 1000 + motor.totalS;
+		const emergency = f.tc !== "untimed" && f.clock_s < EMERGENCY_PLAN_CLOCK_S;
 		let totalS: number;
 		if (mode === "premove") totalS = tSec;
-		else if (mode === "instant") totalS = physicalS + tSec;
+		else if (mode === "instant") totalS = jitteredCap(physicalS + tSec, capped.capSec, this.rng);
 		else {
 			// Appendix D §5: `total = max(tSec, motor.total)`, with the §8.4b item 2 orientation
-			// latency part of the window; the hard cap (§3a.3) wins over that physical floor and
-			// compresses orientation + motor (`allocateWindow`); `minNormalMs` is the only hard floor.
-			totalS = Math.max(C.minNormalMs / 1000, Math.min(Math.max(tSec, physicalS), capped.capSec));
+			// latency part of the window; a binding hard cap (§3a.3) wins over that physical floor
+			// (jittered, never a constant) and compresses orientation + motor (`allocateWindow`);
+			// `minNormalMs` is the only hard floor outside the emergency regime.
+			totalS = jitteredCap(Math.max(tSec, physicalS), capped.capSec, this.rng);
+			if (!emergency) totalS = Math.max(C.minNormalMs / 1000, totalS);
 		}
+		if (emergency) why.push("emergency regime: minimal motor, no normal floor");
 		const thinkMs = totalS * 1000;
 		const motorMs = mode === "premove" ? thinkMs : Math.min(motor.totalS * 1000, thinkMs);
 		const window = allocateWindow(
-			{ thinkMs, mode, orientationMs, motorMs, previewCount: mode === "long" ? 1 : 0 },
+			{ thinkMs, mode, orientationMs, motorMs, previewCount: mode === "long" ? 1 : 0, emergency },
 			this.rng
 		);
 		const dragDurationMs =
@@ -367,7 +377,7 @@ export class TimingModel {
 			}
 			case "clock-jump": {
 				const f = computeFeatures(ctx, this._state);
-				const capMs = hardCapSec(f) * 1000;
+				const capMs = jitteredCap(plan.thinkMs / 1000, hardCapSec(f), this.rng) * 1000;
 				if (plan.thinkMs <= capMs)
 					return this.withElapsed(plan, ctx, plan.thinkMs, plan.window, "clock-jump: within caps");
 				const thinkMs = Math.min(plan.thinkMs, Math.max(spent + approach, capMs));

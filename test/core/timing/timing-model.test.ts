@@ -4,7 +4,13 @@ import { DEFAULT_SETTINGS } from "@core/constants/defaults";
 import { createRng } from "@core/rng";
 import { computeFeatures } from "@core/timing/features";
 import { windowTotalMs } from "@core/timing/move-window";
-import { freshState, isBotPace, needsResample, TimingModel } from "@core/timing/timing-model";
+import {
+	EMERGENCY_PLAN_CLOCK_S,
+	freshState,
+	isBotPace,
+	needsResample,
+	TimingModel,
+} from "@core/timing/timing-model";
 import type { GameMeta, TimingLogEntry } from "@core/timing/types";
 import { mirrorTerm, V1ParametricHead } from "@core/timing/v1-head";
 import { AFTER_EXD5, ctx, line, pearson } from "./helpers";
@@ -27,6 +33,39 @@ function model(over: Partial<typeof DEFAULT_SETTINGS.timing> = {}, seed: string 
 		{ onEntry: (e) => entries.push(e) }
 	);
 	return { m, entries };
+}
+
+/** Largest fraction of `sorted` values within ±`tol` of one value. */
+function largestCluster(sorted: number[], tol: number): number {
+	let best = 0;
+	let lo = 0;
+	for (let hi = 0; hi < sorted.length; hi++) {
+		while ((sorted[hi] ?? 0) - (sorted[lo] ?? 0) > 2 * tol) lo++;
+		best = Math.max(best, hi - lo + 1);
+	}
+	return sorted.length ? best / sorted.length : 0;
+}
+
+/** `n` plans at `clockMs` over games of 40 moves; returns sorted thinkMs and the mode counts. */
+function probe(seed: string, clockMs: number, n: number, over: Record<string, unknown> = {}) {
+	const { m } = model({}, seed);
+	const ts: number[] = [];
+	const modes: Record<string, number> = {};
+	let minOrientation = Number.POSITIVE_INFINITY;
+	for (let i = 0; i < n; i++) {
+		if (i % 40 === 0) m.startGame({ ...meta, gameId: `${seed}-${i}` });
+		const p = m.planMove(ctx({ myClockMs: clockMs, oppClockMs: 30_000, ply: 60, ...over }));
+		ts.push(p.thinkMs);
+		modes[p.mode] = (modes[p.mode] ?? 0) + 1;
+		if (p.mode !== "premove") minOrientation = Math.min(minOrientation, p.orientationMs);
+	}
+	const sorted = [...ts].sort((a, b) => a - b);
+	return {
+		sorted,
+		modes,
+		minOrientation,
+		q: (x: number) => sorted[Math.floor(x * sorted.length)] ?? 0,
+	};
 }
 
 describe("TimingModel.planMove", () => {
@@ -122,29 +161,42 @@ describe("TimingModel.planMove", () => {
 			expect(best / ts.length).toBeLessThan(0.1);
 		}
 	});
-	it("probe: 3+0 with 8 s left — no mass point, q90 ≤ 0.15·C (N = 6 000)", () => {
-		const { m } = model({}, "probe-8s");
-		const ts: number[] = [];
-		for (let i = 0; i < 6000; i++) {
-			if (i % 40 === 0) m.startGame({ ...meta, gameId: `p8-${i}` });
-			const p = m.planMove(ctx({ myClockMs: 8_000, oppClockMs: 30_000, ply: 60 }));
-			expect(p.mode).not.toBe("premove");
-			expect(p.orientationMs).toBeGreaterThanOrEqual(150);
-			ts.push(p.thinkMs);
-		}
-		const sorted = [...ts].sort((a, b) => a - b);
-		const q90 = sorted[Math.floor(0.9 * sorted.length)] ?? 0;
-		expect(q90).toBeLessThanOrEqual(0.15 * 8_000 + 1e-6);
-		// Largest cluster of plans within ±1 ms of a single value.
-		let best = 0;
-		let lo = 0;
-		for (let hi = 0; hi < sorted.length; hi++) {
-			while ((sorted[hi] ?? 0) - (sorted[lo] ?? 0) > 2) lo++;
-			best = Math.max(best, hi - lo + 1);
-		}
-		expect(best / ts.length).toBeLessThan(0.1);
-		expect(sorted[0] ?? 0).toBeGreaterThanOrEqual(250);
+	for (const [clockMs, capMs, n] of [
+		[8_000, 1_200, 6000],
+		[5_000, 750, 3000],
+		[2_500, 350, 3000],
+	] as const) {
+		it(`probe: 3+0 with ${clockMs / 1000} s left — every plan ≤ the hard cap ${capMs} ms, no mass point (N = ${n})`, () => {
+			const r = probe(`p-${clockMs}`, clockMs, n);
+			expect(r.modes.premove ?? 0).toBe(0);
+			expect(r.minOrientation).toBeGreaterThanOrEqual(150);
+			expect(r.sorted[r.sorted.length - 1] ?? 0).toBeLessThanOrEqual(capMs + 1e-6);
+			expect(r.q(0.9)).toBeLessThanOrEqual(capMs + 1e-6);
+			expect(largestCluster(r.sorted, 1)).toBeLessThan(0.1);
+			expect(r.sorted[0] ?? 0).toBeGreaterThanOrEqual(250);
+		});
+	}
+	it("emergency regime below minNormalMs / 0.15 s: no 250 ms floor, capped, motor ≥ 60 ms", () => {
+		expect(EMERGENCY_PLAN_CLOCK_S).toBeCloseTo(250 / 1000 / 0.15, 10);
+		const r = probe("emergency", 1_500, 500);
+		expect(r.sorted[r.sorted.length - 1] ?? 0).toBeLessThanOrEqual(0.15 * 1_500 + 1e-6);
+		expect(r.sorted[0] ?? 0).toBeLessThan(250);
+		expect(r.sorted[0] ?? 0).toBeGreaterThanOrEqual(60);
+		expect(largestCluster(r.sorted, 1)).toBeLessThan(0.1);
 	});
+	for (const [clockMs, longCapMs, n] of [
+		[40_000, 10_000, 3000],
+		[120_000, 30_000, 6000],
+	] as const) {
+		it(`probe: the ${longCapMs / 1000} s long-think cap at ${clockMs / 1000} s is jittered — no exact-cap mass (N = ${n})`, () => {
+			const r = probe(`lc-${clockMs}`, clockMs, n, { ply: 24, oppClockMs: clockMs });
+			const atCap = r.sorted.filter((t) => Math.abs(t - longCapMs) <= 1).length / r.sorted.length;
+			expect(atCap).toBeLessThan(0.001);
+			expect(largestCluster(r.sorted, 1)).toBeLessThan(0.1);
+			// Only long-mode samples are subject to the long-think cap; the hard cap is 0.5·C.
+			expect(r.sorted[r.sorted.length - 1] ?? 0).toBeLessThanOrEqual(0.5 * clockMs + 1e-6);
+		});
+	}
 	it("probe: 3+0 with 120 s left — one seeded persona reproduces the head bands (N = 6 000)", () => {
 		const { m } = model({}, "probe-120s");
 		m.startGame(meta);
@@ -241,6 +293,18 @@ describe("TimingModel.planMove", () => {
 		expect(
 			needsResample([200, 6000, 300, 9000, 250, 4000, 500, 12_000, 300, 700, 8000, 350], 2000)
 		).toBe(false);
+	});
+	it("120 s band over a persona mixture (150 seeds × 40 moves, N = 6 000): q50 2–4 s, P(> 15 s) ≤ 7 %, P(instant) 5–20 %", () => {
+		const r = probe("mixture-120s", 120_000, 6000, { ply: 24, oppClockMs: 120_000 });
+		expect(r.q(0.5) / 1000).toBeGreaterThan(2);
+		expect(r.q(0.5) / 1000).toBeLessThan(4);
+		const tail = r.sorted.filter((t) => t > 15_000).length / r.sorted.length;
+		expect(tail).toBeGreaterThan(0.01);
+		expect(tail).toBeLessThanOrEqual(0.07);
+		const instant = (r.modes.instant ?? 0) / r.sorted.length;
+		expect(instant).toBeGreaterThan(0.05);
+		expect(instant).toBeLessThan(0.2);
+		expect(largestCluster(r.sorted, 1)).toBeLessThan(0.1);
 	});
 });
 

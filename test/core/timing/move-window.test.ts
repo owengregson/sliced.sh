@@ -120,4 +120,37 @@ describe("window allocation", () => {
 		expect(tight.orientationMs).toBe(150);
 		expect(tight.approachMs).toBe(100);
 	});
+	it("emergency windows compress proportionally below the orientation floor, motor ≥ 60 ms", () => {
+		const rng = createRng("w4");
+		const w = allocateWindow(
+			{
+				thinkMs: 180,
+				mode: "normal",
+				orientationMs: 380,
+				motorMs: 400,
+				previewCount: 0,
+				emergency: true,
+			},
+			rng
+		);
+		expect(w.orientationMs + w.approachMs + w.decisionMs + w.scanMs + w.previewMs).toBeCloseTo(
+			180,
+			9
+		);
+		expect(w.orientationMs).toBeLessThan(150);
+		expect(w.approachMs).toBeGreaterThanOrEqual(60);
+		const tiny = allocateWindow(
+			{
+				thinkMs: 40,
+				mode: "instant",
+				orientationMs: 380,
+				motorMs: 400,
+				previewCount: 0,
+				emergency: true,
+			},
+			rng
+		);
+		expect(tiny.approachMs).toBe(40);
+		expect(tiny.orientationMs).toBe(0);
+	});
 });

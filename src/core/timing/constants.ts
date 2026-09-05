@@ -131,6 +131,8 @@ export const TIMING_CONSTANTS = {
 		lowIncS: 2,
 		tinyClockS: 3,
 		tinyCapS: 0.35,
+		/** A binding cap lands in `cap · U(jitterMin, 1)` rather than exactly at the cap (§8.4a). */
+		jitterMin: 0.75,
 	},
 	/** Appendix D §3a.5 premove spike. */
 	premove: {

@@ -6,8 +6,10 @@
  * bypass compression and caps.
  */
 
+import type { Rng } from "@core/rng";
 import { clamp } from "@core/util/clamp";
 import { TIMING_CONSTANTS } from "./constants";
+import { uniform } from "./distributions";
 import type { Features, Persona, TimingKnobs } from "./types";
 
 const C = TIMING_CONSTANTS;
@@ -42,11 +44,20 @@ export interface CappedTime {
 	capSec: number;
 }
 
-/** Multiplicative compression then the hard caps (Appendix D §3a.3). */
-export function applyPressureAndCaps(tSec: number, f: Features): CappedTime {
+/**
+ * A cap that binds is sampled in `cap · U(jitterMin, 1)` instead of clamping to the cap exactly,
+ * so a binding cap never produces a constant per-move time (§8.4a); an unbound value passes through.
+ */
+export function jitteredCap(valueSec: number, capSec: number, rng: Rng): number {
+	if (!(valueSec > capSec) || !Number.isFinite(capSec)) return valueSec;
+	return capSec * uniform(rng, TIMING_CONSTANTS.caps.jitterMin, 1);
+}
+
+/** Multiplicative compression then the (jittered) hard caps (Appendix D §3a.3). */
+export function applyPressureAndCaps(tSec: number, f: Features, rng: Rng): CappedTime {
 	const comp = compressionFactor(f);
 	const capSec = hardCapSec(f);
-	return { tSec: Math.min(tSec * comp, capSec), comp, capSec };
+	return { tSec: jitteredCap(tSec * comp, capSec, rng), comp, capSec };
 }
 
 /** Long-think cap: `min(0.25·C, per-class cap)`. */

@@ -443,14 +443,14 @@ export class ChessMimicHead implements DistributionHead {
 		this.temperature = options.temperature ?? CM.temperature;
 	}
 
-	/** Issue inference for `ctx` (called as soon as the opponent's move arrives). */
-	/** Drop the per-game cache (`startGame`). */
+	/** Drop the per-game cache and invalidate any in-flight inference (`startGame`). */
 	reset(): void {
 		this.generation++;
 		this.cache = null;
 		this.lastFailure = null;
 	}
 
+	/** Issue inference for `ctx` (called as soon as the opponent's move arrives); resolves when cached. */
 	async prepare(ctx: TimingContext): Promise<void> {
 		const gen = ++this.generation;
 		this.cache = null;
