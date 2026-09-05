@@ -7,7 +7,7 @@
  * implements the same interface.
  */
 
-import type { Pt } from "./types";
+import type { PathPoint, Pt } from "./types";
 
 export interface InputBackend {
 	/**
@@ -18,6 +18,12 @@ export interface InputBackend {
 	press(p: Pt, atMs: number, signal?: AbortSignal): Promise<void>;
 	/** Never aborted: the abort path itself releases at the current point. */
 	release(p: Pt, atMs: number): Promise<void>;
+	/**
+	 * Dispatch a path on an absolute schedule (`dtMs` after the previous point,
+	 * drift-corrected, re-anchored after a stall). `beforePoint` runs before every
+	 * dispatch and may throw to stop the travel (the focus gate).
+	 */
+	travel(path: readonly PathPoint[], signal?: AbortSignal, beforePoint?: () => void): Promise<void>;
 	/** Where the backend last put the cursor. */
 	position(): Pt;
 	/** `true` while the left button is held. */

@@ -367,6 +367,10 @@ describe("executor: a scheduled drag move end to end", () => {
 		expect(cmds.at(-1)?.type).toBe("mouseReleased");
 		expect(cmds.at(-2)).toMatchObject({ type: "mouseMoved", buttons: 1 });
 		expect(sim.input.pointer(tabId)?.buttons).toBe(0);
-		expect(adapter.observeRequests).toEqual([]);
+		// the committed press went out, so the interrupted attempt is verified once (the drop landed
+		// off-target here, hence still `aborted`) and never re-dispatched
+		expect((reports[0] as ExecutionReport).result.pressed).toBe(true);
+		expect(adapter.observeRequests).toEqual([{ from: "e2", to: "e4" }]);
+		expect(cmds.filter((c) => c.type === "mousePressed")).toHaveLength(1);
 	});
 });

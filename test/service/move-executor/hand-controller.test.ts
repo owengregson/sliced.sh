@@ -2,8 +2,8 @@
 // sequences, timing, the §13.4 focus gate, §13.5 hand ownership and the abort path.
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { debuggerAttach, debuggerSend } from "@core/chrome/debugger";
-import { type BoardGeometryReply, CDP } from "@core/constants";
-import { CLICK, MOTOR_DEFAULTS, PROMOTION_LOOK_DELAY_MS } from "@core/motor/constants";
+import { type BoardGeometryReply, CDP, EXECUTOR } from "@core/constants";
+import { CLICK, MOTOR_DEFAULTS, PATH, PROMOTION_LOOK_DELAY_MS } from "@core/motor/constants";
 import type { ExecutionPlan, HandState, MotorProfile, Pt, Rect } from "@core/motor/types";
 import { createRng } from "@core/rng";
 import { defaultScheduler } from "@core/util/scheduler";
@@ -28,9 +28,11 @@ let promotionRect: Rect | null;
 let geometryReads: Array<PromoPiece | undefined>;
 const prevChrome = (globalThis as Record<string, unknown>).chrome;
 
+let promotionReadFails = false;
 const provider: GeometryProvider = {
 	async read(_tabId, promotion) {
 		geometryReads.push(promotion);
+		if (promotion !== undefined && promotionReadFails) throw new Error("timeout");
 		const reply: BoardGeometryReply = { boardRect: BOARD, flipped: false };
 		if (promotion !== undefined) reply.promotion = promotionRect;
 		return reply;
@@ -49,6 +51,7 @@ beforeEach(async () => {
 	tabsUpdateCalls = 0;
 	windowsUpdateCalls = 0;
 	promotionRect = null;
+	promotionReadFails = false;
 	geometryReads = [];
 	const realUpdate = sim.chrome.tabs.update;
 	sim.chrome.tabs.update = ((...args: unknown[]) => {
@@ -224,11 +227,21 @@ describe("HandController drag execution", () => {
 			const b = cmds[i] as Cmd;
 			if (a.type === "mouseMoved" && b.type === "mouseMoved") expect(b.at - a.at).toBeGreaterThan(0);
 		}
-		expect(result.endPoint).toEqual({ x: release.x, y: release.y });
+		// post-drop rest: slow idle drift on the dropped piece, free moves only, inside the rest band
+		const after = cmds.slice(releaseIdx + 1);
+		expect(after.length).toBeGreaterThan(0);
+		for (const c of after) expect(c).toMatchObject({ type: "mouseMoved", buttons: 0 });
+		const last = cmds.at(-1) as Cmd;
+		expect(last.at - release.at).toBeLessThanOrEqual(EXECUTOR.postDropRestMs[1]);
+		expect(Math.hypot(last.x - release.x, last.y - release.y)).toBeLessThanOrEqual(
+			PATH.idle.maxOffsetPx
+		);
+		expect(result.endPoint).toEqual({ x: last.x, y: last.y });
+		expect(result.pressed).toBe(true);
 		expect(ownership.position(tabId)).toEqual(result.endPoint);
 		expect(ctrl.backend.position()).toEqual(result.endPoint);
 		const phases = result.timeline.map((t) => t.phase);
-		for (const p of ["orientation", "decision", "approach", "grab", "drag", "drop"])
+		for (const p of ["orientation", "decision", "approach", "grab", "drag", "drop", "rest"])
 			expect(phases).toContain(p);
 		for (const t of result.timeline) expect(t.endMs).toBeGreaterThanOrEqual(t.startMs);
 		expect(ctrl.states[0]).toBe("orientation");
@@ -370,6 +383,52 @@ describe("HandController promotion", () => {
 		expect(result.outcome).toBe("executed");
 		expect(commands().filter((c) => c.type === "mousePressed")).toHaveLength(1);
 	});
+
+	it("a failed picker read never fails the move: the drop stands, a timeline note is recorded, verification decides", async () => {
+		promotionRect = { left: 420, top: 60, width: 80, height: 80 };
+		promotionReadFails = true;
+		const ctrl = makeController(5);
+		const result = await run(ctrl, makePlan({ promotion: "q" }), makeTiming());
+		expect(result.outcome).toBe("executed");
+		expect(result.pressed).toBe(true);
+		expect(result.error).toBeUndefined();
+		expect(commands().filter((c) => c.type === "mousePressed")).toHaveLength(1);
+		expect(geometryReads).toContain("q");
+		const note = result.timeline.find(
+			(t) => t.phase === EXECUTOR.timelineNotes.promotionGeometryUnavailable
+		);
+		expect(note).toBeDefined();
+		expect(note?.startMs).toBe(note?.endMs);
+		expect(ctrl.backend.pressed()).toBe(false);
+	});
+
+	it("uses the timing plan's promotionDelayMs as the look-delay when present", async () => {
+		promotionRect = { left: 420, top: 60, width: 80, height: 80 };
+		const ctrl = makeController(5);
+		const result = await run(
+			ctrl,
+			makePlan({ promotion: "q" }),
+			makeTiming({ promotionDelayMs: 700 })
+		);
+		expect(result.outcome).toBe("executed");
+		const cmds = commands();
+		const drop = cmds.filter((c) => c.type === "mouseReleased")[0] as Cmd;
+		const next = cmds.slice(cmds.indexOf(drop) + 1)[0] as Cmd;
+		expect(next.at - drop.at).toBeGreaterThanOrEqual(700);
+		expect(next.at - drop.at).toBeLessThan(700 + PROMOTION_LOOK_DELAY_MS[0]);
+	});
+});
+
+describe("HandController geometry reads", () => {
+	it("reuses the caller's geometry reply for the exploration and reads fresh only before the approach", async () => {
+		const ctrl = makeController(7);
+		const plan = makePlan({
+			geometry: { reply: { boardRect: BOARD, flipped: false }, readAt: sim.now() },
+		});
+		const result = await run(ctrl, plan, makeTiming());
+		expect(result.outcome).toBe("executed");
+		expect(geometryReads).toEqual([undefined]);
+	});
 });
 
 describe("HandController focus gate (§13.4) and hand ownership (§13.5)", () => {
@@ -448,6 +507,8 @@ describe("HandController abort", () => {
 		expect(ctrl.backend.pressed()).toBe(false);
 		expect(ctrl.controller.state()).toBe("rest");
 		expect(sim.input.pointer(tabId)?.buttons).toBe(0);
+		expect(result.pressed).toBe(true);
+		expect(result.attempts).toBe(1);
 	});
 
 	it("an abort before the touch ends the exploration without any press", async () => {
@@ -461,5 +522,6 @@ describe("HandController abort", () => {
 		expect(result.outcome).toBe("aborted");
 		expect(commands().filter((c) => c.type !== "mouseMoved")).toHaveLength(0);
 		expect(result.elapsedMs).toBeLessThanOrEqual(520);
+		expect(result.pressed).toBe(false);
 	});
 });

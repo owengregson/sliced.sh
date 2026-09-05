@@ -13,6 +13,7 @@ import type { GamePortCommand, GamePortMessage } from "@core/constants/messages"
 import { PORT_NAMES } from "@core/constants/ports";
 import { log } from "@core/logger";
 import { type AcceptedPort, acceptPorts } from "@core/messaging/ports";
+import { errorMessage } from "@core/util/errors";
 import { defaultNow, defaultScheduler, type Scheduler } from "@core/util/scheduler";
 
 export type RequestCommand = Extract<GamePortCommand, { id: string }>;
@@ -121,7 +122,13 @@ export class ContentLink implements ContentLinkEvents {
 				timer,
 			});
 			const wire = { ...cmd, id, timeoutMs: cmd.timeoutMs ?? timeoutMs } as unknown as GamePortCommand;
-			entry.port.post(wire);
+			try {
+				entry.port.post(wire);
+			} catch (error) {
+				this.pending.delete(id);
+				this.scheduler.clearTimeout(timer);
+				reject(error instanceof Error ? error : new Error(errorMessage(error)));
+			}
 		});
 	}
 

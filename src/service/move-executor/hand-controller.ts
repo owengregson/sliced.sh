@@ -12,16 +12,19 @@
  * travel rescaled to `dragDurationMs` + settle) is planned right before the
  * decision pause from a fresh geometry read (§9.5), and the approach starts
  * at `t0 + thinkMs − approach − touch` so the drop lands on `thinkMs`.
+ * `ExecutionResult.elapsedMs` is the time to the drop (the move-hold time);
+ * the promotion click and the post-drop rest follow it in the timeline.
  *
  * V2 gates: the `FocusGate` is consulted before the first dispatch and before
  * every subsequent one — a failing verdict skips the move with nothing (more)
  * sent, releasing a held preview first (§13.4). Real pointer input is never
- * consulted (§13.5). An abort mid-drag releases at the current point at once.
+ * consulted (§13.5). An abort mid-drag releases at the current point at once;
+ * `pressed` tells the caller that a release may still have landed the move.
  * There is no tab-activation pre-flight of any kind.
  */
 
 import { fileOf, rankOf } from "@core/chess/squares";
-import { CDP, EXECUTOR } from "@core/constants/cdp";
+import { EXECUTOR } from "@core/constants/cdp";
 import type { BoardGeometryReply } from "@core/constants/messages";
 import { log } from "@core/logger";
 import { CLICK, EXPLORATION, PATH, PROMOTION_LOOK_DELAY_MS, SAMPLING } from "@core/motor/constants";
@@ -166,6 +169,11 @@ class Timeline {
 		this.end();
 		this.open = { phase, startMs: this.now() - this.t0 };
 	}
+	/** A zero-length annotation that does not interrupt the open phase. */
+	note(phase: string): void {
+		const at = this.now() - this.t0;
+		this.entries.push({ phase, startMs: at, endMs: at });
+	}
 	end(): void {
 		if (!this.open) return;
 		this.entries.push({ ...this.open, endMs: this.now() - this.t0 });
@@ -224,6 +232,10 @@ export class HandController {
 	private current: HandState = "rest";
 	private tabId = -1;
 	private signal: AbortSignal | null = null;
+	/** The committed press went out (a release may land the move even on abort/skip). */
+	private pressedCommitted = false;
+	/** Clock time of the drop (second click / release); `null` until then. */
+	private dropAt: number | null = null;
 
 	constructor(deps: HandControllerDeps) {
 		this.backend = deps.backend;
@@ -249,11 +261,17 @@ export class HandController {
 		const tl = new Timeline(t0, this.now);
 		this.tabId = plan.tabId;
 		this.signal = signal;
-		const base = (): Pick<ExecutionResult, "tier" | "endPoint" | "elapsedMs" | "timeline"> => ({
+		this.pressedCommitted = false;
+		this.dropAt = null;
+		const base = (): Pick<
+			ExecutionResult,
+			"tier" | "endPoint" | "elapsedMs" | "timeline" | "pressed"
+		> => ({
 			tier: plan.style,
 			endPoint: this.backend.position(),
-			elapsedMs: this.now() - t0,
+			elapsedMs: (this.dropAt ?? this.now()) - t0,
 			timeline: tl.entries,
+			pressed: this.pressedCommitted,
 		});
 		const verdict = this.focus.canExecute(plan.tabId);
 		if (!verdict.ok) {
@@ -271,10 +289,12 @@ export class HandController {
 		} catch (error) {
 			tl.end();
 			await this.recover();
+			this.ownership.setPosition(this.tabId, this.backend.position());
 			this.setState("rest");
+			const attempts = this.pressedCommitted ? 1 : 0;
 			if (error instanceof SkipError) {
 				log.info("hand: skipped mid-window", { tabId: plan.tabId, reason: error.reason });
-				return { ok: false, outcome: "skipped", reason: error.reason, attempts: 0, ...base() };
+				return { ok: false, outcome: "skipped", reason: error.reason, attempts, ...base() };
 			}
 			if (isAbortedError(error) || signal.aborted) {
 				return {
@@ -309,8 +329,8 @@ export class HandController {
 		tl: Timeline
 	): Promise<void> {
 		const m = plan.motor;
-		let reply = await this.readGeometry(plan.tabId);
-		let readAt = this.now();
+		let reply = plan.geometry?.reply ?? (await this.readGeometry(plan.tabId));
+		let readAt = plan.geometry?.readAt ?? this.now();
 		const preTouchMs = preTouchMsOf(timing);
 
 		// Exploration inside the pre-touch window (§9.3 / §9.3a); the trailing decision
@@ -362,10 +382,10 @@ export class HandController {
 		this.setState("approaching");
 		await this.travel(touch.approach);
 		if (touch.kind === "drag") await this.drag(touch, rects, m, tl);
-		else await this.clickClick(touch, m, tl);
+		else await this.clickClick(touch, tl);
 
-		if (plan.promotion) await this.promote(plan, plan.promotion, m, tl);
-		tl.begin("rest");
+		if (plan.promotion) await this.promote(plan, timing, plan.promotion, m, tl);
+		await this.postDropRest(m, tl);
 	}
 
 	private planExploration(
@@ -393,17 +413,18 @@ export class HandController {
 		return this.planner.plan(preTouchMs, ex.candidates, geo, plan.motor, this.rng, opts);
 	}
 
+	/** Every pause of a preview was sampled by the planner (its budget already counts them). */
 	private async perform(a: HandAction, m: MotorProfile): Promise<void> {
 		if (a.kind === "preview" && a.preview) {
 			const pv = a.preview;
 			await this.travel(pv.approach);
-			await this.pause(sampleRange(CLICK.prePressPauseMs, this.rng));
+			await this.pause(pv.prePressMs);
 			await this.press(pv.press);
 			await this.pause(pv.holdMs);
 			if (pv.dragPath) {
-				await this.pause(sampleRange(m.grabDelayMs, this.rng));
+				await this.pause(pv.grabDelayMs ?? sampleRange(m.grabDelayMs, this.rng));
 				await this.travel(pv.dragPath);
-				await this.pause(sampleRange(m.releaseSettleMs, this.rng));
+				await this.pause(pv.settleMs ?? sampleRange(m.releaseSettleMs, this.rng));
 			}
 			await this.release(pv.release);
 			await this.travel(pv.hoverPath);
@@ -411,7 +432,7 @@ export class HandController {
 			const d = pv.deselect;
 			if (d) {
 				await this.travel(d.path);
-				await this.pause(sampleRange(CLICK.prePressPauseMs, this.rng));
+				await this.pause(d.prePressMs);
 				await this.press(d.press);
 				await this.pause(d.holdMs);
 				await this.release(d.release);
@@ -530,7 +551,7 @@ export class HandController {
 		tl.begin("grab");
 		this.setState("grabbing");
 		await this.pause(t.preGrabMs);
-		await this.press(t.pressAt);
+		await this.press(t.pressAt, true);
 		await this.pause(t.grabDelayMs);
 		await this.travel(t.wobble);
 		tl.begin("drag");
@@ -548,13 +569,14 @@ export class HandController {
 			this.setState("dropping");
 		}
 		await this.release(this.backend.position());
+		this.dropAt = this.now();
 	}
 
-	private async clickClick(t: ClickTouch, _m: MotorProfile, tl: Timeline): Promise<void> {
+	private async clickClick(t: ClickTouch, tl: Timeline): Promise<void> {
 		tl.begin("grab");
 		this.setState("grabbing");
 		await this.pause(t.prePressMs);
-		await this.press(t.pressAt);
+		await this.press(t.pressAt, true);
 		await this.pause(t.holdMs);
 		await this.release(t.releaseAt);
 		tl.begin("drag");
@@ -564,26 +586,41 @@ export class HandController {
 		tl.begin("drop");
 		this.setState("dropping");
 		await this.pause(t.prePress2Ms);
-		await this.press(t.press2At);
+		await this.press(t.press2At, true);
 		await this.pause(t.hold2Ms);
 		await this.release(t.release2At);
+		this.dropAt = this.now();
 	}
 
+	/**
+	 * Promotion (§9.5): look at the picker, then click the piece. The picker rect
+	 * is read through the same guarded geometry path as the board; when the read
+	 * fails or the picker never appears (auto-queen) the drag stands as it is and
+	 * verification decides the outcome — a failed read is never a failed move.
+	 */
 	private async promote(
 		plan: ExecutionPlan,
+		timing: TimingPlan,
 		piece: PromoPiece,
 		m: MotorProfile,
 		tl: Timeline
 	): Promise<void> {
 		tl.begin("promote");
 		this.setState("promoting");
-		const look = m.lookDelayMs[1] > 0 ? m.lookDelayMs : PROMOTION_LOOK_DELAY_MS;
-		await this.pause(sampleRange(look, this.rng));
-		const reply = this.geometry ? await this.geometry.read(plan.tabId, piece) : null;
+		const lookMs =
+			timing.promotionDelayMs !== undefined
+				? timing.promotionDelayMs
+				: sampleRange(m.lookDelayMs[1] > 0 ? m.lookDelayMs : PROMOTION_LOOK_DELAY_MS, this.rng);
+		await this.pause(lookMs);
+		const reply = await this.readGeometry(plan.tabId, piece);
+		if (reply === null) tl.note(EXECUTOR.timelineNotes.promotionGeometryUnavailable);
 		const rect = reply?.promotion ?? null;
 		if (!rect) {
-			// The picker never appeared (auto-queen preference): the move is already complete.
-			log.debug("hand: no promotion picker; assuming auto-promotion", { tabId: plan.tabId });
+			// The picker never appeared (auto-queen preference) or could not be read.
+			log.debug("hand: no promotion picker rect; leaving the drop as it is", {
+				tabId: plan.tabId,
+				read: reply !== null,
+			});
 			return;
 		}
 		this.gate();
@@ -602,15 +639,43 @@ export class HandController {
 		await this.release(clickReleasePoint(pressAt, this.rng));
 	}
 
+	/**
+	 * Post-drop rest (§9.4): slow idle drift on the dropped piece. The move is
+	 * complete by now, so a gate veto or an abort here merely ends the drift.
+	 */
+	private async postDropRest(m: MotorProfile, tl: Timeline): Promise<void> {
+		tl.begin("rest");
+		this.setState("rest");
+		try {
+			const drift = idleTremor(
+				this.backend.position(),
+				sampleRange(EXECUTOR.postDropRestMs, this.rng),
+				m,
+				this.rng
+			);
+			await this.travel(drift);
+		} catch (error) {
+			if (error instanceof SkipError || isAbortedError(error)) {
+				log.debug("hand: post-drop rest cut short", { reason: errorMessage(error) });
+				return;
+			}
+			throw error;
+		}
+	}
+
 	// ── primitives ────────────────────────────────────────────────────────
 
-	private async readGeometry(tabId: number): Promise<BoardGeometryReply | null> {
+	private async readGeometry(
+		tabId: number,
+		promotion?: PromoPiece
+	): Promise<BoardGeometryReply | null> {
 		if (!this.geometry) return null;
 		try {
-			return await this.geometry.read(tabId);
+			return await this.geometry.read(tabId, promotion);
 		} catch (error) {
-			log.debug("hand: geometry read failed; using the plan's rects", {
+			log.debug("hand: geometry read failed", {
 				tabId,
+				promotion: promotion ?? null,
 				error: errorMessage(error),
 			});
 			return null;
@@ -623,23 +688,18 @@ export class HandController {
 		return { from: geo.squareRect(plan.from.square), to: geo.squareRect(plan.to.square) };
 	}
 
-	/** Absolute-time dispatch of a path; the gate is checked before every point (§9.6a). */
+	/** The backend's absolute-time travel; the gate is checked before every point (§9.6a). */
 	private async travel(path: readonly PathPoint[]): Promise<void> {
-		let due = this.now();
-		for (const pt of path) {
-			throwIfAborted(this.signal ?? undefined);
-			this.gate();
-			due += pt.dtMs;
-			await this.backend.move(pt, due, this.signal ?? undefined);
-			this.ownership.setPosition(this.tabId, this.backend.position());
-			if (this.now() - due > CDP.stallResyncMs) due = this.now();
-		}
+		if (path.length === 0) return;
+		await this.backend.travel(path, this.signal ?? undefined, () => this.gate());
+		this.ownership.setPosition(this.tabId, this.backend.position());
 	}
 
-	private async press(p: Pt): Promise<void> {
+	private async press(p: Pt, committed = false): Promise<void> {
 		throwIfAborted(this.signal ?? undefined);
 		this.gate();
 		await this.backend.press(p, this.now(), this.signal ?? undefined);
+		if (committed) this.pressedCommitted = true;
 		this.ownership.setPosition(this.tabId, this.backend.position());
 	}
 

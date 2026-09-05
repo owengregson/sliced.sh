@@ -223,10 +223,13 @@ export function planPreview(input: PreviewPlanInput, rng: Rng): PreviewSelection
 	const approach = generatePath(input.cursor, press, pieceRect, profile, rng);
 	const pressAt = lastPoint(approach, press);
 	const holdMs = sampleRange(profile.pressHoldMs, rng);
-	let fixed = pathMs(approach) + sampleRange(CLICK.prePressPauseMs, rng) + holdMs;
+	const prePressMs = sampleRange(CLICK.prePressPauseMs, rng);
+	let fixed = pathMs(approach) + prePressMs + holdMs;
 
 	let release: Pt;
 	let dragPath: PathPoint[] | undefined;
+	let grabDelayMs: number | undefined;
+	let settleMs: number | undefined;
 	if (style === "drag") {
 		const disp = sampleRange(PREVIEW.dragDisplacementPx, rng);
 		const angle = rng.next() * 2 * Math.PI;
@@ -251,10 +254,9 @@ export function planPreview(input: PreviewPlanInput, rng: Rng): PreviewSelection
 		const backPath = generatePath(outEnd, back, pieceRect, profile, rng);
 		dragPath = [...outPath, ...backPath];
 		release = lastPoint(dragPath, back);
-		fixed +=
-			pathMs(dragPath) +
-			sampleRange(profile.grabDelayMs, rng) +
-			sampleRange(profile.releaseSettleMs, rng);
+		grabDelayMs = sampleRange(profile.grabDelayMs, rng);
+		settleMs = sampleRange(profile.releaseSettleMs, rng);
+		fixed += pathMs(dragPath) + grabDelayMs + settleMs;
 	} else {
 		release = clickReleasePoint(pressAt, rng);
 	}
@@ -277,15 +279,17 @@ export function planPreview(input: PreviewPlanInput, rng: Rng): PreviewSelection
 		const dPath = generatePath(hoverPoint, dTarget, dRect, profile, rng);
 		const dPress = lastPoint(dPath, dTarget);
 		const dHold = sampleRange(profile.pressHoldMs, rng);
+		const dPrePress = sampleRange(CLICK.prePressPauseMs, rng);
 		deselect = {
 			square: choice.square,
 			press: dPress,
 			release: clickReleasePoint(dPress, rng),
 			path: dPath,
+			prePressMs: dPrePress,
 			holdMs: dHold,
 		};
 		if (choice.occupancy) deselect.occupancy = choice.occupancy;
-		fixed += pathMs(dPath) + sampleRange(CLICK.prePressPauseMs, rng) + dHold;
+		fixed += pathMs(dPath) + dPrePress + dHold;
 	}
 
 	let dwellMs = sampleRange(PREVIEW.dwellMs, rng);
@@ -303,12 +307,15 @@ export function planPreview(input: PreviewPlanInput, rng: Rng): PreviewSelection
 		approach,
 		press: pressAt,
 		release,
+		prePressMs,
 		holdMs,
 		dwellMs,
 		isCommittedPiece,
 		totalAfterApproachMs: fixed - pathMs(approach) + dwellMs,
 	};
 	if (dragPath) selection.dragPath = dragPath;
+	if (grabDelayMs !== undefined) selection.grabDelayMs = grabDelayMs;
+	if (settleMs !== undefined) selection.settleMs = settleMs;
 	if (deselect) selection.deselect = deselect;
 	return selection;
 }

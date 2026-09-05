@@ -135,6 +135,18 @@ describe("CdpMouse", () => {
 		expect(mouseCommands().map((c) => c.at - START)).toEqual([10, 25, 30]);
 	});
 
+	it("a rejected press leaves the button state up (the renderer never acknowledged it)", async () => {
+		sim.debugger.respond(CDP.inputDispatchMouseEvent, async (params) => {
+			if ((params as { type: string }).type === "mousePressed") throw new Error("Target closed");
+			return {};
+		});
+		const mouse = makeMouse();
+		await expect(mouse.pressAt({ x: 20, y: 20 }, sim.now())).rejects.toThrow("Target closed");
+		expect(mouse.pressed).toBe(false);
+		await mouse.moveAt({ x: 21, y: 21 }, sim.now());
+		expect(mouseCommands().at(-1)).toMatchObject({ type: "mouseMoved", button: "none", buttons: 0 });
+	});
+
 	it("travel stops at an abort and leaves the button state untouched", async () => {
 		const mouse = makeMouse();
 		const ac = new AbortController();

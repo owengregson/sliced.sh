@@ -106,10 +106,12 @@ export class DebuggerManager {
 	 * Attach once (concurrent calls share the in-flight attach). Rejects with
 	 * the user-facing reason from the registry. Call at arm time, never mid-game.
 	 */
-	ensureAttached(tabId: number): Promise<void> {
+	async ensureAttached(tabId: number): Promise<void> {
+		// A restarted worker must see the rebuilt map before deciding to attach.
+		await this.ready;
 		if (this.attached.has(tabId)) {
 			this.touch(tabId);
-			return Promise.resolve();
+			return;
 		}
 		const pending = this.inflight.get(tabId);
 		if (pending) return pending;

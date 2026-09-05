@@ -6,7 +6,7 @@
  */
 
 import type { InputBackend } from "@core/motor/input-backend";
-import type { Pt } from "@core/motor/types";
+import type { PathPoint, Pt } from "@core/motor/types";
 import type { DebuggerManager } from "@service/debugger-manager";
 import { type Cdp, CdpMouse, type CdpMouseOptions } from "./cdp-mouse";
 
@@ -41,6 +41,10 @@ export class CdpInputBackend implements InputBackend {
 
 	release(p: Pt, atMs: number): Promise<void> {
 		return this.mouse.releaseAt(p, atMs);
+	}
+
+	travel(path: readonly PathPoint[], signal?: AbortSignal, beforePoint?: () => void): Promise<void> {
+		return this.mouse.travel(path, signal, beforePoint);
 	}
 
 	position(): Pt {

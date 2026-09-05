@@ -87,7 +87,7 @@ export const EXECUTOR = {
 	/** Retry attempts including the first (drag → click-click once, no third attempt). */
 	maxAttempts: 2,
 	/** Free-move dispatch cadence for the post-drop rest tremor (ms). */
-	postDropRestMs: [120, 320],
+	postDropRestMs: [120, 320] as [number, number],
 	/** Executor event names (`MoveExecutor.on`). */
 	events: {
 		executed: "executed",
@@ -106,5 +106,11 @@ export const EXECUTOR = {
 		aborted: "aborted",
 		noGeometry: "no board geometry",
 		dispatchFailed: "dispatch failed",
+		/** The board could not be (re-)checked: never dispatch again on a guess. */
+		verificationUnavailable: "verification-unavailable",
+	},
+	/** Zero-length `ExecutionResult.timeline` entries that annotate an execution. */
+	timelineNotes: {
+		promotionGeometryUnavailable: "promotion-geometry-unavailable",
 	},
 } as const;

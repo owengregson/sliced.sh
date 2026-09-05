@@ -65,6 +65,39 @@ describe("DebuggerManager", () => {
 		expect(keepalive.reasons()).toEqual(["debugger"]);
 	});
 
+	it("ensureAttached waits for the getTargets() rebuild: an arm racing the restart never re-attaches", async () => {
+		await new Promise<void>((r) => sim.chrome.debugger.attach({ tabId }, CDP.protocolVersion, r));
+		let release: (() => void) | null = null;
+		const realGetTargets = sim.chrome.debugger.getTargets.bind(sim.chrome.debugger);
+		sim.chrome.debugger.getTargets = ((cb?: (t: chrome.debugger.TargetInfo[]) => void) => {
+			const gate = new Promise<void>((r) => {
+				release = r;
+			});
+			return gate
+				.then(() => realGetTargets())
+				.then((targets) => {
+					cb?.(targets);
+					return targets;
+				});
+		}) as typeof sim.chrome.debugger.getTargets;
+		let attachCalls = 0;
+		const realAttach = sim.chrome.debugger.attach.bind(sim.chrome.debugger);
+		sim.chrome.debugger.attach = ((target, version, cb) => {
+			attachCalls += 1;
+			return realAttach(target, version, cb);
+		}) as typeof sim.chrome.debugger.attach;
+		const m = new DebuggerManager({ keepalive, scheduler: defaultScheduler, now: sim.now });
+		managers.push(m);
+		const arming = m.ensureAttached(tabId);
+		await sim.time.runMicrotasks();
+		expect(m.isAttached(tabId)).toBe(false); // rebuild still pending
+		(release as unknown as () => void)();
+		await arming;
+		expect(attachCalls).toBe(0);
+		expect(m.isAttached(tabId)).toBe(true);
+		expect(keepalive.reasons()).toEqual(["debugger"]);
+	});
+
 	it("onDetach(canceled_by_user) clears state, releases the keepalive and notifies subscribers", async () => {
 		const m = await makeManager();
 		await m.ensureAttached(tabId);

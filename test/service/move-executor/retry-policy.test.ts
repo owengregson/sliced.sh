@@ -133,6 +133,62 @@ describe("runWithRetry", () => {
 		}
 	});
 
+	it("an unavailable verification is terminal: failed with the registry reason and no second dispatch", async () => {
+		const h = harness([{ outcome: "unavailable", reason: "no content port" }]);
+		const r = await h.run();
+		expect(r).toMatchObject({
+			ok: false,
+			outcome: "failed",
+			reason: EXECUTOR.reasons.verificationUnavailable,
+			error: "no content port",
+			attempts: 1,
+		});
+		expect(h.attempts).toEqual(["drag"]);
+		expect(h.rechecks).toBe(0);
+	});
+
+	it("an unavailable re-check before the retry is terminal too — never a dispatch on a guess", async () => {
+		const h = harness(
+			[{ outcome: "rejected" }],
+			[{ outcome: "unavailable", reason: "disconnected" }]
+		);
+		const r = await h.run();
+		expect(r).toMatchObject({
+			ok: false,
+			outcome: "failed",
+			reason: EXECUTOR.reasons.verificationUnavailable,
+			tier: "drag",
+			attempts: 1,
+		});
+		expect(h.attempts).toEqual(["drag"]);
+		expect(h.rechecks).toBe(1);
+		expect(h.delays).toEqual([TIMINGS.executorRetryDelayMs[0]]);
+	});
+
+	it("an aborted or skipped attempt whose committed press went out is verified once (attempts 1) and upgraded when the move landed", async () => {
+		for (const outcome of ["aborted", "skipped"] as const) {
+			const landed = harness([{ outcome: "ok" }], [], (tier) => ({
+				...dispatched(tier),
+				ok: false,
+				outcome,
+				reason: outcome,
+				pressed: true,
+			}));
+			expect(await landed.run()).toMatchObject({ ok: true, outcome: "executed", attempts: 1 });
+			expect(landed.verifies).toHaveLength(1);
+			expect(landed.attempts).toEqual(["drag"]);
+			const missed = harness([{ outcome: "rejected" }], [], (tier) => ({
+				...dispatched(tier),
+				ok: false,
+				outcome,
+				reason: outcome,
+				pressed: true,
+			}));
+			expect(await missed.run()).toMatchObject({ ok: false, outcome, attempts: 1 });
+			expect(missed.attempts).toEqual(["drag"]);
+		}
+	});
+
 	it("an abort during the retry delay ends as aborted without dispatching again", async () => {
 		const ac = new AbortController();
 		const h = harness([{ outcome: "rejected" }], [], dispatched, ac.signal);

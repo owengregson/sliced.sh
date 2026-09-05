@@ -63,28 +63,42 @@ export class CdpMouse {
 	async moveAt(p: Pt, atMs: number, signal?: AbortSignal): Promise<void> {
 		await this.waitUntil(atMs, signal);
 		throwIfAborted(signal);
-		await this.dispatch("mouseMoved", p);
+		await this.dispatch("mouseMoved", p, this.buttons);
 	}
 
+	/** The button state only changes once the renderer acknowledged the press. */
 	async pressAt(p: Pt, atMs: number, signal?: AbortSignal): Promise<void> {
 		await this.waitUntil(atMs, signal);
 		throwIfAborted(signal);
+		await this.dispatch("mousePressed", p, this.buttons | CDP.mouse.leftButtons, {
+			clickCount: CDP.mouse.clickCount,
+		});
 		this.buttons |= CDP.mouse.leftButtons;
-		await this.dispatch("mousePressed", p, { clickCount: CDP.mouse.clickCount });
 	}
 
 	/** Release never waits on an abort: it is the abort path's own cleanup. */
 	async releaseAt(p: Pt, atMs: number, signal?: AbortSignal): Promise<void> {
 		await this.waitUntil(atMs, signal);
+		await this.dispatch("mouseReleased", p, this.buttons & ~CDP.mouse.leftButtons, {
+			button: "left",
+			clickCount: CDP.mouse.clickCount,
+		});
 		this.buttons &= ~CDP.mouse.leftButtons;
-		await this.dispatch("mouseReleased", p, { button: "left", clickCount: CDP.mouse.clickCount });
 	}
 
-	/** Dispatch `path` honouring `dtMs` against the clock; resyncs after a stall > `stallResyncMs`. */
-	async travel(path: readonly PathPoint[], signal?: AbortSignal): Promise<void> {
+	/**
+	 * Dispatch `path` honouring `dtMs` against the clock; resyncs after a stall >
+	 * `stallResyncMs`. `beforePoint` runs before every dispatch and may throw.
+	 */
+	async travel(
+		path: readonly PathPoint[],
+		signal?: AbortSignal,
+		beforePoint?: () => void
+	): Promise<void> {
 		let due = this.now();
 		for (const pt of path) {
 			throwIfAborted(signal);
+			beforePoint?.();
 			due += pt.dtMs;
 			await this.moveAt(pt, due, signal);
 			if (this.now() - due > CDP.stallResyncMs) due = this.now();
@@ -94,6 +108,7 @@ export class CdpMouse {
 	private async dispatch(
 		type: MouseEventType,
 		p: Pt,
+		buttons: number,
 		extra: Record<string, unknown> = {}
 	): Promise<void> {
 		const x = Math.round(p.x);
@@ -102,8 +117,8 @@ export class CdpMouse {
 			type,
 			x,
 			y,
-			button: this.pressed || type !== "mouseMoved" ? "left" : "none",
-			buttons: this.buttons,
+			button: (buttons & CDP.mouse.leftButtons) !== 0 || type !== "mouseMoved" ? "left" : "none",
+			buttons,
 			modifiers: CDP.mouse.modifiers,
 			...extra,
 		});

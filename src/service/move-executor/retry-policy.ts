@@ -3,8 +3,11 @@
  * (or the reverse for a click-first hand), then report failure. Before every
  * retry the board is re-checked so a move that did land (slow verification)
  * is never played twice, and the retry waits `TIMINGS.executorRetryDelayMs`.
- * Skips, aborts and dispatch failures are final: they are position- or
- * user-level, not transport-level.
+ * A board that cannot be checked at all (`unavailable`, from the verification
+ * or the re-check) is terminal: nothing is dispatched on a guess. Skips,
+ * aborts and dispatch failures are final too — but when the committed press
+ * went out (`pressed`) the release may have landed the move, so they are
+ * verified once and upgraded to `executed` if the board shows the move.
  */
 
 import { EXECUTOR } from "@core/constants/cdp";
@@ -42,6 +45,23 @@ export interface RetryRunnerOptions {
 	signal?: AbortSignal;
 }
 
+function unavailable(
+	base: ExecutionResult,
+	attempts: number,
+	verdict: VerifyResult
+): ExecutionResult {
+	log.warn("executor: board could not be checked; no further dispatch", { verdict });
+	const r: ExecutionResult = {
+		...base,
+		ok: false,
+		outcome: "failed",
+		reason: EXECUTOR.reasons.verificationUnavailable,
+		attempts,
+	};
+	if (verdict.reason !== undefined) r.error = verdict.reason;
+	return r;
+}
+
 export async function runWithRetry(o: RetryRunnerOptions): Promise<ExecutionResult> {
 	const tiers = tiersFor(o.style);
 	let attempts = 0;
@@ -58,12 +78,23 @@ export async function runWithRetry(o: RetryRunnerOptions): Promise<ExecutionResu
 				log.info("executor: move landed before the retry; not re-dispatching", { tier: last.tier });
 				return { ...last, ok: true, outcome: "executed", attempts };
 			}
+			if (pre.outcome === "unavailable") return unavailable(last, attempts, pre);
 		}
 		const result = await o.attempt(tier, i);
-		if (result.outcome !== "skipped") attempts += 1;
-		if (!result.ok) return { ...result, attempts };
+		if (result.outcome !== "skipped" || result.pressed) attempts += 1;
+		if (!result.ok) {
+			if (!result.pressed) return { ...result, attempts };
+			// The committed press went out before the skip/abort: the release may have moved the piece.
+			const late = await o.verify(o.verifyTimeoutMs);
+			if (late.outcome === "ok") {
+				log.info("executor: interrupted attempt still landed the move", { outcome: result.outcome });
+				return { ...result, ok: true, outcome: "executed", attempts };
+			}
+			return { ...result, attempts };
+		}
 		const verdict = await o.verify(o.verifyTimeoutMs);
 		if (verdict.outcome === "ok") return { ...result, attempts };
+		if (verdict.outcome === "unavailable") return unavailable(result, attempts, verdict);
 		log.warn("executor: move not verified", { tier, verdict });
 		last = result;
 	}

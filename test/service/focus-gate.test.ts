@@ -79,6 +79,20 @@ describe("FocusGate.canExecute", () => {
 		expect(gate.canExecute(tabId).ok).toBe(true);
 	});
 
+	it("an activation in a different window never marks this tab inactive (known or unknown window)", () => {
+		const unknown = 77; // a tab the link knows nothing about (windowIdOf → null)
+		focus(tabId, true);
+		gate.positionArrived(tabId, sim.now());
+		focus(unknown, true);
+		gate.positionArrived(unknown, sim.now());
+		sim.chrome.tabs.create({ url: "https://example.com/", windowId: 2, active: true }, () => {});
+		expect(gate.canExecute(tabId).ok).toBe(true);
+		expect(gate.canExecute(unknown).ok).toBe(true);
+		sim.tabs.activate(other); // same window as `tabId`
+		expect(gate.canExecute(tabId)).toEqual({ ok: false, reason: "hidden" });
+		expect(gate.canExecute(unknown).ok).toBe(true);
+	});
+
 	it("losing browser focus (windows.onFocusChanged NONE) is a blur edge for every tab in that state", () => {
 		focus(tabId, true);
 		gate.positionArrived(tabId, sim.now());

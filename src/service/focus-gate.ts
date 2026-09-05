@@ -137,11 +137,15 @@ export class FocusGate {
 		}
 	}
 
+	/** Only tabs known to live in `windowId` change; a tab of unknown window is only ever activated. */
 	private onActivated(activeTabId: number, windowId: number): void {
 		for (const [tabId, s] of this.states) {
+			if (tabId === activeTabId) {
+				s.active = true;
+				continue;
+			}
 			const own = this.link.windowIdOf(tabId);
-			if (own !== null && own !== windowId) continue;
-			s.active = tabId === activeTabId;
+			if (own !== null && own === windowId) s.active = false;
 		}
 		if (!this.states.has(activeTabId)) this.state(activeTabId).active = true;
 	}

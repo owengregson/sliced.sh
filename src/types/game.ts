@@ -79,6 +79,8 @@ export interface ExecutionResult {
 	error?: string;
 	/** Task 24: epoch ms the execution finished — identifies one result across snapshots (set by Task 18's controller at integration). */
 	at?: number;
+	/** The committed press was dispatched — even a skipped/aborted attempt may have landed the move. */
+	pressed?: boolean;
 }
 
 export interface GameSessionView {

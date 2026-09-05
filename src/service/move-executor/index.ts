@@ -334,13 +334,24 @@ export class MoveExecutor {
 
 	// ── execution ─────────────────────────────────────────────────────────
 
+	/**
+	 * One execution at a time per tab. A second request while the hand is busy is
+	 * dropped (the running execution's promise is returned): the session owns the
+	 * "one recommendation per position" rule and must `cancel()` before
+	 * scheduling a replacement — queueing here would play a stale move.
+	 * (Queued for Task 30: decide whether a newer recommendation should abort the
+	 * running one instead.)
+	 */
 	private async execute(
 		rec: Recommendation,
 		timing: TimingPlan,
 		ctx: MoveContext
 	): Promise<ExecutionResult> {
 		if (this.running) {
-			log.warn("executor: execution already running; ignoring", { tabId: this.tabId });
+			log.warn("executor: execution already running; request dropped (cancel() first)", {
+				tabId: this.tabId,
+				uci: rec.chosen.uci,
+			});
 			return this.running.done;
 		}
 		const ac = new AbortController();
@@ -412,6 +423,7 @@ export class MoveExecutor {
 		reply: BoardGeometryReply,
 		signal: AbortSignal
 	): Promise<ExecutionResult> {
+		const readAt = this.now();
 		const geo = boardGeometryOf(reply);
 		const fromRect = geo.squareRect(rec.chosen.from);
 		const toRect = geo.squareRect(rec.chosen.to);
@@ -460,6 +472,7 @@ export class MoveExecutor {
 			style,
 			motor,
 			expected: { san: rec.chosen.san, uci: rec.chosen.uci, premove: rec.chosen.source === "premove" },
+			geometry: { reply, readAt },
 			exploration: {
 				candidates: ctx.candidates ?? candidatesFromLines(rec),
 				nReasonable: ctx.nReasonable ?? Math.max(1, rec.lines.length),

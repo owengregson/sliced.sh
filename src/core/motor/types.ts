@@ -6,6 +6,7 @@
  * interface belongs to Task 18 (`input-backend.ts`).
  */
 
+import type { BoardGeometryReply } from "@core/constants/messages";
 import type { ExecutionResult, PromoPiece, Site, Square } from "@typedefs/game";
 import type { PersonaId } from "@typedefs/settings";
 
@@ -111,15 +112,21 @@ export interface PreviewSelection {
 	approach: PathPoint[];
 	press: Pt;
 	release: Pt;
+	/** Pause between the approach's last point and the press (sampled by the planner). */
+	prePressMs: number;
 	holdMs: number;
 	dwellMs: number;
 	/** Drag style only: out 8–40 px and back, dispatched while the button is held. */
 	dragPath?: PathPoint[];
+	/** Drag style only: press → movement onset and deceleration → release (sampled by the planner). */
+	grabDelayMs?: number;
+	settleMs?: number;
 	deselect?: {
 		square: Square;
 		press: Pt;
 		release: Pt;
 		path: PathPoint[];
+		prePressMs: number;
 		holdMs: number;
 		/** Known when the caller supplied `occupancy`. */
 		occupancy?: Occupancy;
@@ -182,4 +189,6 @@ export interface ExecutionPlan {
 	timeoutMs?: number;
 	/** Absent → the pre-touch window is a plain rest (no hovers, no previews). */
 	exploration?: ExplorationInput;
+	/** A geometry reply the caller already holds (avoids a duplicate read at the start). */
+	geometry?: { reply: BoardGeometryReply; readAt: number };
 }
