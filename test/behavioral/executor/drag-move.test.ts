@@ -524,6 +524,41 @@ describe("executor: a scheduled drag move end to end", () => {
 		expect(executor.pendingMove()).toBeNull();
 	});
 
+	it("a replacement whose destination the adapter cannot classify is skipped as verification-unavailable (fail closed)", async () => {
+		const events: string[] = [];
+		let plan: TimingPlan = plan1200();
+		adapter.occupancy.e4 = "own";
+		delete adapter.occupancy.d5;
+		await sw.run(async () => {
+			for (const ev of ["executed", "aborted", "skipped", "failed"] as const)
+				executor.on(ev, (r) => events.push(`${ev}:${r.rec.chosen.uci}`));
+			await executor.arm();
+			focus.positionArrived(tabId, sim.now());
+			plan = plan1200();
+			executor.schedule(recommendation(plan), plan);
+		});
+		let held = 0;
+		let replacement: Promise<unknown> | null = null;
+		sim.debugger.respond(CDP.inputDispatchMouseEvent, (params, id) => {
+			const p = params as { type: string; buttons: number };
+			if (p.type === "mouseMoved" && p.buttons === 1 && ++held === 2) {
+				executor.cancel();
+				replacement = executor.playNow(recommendation(plan, { from: "e4", to: "d5" }), plan);
+			}
+			return sim.input.send(id, CDP.inputDispatchMouseEvent, params);
+		});
+		await sw.run(() => sim.time.advanceUntilIdle({ maxAdvanceMs: 30_000 }));
+		expect(await replacement).toMatchObject({
+			ok: false,
+			outcome: "skipped",
+			reason: "verification-unavailable",
+		});
+		expect(events).toEqual(["aborted:e2e4", "skipped:e4d5"]);
+		const presses = commands().filter((c) => c.type === "mousePressed");
+		expect(presses).toHaveLength(1);
+		expect(adapter.boardChecks).toEqual([["e4", "d5"]]);
+	});
+
 	it("a replacement CAPTURE is never vetoed by the enemy piece on its destination (colour-aware guard)", async () => {
 		const events: string[] = [];
 		let plan: TimingPlan = plan1200();

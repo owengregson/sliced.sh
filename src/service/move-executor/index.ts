@@ -663,7 +663,9 @@ export class MoveExecutor {
 		replacement: boolean
 	): Promise<{ outcome: "skipped" | "aborted"; reason: string } | null> {
 		const changed = { outcome: "skipped", reason: EXECUTOR.reasons.positionChanged } as const;
-		if (reply.occupancy) return positionIntact(reply, rec.chosen.from) ? null : changed;
+		if (reply.occupancy) {
+			return positionIntact(reply, rec.chosen.from, rec.chosen.to) ? null : changed;
+		}
 		if (!replacement || !this.config.verifyMoves) return null;
 		const { from, to } = rec.chosen;
 		const signal = this.freshCheckSignal();
@@ -681,7 +683,8 @@ export class MoveExecutor {
 				: { outcome: "skipped", reason: EXECUTOR.reasons.verificationUnavailable };
 		}
 		const occ = seen.occupancy;
-		if (occ[from] === undefined) {
+		if (occ[from] === undefined || occ[to] === undefined) {
+			// A square the adapter could not classify: nothing is dispatched on a guess.
 			return { outcome: "skipped", reason: EXECUTOR.reasons.verificationUnavailable };
 		}
 		return occ[from] === "own" && occ[to] !== "own" ? null : changed;

@@ -72,10 +72,15 @@ export interface GeometryProvider {
  * The from-square must still hold our piece when the adapter reports occupancy
  * (§9.3 "never double-move"): a reply that says otherwise vetoes the touch.
  */
-export function positionIntact(reply: BoardGeometryReply | null, from: Square): boolean {
+export function positionIntact(
+	reply: BoardGeometryReply | null,
+	from: Square,
+	to?: Square
+): boolean {
 	const occ = reply?.occupancy;
 	if (!occ) return true;
-	return occ[from] === "own";
+	if (occ[from] !== "own") return false;
+	return to === undefined || occ[to] !== "own";
 }
 
 export interface FocusSource {
@@ -696,7 +701,7 @@ export class HandController {
 
 	/** Skip (never dispatch) when the adapter's occupancy says the piece is no longer on `from`. */
 	private guardPosition(plan: ExecutionPlan, reply: BoardGeometryReply | null): void {
-		if (positionIntact(reply, plan.from.square)) return;
+		if (positionIntact(reply, plan.from.square, plan.to.square)) return;
 		log.info("hand: from-square no longer holds our piece; skipping", {
 			tabId: plan.tabId,
 			from: plan.from.square,
