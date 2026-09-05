@@ -8,8 +8,8 @@
 import { viewTitle } from "../copy";
 import { instantiate, part } from "../template";
 import { VIEW_NAMES, type View, type ViewName, type ViewRegistry } from "../view";
-import { createSettingsView } from "./settings";
 import { engineView } from "./engine"; // Task 26
+import { createSettingsView } from "./settings";
 import stubHtml from "./templates/stub.html?raw";
 
 export function createStubView(name: ViewName): View {
