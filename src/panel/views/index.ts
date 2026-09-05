@@ -8,6 +8,7 @@
 import { viewTitle } from "../copy";
 import { instantiate, part } from "../template";
 import { VIEW_NAMES, type View, type ViewName, type ViewRegistry } from "../view";
+import { createSettingsView } from "./settings";
 import stubHtml from "./templates/stub.html?raw";
 
 export function createStubView(name: ViewName): View {
@@ -27,6 +28,4 @@ export const VIEWS: ViewRegistry = Object.fromEntries(
 ) as ViewRegistry;
 
 // ── Task 25: the real Settings view replaces its stub ────────────────────────────────────────
-import { createSettingsView } from "./settings";
-
 VIEWS.settings = createSettingsView();

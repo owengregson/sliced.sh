@@ -327,6 +327,31 @@ describe("settings view · hands-off", () => {
 		await dom.tick(0);
 		expect(h.root.getAttribute("aria-disabled")).toBe("true");
 	});
+
+	it("an open confirm popover is closed when the game goes live; Confirm cannot act mid-game", async () => {
+		const h = await mountSettings();
+		click(q(h.root, ".sl-settings-advanced__reset"));
+		const confirm = q(document, ".sl-popover .sl-settings-confirm__confirm");
+		expect(document.querySelector(".sl-popover")).not.toBeNull();
+		h.store.emit(makeSnapshot({ state: "live:opponent-turn" }));
+		await dom.tick(0);
+		expect(document.querySelector(".sl-popover")).toBeNull();
+		click(confirm); // a stale reference must not fire either
+		await dom.tick(0);
+		expect(h.patches).toEqual([]);
+		// Sign-out confirm: the same, and no logout is dispatched.
+		h.store.emit(makeSnapshot({ state: "game-over" }));
+		await dom.tick(0);
+		click(q(h.root, ".sl-settings-account__signout"));
+		expect(document.querySelector(".sl-popover")).not.toBeNull();
+		h.store.emit(makeSnapshot({ state: "live:opponent-turn" }));
+		await dom.tick(0);
+		expect(document.querySelector(".sl-popover")).toBeNull();
+		expect(h.store.dispatched).toEqual([]);
+		// While locked the buttons open nothing.
+		click(q(h.root, ".sl-settings-advanced__reset"));
+		expect(document.querySelector(".sl-popover")).toBeNull();
+	});
 });
 
 describe("settings view · jump chips", () => {

@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { LOCAL_KEYS, type PanelSnapshot } from "@core/constants";
 import { currentBannerKind } from "@panel/components/banner";
+import { openPopover } from "@panel/components/popover";
 import { createToggle, type ToggleHandle } from "@panel/components/toggle";
 import { COPY } from "@panel/copy";
 import { bootShell, type PanelShell } from "@panel/shell";
@@ -297,6 +298,39 @@ describe("bootShell", () => {
 		if (refs.toggle) key(refs.toggle.el, "keydown", { key: " ", code: "Space" });
 		if (refs.toggle) key(refs.toggle.el, "keyup", { key: " ", code: "Space" });
 		expect(changes).toEqual([true, true]);
+	});
+
+	it("hands-off closes an open popover so nothing inside it can act mid-game", async () => {
+		const confirmed: string[] = [];
+		const view: View = {
+			mount(ctx) {
+				const section = document.createElement("section");
+				section.dataset.view = "waiting";
+				const anchor = document.createElement("button");
+				anchor.type = "button";
+				section.append(anchor);
+				const body = document.createElement("div");
+				const ok = document.createElement("button");
+				ok.type = "button";
+				ok.addEventListener("click", () => confirmed.push("ok"));
+				body.append(ok);
+				anchor.addEventListener("click", () => void openPopover(anchor, body, { title: "t" }));
+				ctx.container.append(section);
+				return () => section.remove();
+			},
+		};
+		shell = bootShell(app(), { store, views: { waiting: view } });
+		store.emit(makeSnapshot());
+		await dom.tick(0);
+		const anchor = app().querySelector<HTMLElement>(".sl-app__content button");
+		if (anchor) click(anchor);
+		expect(app().querySelector(".sl-popover")).not.toBeNull();
+		const ok = app().querySelector<HTMLElement>(".sl-popover .sl-popover__body button");
+		store.emit(makeSnapshot({ state: "live:opponent-turn" }));
+		await dom.tick(0);
+		expect(shell.handsOff).toBe(true);
+		expect(app().querySelector(".sl-popover")).toBeNull();
+		expect(ok?.isConnected).toBe(false);
 	});
 
 	it("dispose tears everything down", async () => {

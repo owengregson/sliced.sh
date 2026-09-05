@@ -7,6 +7,7 @@ export const LIMITS = {
 	multiPvMax: 8,
 	depthMin: 6,
 	depthMax: 30,
+	threadsMin: 1,
 	threadsMax: 8,
 	hashMbMin: 16,
 	hashMbMax: 128,

@@ -165,7 +165,13 @@ export function tcClass(tc: TimeControl): TcClass {
 	return "classical";
 }
 
-/** The timing preset a detected time control pre-selects (Appendix F §4.6). */
+/**
+ * The timing preset a detected time control pre-selects (Appendix F §4.6). The preset chips
+ * are display-only: the view shows this preset for the detected class without writing it, and
+ * only a user pick writes `timing.profile`. `@core/timing` must apply this same mapping when it
+ * derives the effective profile from the detected class at integration (Task 30), so what the
+ * chips show is what the timing model uses.
+ */
 export const PROFILE_FOR_TC_CLASS: Readonly<Record<TcClass, Settings["timing"]["profile"]>> = {
 	bullet: "fast",
 	blitz: "natural",
@@ -382,7 +388,7 @@ export const ROWS: readonly RowSpec[] = [
 		kind: "stepper",
 		path: "engine.threads",
 		...rowCopy("engine.threads"),
-		min: 1,
+		min: LIMITS.threadsMin,
 		max: LIMITS.threadsMax,
 		auto: true,
 	},

@@ -225,6 +225,7 @@ export function bootShell(root: HTMLElement, options: ShellOptions): PanelShell 
 				focusObserver = new MutationObserver(() => lockFocusables());
 				focusObserver.observe(content, { childList: true, subtree: true });
 			}
+			closePopovers(); // an open popover (e.g. a confirm) must not act mid-game
 			// The hands-off banner outranks every other banner; the update banner is suspended.
 			updateBanner?.dismiss();
 			updateBanner = null;

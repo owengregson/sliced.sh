@@ -356,16 +356,19 @@ function buildKeybind(
 	const otherActions = KEYBIND_ACTIONS.filter((a) => a !== spec.action);
 	/** `onSwap` writes both bindings; the `onChange` that follows it must not write again. */
 	let swapped = false;
+	/** The action found by the last `conflicts` check — `onSwap` uses it, not the label. */
+	let conflictAction: KeybindAction | null = null;
 	const handle = createKeybindCapture(row.control, {
 		label,
 		value: host.settings().keybinds[spec.action],
 		global: host.settings().keybinds.global,
 		conflicts: (kb) => {
-			const other = otherActions.find((a) => sameKeybind(host.settings().keybinds[a], kb));
-			return other ? COPY.keybind.actions[other] : null;
+			conflictAction = otherActions.find((a) => sameKeybind(host.settings().keybinds[a], kb)) ?? null;
+			return conflictAction ? COPY.keybind.actions[conflictAction] : null;
 		},
-		onSwap: (kb, otherLabel) => {
-			const other = otherActions.find((a) => COPY.keybind.actions[a] === otherLabel);
+		onSwap: (kb) => {
+			const other = conflictAction;
+			conflictAction = null;
 			if (!other) return;
 			swapped = true;
 			host.write({
@@ -462,6 +465,7 @@ export function createSettingsView(overrides: Partial<SettingsViewDeps> = {}): V
 			}
 
 			function applyLock(): void {
+				if (locked) closePopovers(); // a confirm left open must not act mid-game (§13.4)
 				root.classList.toggle("sl-settings--locked", locked);
 				if (locked) root.setAttribute("aria-disabled", "true");
 				else root.removeAttribute("aria-disabled");

@@ -104,7 +104,8 @@ function keybind(v: unknown, d: Keybind): Keybind {
 
 function threads(v: unknown, d: Settings["engine"]["threads"]): Settings["engine"]["threads"] {
 	if (v === "auto") return "auto";
-	if (typeof v === "number" && Number.isFinite(v)) return clampInt(v, 1, LIMITS.threadsMax);
+	if (typeof v === "number" && Number.isFinite(v))
+		return clampInt(v, LIMITS.threadsMin, LIMITS.threadsMax);
 	return d;
 }
 
