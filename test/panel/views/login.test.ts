@@ -59,57 +59,62 @@ function license(status: LicenseState["status"], extra: Partial<LicenseState> = 
 }
 
 describe("formatLicenseKey", () => {
-	it("uppercases, strips the prefix and dashes into SL-XXXX-XXXX-XXXX", () => {
+	it("shows the prefix only once typed, uppercases and dashes into SL-XXXX-XXXX-XXXX", () => {
 		expect(formatLicenseKey("")).toBe("");
-		expect(formatLicenseKey("S")).toBe("SL-");
-		expect(formatLicenseKey("sl")).toBe("SL-");
+		expect(formatLicenseKey("S")).toBe("S");
+		expect(formatLicenseKey("sl")).toBe("SL");
 		expect(formatLicenseKey("SL-")).toBe("SL-");
+		expect(formatLicenseKey("SL -")).toBe("SL-");
+		expect(formatLicenseKey("SLS")).toBe("SL-S"); // first body character after SL
+		expect(formatLicenseKey("SA")).toBe("SL-SA"); // no prefix typed: S is body
+		expect(formatLicenseKey("l")).toBe("SL-L");
 		expect(formatLicenseKey("7f3")).toBe("SL-7F3");
 		expect(formatLicenseKey("SL-7F3K")).toBe("SL-7F3K");
 		expect(formatLicenseKey("SL-7F3K1")).toBe("SL-7F3K-1");
 		expect(formatLicenseKey("sl7f3kab12cd34")).toBe("SL-7F3K-AB12-CD34");
 		expect(formatLicenseKey("SL-7F3K-AB12-CD34-EXTRA")).toBe("SL-7F3K-AB12-CD34");
 		expect(formatLicenseKey(" sl 7f3k_ab12.cd34 ")).toBe("SL-7F3K-AB12-CD34");
-		expect(formatLicenseKey("l")).toBe("SL-");
+		expect(formatLicenseKey("SL-SA12-BC34-DE56")).toBe("SL-SA12-BC34-DE56");
 		expect(isCompleteLicenseKey("SL-7F3K-AB12-CD34")).toBe(true);
 		expect(isCompleteLicenseKey("SL-7F3K-AB12-CD3")).toBe(false);
 	});
 
-	it("shrinking edits never re-add the prefix or a trailing dash; the caret follows the edit", () => {
-		expect(formatLicenseKey("SL", "SL-")).toBe("");
-		expect(formatLicenseKey("S", "SL")).toBe("");
-		expect(formatLicenseKey("SL-", "SL-7")).toBe("");
+	it("shrinking edits walk back through the prefix zone; the caret follows the edit", () => {
+		expect(formatLicenseKey("SL-", "SL-7")).toBe("SL-");
+		expect(formatLicenseKey("SL", "SL-")).toBe("SL");
+		expect(formatLicenseKey("S", "SL")).toBe("S");
+		expect(formatLicenseKey("", "S")).toBe("");
 		expect(formatLicenseKey("SL-7F3K", "SL-7F3K-1")).toBe("SL-7F3K");
 		expect(formatLicenseKey("SL-7F3KAB12", "SL-7F3K-AB12-C")).toBe("SL-7F3K-AB12");
-		// Growing from a shrunken state re-adds the separators.
+		expect(formatLicenseKey("SL-7F3KAB12", "SL-7F3K-AB12")).toBe("SL-7F3K-AB12"); // dash removed
 		expect(formatLicenseKey("SL-7F3K1", "SL-7F3K")).toBe("SL-7F3K-1");
 		// Caret: after the inserted character for a mid-string edit, at the end for typing.
 		expect(caretAfterFormat("SL-7FX3K-AB12", 6, "SL-7FX3-KAB1-2")).toBe(6);
 		expect(caretAfterFormat("SL-7F3K1", 8, "SL-7F3K-1")).toBe(9);
 		expect(caretAfterFormat("7F", 2, "SL-7F")).toBe(5);
-		expect(caretAfterFormat("S", 1, "SL-")).toBe(3); // nothing but separators left: the end
+		expect(caretAfterFormat("S", 1, "S")).toBe(1);
+		expect(caretAfterFormat("SA", 2, "SL-SA")).toBe(5);
+		expect(caretAfterFormat("SL-7F3KAB12", 7, "SL-7F3K-AB12")).toBe(7); // before the dash
 		expect(caretAfterFormat("SL-7F3K-AB12-CD34", 0, "SL-7F3K-AB12-CD34")).toBe(0);
 	});
 
-	it("typing the prefix into a field that already shows it never doubles it", () => {
-		// The prefix in progress: S, L and - are consumed, not turned into body.
-		expect(formatLicenseKey("SL-L", "SL-")).toBe("SL-");
-		expect(formatLicenseKey("SL-l", "SL-")).toBe("SL-");
+	it("every character after a shown SL- is body; insertions before it keep the prefix", () => {
+		expect(formatLicenseKey("SL-S", "SL-")).toBe("SL-S");
+		expect(formatLicenseKey("SL-L", "SL-")).toBe("SL-L");
 		expect(formatLicenseKey("SL--", "SL-")).toBe("SL-");
-		expect(formatLicenseKey("SLL-", "SL-")).toBe("SL-"); // caret before the dash
 		expect(formatLicenseKey("SL-7", "SL-")).toBe("SL-7");
-		expect(formatLicenseKey("SL-S7", "SL-")).toBe("SL-7");
-		// Index-0 insertion into an already-prefixed value keeps the shown prefix as prefix.
-		expect(formatLicenseKey("SSL-7F3K", "SL-7F3K")).toBe("SL-7F3K");
+		expect(formatLicenseKey("SL-SA12-", "SL-SA12")).toBe("SL-SA12");
+		expect(formatLicenseKey("SL-SA12B", "SL-SA12")).toBe("SL-SA12-B");
+		// Index-0 / in-prefix insertions into a fully prefixed value: body, placed first.
+		expect(formatLicenseKey("SSL-7F3K", "SL-7F3K")).toBe("SL-S7F3-K");
 		expect(formatLicenseKey("-SL-7F3K", "SL-7F3K")).toBe("SL-7F3K");
-		expect(formatLicenseKey("SLSL-7F3K", "SL-7F3K")).toBe("SL-7F3K");
 		expect(formatLicenseKey("7SL-7F3K", "SL-7F3K")).toBe("SL-77F3-K");
-		// A paste after the prefix in progress still reads as a whole key.
+		// A whole key pasted after typing SL- reads as that key; a bare body too.
 		expect(formatLicenseKey("SL-SL-7F3K-AB12-CD34", "SL-")).toBe("SL-7F3K-AB12-CD34");
 		expect(formatLicenseKey("SL-7f3kab12cd34", "SL-")).toBe("SL-7F3K-AB12-CD34");
-		// Outside the prefix zone nothing changes.
-		expect(formatLicenseKey("SL-7F3K-", "SL-7F3K")).toBe("SL-7F3K");
-		expect(formatLicenseKey("SL-7F3KA", "SL-7F3K")).toBe("SL-7F3K-A");
+		// Typing the prefix itself is never re-read as body.
+		expect(formatLicenseKey("SL", "S")).toBe("SL");
+		expect(formatLicenseKey("SLS", "SL")).toBe("SL-S");
 	});
 });
 
@@ -148,7 +153,7 @@ describe("loginView", () => {
 	it("auto-formats the key while typing and toggles reveal", async () => {
 		await mountLogin();
 		type("s");
-		expect(input().value).toBe("SL-");
+		expect(input().value).toBe("S");
 		type("SL-7f3k");
 		expect(input().value).toBe("SL-7F3K");
 		type("SL-7F3Kab12cd34xx");
@@ -161,15 +166,17 @@ describe("loginView", () => {
 		expect(eye?.getAttribute("aria-label")).toBe(COPY.login.reveal);
 	});
 
-	it("Backspace walks back to an empty field and a mid-string edit keeps the caret", async () => {
+	it("Backspace walks back through the prefix zone to an empty field; a mid-string edit keeps the caret", async () => {
 		await mountLogin();
 		type("SL-7");
 		expect(input().value).toBe("SL-7");
 		type("SL-"); // Backspace removed the 7
-		expect(input().value).toBe("");
-		type("S");
 		expect(input().value).toBe("SL-");
-		type("SL"); // Backspace removed the dash
+		type("SL");
+		expect(input().value).toBe("SL");
+		type("S");
+		expect(input().value).toBe("S");
+		type("");
 		expect(input().value).toBe("");
 		// Insert an X after "7F" with the caret there: the value re-flows, the caret stays after X.
 		type("SL-7F3K-AB12");
@@ -181,37 +188,78 @@ describe("loginView", () => {
 		expect(input().selectionEnd).toBe(6);
 	});
 
-	it("typing the key as printed, one character at a time, yields SL-7F3K-AB12-CD34 and submits", async () => {
+	it("Backspace directly after a mid-key dash steps over it and then deletes the character", async () => {
 		await mountLogin();
-		let typed = "";
-		for (const ch of "sl-7f3k-ab12-cd34") {
-			// Each keystroke inserts at the caret, which sits at the end after every format pass.
-			const caret = input().selectionStart ?? input().value.length;
-			typed = input().value.slice(0, caret) + ch + input().value.slice(caret);
-			input().value = typed;
-			input().setSelectionRange(caret + 1, caret + 1);
-			input().dispatchEvent(new Event("input", { bubbles: true }));
-		}
-		expect(input().value).toBe("SL-7F3K-AB12-CD34");
-		expect(input().selectionStart).toBe("SL-7F3K-AB12-CD34".length);
-		expect(store.dispatched).toEqual([]); // typing never auto-submits (§4.1: paste does)
-		key(input(), "keydown", { key: "Enter", code: "Enter" });
-		expect(store.dispatched).toEqual([{ type: MSG.PANEL_LOGIN, key: "SL-7F3K-AB12-CD34" }]);
+		type("SL-7F3K-AB12");
+		// Caret at 8 (after the dash); Backspace removes the dash, the formatter re-adds it.
+		input().value = "SL-7F3KAB12";
+		input().setSelectionRange(7, 7);
+		input().dispatchEvent(new Event("input", { bubbles: true }));
+		expect(input().value).toBe("SL-7F3K-AB12");
+		expect(input().selectionStart).toBe(7);
+		// The next Backspace deletes K.
+		input().value = "SL-7F3AB12";
+		input().setSelectionRange(6, 6);
+		input().dispatchEvent(new Event("input", { bubbles: true }));
+		expect(input().value).toBe("SL-7F3A-B12");
+		expect(input().selectionStart).toBe(6);
 	});
 
-	it("inserting a prefix character at index 0 of a prefixed value is dropped; a body character joins the body", async () => {
+	it("typing a key character by character yields the printed key and submits on Enter", async () => {
+		const cases: Array<[string, string]> = [
+			["sl-7f3k-ab12-cd34", "SL-7F3K-AB12-CD34"],
+			["SL-SA12-BC34-DE56", "SL-SA12-BC34-DE56"],
+			["sl-sa12-bc34-de56", "SL-SA12-BC34-DE56"],
+			["7F3K-AB12-CD34", "SL-7F3K-AB12-CD34"],
+			["7f3kab12cd34", "SL-7F3K-AB12-CD34"],
+		];
+		for (const [typedKey, expected] of cases) {
+			await mountLogin();
+			for (const ch of typedKey) {
+				// Each keystroke inserts at the caret, which sits at the end after every format pass.
+				const caret = input().selectionStart ?? input().value.length;
+				input().value = input().value.slice(0, caret) + ch + input().value.slice(caret);
+				input().setSelectionRange(caret + 1, caret + 1);
+				input().dispatchEvent(new Event("input", { bubbles: true }));
+			}
+			expect(input().value).toBe(expected);
+			expect(input().selectionStart).toBe(expected.length);
+			expect(store.dispatched).toEqual([]); // typing never auto-submits (§4.1: paste does)
+			key(input(), "keydown", { key: "Enter", code: "Enter" });
+			expect(store.dispatched).toEqual([{ type: MSG.PANEL_LOGIN, key: expected }]);
+			cleanup?.();
+			cleanup = null;
+			store = fakeStore(makeSnapshot({ license: "unknown" }));
+		}
+	});
+
+	it("the prefix is shown only as typed: S, SL, then SL- on the dash or the first body character", async () => {
+		await mountLogin();
+		type("S");
+		expect(input().value).toBe("S");
+		type("SL");
+		expect(input().value).toBe("SL");
+		type("SLS"); // first body character after SL
+		expect(input().value).toBe("SL-S");
+		type("");
+		type("SL");
+		type("SL-"); // the dash
+		expect(input().value).toBe("SL-");
+	});
+
+	it("inserting at index 0 of a prefixed value keeps the shown prefix; the character joins the body", async () => {
 		await mountLogin();
 		type("SL-7F3K");
 		input().value = "SSL-7F3K";
 		input().setSelectionRange(1, 1);
 		input().dispatchEvent(new Event("input", { bubbles: true }));
-		expect(input().value).toBe("SL-7F3K");
-		expect(input().selectionStart).toBe(0);
-		input().value = "7SL-7F3K";
+		expect(input().value).toBe("SL-S7F3-K");
+		expect(input().selectionStart).toBe(4); // right after the inserted S
+		input().value = "-SL-S7F3-K";
 		input().setSelectionRange(1, 1);
 		input().dispatchEvent(new Event("input", { bubbles: true }));
-		expect(input().value).toBe("SL-77F3-K");
-		expect(input().selectionStart).toBe(4); // right after the inserted 7
+		expect(input().value).toBe("SL-S7F3-K"); // a stray dash is dropped, caret stays
+		expect(input().selectionStart).toBe(0);
 	});
 
 	it("Enter submits: dispatches PANEL_LOGIN, locks the width and shows the loading label", async () => {

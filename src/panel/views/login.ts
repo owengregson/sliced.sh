@@ -121,9 +121,10 @@ export const loginView: View = {
 					const caret = input.input.selectionStart;
 					input.update({ value: formatted });
 					if (caret !== null) {
-						// A dropped edit (prefix typed into a prefixed field) leaves the caret where it was.
+						// A dropped growing edit (a dash typed where one already is) leaves the caret in
+						// place; a shrinking edit that re-flows follows the significant characters.
 						const next =
-							formatted === lastValue
+							formatted === lastValue && value.length > lastValue.length
 								? Math.max(0, caret - (value.length - lastValue.length))
 								: caretAfterFormat(value, caret, formatted);
 						input.input.setSelectionRange(next, next);

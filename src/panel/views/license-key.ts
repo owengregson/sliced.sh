@@ -1,12 +1,12 @@
 /**
  * License-key auto-formatting (Appendix F §4.1): `SL-XXXX-XXXX-XXXX`, uppercase, dashes inserted
- * while typing, capped at the full length. The `SL` prefix is implied — typing it, pasting it or
- * leaving it out all format the same — and a lone leading `S` or `L` is read as the prefix being
- * typed. Formatting is edit-aware: separators are only appended while the value grows, so
- * Backspace can always walk back to an empty field; an insertion inside the prefix zone of an
- * already-prefixed value (typing the key as printed — `S`, `L`, `-` — into a field that already
- * shows `SL-`, or inserting at index 0) never turns the shown prefix into body; and
- * `caretAfterFormat` keeps the caret next to the character the user just edited.
+ * while typing, capped at the full length. The prefix is shown only once the user has typed it —
+ * `S` shows `S`, `SL` shows `SL`, and `SL-` appears when the dash or the first body character
+ * follows — while a value with no prefix at all (`7F3K…`, typed or pasted) gets `SL-` prepended
+ * on its first body character. Every character after a shown `SL-` is body (the body alphabet is
+ * not restricted), so `SL-SA12-BC34-DE56` types as printed. Formatting is edit-aware: an insertion
+ * at or before the end of an already shown `SL-` (index 0, say) never turns that prefix into body,
+ * and `caretAfterFormat` keeps the caret next to the character the user just edited.
  */
 
 const PREFIX = "SL";
@@ -15,7 +15,6 @@ const GROUP_LENGTH = 4;
 const GROUP_COUNT = 3;
 const BODY_LENGTH = GROUP_LENGTH * GROUP_COUNT;
 const ALNUM = /[A-Z0-9]/;
-const PREFIX_CHARS = /^[SL]+/;
 
 export const LICENSE_KEY_LENGTH = PREFIX.length + GROUP_COUNT * (SEPARATOR.length + GROUP_LENGTH);
 
@@ -23,16 +22,17 @@ function significant(raw: string): string {
 	return raw.toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
 
-/** How many leading characters of `chars` are the prefix (or a prefix being typed). */
+/** Leading characters of `chars` that are the typed prefix: `SL`, or a lone `S`. */
 function prefixLength(chars: string): number {
 	if (chars.startsWith(PREFIX)) return PREFIX.length;
-	return chars.length === 1 && PREFIX.includes(chars) ? 1 : 0;
+	return chars === PREFIX.charAt(0) ? 1 : 0;
 }
 
-/** Alphanumeric body of the key (after the prefix), uppercase, at most 12 characters. */
+/** Alphanumeric body of the key (after the typed prefix), uppercase, at most 12 characters. */
 export function licenseKeyBody(raw: string): string {
 	const chars = significant(raw);
-	return chars.slice(prefixLength(chars), prefixLength(chars) + BODY_LENGTH);
+	const n = prefixLength(chars);
+	return chars.slice(n, n + BODY_LENGTH);
 }
 
 function joinGroups(body: string): string {
@@ -41,47 +41,48 @@ function joinGroups(body: string): string {
 	return [PREFIX, ...groups].join(SEPARATOR);
 }
 
-/** Length of the leading `SL-` portion (`S`, `SL` or `SL-`) that a formatted value shows. */
-function shownPrefixLength(value: string): number {
-	const shown = PREFIX + SEPARATOR;
-	let n = 0;
-	while (n < shown.length && n < value.length && value.charAt(n) === shown.charAt(n)) n += 1;
-	return n;
+/** A prefix-only value renders exactly what was typed: `S`, `SL`, or `SL-` once the dash follows. */
+function typedPrefix(trimmed: string, chars: string): string {
+	if (chars !== PREFIX) return chars;
+	const compact = trimmed.toUpperCase().replace(/\s/g, "");
+	return compact.startsWith(PREFIX + SEPARATOR) ? PREFIX + SEPARATOR : PREFIX;
 }
 
+const SHOWN_PREFIX = PREFIX + SEPARATOR;
+
 /**
- * Body for a pure insertion into `previous` that lands at or before the end of its shown prefix:
- * prefix characters typed there (`S`, `L`, `-`) are the prefix being typed and are dropped; any
- * other characters are body, placed before the existing body. `null` when the edit is not such
- * an insertion (the caller falls back to formatting the raw value).
+ * Body for a pure insertion into a `previous` that shows the full `SL-`, landing at or before
+ * the end of that prefix: the inserted characters are body placed before the existing body (the
+ * shown prefix stays the prefix). A whole prefixed key inserted there — a paste after typing
+ * `SL-` — is read as that key. `null` when the edit is not such an insertion.
  */
 function bodyForPrefixZoneInsertion(trimmed: string, previous: string): string | null {
+	if (!previous.startsWith(SHOWN_PREFIX)) return null;
 	const delta = trimmed.length - previous.length;
 	if (delta <= 0) return null;
 	let at = 0;
 	while (at < previous.length && trimmed.charAt(at) === previous.charAt(at)) at += 1;
-	if (at > shownPrefixLength(previous)) return null;
+	if (at > SHOWN_PREFIX.length) return null;
 	if (trimmed.slice(0, at) + trimmed.slice(at + delta) !== previous) return null;
-	const inserted = significant(trimmed.slice(at, at + delta)).replace(PREFIX_CHARS, "");
+	let inserted = significant(trimmed.slice(at, at + delta));
+	if (inserted.startsWith(PREFIX) && inserted.length >= PREFIX.length + BODY_LENGTH)
+		inserted = inserted.slice(PREFIX.length);
 	return (inserted + licenseKeyBody(previous)).slice(0, BODY_LENGTH);
 }
 
 /**
- * `""` for an empty body; otherwise `SL-` followed by the dashed groups typed so far. With
- * `previous` (the field's value before this edit) a shrinking edit never re-appends the prefix
- * or a trailing separator — deleting from `SL-` reaches `""` instead of bouncing back — and an
- * insertion in the prefix zone of an already-prefixed value is read as the prefix being typed.
+ * `""` for an empty value; the typed prefix alone while only the prefix has been typed; otherwise
+ * `SL-` followed by the dashed groups of the body. `previous` (the field's value before this
+ * edit) lets an insertion in the prefix zone of a fully prefixed value keep that prefix.
  */
 export function formatLicenseKey(raw: string, previous = ""): string {
 	const trimmed = raw.trim();
-	if (significant(trimmed) === "") return "";
-	const shrinking = trimmed.length < previous.length;
-	const zoneBody =
-		previous === "" || shrinking ? null : bodyForPrefixZoneInsertion(trimmed, previous);
-	if (zoneBody !== null) return zoneBody === "" ? PREFIX + SEPARATOR : joinGroups(zoneBody);
+	const chars = significant(trimmed);
+	if (chars === "") return "";
+	const zoneBody = bodyForPrefixZoneInsertion(trimmed, previous);
+	if (zoneBody !== null && zoneBody !== "") return joinGroups(zoneBody);
 	const body = licenseKeyBody(trimmed);
-	if (body === "") return shrinking ? "" : PREFIX + SEPARATOR;
-	return joinGroups(body);
+	return body === "" ? typedPrefix(trimmed, chars) : joinGroups(body);
 }
 
 export function isCompleteLicenseKey(formatted: string): boolean {
@@ -90,7 +91,8 @@ export function isCompleteLicenseKey(formatted: string): boolean {
 
 /**
  * Caret position in `formatted` that follows the same significant characters as `caret` did in
- * `raw` (the prefix the formatter inserted counts as already passed).
+ * `raw` (prefix characters the formatter inserted count as already passed); when only separators
+ * remain past that point the caret goes to the end.
  */
 export function caretAfterFormat(raw: string, caret: number, formatted: string): number {
 	const before = significant(raw.slice(0, caret));
