@@ -41,6 +41,8 @@ export const VIEWS: ViewRegistry = {
 	expired: expiredView,
 	unsupported: unsupportedView,
 	waiting: waitingView,
+	// TODO(Task 31 boot): inject `createUpdateView({ version, notes, onUpdate })` through
+	// `bootShell({ views: { update } })`; this default knows only the build version.
 	update: updateView,
 };
 

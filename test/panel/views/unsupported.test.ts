@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { URLS } from "@core/constants";
 import { COPY } from "@panel/copy";
+import { PLAY_URL } from "@panel/views/play-url";
 import { unsupportedView } from "@panel/views/unsupported";
 import { bootPanelDom, mount, type PanelDom } from "../dom";
 import { makeSnapshot } from "../fixtures";
@@ -63,7 +64,8 @@ describe("unsupportedView", () => {
 		expect(text(".sl-empty__body")).toBe(COPY.nonGame.body);
 		expect(actions()).toHaveLength(1);
 		expect(actions()[0]?.textContent?.trim()).toBe(COPY.unsupportedView.play);
-		expect(actions()[0]?.dataset.url).toBe("chesscomPlay");
+		expect(actions()[0]?.dataset.url).toBe(PLAY_URL.chesscom);
+		expect(PLAY_URL.chesscom).toBe("chesscomPlay");
 		expect(URLS.chesscomPlay).toBe("https://www.chess.com/play/online");
 
 		// Follows snapshots: lichess deep-links to the lobby; leaving the site restores the default.

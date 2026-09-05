@@ -29,6 +29,7 @@ export function mountMark(img: HTMLImageElement): () => void {
 		clicks += 1;
 		if (clicks < UI_TIMINGS.easterEggClicks) return;
 		reset();
+		popover?.close();
 		popover = openCatFacts(img);
 	};
 	img.addEventListener("click", onClick);

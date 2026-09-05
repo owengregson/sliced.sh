@@ -328,7 +328,6 @@ export const COPY = {
 		renew: "Renew",
 		expiredNoDate: "This key has expired.",
 		version: (version: string): string => `v${version}`,
-		discord: "Discord",
 	},
 	expiredView: {
 		bodyNoDate:

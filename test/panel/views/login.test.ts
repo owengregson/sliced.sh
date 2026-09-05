@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { IMAGES, LICENSE_FORCE_VALID, LIMITS, MSG, UI_TIMINGS } from "@core/constants";
 import { ANIM } from "@panel/animation-manager";
 import { COPY } from "@panel/copy";
-import { formatLicenseKey, isCompleteLicenseKey } from "@panel/views/license-key";
+import { caretAfterFormat, formatLicenseKey, isCompleteLicenseKey } from "@panel/views/license-key";
 import { loginView } from "@panel/views/login";
 import type { LicenseState } from "@typedefs/settings";
 import { bootPanelDom, click, key, mount, type PanelDom } from "../dom";
@@ -70,8 +70,24 @@ describe("formatLicenseKey", () => {
 		expect(formatLicenseKey("sl7f3kab12cd34")).toBe("SL-7F3K-AB12-CD34");
 		expect(formatLicenseKey("SL-7F3K-AB12-CD34-EXTRA")).toBe("SL-7F3K-AB12-CD34");
 		expect(formatLicenseKey(" sl 7f3k_ab12.cd34 ")).toBe("SL-7F3K-AB12-CD34");
+		expect(formatLicenseKey("l")).toBe("SL-");
 		expect(isCompleteLicenseKey("SL-7F3K-AB12-CD34")).toBe(true);
 		expect(isCompleteLicenseKey("SL-7F3K-AB12-CD3")).toBe(false);
+	});
+
+	it("shrinking edits never re-add the prefix or a trailing dash; the caret follows the edit", () => {
+		expect(formatLicenseKey("SL", "SL-")).toBe("");
+		expect(formatLicenseKey("S", "SL")).toBe("");
+		expect(formatLicenseKey("SL-", "SL-7")).toBe("");
+		expect(formatLicenseKey("SL-7F3K", "SL-7F3K-1")).toBe("SL-7F3K");
+		expect(formatLicenseKey("SL-7F3KAB12", "SL-7F3K-AB12-C")).toBe("SL-7F3K-AB12");
+		// Growing from a shrunken state re-adds the separators.
+		expect(formatLicenseKey("SL-7F3K1", "SL-7F3K")).toBe("SL-7F3K-1");
+		// Caret: after the inserted character for a mid-string edit, at the end for typing.
+		expect(caretAfterFormat("SL-7FX3K-AB12", 6, "SL-7FX3-KAB1-2")).toBe(6);
+		expect(caretAfterFormat("SL-7F3K1", 8, "SL-7F3K-1")).toBe(9);
+		expect(caretAfterFormat("7F", 2, "SL-7F")).toBe(5);
+		expect(caretAfterFormat("SL-7F3K-AB12-CD34", 0, "SL-7F3K-AB12-CD34")).toBe(0);
 	});
 });
 
@@ -100,10 +116,9 @@ describe("loginView", () => {
 		expect(container.querySelector(".sl-login__version")?.textContent).toBe(
 			COPY.loginView.version(__SL_VERSION__)
 		);
-		const discord = container.querySelector<HTMLElement>(".sl-login__discord");
-		expect(discord?.textContent?.trim()).toBe(COPY.loginView.discord);
-		expect(discord?.dataset.action).toBe("open-url");
-		expect(discord?.dataset.url).toBe("discord");
+		// No community link ships until a real invite exists (review ruling): the footer has
+		// the version only, and no dead `open-url` targets.
+		expect(container.querySelectorAll(".sl-login__footer [data-action]")).toHaveLength(0);
 		expect(container.querySelector(".sl-icon[data-icon]")?.className).toContain("fa-fw");
 		expect(document.activeElement).toBe(document.body);
 	});
@@ -116,13 +131,32 @@ describe("loginView", () => {
 		expect(input().value).toBe("SL-7F3K");
 		type("SL-7F3Kab12cd34xx");
 		expect(input().value).toBe("SL-7F3K-AB12-CD34");
-		expect(input().maxLength).toBe("SL-7F3K-AB12-CD34".length);
 		expect(input().type).toBe("text");
 		const eye = container.querySelector<HTMLButtonElement>(".sl-input__trailing");
 		expect(eye?.getAttribute("aria-label")).toBe(COPY.login.hide);
 		if (eye) click(eye);
 		expect(input().type).toBe("password");
 		expect(eye?.getAttribute("aria-label")).toBe(COPY.login.reveal);
+	});
+
+	it("Backspace walks back to an empty field and a mid-string edit keeps the caret", async () => {
+		await mountLogin();
+		type("SL-7");
+		expect(input().value).toBe("SL-7");
+		type("SL-"); // Backspace removed the 7
+		expect(input().value).toBe("");
+		type("S");
+		expect(input().value).toBe("SL-");
+		type("SL"); // Backspace removed the dash
+		expect(input().value).toBe("");
+		// Insert an X after "7F" with the caret there: the value re-flows, the caret stays after X.
+		type("SL-7F3K-AB12");
+		input().value = "SL-7FX3K-AB12";
+		input().setSelectionRange(6, 6);
+		input().dispatchEvent(new Event("input", { bubbles: true }));
+		expect(input().value).toBe("SL-7FX3-KAB1-2");
+		expect(input().selectionStart).toBe(6);
+		expect(input().selectionEnd).toBe(6);
 	});
 
 	it("Enter submits: dispatches PANEL_LOGIN, locks the width and shows the loading label", async () => {
@@ -168,6 +202,14 @@ describe("loginView", () => {
 		await dom.tick(ANIM.duration[6] - 1);
 		expect(store.dispatched).toEqual([]);
 		await dom.tick(1);
+		expect(store.dispatched).toEqual([{ type: MSG.PANEL_LOGIN, key: "SL-7F3K-AB12-CD34" }]);
+	});
+
+	it("a padded paste is trimmed, formatted and still auto-submits", async () => {
+		await mountLogin();
+		paste("  sl-7f3k-ab12-cd34\n");
+		expect(input().value).toBe("SL-7F3K-AB12-CD34");
+		await dom.tick(ANIM.duration[6]);
 		expect(store.dispatched).toEqual([{ type: MSG.PANEL_LOGIN, key: "SL-7F3K-AB12-CD34" }]);
 	});
 

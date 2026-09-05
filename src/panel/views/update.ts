@@ -6,6 +6,7 @@
  */
 
 import { log } from "@core/logger";
+import { createButton } from "../components/button";
 import { createEmptyState } from "../components/empty-state";
 import { COPY } from "../copy";
 import { instantiate, part } from "../template";
@@ -43,16 +44,20 @@ export function createUpdateView(options: UpdateViewOptions = {}): View {
 							else log.info("update: no updater wired");
 						},
 					},
-					{ label: COPY.update.later, variant: "ghost" },
 				],
 				note: COPY.update.note,
 			});
 			empty.el.prepend(mark);
-			const later = empty.el.querySelectorAll<HTMLElement>(".sl-empty__actions .sl-button")[1];
-			if (later) later.dataset.action = "dismiss-update";
+			// Later is the shell's `dismiss-update` action (banner, never re-interrupts).
+			const later = createButton(part(empty.el, ".sl-empty__actions"), {
+				label: COPY.update.later,
+				variant: "ghost",
+			});
+			later.el.dataset.action = "dismiss-update";
 			ctx.container.append(el);
 			return () => {
 				unmountMark();
+				later.dispose();
 				empty.dispose();
 				el.remove();
 			};

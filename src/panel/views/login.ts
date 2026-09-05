@@ -21,7 +21,7 @@ import { formatDate } from "../format";
 import { mountIcons } from "../icons-mount";
 import { instantiate, part } from "../template";
 import type { View } from "../view";
-import { formatLicenseKey, isCompleteLicenseKey, LICENSE_KEY_LENGTH } from "./license-key";
+import { caretAfterFormat, formatLicenseKey, isCompleteLicenseKey } from "./license-key";
 import { mountMark } from "./mark";
 import html from "./templates/login.html?raw";
 
@@ -77,7 +77,6 @@ export const loginView: View = {
 		part(el, ".sl-login__link-text").textContent = COPY.login.link;
 		part(el, ".sl-login__link-button").setAttribute("aria-label", COPY.brand.product);
 		part(el, ".sl-login__version").textContent = COPY.loginView.version(__SL_VERSION__);
-		part(el, ".sl-login__discord-label").textContent = COPY.loginView.discord;
 		const unmountMark = mountMark(part<HTMLImageElement>(el, ".sl-login__mark"));
 
 		let license: LicenseState = ctx.snapshot?.license ?? UNKNOWN;
@@ -90,6 +89,8 @@ export const loginView: View = {
 		let pasteSubmitTimer: ReturnType<typeof setTimeout> | null = null;
 		let extraButton: ButtonHandle | null = null;
 		let extraKey: string | null = null;
+		/** The field's value after the last format pass (shrinking edits never re-add separators). */
+		let lastValue = "";
 
 		const clearTimer = (timer: ReturnType<typeof setTimeout> | null): null => {
 			if (timer !== null) clearTimeout(timer);
@@ -107,7 +108,6 @@ export const loginView: View = {
 			size: "lg",
 			mono: true,
 			hint: COPY.login.hint,
-			maxLength: LICENSE_KEY_LENGTH,
 			trailing: {
 				...revealTrailing(),
 				onClick: () => {
@@ -116,8 +116,16 @@ export const loginView: View = {
 				},
 			},
 			onInput: (value) => {
-				const formatted = formatLicenseKey(value);
-				if (formatted !== value) input.update({ value: formatted });
+				const formatted = formatLicenseKey(value, lastValue);
+				if (formatted !== value) {
+					const caret = input.input.selectionStart;
+					input.update({ value: formatted });
+					if (caret !== null) {
+						const next = caretAfterFormat(value, caret, formatted);
+						input.input.setSelectionRange(next, next);
+					}
+				}
+				lastValue = formatted;
 				pasteSubmitTimer = clearTimer(pasteSubmitTimer);
 				if (!pasted) return;
 				pasted = false;

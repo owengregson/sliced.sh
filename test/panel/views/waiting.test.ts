@@ -39,7 +39,6 @@ function withOpponent(snapshot: PanelSnapshot, opponent: PanelSnapshot["opponent
 async function mountWaiting(snapshot: PanelSnapshot): Promise<void> {
 	store = fakeStore(snapshot);
 	cleanup = await waitingView.mount(makeContext(container, store));
-	await dom.tick(0); // the active tab is resolved through `tabsQuery`
 }
 
 const text = (selector: string): string =>
@@ -110,7 +109,7 @@ describe("waitingView", () => {
 		pointer(el, "pointerdown", { pointerId: 1, isPrimary: true });
 		await dom.tick(UI_TIMINGS.armHoldMs - 1);
 		expect(store.dispatched).toEqual([]);
-		await dom.tick(1);
+		await dom.tick(1); // the hold completes; the game tab is resolved (`tabsQuery`) and armed
 		expect(store.dispatched).toEqual([{ type: MSG.PANEL_SET_AUTO_MOVE, tabId, armed: true }]);
 		expect(el.getAttribute("aria-checked")).toBe("true");
 		expect(el.querySelector(".sl-toggle__label")?.textContent).toBe(COPY.toggle.armed);
@@ -200,5 +199,8 @@ describe("waitingView", () => {
 		expect(text(".sl-waiting__meta")).toBe(
 			COPY.waiting.meta(COPY.waitingView.sites.chesscom, COPY.waiting.engineReady)
 		);
+		// Without a site (session ended off-site) the meta line is hidden rather than "On sliced".
+		store.emit(makeSnapshot({ site: null }));
+		expect(container.querySelector<HTMLElement>(".sl-waiting__meta")?.hidden).toBe(true);
 	});
 });

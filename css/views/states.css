@@ -50,6 +50,15 @@
 	padding-bottom: var(--sl-space-2);
 }
 
+/* release notes: at most three lines (§4.8); the clamp count is a line count, not a size */
+.sl-update .sl-empty__body {
+	display: -webkit-box;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 3;
+	line-clamp: 3;
+	overflow: hidden;
+}
+
 /* the 64 px mark sits above the title, in the icon's place */
 .sl-update__mark {
 	width: var(--sl-space-16);

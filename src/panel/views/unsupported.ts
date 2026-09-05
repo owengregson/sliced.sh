@@ -11,6 +11,7 @@ import { createEmptyState } from "../components/empty-state";
 import { COPY } from "../copy";
 import { instantiate, part } from "../template";
 import type { View } from "../view";
+import { PLAY_URL } from "./play-url";
 import html from "./templates/unsupported.html?raw";
 
 type Variant = "unsupported" | "chesscom" | "lichess";
@@ -19,11 +20,6 @@ export function unsupportedVariant(snapshot: PanelSnapshot): Variant {
 	if (snapshot.site === null || snapshot.pageKind === "live-game") return "unsupported";
 	return snapshot.site;
 }
-
-const PLAY_URL: Readonly<Record<"chesscom" | "lichess", UrlKey>> = {
-	chesscom: "chesscomPlay",
-	lichess: "lichessLobby",
-};
 
 export const unsupportedView: View = {
 	mount(ctx) {

@@ -15,8 +15,6 @@ import { tabsQuery } from "@core/chrome/tabs";
 import type { PanelSnapshot } from "@core/constants/messages";
 import { MSG } from "@core/constants/messages";
 import { log } from "@core/logger";
-import type { Site } from "@typedefs/game";
-import type { UrlKey } from "../actions";
 import { showBanner } from "../components/banner";
 import { createButton } from "../components/button";
 import { createEvalBar } from "../components/eval-bar";
@@ -27,10 +25,11 @@ import { COPY } from "../copy";
 import { formatSeconds } from "../format";
 import { instantiate, part } from "../template";
 import type { View } from "../view";
+import { PLAY_URL } from "./play-url";
 import html from "./templates/waiting.html?raw";
 
 export interface WaitingViewOptions {
-	/** The game tab to arm (default: the active tab of the current window). */
+	/** The game tab to arm, resolved at arm time (default: the active tab of the current window). */
 	resolveTabId?: () => Promise<number | null>;
 }
 
@@ -45,11 +44,6 @@ async function activeTabId(): Promise<number | null> {
 	const tabs = await tabsQuery({ active: true, currentWindow: true });
 	return tabs[0]?.id ?? null;
 }
-
-const PLAY_URL: Readonly<Record<Site, UrlKey>> = {
-	chesscom: "chesscomPlay",
-	lichess: "lichessLobby",
-};
 
 function engineText(snapshot: PanelSnapshot): string {
 	switch (snapshot.engine.state) {
@@ -90,18 +84,6 @@ export function createWaitingView(options: WaitingViewOptions = {}): View {
 				text: COPY.waitingView.bot,
 			});
 
-			let tabId: number | null = null;
-			const tabReady = resolveTabId().then(
-				(id) => {
-					if (!ctx.signal.aborted) tabId = id;
-					return id;
-				},
-				(error: unknown) => {
-					log.warn("waiting: could not resolve the game tab", { error });
-					return null;
-				}
-			);
-
 			function send(id: number | null, armed: boolean): void {
 				if (ctx.signal.aborted) return;
 				if (id === null) {
@@ -118,8 +100,14 @@ export function createWaitingView(options: WaitingViewOptions = {}): View {
 			}
 
 			function setArmed(armed: boolean): void {
-				if (tabId !== null) send(tabId, armed);
-				else void tabReady.then((id) => send(id, armed));
+				// The game tab is resolved at arm time (the active tab may have changed since mount).
+				resolveTabId().then(
+					(id) => send(id, armed),
+					(error: unknown) => {
+						log.warn("waiting: could not resolve the game tab", { error });
+						send(null, armed);
+					}
+				);
 				// "Armed for next game" and the lock follow the SW's `armed: true` snapshot: touching
 				// the toggle here would let the click that ends the hold through as a disarm.
 				if (!armed || debuggerBannerShown) return;
@@ -160,10 +148,9 @@ export function createWaitingView(options: WaitingViewOptions = {}): View {
 
 			function render(snapshot: PanelSnapshot): void {
 				const site = snapshot.site ?? snapshot.session.site;
-				meta.textContent = COPY.waiting.meta(
-					site ? COPY.waitingView.sites[site] : COPY.brand.name,
-					engineText(snapshot)
-				);
+				meta.hidden = site === null;
+				if (site)
+					meta.textContent = COPY.waiting.meta(COPY.waitingView.sites[site], engineText(snapshot));
 				const reading = snapshot.session.state === "idle";
 				dot.dataset.state = reading ? "warn" : "ok";
 				statusText.textContent = reading ? COPY.waiting.reading : COPY.waiting.watching;

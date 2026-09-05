@@ -92,20 +92,3 @@
 	color: var(--sl-color-text-tertiary);
 }
 
-.sl-login__discord {
-	display: inline-flex;
-	align-items: center;
-	gap: var(--sl-space-1);
-	height: var(--sl-size-control-sm);
-	padding: 0 var(--sl-space-2);
-	border-radius: var(--sl-radius-sm);
-	color: var(--sl-color-text-secondary);
-	transition:
-		background-color var(--sl-motion-duration-1) var(--sl-motion-easing-standard),
-		color var(--sl-motion-duration-1) var(--sl-motion-easing-standard);
-}
-
-.sl-login__discord:hover {
-	background: var(--sl-color-surface-hover);
-	color: var(--sl-color-text-primary);
-}

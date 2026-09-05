@@ -18,5 +18,4 @@ export const URLS = {
 	lichess: "https://lichess.org/",
 	/** The lichess lobby is the site root (the plan's `/lobby` path has no such page). */
 	lichessLobby: "https://lichess.org/",
-	discord: "https://sliced.sh/discord",
 } as const;
