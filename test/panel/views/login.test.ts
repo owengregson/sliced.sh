@@ -87,7 +87,29 @@ describe("formatLicenseKey", () => {
 		expect(caretAfterFormat("SL-7FX3K-AB12", 6, "SL-7FX3-KAB1-2")).toBe(6);
 		expect(caretAfterFormat("SL-7F3K1", 8, "SL-7F3K-1")).toBe(9);
 		expect(caretAfterFormat("7F", 2, "SL-7F")).toBe(5);
+		expect(caretAfterFormat("S", 1, "SL-")).toBe(3); // nothing but separators left: the end
 		expect(caretAfterFormat("SL-7F3K-AB12-CD34", 0, "SL-7F3K-AB12-CD34")).toBe(0);
+	});
+
+	it("typing the prefix into a field that already shows it never doubles it", () => {
+		// The prefix in progress: S, L and - are consumed, not turned into body.
+		expect(formatLicenseKey("SL-L", "SL-")).toBe("SL-");
+		expect(formatLicenseKey("SL-l", "SL-")).toBe("SL-");
+		expect(formatLicenseKey("SL--", "SL-")).toBe("SL-");
+		expect(formatLicenseKey("SLL-", "SL-")).toBe("SL-"); // caret before the dash
+		expect(formatLicenseKey("SL-7", "SL-")).toBe("SL-7");
+		expect(formatLicenseKey("SL-S7", "SL-")).toBe("SL-7");
+		// Index-0 insertion into an already-prefixed value keeps the shown prefix as prefix.
+		expect(formatLicenseKey("SSL-7F3K", "SL-7F3K")).toBe("SL-7F3K");
+		expect(formatLicenseKey("-SL-7F3K", "SL-7F3K")).toBe("SL-7F3K");
+		expect(formatLicenseKey("SLSL-7F3K", "SL-7F3K")).toBe("SL-7F3K");
+		expect(formatLicenseKey("7SL-7F3K", "SL-7F3K")).toBe("SL-77F3-K");
+		// A paste after the prefix in progress still reads as a whole key.
+		expect(formatLicenseKey("SL-SL-7F3K-AB12-CD34", "SL-")).toBe("SL-7F3K-AB12-CD34");
+		expect(formatLicenseKey("SL-7f3kab12cd34", "SL-")).toBe("SL-7F3K-AB12-CD34");
+		// Outside the prefix zone nothing changes.
+		expect(formatLicenseKey("SL-7F3K-", "SL-7F3K")).toBe("SL-7F3K");
+		expect(formatLicenseKey("SL-7F3KA", "SL-7F3K")).toBe("SL-7F3K-A");
 	});
 });
 
@@ -157,6 +179,39 @@ describe("loginView", () => {
 		expect(input().value).toBe("SL-7FX3-KAB1-2");
 		expect(input().selectionStart).toBe(6);
 		expect(input().selectionEnd).toBe(6);
+	});
+
+	it("typing the key as printed, one character at a time, yields SL-7F3K-AB12-CD34 and submits", async () => {
+		await mountLogin();
+		let typed = "";
+		for (const ch of "sl-7f3k-ab12-cd34") {
+			// Each keystroke inserts at the caret, which sits at the end after every format pass.
+			const caret = input().selectionStart ?? input().value.length;
+			typed = input().value.slice(0, caret) + ch + input().value.slice(caret);
+			input().value = typed;
+			input().setSelectionRange(caret + 1, caret + 1);
+			input().dispatchEvent(new Event("input", { bubbles: true }));
+		}
+		expect(input().value).toBe("SL-7F3K-AB12-CD34");
+		expect(input().selectionStart).toBe("SL-7F3K-AB12-CD34".length);
+		expect(store.dispatched).toEqual([]); // typing never auto-submits (§4.1: paste does)
+		key(input(), "keydown", { key: "Enter", code: "Enter" });
+		expect(store.dispatched).toEqual([{ type: MSG.PANEL_LOGIN, key: "SL-7F3K-AB12-CD34" }]);
+	});
+
+	it("inserting a prefix character at index 0 of a prefixed value is dropped; a body character joins the body", async () => {
+		await mountLogin();
+		type("SL-7F3K");
+		input().value = "SSL-7F3K";
+		input().setSelectionRange(1, 1);
+		input().dispatchEvent(new Event("input", { bubbles: true }));
+		expect(input().value).toBe("SL-7F3K");
+		expect(input().selectionStart).toBe(0);
+		input().value = "7SL-7F3K";
+		input().setSelectionRange(1, 1);
+		input().dispatchEvent(new Event("input", { bubbles: true }));
+		expect(input().value).toBe("SL-77F3-K");
+		expect(input().selectionStart).toBe(4); // right after the inserted 7
 	});
 
 	it("Enter submits: dispatches PANEL_LOGIN, locks the width and shows the loading label", async () => {

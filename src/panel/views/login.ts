@@ -121,7 +121,11 @@ export const loginView: View = {
 					const caret = input.input.selectionStart;
 					input.update({ value: formatted });
 					if (caret !== null) {
-						const next = caretAfterFormat(value, caret, formatted);
+						// A dropped edit (prefix typed into a prefixed field) leaves the caret where it was.
+						const next =
+							formatted === lastValue
+								? Math.max(0, caret - (value.length - lastValue.length))
+								: caretAfterFormat(value, caret, formatted);
 						input.input.setSelectionRange(next, next);
 					}
 				}
