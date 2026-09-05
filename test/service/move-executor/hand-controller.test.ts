@@ -116,16 +116,26 @@ function makePlan(over: Partial<ExecutionPlan> = {}, previewScale = 0): Executio
 }
 
 function makeTiming(over: Partial<TimingPlan> = {}): TimingPlan {
-	return {
+	const base = {
 		thinkMs: 3000,
-		mode: "normal",
+		mode: "normal" as const,
 		preMoveHoverMs: 2000,
 		dragDurationMs: 400,
 		deadlineMs: START + 3000,
 		rationale: [],
 		features: {},
+		orientationMs: 0,
 		...over,
 	};
+	// The pre-touch window mirrors `preMoveHoverMs` unless a test passes its own phases.
+	const window = over.window ?? {
+		orientationMs: base.preMoveHoverMs,
+		scanMs: 0,
+		previewMs: 0,
+		decisionMs: 0,
+		approachMs: base.dragDurationMs,
+	};
+	return { ...base, window };
 }
 
 interface Ctrl {

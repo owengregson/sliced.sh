@@ -122,21 +122,40 @@ interface Running {
 	done: Promise<ExecutionResult>;
 }
 
-type WindowedTimingPlan = TimingPlan & { window?: TimingWindow };
-
-function withoutWindow(plan: TimingPlan): TimingPlan {
-	const copy: WindowedTimingPlan = { ...plan };
-	delete copy.window;
-	return copy;
+/**
+ * The plan with its pre-touch window resized to `preTouchMs`: phases scale
+ * proportionally (orientation alone when the plan had no pre-touch time) and
+ * the approach budget is kept.
+ */
+function withPreTouch(plan: TimingPlan, preTouchMs: number): TimingPlan {
+	const w: TimingWindow = plan.window;
+	const current = preTouchMsOf(plan);
+	const scale = current > 0 ? preTouchMs / current : 0;
+	const window: TimingWindow =
+		current > 0
+			? {
+					orientationMs: w.orientationMs * scale,
+					scanMs: w.scanMs * scale,
+					previewMs: w.previewMs * scale,
+					decisionMs: w.decisionMs * scale,
+					approachMs: w.approachMs,
+				}
+			: {
+					orientationMs: preTouchMs,
+					scanMs: 0,
+					previewMs: 0,
+					decisionMs: 0,
+					approachMs: w.approachMs,
+				};
+	return { ...plan, preMoveHoverMs: preTouchMs, window };
 }
 
 /** An instant plan for `playNow` and retries: no exploration, touch only. */
 export function instantTiming(plan: TimingPlan): TimingPlan {
 	return {
-		...withoutWindow(plan),
+		...withPreTouch(plan, 0),
 		mode: "instant",
 		thinkMs: EXECUTOR.minExecutionMs + plan.dragDurationMs,
-		preMoveHoverMs: 0,
 	};
 }
 
@@ -149,7 +168,7 @@ export function fitTiming(plan: TimingPlan, availableMs: number): TimingPlan {
 	const touchBudget = EXECUTOR.defaultApproachMs + plan.dragDurationMs;
 	const thinkMs = Math.max(EXECUTOR.minExecutionMs, availableMs);
 	const preTouch = Math.max(0, Math.min(preTouchMsOf(plan), thinkMs - touchBudget));
-	return { ...withoutWindow(plan), thinkMs, preMoveHoverMs: preTouch };
+	return { ...withPreTouch(plan, preTouch), thinkMs };
 }
 
 /** Exploration candidates from the MultiPV lines, weighted by rank when the session gives no probabilities. */

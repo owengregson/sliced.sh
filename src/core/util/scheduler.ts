@@ -15,6 +15,8 @@ export const DEFAULT_SCHEDULER: TimerScheduler = {
 	clearTimeout: (handle) => globalThis.clearTimeout(handle as ReturnType<typeof setTimeout>),
 	now: () => Date.now(),
 };
+
+/**
  * Injectable timer + clock so service modules can be driven by the simulator's
  * virtual time (or a hand-rolled fake) without touching the globals.
  */

@@ -57,7 +57,7 @@ import {
 } from "@core/util/scheduler";
 import type { FocusVerdict } from "@service/focus-gate";
 import type { PromoPiece, Square } from "@typedefs/game";
-import type { TimingPlan } from "@typedefs/timing";
+import type { MoveWindowBudget, TimingPlan } from "@typedefs/timing";
 
 /** Reads board / square / promotion rects on demand (the content adapter over the game port). */
 export interface GeometryProvider {
@@ -98,20 +98,13 @@ export interface HandControllerDeps {
 	onState?: (state: HandState) => void;
 }
 
-/** Task 16 extends `TimingPlan` with the phase window; read it defensively until it lands. */
-export interface TimingWindow {
-	orientationMs: number;
-	scanMs: number;
-	previewMs: number;
-	decisionMs: number;
-	approachMs: number;
-}
-type WindowedTimingPlan = TimingPlan & { window?: TimingWindow };
+/** The §8.4b phase window of a plan (Task 16's `MoveWindowBudget`). */
+export type TimingWindow = MoveWindowBudget;
 
+/** Pre-touch budget: every window phase before the approach (§8.4b item 3). */
 export function preTouchMsOf(timing: TimingPlan): number {
-	const w = (timing as WindowedTimingPlan).window;
-	if (w) return Math.max(0, w.orientationMs + w.scanMs + w.previewMs + w.decisionMs);
-	return Math.max(0, timing.preMoveHoverMs);
+	const w = timing.window;
+	return Math.max(0, w.orientationMs + w.scanMs + w.previewMs + w.decisionMs);
 }
 
 /** Square rects from the adapter's reply, derived from the board rect when it sent none. */

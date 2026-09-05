@@ -255,6 +255,8 @@ const plan1200 = (): TimingPlan => ({
 	deadlineMs: sim.now() + 1200,
 	rationale: [],
 	features: {},
+	orientationMs: 600,
+	window: { orientationMs: 600, scanMs: 0, previewMs: 0, decisionMs: 0, approachMs: 300 },
 });
 
 interface Cmd {
