@@ -19,7 +19,7 @@ import { computeFeatures, featuresToRecord, isBotPace } from "./features";
 import { allocateWindow, type MotorTimes, motorModel } from "./move-window";
 import { sampleOrientationMs } from "./orientation";
 import { samplePersona } from "./persona-latents";
-import { applyPressureAndCaps, hardCapSec, jitteredCap } from "./pressure";
+import { boundByCap, compressionFactor, hardCapSec } from "./pressure";
 import { buildTimingLogEntry } from "./timing-log";
 import type {
 	DistributionHead,
@@ -39,11 +39,15 @@ import type {
 
 const C = TIMING_CONSTANTS;
 
-/**
- * Below this clock the `0.15·C` cap is under `minNormalMs`, so `planMove` runs the emergency
- * regime (§8.5: minimal motor, no 250 ms floor). Derived, not a new literal.
- */
-export const EMERGENCY_PLAN_CLOCK_S = C.minNormalMs / 1000 / C.caps.lowFraction;
+/** Orientation floor + motor floor: the physical minimum of every non-premove window. */
+const PHYSICAL_FLOOR_S = (C.orientation.minMs + C.motor.minMotorMs) / 1000;
+
+/** The floor a bound total must respect: `minNormalMs` for normal/long moves, physical otherwise. */
+function floorFor(mode: TimingMode): number {
+	return mode === "normal" || mode === "long"
+		? Math.max(C.minNormalMs / 1000, PHYSICAL_FLOOR_S)
+		: PHYSICAL_FLOOR_S;
+}
 
 export type TimingSettings = Settings["timing"];
 
@@ -219,34 +223,39 @@ export class TimingModel {
 		const sample = this.sampleGuarded(f, alloc);
 		let { tSec, mode } = sample;
 		const why = [...sample.why];
-		const capped = applyPressureAndCaps(tSec, f, this.rng);
-		tSec = capped.tSec;
+		const comp = compressionFactor(f);
+		const capSec = hardCapSec(f);
+		tSec *= comp;
 		if (mode === "premove" && (!f.premove_eligible || this.forbidPremove)) {
 			mode = "instant";
 			tSec = Math.max(tSec, C.instant.minS + C.instant.rangeS);
 			why.push(this.forbidPremove ? "no premove entered → instant" : "premove not eligible → instant");
 		}
 		if (mode !== "premove") tSec *= this.settings.speedScale;
-		const median = this.head.median(f, this._persona, st, alloc) * capped.comp;
+		const median = this.head.median(f, this._persona, st, alloc) * comp;
 		if (f.opp_is_bot && mode !== "premove") why.push("bot opponent: mirror coefficient floored");
 		if (mode === "premove" && ctx.site === "chesscom") tSec += C.premove.chesscomPenaltyS;
 
 		const motor = this.motorFor(f, ctx, mode);
 		const orientationMs = mode === "premove" ? 0 : sampleOrientationMs(f, this.rng);
 		const physicalS = orientationMs / 1000 + motor.totalS;
-		const emergency = f.tc !== "untimed" && f.clock_s < EMERGENCY_PLAN_CLOCK_S;
+		const clockEmergency = f.tc !== "untimed" && ctx.myClockMs < C.replan.emergencyClockMs;
 		let totalS: number;
+		let emergency = false;
 		if (mode === "premove") totalS = tSec;
-		else if (mode === "instant") totalS = jitteredCap(physicalS + tSec, capped.capSec, this.rng);
 		else {
-			// Appendix D §5: `total = max(tSec, motor.total)`, with the §8.4b item 2 orientation
-			// latency part of the window; a binding hard cap (§3a.3) wins over that physical floor
-			// (jittered, never a constant) and compresses orientation + motor (`allocateWindow`);
-			// `minNormalMs` is the only hard floor outside the emergency regime.
-			totalS = jitteredCap(Math.max(tSec, physicalS), capped.capSec, this.rng);
-			if (!emergency) totalS = Math.max(C.minNormalMs / 1000, totalS);
+			// Instant: orientation + motor + the head's U(0.05, 0.25). Normal/long: Appendix D §5's
+			// `max(tSec, motor.total)` with the §8.4b item 2 orientation inside the window. A
+			// binding hard cap (§3a.3) wins over that physical floor, sampled in `cap · U(lo, 1)`
+			// with every floor folded into `lo` (never a clamp after jittering); `lo ≥ 1` or the
+			// §8.5 clock threshold is the emergency regime (`boundByCap`).
+			const value = mode === "instant" ? physicalS + tSec : Math.max(tSec, physicalS);
+			const b = boundByCap(value, capSec, floorFor(mode), clockEmergency, this.rng);
+			totalS = b.totalSec;
+			emergency = b.emergency;
+			if (b.bound) why.push(`cap ${capSec.toFixed(2)} s binds (lo ${b.lo.toFixed(2)})`);
 		}
-		if (emergency) why.push("emergency regime: minimal motor, no normal floor");
+		if (emergency) why.push("emergency regime: no floors, minimal motor");
 		const thinkMs = totalS * 1000;
 		const motorMs = mode === "premove" ? thinkMs : Math.min(motor.totalS * 1000, thinkMs);
 		const window = allocateWindow(
@@ -258,7 +267,9 @@ export class TimingModel {
 		const features: Record<string, number> = {
 			...featuresToRecord(f),
 			alloc,
-			comp: capped.comp,
+			comp,
+			capSec,
+			emergency: emergency ? 1 : 0,
 			eps: st.eps,
 			bodyMedianMs: median * 1000,
 		};
@@ -280,7 +291,7 @@ export class TimingModel {
 		st.lastPlan = plan;
 		st.lastEvalOurPov = f.eval_cp;
 		st.oppThinkMs = [...ctx.oppThinkMsHistory];
-		this.logPlan(ctx, plan, f, alloc, capped.comp, sample.terms ?? []);
+		this.logPlan(ctx, plan, f, alloc, comp, sample.terms ?? []);
 		return plan;
 	}
 
@@ -377,10 +388,20 @@ export class TimingModel {
 			}
 			case "clock-jump": {
 				const f = computeFeatures(ctx, this._state);
-				const capMs = jitteredCap(plan.thinkMs / 1000, hardCapSec(f), this.rng) * 1000;
-				if (plan.thinkMs <= capMs)
+				const capSec = hardCapSec(f);
+				if (plan.thinkMs / 1000 <= capSec)
 					return this.withElapsed(plan, ctx, plan.thinkMs, plan.window, "clock-jump: within caps");
-				const thinkMs = Math.min(plan.thinkMs, Math.max(spent + approach, capMs));
+				const clockEmergency = f.tc !== "untimed" && ctx.myClockMs < C.replan.emergencyClockMs;
+				const b = boundByCap(
+					plan.thinkMs / 1000,
+					capSec,
+					floorFor(plan.mode),
+					clockEmergency,
+					this.rng
+				);
+				// A committed approach may exceed the cap: once the drag is in flight the executor
+				// never aborts a mousedown, so the truncation keeps `spent + approach` at least.
+				const thinkMs = Math.min(plan.thinkMs, Math.max(spent + approach, b.totalSec * 1000));
 				const window = allocateWindow(
 					{
 						thinkMs,
@@ -388,6 +409,7 @@ export class TimingModel {
 						orientationMs: plan.orientationMs,
 						motorMs: Math.min(approach, thinkMs),
 						previewCount: plan.window.previewMs > 0 ? 1 : 0,
+						emergency: b.emergency,
 					},
 					this.rng
 				);

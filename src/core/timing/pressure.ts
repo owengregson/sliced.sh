@@ -91,3 +91,53 @@ export function premoveLogit(
 		(f.tc === "bullet" ? P.eloBullet * f.elo_z : 0)
 	);
 }
+
+export interface BoundedTotal {
+	totalSec: number;
+	/** The plan is in the emergency regime (clock below §8.5's threshold, or `lo ≥ 1`). */
+	emergency: boolean;
+	/** Lower bound of the jitter as a fraction of the cap (0 when the cap is infinite). */
+	lo: number;
+	/** The cap bound the value. */
+	bound: boolean;
+}
+
+/**
+ * Bound a sampled total by the hard cap with every floor folded into the jitter's LOWER bound
+ * — never a clamp after jittering (§8.4a): when the cap binds, `total = cap · U(lo, 1)` with
+ * `lo = max(jitterMin, floorSec / cap)`. `lo ≥ 1` means the floors cannot fit under the cap:
+ * the emergency regime, where `total = cap · U(jitterMin, 1)` and the phases compress below
+ * their floors. `clockEmergency` (§8.5) forces the regime. An unbound value keeps its floor
+ * outside the emergency regime (a floor on an unjittered value, which the sampled physical
+ * phases practically never undercut).
+ */
+export function boundByCap(
+	valueSec: number,
+	capSec: number,
+	floorSec: number,
+	clockEmergency: boolean,
+	rng: Rng
+): BoundedTotal {
+	if (!Number.isFinite(capSec))
+		return {
+			totalSec: clockEmergency ? valueSec : Math.max(valueSec, floorSec),
+			emergency: clockEmergency,
+			lo: 0,
+			bound: false,
+		};
+	const lo = Math.max(TIMING_CONSTANTS.caps.jitterMin, floorSec / capSec);
+	const emergency = clockEmergency || lo >= 1;
+	if (valueSec > capSec)
+		return {
+			totalSec: capSec * uniform(rng, emergency ? TIMING_CONSTANTS.caps.jitterMin : lo, 1),
+			emergency,
+			lo,
+			bound: true,
+		};
+	return {
+		totalSec: emergency ? valueSec : Math.max(valueSec, floorSec),
+		emergency,
+		lo,
+		bound: false,
+	};
+}

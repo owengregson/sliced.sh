@@ -4,13 +4,7 @@ import { DEFAULT_SETTINGS } from "@core/constants/defaults";
 import { createRng } from "@core/rng";
 import { computeFeatures } from "@core/timing/features";
 import { windowTotalMs } from "@core/timing/move-window";
-import {
-	EMERGENCY_PLAN_CLOCK_S,
-	freshState,
-	isBotPace,
-	needsResample,
-	TimingModel,
-} from "@core/timing/timing-model";
+import { freshState, isBotPace, needsResample, TimingModel } from "@core/timing/timing-model";
 import type { GameMeta, TimingLogEntry } from "@core/timing/types";
 import { mirrorTerm, V1ParametricHead } from "@core/timing/v1-head";
 import { AFTER_EXD5, ctx, line, pearson } from "./helpers";
@@ -46,23 +40,40 @@ function largestCluster(sorted: number[], tol: number): number {
 	return sorted.length ? best / sorted.length : 0;
 }
 
-/** `n` plans at `clockMs` over games of 40 moves; returns sorted thinkMs and the mode counts. */
+interface ProbePlan {
+	thinkMs: number;
+	mode: string;
+	orientationMs: number;
+	approachMs: number;
+	emergency: boolean;
+}
+
+/** `n` plans at `clockMs` over games of 40 moves; returns sorted thinkMs, mode counts and plan facts. */
 function probe(seed: string, clockMs: number, n: number, over: Record<string, unknown> = {}) {
 	const { m } = model({}, seed);
 	const ts: number[] = [];
 	const modes: Record<string, number> = {};
+	const plans: ProbePlan[] = [];
 	let minOrientation = Number.POSITIVE_INFINITY;
 	for (let i = 0; i < n; i++) {
 		if (i % 40 === 0) m.startGame({ ...meta, gameId: `${seed}-${i}` });
 		const p = m.planMove(ctx({ myClockMs: clockMs, oppClockMs: 30_000, ply: 60, ...over }));
 		ts.push(p.thinkMs);
 		modes[p.mode] = (modes[p.mode] ?? 0) + 1;
+		plans.push({
+			thinkMs: p.thinkMs,
+			mode: p.mode,
+			orientationMs: p.orientationMs,
+			approachMs: p.window.approachMs,
+			emergency: p.features.emergency === 1,
+		});
 		if (p.mode !== "premove") minOrientation = Math.min(minOrientation, p.orientationMs);
 	}
 	const sorted = [...ts].sort((a, b) => a - b);
 	return {
 		sorted,
 		modes,
+		plans,
 		minOrientation,
 		q: (x: number) => sorted[Math.floor(x * sorted.length)] ?? 0,
 	};
@@ -176,14 +187,45 @@ describe("TimingModel.planMove", () => {
 			expect(r.sorted[0] ?? 0).toBeGreaterThanOrEqual(250);
 		});
 	}
-	it("emergency regime below minNormalMs / 0.15 s: no 250 ms floor, capped, motor ≥ 60 ms", () => {
-		expect(EMERGENCY_PLAN_CLOCK_S).toBeCloseTo(250 / 1000 / 0.15, 10);
-		const r = probe("emergency", 1_500, 500);
-		expect(r.sorted[r.sorted.length - 1] ?? 0).toBeLessThanOrEqual(0.15 * 1_500 + 1e-6);
+	it("emergency regime under §8.5's 1.5 s: no 250 ms floor, capped, motor ≥ 60 ms (N = 500 at 1.4 s)", () => {
+		const r = probe("emergency", 1_400, 500);
+		expect(r.sorted[r.sorted.length - 1] ?? 0).toBeLessThanOrEqual(0.15 * 1_400 + 1e-6);
 		expect(r.sorted[0] ?? 0).toBeLessThan(250);
-		expect(r.sorted[0] ?? 0).toBeGreaterThanOrEqual(60);
 		expect(largestCluster(r.sorted, 1)).toBeLessThan(0.1);
+		for (const p of r.plans) {
+			expect(p.emergency).toBe(true);
+			expect(p.approachMs).toBeGreaterThanOrEqual(60);
+			expect(p.approachMs).toBeLessThanOrEqual(p.thinkMs);
+		}
 	});
+	for (const [clockMs, capMs] of [
+		[2_200, 330],
+		[2_000, 300],
+		[1_800, 270],
+		[1_600, 240],
+	] as const) {
+		it(`probe: 3+0 with ${clockMs / 1000} s left — floors folded into the cap jitter, no cluster > 10 % (N = 3 000)`, () => {
+			const r = probe(`floor-${clockMs}`, clockMs, 3000);
+			expect(r.sorted[r.sorted.length - 1] ?? 0).toBeLessThanOrEqual(capMs + 1e-6);
+			expect(largestCluster(r.sorted, 1)).toBeLessThan(0.1);
+			// No mass at the 250 ms floor either.
+			expect(r.sorted.filter((v) => Math.abs(v - 250) <= 1).length / r.sorted.length).toBeLessThan(
+				0.1
+			);
+			for (const p of r.plans) {
+				expect(p.approachMs).toBeGreaterThanOrEqual(60);
+				if (p.emergency) continue;
+				expect(p.orientationMs).toBeGreaterThanOrEqual(150);
+				if (p.mode === "normal" || p.mode === "long") expect(p.thinkMs).toBeGreaterThanOrEqual(250);
+			}
+			if (clockMs >= 1_800) expect(r.plans.every((p) => !p.emergency)).toBe(true);
+			if (clockMs === 1_600) {
+				// Normal/long plans cannot fit the 250 ms floor under the 240 ms cap; instant ones can.
+				expect(r.plans.filter((p) => p.mode === "normal").every((p) => p.emergency)).toBe(true);
+				expect(r.plans.filter((p) => p.mode === "instant").every((p) => !p.emergency)).toBe(true);
+			}
+		});
+	}
 	for (const [clockMs, longCapMs, n] of [
 		[40_000, 10_000, 3000],
 		[120_000, 30_000, 6000],

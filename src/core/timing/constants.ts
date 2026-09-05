@@ -259,6 +259,14 @@ export const TIMING_CONSTANTS = {
 		blurReorientS: [0.3, 1.2],
 		blurPauseThresholdS: 2,
 		blurMinClockS: 15,
+		/**
+		 * §8.5 emergency: `myClockMs < emergencyClockMs` → every wait 0, minimal motor. The
+		 * plan-level emergency regime (`boundByCap`) applies when EITHER that holds OR the floors
+		 * (`minNormalMs` for normal/long moves; `orientation.minMs + motor.minMotorMs` for every
+		 * non-premove window) cannot fit under the hard cap (`lo ≥ 1`): then no floor applies, the
+		 * total is `cap · U(jitterMin, 1)` and the phases compress below their floors with the
+		 * motor kept ≥ `minMotorMs`. There is no separate clock threshold for it.
+		 */
 		emergencyClockMs: 1500,
 		observeShiftClamp: 2,
 	},
