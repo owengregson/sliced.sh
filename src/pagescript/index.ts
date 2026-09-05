@@ -13,6 +13,8 @@ export {
 	type AnyPageProgram,
 	bindCode,
 	defineProgram,
+	type EntryArgs,
+	type EntryEnv,
 	type PageProgram,
 	type ParamArgs,
 	type ParamMap,

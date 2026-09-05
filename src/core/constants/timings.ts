@@ -23,6 +23,12 @@ export const TIMINGS = {
 	explorerTimeoutMs: 1_200,
 	autoQueueDelayRangeMs: [900, 2_600],
 	keybindDebounceMs: 150,
+	/** MAIN-world bridges: board / site-API retry, doubling up to the cap, giving up after the wait (Task 21). */
+	bridgeRetryMs: 250,
+	bridgeRetryMaxMs: 2_000,
+	bridgeApiWaitMs: 15_000,
+	/** Content cursor tracker: minimum spacing of `pointermove` samples posted on the game port (Task 21). */
+	cursorReportIntervalMs: 200,
 	/** `connectPort` reconnect backoff: base, doubling up to the cap (Task 4). */
 	portReconnectBaseMs: 250,
 	portReconnectMaxMs: 4_000,

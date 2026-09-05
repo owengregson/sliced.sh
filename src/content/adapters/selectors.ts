@@ -13,6 +13,8 @@ import type { Color, PromoPiece } from "@typedefs/game";
 export const SELECTORS = {
 	chesscom: {
 		// board + pieces (§1.2)
+		/** Custom-element tag the MAIN-world bridge awaits (`customElements.whenDefined`). */
+		boardTag: "wc-chess-board",
 		board: [
 			"wc-chess-board#board-single",
 			"wc-chess-board#board-play-computer",
@@ -143,6 +145,8 @@ export const SELECTORS = {
 		wrap: [".round__app .cg-wrap", ".main-board .cg-wrap", ".cg-wrap.manipulable", ".cg-wrap"],
 		board: "cg-board",
 		container: "cg-container",
+		/** chessground's own shape layer; the overlay is never inserted inside it (Appendix C §2.7). */
+		shapes: "svg.cg-shapes",
 		wrapClass: "cg-wrap",
 		orientationBlack: "orientation-black",
 		manipulable: "manipulable",

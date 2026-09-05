@@ -150,6 +150,12 @@ export interface SiteAdapter {
 	/** Where to click once the promotion dialog is open; `null` while it is closed. */
 	getPromotionTargetRect(dest: Square, piece: PromoPiece): Rect | null;
 
+	/**
+	 * The current position as one snapshot (the same reading `onPositionChange`
+	 * would deliver), or `null` while the board is absent or unstable. Content
+	 * boot uses it to feed the initial position of a game already in progress.
+	 */
+	readSnapshot(): AdapterPositionSnapshot | null;
 	/** Debounced (`TIMINGS.adapterDebounceMs`), deduped; never fires mid-drag/animation/promotion. */
 	onPositionChange(cb: (s: AdapterPositionSnapshot) => void): () => void;
 	onGameStart(cb: () => void): () => void;
@@ -192,6 +198,10 @@ export const BRIDGE_KINDS = {
 	gameover: "gameover",
 	state: "state",
 	ply: "ply",
+	/** Both directions: content asks for the last pointer position, the page answers (Task 21). */
+	cursor: "cursor",
+	/** page → content: a window focus / blur / visibilitychange edge seen by the page realm. */
+	focus: "focus",
 } as const;
 
 /** Normalised `getState` / `move` / `state` payload from either bridge. */
@@ -206,6 +216,9 @@ export interface BridgeState {
 	gameOver?: boolean;
 	hasLichessApi?: boolean;
 	analysisFen?: string;
+	/** chess.com `timeControl.get()` / `timestamps.get()` as the site reports them (opaque). */
+	timeControl?: unknown;
+	timestamps?: unknown;
 }
 
 export interface AdapterOptions {
@@ -423,6 +436,11 @@ export abstract class AdapterBase implements SiteAdapter {
 		const off = installFocusEdges(this.win, this.doc, cb);
 		this.disposers.push(off);
 		return off;
+	}
+
+	readSnapshot(): AdapterPositionSnapshot | null {
+		if (this.destroyed) return null;
+		return this.read()?.snapshot ?? null;
 	}
 
 	onPositionChange(cb: (s: AdapterPositionSnapshot) => void): () => void {

@@ -61,6 +61,12 @@ export function loadFixture(
 	return dom;
 }
 
+/** Load a fixture into an existing tab DOM (e.g. one from `sim.openTab`), keeping its URL. */
+export function loadFixtureInto(dom: TabDom, name: FixtureName): void {
+	const { head, bodyAttrs, body } = splitDocument(fixtureHtml(name));
+	dom.document.documentElement.innerHTML = `<head>${head}</head><body${bodyAttrs}>${body}</body>`;
+}
+
 export interface ObserverRegistration {
 	target: Element | Document;
 	init: MutationObserverInit;

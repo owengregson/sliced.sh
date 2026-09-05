@@ -8,11 +8,25 @@ export interface BuildOptions {
 	dev: boolean;
 	fast: boolean;
 	watch: boolean;
+	/** Spoof seed for this build (default: `SL_SPOOF_SEED` env, else a fresh random one). */
+	spoofSeed?: string;
+}
+/** `BuildOptions` with the seed resolved once for the whole pipeline (`runBuild`). */
+export interface BuildEnv extends BuildOptions {
+	spoofSeed: string;
 }
 export const ROOT = path.resolve(import.meta.dir, "..");
 export const DIST = path.join(ROOT, "dist");
 
-export type Step = { name: string; run: (o: BuildOptions) => Promise<void> };
+/**
+ * One seed per build: the page programs (`gen-pagescript`) and the content
+ * bundle (`define.__SL_SPOOF_SEED__`) must derive identical tokens.
+ */
+export function newSpoofSeed(): string {
+	return process.env.SL_SPOOF_SEED ?? crypto.randomUUID().replaceAll("-", "");
+}
+
+export type Step = { name: string; run: (o: BuildEnv) => Promise<void> };
 export const steps: Step[] = [
 	{
 		name: "clean",
@@ -25,7 +39,8 @@ export const steps: Step[] = [
 	{ name: "gen-icons", run: async () => (await import("./gen-icons.ts")).verifyIcons() },
 	{
 		name: "gen-pagescript",
-		run: async () => (await import("./gen-pagescript.ts")).generatePagescript(DIST),
+		run: async (o) =>
+			(await import("./gen-pagescript.ts")).generatePagescript(DIST, { seed: o.spoofSeed }),
 	},
 	{
 		name: "check-constants",
@@ -87,11 +102,11 @@ const rawHtmlPlugin: import("bun").BunPlugin = {
 	},
 };
 
-async function bundle(o: BuildOptions): Promise<void> {
+async function bundle(o: BuildEnv): Promise<void> {
 	const define = {
 		__SL_VERSION__: JSON.stringify(pkg.version),
 		__SL_BUILD__: JSON.stringify(new Date().toISOString()),
-		__SL_SPOOF_SEED__: JSON.stringify(crypto.randomUUID().replaceAll("-", "")),
+		__SL_SPOOF_SEED__: JSON.stringify(o.spoofSeed),
 		__SL_LICENSE_URL__: JSON.stringify(config.licenseUrl),
 		__SL_LICENSE_ENFORCE__: JSON.stringify(config.licenseEnforce === true),
 		__SL_DEBUG__: JSON.stringify(o.dev),
@@ -139,9 +154,10 @@ async function bundle(o: BuildOptions): Promise<void> {
 }
 
 export async function runBuild(o: BuildOptions): Promise<void> {
+	const env: BuildEnv = { ...o, spoofSeed: o.spoofSeed ?? newSpoofSeed() };
 	for (const s of steps) {
 		const t = performance.now();
-		await s.run(o);
+		await s.run(env);
 		console.log(`✓ ${s.name} ${(performance.now() - t).toFixed(0)}ms`);
 	}
 }

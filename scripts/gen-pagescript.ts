@@ -11,12 +11,14 @@
 // only the generated modules. With an empty registry the directories are still
 // created and the step succeeds.
 //
-// Seed: `--seed <value>` / `SL_SPOOF_SEED` env, else the fixed dev seed.
-// Handing the build's `__SL_SPOOF_SEED__` to this step (so page programs and
-// the content bundle agree) is deferred to Task 21 together with the bridges.
+// Seed: `options.seed` (the build pipeline passes its `__SL_SPOOF_SEED__`, so
+// page programs and the content bundle derive the same tokens), else `--seed
+// <value>` / `SL_SPOOF_SEED` env, else the fixed dev seed. Entry arguments
+// may be a function of `{ seed }` for seed-derived tokens.
 
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import config from "../build.config.json" with { type: "json" };
 import {
 	type AnyPageProgram,
 	bindCode,
@@ -123,6 +125,25 @@ export function parseSeedArg(argv: readonly string[]): string | undefined {
 	return value;
 }
 
+/**
+ * The registry binds from runtime registries (`URLS`, `SELECTORS`, `TOKENS`)
+ * whose modules read bundler defines at load time; this process is plain bun,
+ * so install the same values the bundle's `define` would (unless a test
+ * preload already did).
+ */
+function installBuildDefines(seed: string): void {
+	const g = globalThis as Record<string, unknown>;
+	const defaults: Record<string, unknown> = {
+		__SL_VERSION__: "build",
+		__SL_BUILD__: "build",
+		__SL_SPOOF_SEED__: seed,
+		__SL_LICENSE_URL__: config.licenseUrl,
+		__SL_LICENSE_ENFORCE__: config.licenseEnforce === true,
+		__SL_DEBUG__: false,
+	};
+	for (const [k, v] of Object.entries(defaults)) if (g[k] === undefined) g[k] = v;
+}
+
 /** Compile the registry (or `options.programs`) and write the generated files. */
 export async function generatePrograms(
 	dist: string,
@@ -131,6 +152,7 @@ export async function generatePrograms(
 	const seed = options.seed ?? process.env[SEED_ENV] ?? DEV_SPOOF_SEED;
 	const generatedDir = options.generatedDir ?? GENERATED_DIR;
 	const entryDir = path.join(dist, "js", "page");
+	installBuildDefines(seed);
 	const programs = options.programs ?? (await import("../src/page/index.ts")).programs;
 
 	await rm(generatedDir, { recursive: true, force: true });
@@ -160,7 +182,9 @@ export async function generatePrograms(
 				`gen-pagescript: entry program "${program.name}" declares parameters but no entryArgs`
 			);
 		}
-		const bound = bindCode(code, params, program.entryArgs ?? {});
+		const entryArgs =
+			typeof program.entryArgs === "function" ? program.entryArgs({ seed }) : program.entryArgs;
+		const bound = bindCode(code, params, entryArgs ?? {});
 		const entryPath = path.join(entryDir, `${program.name}.js`);
 		await writeFile(entryPath, renderEntry(bound));
 		entries.push(entryPath);

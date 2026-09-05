@@ -1,5 +1,6 @@
 export * from "./alarms";
 export * from "./books";
+export * from "./bridge";
 export * from "./defaults";
 export * from "./engine-files";
 export * from "./images";

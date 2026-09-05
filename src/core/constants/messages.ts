@@ -5,6 +5,7 @@
  * `src/core/messaging/typed-messages.ts` (Task 4).
  */
 
+import type { Rect } from "@content/adapters/adapter";
 import type { LogEntry } from "@core/logger";
 import type { EngineStatus, EngineVariant, EvalLine } from "@typedefs/engine";
 import type {
@@ -15,6 +16,7 @@ import type {
 	HighlightStyle,
 	PageKind,
 	PositionSnapshot,
+	PromoPiece,
 	Recommendation,
 	SessionStats,
 	Site,
@@ -111,7 +113,18 @@ export type GamePortMessage =
 	| { kind: "focus"; hasFocus: boolean; visibility: "visible" | "hidden"; at: number }
 	/** V2 §13.6: opponent identity for matchOpponentRating */
 	| { kind: "opponent"; isBot: boolean; name: string; ratingEstimate: number | null }
-	| { kind: "moveObserved"; san: string; ply: number; byMe: boolean; atMs: number };
+	| { kind: "moveObserved"; san: string; ply: number; byMe: boolean; atMs: number }
+	/** Reply to `observeMove` (Task 18 executor ↔ Task 21 content). */
+	| { kind: "observeMoveResult"; id: string; ok: boolean; reason?: string }
+	/** Reply to `geometry`: the 8×8 board rect, every square, orientation, open promotion picker. */
+	| {
+			kind: "geometryResult";
+			id: string;
+			boardRect: Rect;
+			squares?: Record<Square, Rect>;
+			flipped: boolean;
+			promotion?: Rect[];
+	  };
 
 /** SW → content */
 export type GamePortCommand =
@@ -120,7 +133,18 @@ export type GamePortCommand =
 	| { kind: "arrow"; lines: Array<{ from: Square; to: Square; weight: number }> }
 	| { kind: "keybinds"; keybinds: Keybinds }
 	| { kind: "startNewGame" }
-	| { kind: "speak"; text: string };
+	| { kind: "speak"; text: string }
+	/** Settings the content script acts on (`automation.highlightMoves`, §13.3 rule 4); default off until sent. */
+	| { kind: "settings"; highlightMoves: boolean }
+	/** Ask the adapter to watch for `expected` landing (Task 18 executor); answered by `observeMoveResult`. */
+	| {
+			kind: "observeMove";
+			id: string;
+			expected: { from: Square; to: Square; promotion?: PromoPiece };
+			timeoutMs: number;
+	  }
+	/** Ask for the board geometry; answered by `geometryResult`. */
+	| { kind: "geometry"; id: string };
 
 /**
  * A slice of a net relayed by the SW (`handlers/engine/nnue-download.ts`).

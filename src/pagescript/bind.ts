@@ -41,6 +41,18 @@ export type ParamArgs<P extends ParamMap> = { [K in keyof P]: ParamValue<P[K]> }
 /** Typed slots handed to `build(p)`. */
 export type ParamSlots<P extends ParamMap> = { [K in keyof P]: Param<ParamValue<P[K]>> };
 
+/** What the generator knows when it binds an entry program. */
+export interface EntryEnv {
+	seed: string;
+}
+
+/**
+ * Bind-time constants for an `entry` program: a plain object, or a function
+ * of the build environment for values that depend on the spoof seed (tokens
+ * derived with `deriveToken(seed, purpose)`).
+ */
+export type EntryArgs<P extends ParamMap> = ParamArgs<P> | ((env: EntryEnv) => ParamArgs<P>);
+
 export interface ProgramDef<P extends ParamMap> {
 	name: string;
 	params: P;
@@ -48,14 +60,14 @@ export interface ProgramDef<P extends ParamMap> {
 	/** Bundled to `dist/js/page/<name>.js` (MAIN-world content script) by the generator. */
 	entry?: boolean;
 	/** Bind-time constants for an `entry` program with parameters. */
-	entryArgs?: ParamArgs<P>;
+	entryArgs?: EntryArgs<P>;
 }
 
 export interface PageProgram<P extends ParamMap> {
 	readonly name: string;
 	readonly params: P;
 	readonly entry: boolean;
-	readonly entryArgs: ParamArgs<P> | undefined;
+	readonly entryArgs: EntryArgs<P> | undefined;
 	build(p: ParamSlots<P>): Program;
 	/** Emit with the build seed and substitute `args` into the parameter slots. */
 	bind(args: ParamArgs<P>): string;

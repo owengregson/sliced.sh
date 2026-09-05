@@ -1,0 +1,72 @@
+/**
+ * Highlight gate (Task 21, §13.3 rule 4). Routes the `highlight` / `arrow` /
+ * `clearHighlight` port commands to the adapter — which draws through the
+ * bridge: native `game.markings` on chess.com, the bridge-embedded overlay
+ * program on lichess — and only while `Settings.automation.highlightMoves`
+ * is on (default off; nothing is drawn until the service worker sends
+ * `settings`). `clearForExecution()` runs before every `observeMove` so no
+ * mark is present at move-submission time.
+ */
+
+import type { ArrowLine, SiteAdapter } from "@content/adapters/adapter";
+import type { GamePortCommand } from "@core/constants/messages";
+import type { HighlightStyle, Square } from "@typedefs/game";
+
+export interface Highlights {
+	enabled(): boolean;
+	setEnabled(on: boolean): void;
+	highlight(from: Square, to: Square, style: HighlightStyle): void;
+	arrows(lines: ArrowLine[]): void;
+	clear(): void;
+	/** Clear before the hand moves; a no-op when nothing was drawn. */
+	clearForExecution(): void;
+	/** Apply a port command; returns whether it was a highlight command. */
+	apply(cmd: GamePortCommand): boolean;
+}
+
+export function createHighlights(adapter: SiteAdapter, initiallyEnabled = false): Highlights {
+	let enabled = initiallyEnabled;
+	let drawn = false;
+
+	const clear = (): void => {
+		if (!drawn) return;
+		drawn = false;
+		adapter.clearHighlights();
+	};
+
+	const api: Highlights = {
+		enabled: () => enabled,
+		setEnabled(on) {
+			enabled = on;
+			if (!on) clear();
+		},
+		highlight(from, to, style) {
+			if (!enabled) return;
+			drawn = true;
+			adapter.highlight(from, to, style);
+		},
+		arrows(lines) {
+			if (!enabled || lines.length === 0) return;
+			drawn = true;
+			adapter.arrows(lines);
+		},
+		clear,
+		clearForExecution: clear,
+		apply(cmd) {
+			switch (cmd.kind) {
+				case "highlight":
+					api.highlight(cmd.from, cmd.to, cmd.style);
+					return true;
+				case "arrow":
+					api.arrows(cmd.lines);
+					return true;
+				case "clearHighlight":
+					clear();
+					return true;
+				default:
+					return false;
+			}
+		},
+	};
+	return api;
+}
