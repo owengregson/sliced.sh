@@ -44,8 +44,7 @@ export interface MessagePayloadMap {
 	// Task 26
 	[MSG.PANEL_CLEAR_TIMING_LOG]: EmptyPayload;
 	[MSG.PANEL_RESET_SESSION]: EmptyPayload;
-	[MSG.PANEL_ENGINE_DETACH]: EmptyPayload;
-	[MSG.PANEL_ENGINE_REATTACH]: EmptyPayload;
+	[MSG.PANEL_DETACH_DEBUGGER]: { tabId: number };
 	[MSG.PANEL_REATTACH_DEBUGGER]: { tabId: number };
 	// content → SW
 	[MSG.CONTENT_HELLO]: EmptyPayload;
@@ -82,8 +81,7 @@ export interface MessageResponseMap {
 	// Task 26
 	[MSG.PANEL_CLEAR_TIMING_LOG]: void;
 	[MSG.PANEL_RESET_SESSION]: void;
-	[MSG.PANEL_ENGINE_DETACH]: void;
-	[MSG.PANEL_ENGINE_REATTACH]: void;
+	[MSG.PANEL_DETACH_DEBUGGER]: void;
 	[MSG.PANEL_REATTACH_DEBUGGER]: void;
 	[MSG.CONTENT_HELLO]: { keybinds: Keybinds; enabled: boolean };
 	[MSG.CONTENT_KEYBIND]: void;

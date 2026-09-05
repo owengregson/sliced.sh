@@ -16,6 +16,7 @@
  * is live every command here is disabled (hands-off).
  */
 
+import { tabsQuery } from "@core/chrome/tabs";
 import { DEFAULT_SETTINGS } from "@core/constants/defaults";
 import { LIMITS } from "@core/constants/limits";
 import { type LogStreamMessage, MSG, type PanelSnapshot } from "@core/constants/messages";
@@ -233,6 +234,8 @@ export function createEngineView(deps: EngineViewDeps = {}): View {
 			let attached = false;
 			let timingEntries: TimingLogEntry[] = [];
 			let lastSampleAt = Number.NEGATIVE_INFINITY;
+			/** The game tab the debugger commands target (the active tab of this window). */
+			let tabId: number | null = null;
 
 			// ── headings & labels ──────────────────────────────────────────────────
 			part(el, '[data-part="title-engine"]').textContent = COPY.engineView.sections.engine;
@@ -279,12 +282,24 @@ export function createEngineView(deps: EngineViewDeps = {}): View {
 					.dispatch({ type })
 					.catch((error: unknown) => log.warn("engine view: dispatch failed", { type, error }));
 			};
+			/** The debugger pair is per tab (Task 28): both act on the game tab's executor. */
+			const dispatchDebugger = (
+				type: typeof MSG.PANEL_DETACH_DEBUGGER | typeof MSG.PANEL_REATTACH_DEBUGGER
+			): void => {
+				if (tabId === null) {
+					log.warn("engine view: no active tab for the command", { type });
+					return;
+				}
+				store
+					.dispatch({ type, tabId })
+					.catch((error: unknown) => log.warn("engine view: dispatch failed", { type, error }));
+			};
 			const detach: ButtonHandle = createButton(part(el, '[data-part="detach"]'), {
 				label: COPY.engineView.detach,
 				variant: "ghost",
 				size: "sm",
 				icon: "status.detached",
-				onClick: () => dispatch(MSG.PANEL_ENGINE_DETACH),
+				onClick: () => dispatchDebugger(MSG.PANEL_DETACH_DEBUGGER),
 			});
 			detach.el.dataset.cmd = "detach";
 			const reattach: ButtonHandle = createButton(part(el, '[data-part="reattach"]'), {
@@ -292,7 +307,7 @@ export function createEngineView(deps: EngineViewDeps = {}): View {
 				variant: "ghost",
 				size: "sm",
 				icon: "action.reattach",
-				onClick: () => dispatch(MSG.PANEL_ENGINE_REATTACH),
+				onClick: () => dispatchDebugger(MSG.PANEL_REATTACH_DEBUGGER),
 			});
 			reattach.el.dataset.cmd = "reattach";
 			const copy: ButtonHandle = createButton(part(el, '[data-part="copy"]'), {
@@ -550,6 +565,13 @@ export function createEngineView(deps: EngineViewDeps = {}): View {
 			const unsubscribeStore = store.subscribe((snapshot) => {
 				if (!disposed) render(snapshot);
 			});
+			tabsQuery({ active: true, currentWindow: true })
+				.then((tabs) => {
+					if (disposed) return;
+					const id = tabs[0]?.id;
+					tabId = typeof id === "number" ? id : null;
+				})
+				.catch((error: unknown) => log.warn("engine view: tabs.query failed", error));
 
 			return () => {
 				if (disposed) return;

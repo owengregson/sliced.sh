@@ -43,9 +43,12 @@ export const MSG = {
 	// Task 26 (engine & diagnostics view) — additive
 	PANEL_CLEAR_TIMING_LOG: "sl:panel:clearTimingLog",
 	PANEL_RESET_SESSION: "sl:panel:resetSession",
-	PANEL_ENGINE_DETACH: "sl:panel:engineDetach",
-	PANEL_ENGINE_REATTACH: "sl:panel:engineReattach",
-	/** Task 24: the Live view's detached banner asks the SW to re-attach the debugger (§9.7). */
+	/**
+	 * The one debugger pair (Task 28 ruling): the Engine view's Detach releases the tab's
+	 * debugger (and disarms the hand); Reattach — from the Live view's detached banner (§9.7)
+	 * or the Engine view — attaches again and re-arms.
+	 */
+	PANEL_DETACH_DEBUGGER: "sl:panel:detachDebugger",
 	PANEL_REATTACH_DEBUGGER: "sl:panel:reattachDebugger",
 	// content → SW (request/response)
 	CONTENT_HELLO: "sl:content:hello",

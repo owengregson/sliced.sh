@@ -1,7 +1,7 @@
 /**
  * Diagnostics handlers for the Engine view (Task 26): the log-stream port, the timing rationale
- * log export/clear and the session reset. `PANEL_ENGINE_DETACH` / `PANEL_ENGINE_REATTACH` are
- * dispatched by the view but owned by the executor (Task 18 / Task 28) — not registered here.
+ * log export/clear and the session reset. `PANEL_DETACH_DEBUGGER` / `PANEL_REATTACH_DEBUGGER` are
+ * dispatched by the view but owned by the panel handlers (`handlers/panel/debugger.ts`, Task 28).
  */
 
 import type { MessageRouter } from "@core/messaging/router";

@@ -11,6 +11,7 @@ import {
 	UI_TIMINGS,
 } from "@core/constants";
 import type { LogEntry } from "@core/logger";
+import type { TypedMessage } from "@core/messaging/typed-messages";
 import { COPY } from "@panel/copy";
 import type { LoggingBridge, LogStreamListener } from "@panel/logging-bridge";
 import { bootShell, type PanelShell } from "@panel/shell";
@@ -27,6 +28,8 @@ interface FakeStore extends PanelStore {
 	emit(snapshot: PanelSnapshot): void;
 	port(message: Exclude<PanelPortMessage, { kind: "snapshot" }>): void;
 	dispatched: string[];
+	/** Every command as sent (the debugger pair carries the game tab). */
+	calls: TypedMessage[];
 	responses: Partial<Record<string, unknown>>;
 }
 
@@ -36,6 +39,7 @@ function fakeStore(): FakeStore {
 	const portSubs = new Set<(m: Exclude<PanelPortMessage, { kind: "snapshot" }>) => void>();
 	const store: FakeStore = {
 		dispatched: [],
+		calls: [],
 		responses: {},
 		get snapshot() {
 			return snapshot;
@@ -52,6 +56,7 @@ function fakeStore(): FakeStore {
 		},
 		dispatch(command) {
 			store.dispatched.push(command.type);
+			store.calls.push(command);
 			return Promise.resolve(store.responses[command.type] as never);
 		},
 		refresh() {},
@@ -115,9 +120,12 @@ let logging: FakeLogging | null;
 let copied: string[];
 let cleanup: Cleanup | null = null;
 let shell: PanelShell | null = null;
+/** The active game tab the view resolves for the debugger commands. */
+let tabId: number;
 
 beforeEach(async () => {
 	dom = await bootPanelDom();
+	tabId = dom.sim.openTab("https://lichess.org/abcdefgh", { active: true }).tabId;
 	store = fakeStore();
 	logging = null;
 	copied = [];
@@ -346,7 +354,8 @@ describe("engine view — executor", () => {
 		expect(reattach?.classList.contains("sl-button--primary")).toBe(false);
 		expect(reattach?.getAttribute("aria-disabled")).toBe("true"); // already attached
 		click(detach as HTMLElement);
-		expect(store.dispatched).toEqual([MSG.PANEL_EXPORT_TIMING_LOG, MSG.PANEL_ENGINE_DETACH]);
+		expect(store.dispatched).toEqual([MSG.PANEL_EXPORT_TIMING_LOG, MSG.PANEL_DETACH_DEBUGGER]);
+		expect(store.calls.at(-1)).toEqual({ type: MSG.PANEL_DETACH_DEBUGGER, tabId });
 
 		const d = engineSnapshot();
 		d.executor = { debuggerAttached: false };
@@ -356,7 +365,8 @@ describe("engine view — executor", () => {
 		expect(reattach?.getAttribute("aria-disabled")).toBeNull();
 		expect(detach?.getAttribute("aria-disabled")).toBe("true");
 		click(reattach as HTMLElement);
-		expect(store.dispatched.at(-1)).toBe(MSG.PANEL_ENGINE_REATTACH);
+		expect(store.dispatched.at(-1)).toBe(MSG.PANEL_REATTACH_DEBUGGER);
+		expect(store.calls.at(-1)).toEqual({ type: MSG.PANEL_REATTACH_DEBUGGER, tabId });
 
 		// Hands-off (§13.4): a live game disables every command, whatever the debugger state.
 		const live = makeSnapshot({ state: "live:opponent-turn" });
