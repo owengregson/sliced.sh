@@ -491,6 +491,8 @@ export const SETTINGS_COPY = {
 		resetAll: "Reset all settings",
 	},
 	tc: { bullet: "bullet", blitz: "blitz", rapid: "rapid", classical: "classical" },
+} as const;
+
 // ── Task 24: Live view ─────────────────────────────────────────────────────────────────────
 /** Strings the Live view adds to Appendix F §7.2 (§4.4 anatomy, §9.7 hand state, §13.6 band). */
 export const COPY_LIVE = {
