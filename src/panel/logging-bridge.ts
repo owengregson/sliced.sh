@@ -3,8 +3,8 @@
  * `PORT_NAMES.logStream` through `connectPort` (which reconnects with backoff on its own), keeps
  * a local ring of what the service worker sent (`LIMITS.logRingMax`), re-emits every stream
  * message to subscribers and pushes the level to the SW as a port command so filtering happens
- * at the source. The level is re-sent after every disconnect (queued until the port is back), so
- * a restarted SW applies it before its backlog arrives. `dispose()` closes the port.
+ * at the source. A `hello` carrying the level opens every connection (re-queued after a drop, so a
+ * restarted SW applies it before sending its backlog). `dispose()` closes the port.
  */
 
 import { LIMITS } from "@core/constants/limits";
@@ -43,8 +43,8 @@ export function createLoggingBridge(options: LoggingBridgeOptions): LoggingBridg
 		for (const listener of [...listeners]) listener(message);
 	}
 
-	function sendLevel(): void {
-		port.post({ kind: "setLevel", level });
+	function sendHello(): void {
+		port.post({ kind: "hello", level });
 	}
 
 	const portOptions: Parameters<typeof connectPort<LogStreamCommand, LogStreamMessage>>[1] = {
@@ -61,8 +61,8 @@ export function createLoggingBridge(options: LoggingBridgeOptions): LoggingBridg
 			}
 		},
 		onDisconnect() {
-			// Queued until the port reconnects; the restarted SW applies it before streaming.
-			if (!disposed) sendLevel();
+			// Queued until the port reconnects; the restarted SW applies it before its backlog.
+			if (!disposed) sendHello();
 		},
 	};
 	if (options.scheduler) portOptions.scheduler = options.scheduler;
@@ -70,7 +70,7 @@ export function createLoggingBridge(options: LoggingBridgeOptions): LoggingBridg
 		PORT_NAMES.logStream,
 		portOptions
 	);
-	sendLevel();
+	sendHello();
 
 	return {
 		get level() {
@@ -86,7 +86,7 @@ export function createLoggingBridge(options: LoggingBridgeOptions): LoggingBridg
 		setLevel(next) {
 			if (disposed || next === level) return;
 			level = next;
-			sendLevel();
+			port.post({ kind: "setLevel", level });
 		},
 		clear() {
 			entries = [];

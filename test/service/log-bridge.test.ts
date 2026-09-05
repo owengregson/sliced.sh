@@ -3,7 +3,7 @@
 // level filter applied at source, bounded ring, backlog re-sent after a SW restart.
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { LIMITS, MSG, TIMINGS } from "@core/constants";
-import { type LogEntry, log, setLogLevel } from "@core/logger";
+import { __setLogSinkOutsideServiceWorker, type LogEntry, log, setLogLevel } from "@core/logger";
 import { installMessageRouter, type MessageRouter } from "@core/messaging/router";
 import { createLoggingBridge, type LoggingBridge } from "@panel/logging-bridge";
 import { registerLogHandlers } from "@service/handlers/log";
@@ -40,6 +40,7 @@ async function settle(): Promise<void> {
 }
 
 beforeEach(async () => {
+	__setLogSinkOutsideServiceWorker(true); // the simulator's SW has no ServiceWorkerGlobalScope
 	sim = createSimulator();
 	sim.time.install();
 	sw = await bootSw();
@@ -52,6 +53,7 @@ afterEach(async () => {
 	bridge.dispose();
 	router.dispose();
 	setLogLevel("info");
+	__setLogSinkOutsideServiceWorker(false);
 	await panel.teardown();
 	await sw.teardown();
 	await sim.dispose();
@@ -174,6 +176,40 @@ describe("SW log bridge + panel logging bridge", () => {
 		expect(bridge.subscriberLevels()).toEqual(["warn"]);
 		expect(events).toEqual(["backlog:0", "entry", "backlog:1"]);
 		expect(panelBridge.entries.map((e) => e.args[0])).toEqual(["after-restart"]);
+	});
+
+	it("never re-enters through the logger: a dead subscriber that logs at debug cannot recurse", async () => {
+		setLogLevel("debug");
+		let sends = 0;
+		const dead = {
+			level: "debug" as const,
+			send(): void {
+				sends += 1;
+				// What `acceptPorts`' post does on a dead port: log the failure (debug) and swallow.
+				log.debug("port: postMessage to peer failed");
+				throw new Error("Attempting to use a disconnected port object");
+			},
+		};
+		const healthy: string[] = [];
+		const alive = {
+			level: "debug" as const,
+			send: (m: { kind: string }) => void healthy.push(m.kind),
+		};
+		bridge.addSubscriber(dead);
+		bridge.addSubscriber(alive);
+		bridge.sendBacklog(dead);
+		bridge.sendBacklog(alive);
+		await settle();
+		expect(sends).toBe(1); // the backlog
+		bridge.push(entry("info", "x"));
+		await settle();
+		expect(sends).toBe(2); // one send per delivery, no recursion
+		expect(healthy).toEqual(["backlog", "entry"]); // the throw did not break the other subscriber
+		// The debug entries the dead subscriber logged went to the ring only.
+		const ringText = bridge.backlog().map((e) => String(e.args[0]));
+		expect(ringText.filter((t) => t === "x")).toHaveLength(1);
+		expect(ringText.filter((t) => t.startsWith("port: postMessage")).length).toBeGreaterThan(0);
+		expect(bridge.backlog().length).toBeLessThan(10);
 	});
 
 	it("dispose closes the port and drops the SW subscriber", async () => {

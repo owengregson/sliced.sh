@@ -31,7 +31,10 @@
 }
 
 .sl-engine__spark-line {
+	fill: none;
 	stroke: var(--sl-color-brand);
+	stroke-width: var(--sl-hairline);
+	stroke-linejoin: round;
 	vector-effect: non-scaling-stroke;
 }
 
@@ -94,7 +97,7 @@
 
 .sl-engine__log,
 .sl-engine__console {
-	max-height: calc(var(--sl-space-16) * 3);
+	max-height: var(--sl-size-log-pane);
 	overflow-y: auto;
 	color: var(--sl-color-text-primary);
 }
@@ -114,7 +117,7 @@
 /* fixed 8ch time column and 5ch kind column (Appendix F §4.7) */
 .sl-engine__log-row {
 	display: grid;
-	grid-template-columns: 8ch 5ch minmax(0, 1fr);
+	grid-template-columns: var(--sl-size-column-log-time) var(--sl-size-column-log-kind) minmax(0, 1fr);
 	gap: var(--sl-space-2);
 	align-items: start;
 }
@@ -149,7 +152,7 @@
 /* live log pane: time · level · source · message */
 .sl-engine__console-row {
 	display: grid;
-	grid-template-columns: 8ch 5ch auto minmax(0, 1fr);
+	grid-template-columns: var(--sl-size-column-log-time) var(--sl-size-column-log-kind) auto minmax(0, 1fr);
 	gap: var(--sl-space-2);
 	align-items: start;
 }

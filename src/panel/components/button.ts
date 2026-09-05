@@ -31,6 +31,8 @@ export interface ButtonOptions {
 
 export interface ButtonState {
 	label?: string;
+	/** Swap the visual variant (Reattach is primary only while detached, Appendix F §4.7). */
+	variant?: ButtonVariant;
 	icon?: IconName | null;
 	kbd?: string | null;
 	disabled?: boolean;
@@ -85,6 +87,10 @@ export function createButton(host: HTMLElement | null, options: ButtonOptions): 
 	}
 
 	function update(state: ButtonState): void {
+		if (state.variant !== undefined) {
+			for (const cls of Object.values(VARIANT_CLASSES)) el.classList.remove(cls);
+			el.classList.add(VARIANT_CLASSES[state.variant]);
+		}
 		if (state.label !== undefined && !loading) label.textContent = state.label;
 		if (state.icon !== undefined) setOptionalIcon(icon, state.icon);
 		if (state.kbd !== undefined) {

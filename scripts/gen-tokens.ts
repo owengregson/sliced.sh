@@ -89,6 +89,8 @@ function structuralDecls(): Decl[] {
 	}
 	add("size-touch", unitMultiple(tokens.size.touch));
 	add("size-rail", unitMultiple(tokens.size.rail));
+	for (const [k, v] of Object.entries(tokens.size.column)) add(`size-column-${kebab(k)}`, v);
+	add("size-log-pane", unitMultiple(tokens.size.logPane));
 	for (const [k, v] of Object.entries(tokens.radius))
 		add(`radius-${k}`, typeof v === "number" ? unitMultiple(v) : v);
 	for (const [k, v] of Object.entries(tokens.type.family)) add(`type-family-${k}`, v);
@@ -245,6 +247,8 @@ export function renderTs(): string {
 			touch: tokens.size.touch * tokens.unit,
 			rail: tokens.size.rail * tokens.unit,
 			hairline: 1,
+			column: tokens.size.column,
+			logPane: tokens.size.logPane * tokens.unit,
 		},
 		radius: radiusPx(),
 		color: { dark: themeColors("dark"), light: themeColors("light") },

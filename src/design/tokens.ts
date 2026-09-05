@@ -219,6 +219,10 @@ export const tokens = {
 		touch: 11,
 		rail: 2,
 		hairline: "1px",
+		/** Fixed mono columns of the Engine view's log panes (Appendix F §4.7): 8ch time, 5ch kind. */
+		column: { logTime: "8ch", logKind: "5ch" },
+		/** Max height of the rationale / live log panes in unit multiples (192px). */
+		logPane: 48,
 	},
 	/** unit multiples (4 8 12 16 24) + pill. */
 	radius: { xs: 1, sm: 2, md: 3, lg: 4, xl: 6, full: "9999px" },

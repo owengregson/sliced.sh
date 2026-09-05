@@ -4,7 +4,7 @@
  * A projection of `PanelSnapshot`: engine rows (version · NNUE names, threads/hash, the nps
  * numeral and depth) with a 60 s nps sparkline sampled once per `UI_TIMINGS.sparklineSampleMs`
  * from successive snapshots (an inline `<svg>` built with DOM APIs, ≤ `LIMITS.npsSparklineSamples`
- * points, colours from `TOKENS.color.<theme>`); executor rows (debugger, target, input mode, last
+ * points, colours from the theme tokens in `engine.css`); executor rows (debugger, target, input mode, last
  * action with the `ExecutionResult.timeline` phase durations) with Detach / Reattach; the raw
  * license verdict; the timing rationale log (`TimingLogEntry` → `plan/exec/verify/warn` rows in
  * `mono-xs`, newest at the bottom) with Copy / Export / Clear; the session line with Reset; and
@@ -97,7 +97,8 @@ export function rationaleRows(entry: TimingLogEntry): RationaleRow[] {
 			...entry.topTerms.map(([name, value]) =>
 				COPY.engineView.rationale.term(name, `${value >= 0 ? "+" : "−"}${Math.abs(value).toFixed(1)}`)
 			),
-			COPY.engineView.rationale.total(seconds(entry.plannedMs), entry.mode, time),
+			COPY.engineView.rationale.factors(entry.comp.toFixed(2), entry.eps.toFixed(2)),
+			COPY.engineView.rationale.total(seconds(entry.plannedMs), entry.mode),
 		],
 	};
 	if (entry.actualMs === null) return [plan];
@@ -164,12 +165,10 @@ async function defaultClipboard(text: string): Promise<void> {
 	await clipboard.writeText(text);
 }
 
-function themeColors(): (typeof TOKENS.color)[keyof typeof TOKENS.color] {
-	const theme = typeof document === "undefined" ? undefined : document.body?.dataset.theme;
-	return theme === "light" ? TOKENS.color.light : TOKENS.color.dark;
-}
-
-/** The nps sparkline: a ring of ≤ `LIMITS.npsSparklineSamples` samples drawn as an SVG polyline. */
+/**
+ * The nps sparkline: a ring of ≤ `LIMITS.npsSparklineSamples` samples drawn as an SVG polyline.
+ * Geometry is token-sized here; colours come from `css/views/engine.css` (theme tokens).
+ */
 function createSparkline(host: HTMLElement): { push(nps: number): void; dispose(): void } {
 	const width = LIMITS.npsSparklineSamples * TOKENS.unit;
 	const height = TOKENS.space[8];
@@ -183,18 +182,12 @@ function createSparkline(host: HTMLElement): { push(nps: number): void; dispose(
 	area.setAttribute("class", "sl-engine__spark-area");
 	const line = document.createElementNS(SVG_NS, "polyline");
 	line.setAttribute("class", "sl-engine__spark-line");
-	line.setAttribute("fill", "none");
-	line.setAttribute("stroke-width", String(TOKENS.size.hairline));
-	line.setAttribute("stroke-linejoin", "round");
 	svg.append(area, line);
 	host.replaceChildren(svg);
 	host.setAttribute("aria-label", COPY.engineView.sparkline);
 	const samples: number[] = [];
 
 	function render(): void {
-		const colors = themeColors();
-		line.setAttribute("stroke", colors.brand);
-		area.setAttribute("fill", colors.brandTint);
 		const max = Math.max(1, ...samples);
 		const step = samples.length > 1 ? width / (samples.length - 1) : 0;
 		const points = samples.map((v, i) => {
@@ -326,10 +319,14 @@ export function createEngineView(deps: EngineViewDeps = {}): View {
 				size: "sm",
 				icon: "action.export",
 				onClick: () => {
-					// The shell's `open-url` action (bubbling after this) opens it in a new tab.
+					// The shell's `open-url` action (bubbling after this) opens it in a new tab; the URL
+					// is dropped once the click has bubbled so the (large) payload never lingers in the DOM.
 					exportButton.el.dataset.url = `${JSON_DATA_URL_PREFIX};charset=utf-8,${encodeURIComponent(
 						JSON.stringify(timingEntries)
 					)}`;
+					queueMicrotask(() => {
+						delete exportButton.el.dataset.url;
+					});
 				},
 			});
 			exportButton.el.dataset.cmd = "export";
@@ -360,8 +357,7 @@ export function createEngineView(deps: EngineViewDeps = {}): View {
 				for (const b of commands) b.update({ disabled: handsOff });
 				detach.update({ disabled: handsOff || !attached });
 				reattach.update({ disabled: handsOff || attached });
-				reattach.el.classList.toggle("sl-button--primary", !attached);
-				reattach.el.classList.toggle("sl-button--ghost", attached);
+				reattach.update({ variant: attached ? "ghost" : "primary" });
 			}
 
 			// ── snapshot projection ────────────────────────────────────────────────

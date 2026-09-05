@@ -46,16 +46,30 @@ let currentLevel: LogLevel = DEFAULT_SETTINGS.advanced.logLevel;
 
 /**
  * Task 26: the service worker's log bridge registers itself here so entries emitted by the
- * SW's own `log.*` calls reach the panel's log stream (Appendix H.2). While a sink is set this
- * context is the collector: entries are handed to it instead of being forwarded. Only the SW
- * sets a sink; `null` restores the default routing.
+ * SW's own `log.*` calls reach the panel's log stream (Appendix H.2). In production the sink is
+ * consulted only inside a real service worker (`isServiceWorker`); the simulator has no
+ * `ServiceWorkerGlobalScope`, so tests that drive the bridge through `log.*` opt in with
+ * `__setLogSinkOutsideServiceWorker(true)` (test-only — never called from shipped code). While
+ * the sink applies, this context is the collector: entries are handed to it instead of being
+ * forwarded.
  */
 export type LogSink = (entry: LogEntry) => void;
 
 let sink: LogSink | null = null;
+let sinkOutsideServiceWorker = false;
 
 export function setLogSink(next: LogSink | null): void {
 	sink = next;
+}
+
+/** Clear the sink only if it is still `expected` (a later bridge's sink is left in place). */
+export function clearLogSink(expected: LogSink): void {
+	if (sink === expected) sink = null;
+}
+
+/** Test-only: let the sink apply outside a `ServiceWorkerGlobalScope` (the simulator's SW). */
+export function __setLogSinkOutsideServiceWorker(enabled: boolean): void {
+	sinkOutsideServiceWorker = enabled;
 }
 
 export function setLogLevel(level: LogLevel): void {
@@ -114,7 +128,7 @@ function emit(level: LogSeverity, values: unknown[]): void {
 		args: values.map((v) => toSerializable(v)),
 		meta: { source: detectSource(), timestamp: Date.now() },
 	};
-	if (isServiceWorker || sink) {
+	if (isServiceWorker || (sink !== null && sinkOutsideServiceWorker)) {
 		if (isServiceWorker) printLog(entry);
 		sink?.(entry);
 		return;

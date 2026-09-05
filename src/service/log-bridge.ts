@@ -6,11 +6,17 @@
  * console, kept in a bounded ring (`LIMITS.logRingMax`) and fanned out to the panel's log-stream
  * subscribers (`PORT_NAMES.logStream`, accepted by `handlers/log/stream.ts`). Each subscriber
  * carries its own level so the SW filters at the source; the ring itself keeps every level.
+ *
+ * Fan-out never runs synchronously inside `record`: entries are queued and delivered on a
+ * microtask, and anything logged *during* delivery (e.g. `acceptPorts` logging a dead port at
+ * debug) goes to the ring only — otherwise logger → sink → send → logger would recurse without
+ * bound. A subscriber receives nothing until its `hello` (`sendBacklog`) has been processed; the
+ * backlog is then sent from the same flush, after the queued entries, so nothing is duplicated.
  */
 
 import { LIMITS } from "@core/constants/limits";
 import { type LogStreamMessage, MSG } from "@core/constants/messages";
-import { type LogEntry, levelAllows, printLog, setLogSink } from "@core/logger";
+import { clearLogSink, type LogEntry, levelAllows, printLog, setLogSink } from "@core/logger";
 import type { MessageRouter } from "@core/messaging/router";
 import type { LogLevel } from "@typedefs/settings";
 
@@ -21,31 +27,81 @@ export interface LogSubscriber {
 }
 
 export interface LogBridge {
-	/** Record an entry: print, ring, fan out. */
+	/** Record an entry: print, ring, fan out (on a microtask). */
 	push(entry: LogEntry): void;
 	/** The ring, oldest first. */
 	backlog(): LogEntry[];
-	/** Register a subscriber; it receives the (level-filtered) backlog at once. Returns the remove. */
+	/** Register a subscriber (streams nothing until `sendBacklog`). Returns the remove. */
 	addSubscriber(subscriber: LogSubscriber): () => void;
+	/** The subscriber's `hello`: queue its level-filtered backlog, then stream new entries to it. */
+	sendBacklog(subscriber: LogSubscriber): void;
 	/** Change a subscriber's level; returns whether it changed. */
 	setSubscriberLevel(subscriber: LogSubscriber, level: LogLevel): boolean;
 	subscriberCount(): number;
 	subscriberLevels(): LogLevel[];
-	/** Drop the ring, the subscribers and the logger sink. */
+	/** Drop the ring, the subscribers and (if still ours) the logger sink. */
 	dispose(): void;
 }
 
 export function installLogBridge(router: MessageRouter): LogBridge {
 	let ring: LogEntry[] = [];
 	const subscribers = new Set<LogSubscriber>();
+	const ready = new Set<LogSubscriber>();
+	const awaitingBacklog = new Set<LogSubscriber>();
+	let pending: LogEntry[] = [];
+	let flushScheduled = false;
+	let flushing = false;
 	let disposed = false;
+
+	function safeSend(subscriber: LogSubscriber, message: LogStreamMessage): void {
+		try {
+			subscriber.send(message);
+		} catch {
+			// a dead subscriber must not break delivery to the others; its disconnect removes it
+		}
+	}
+
+	function flush(): void {
+		flushScheduled = false;
+		if (disposed) return;
+		flushing = true;
+		try {
+			const batch = pending;
+			pending = [];
+			for (const entry of batch) {
+				for (const subscriber of [...subscribers]) {
+					if (ready.has(subscriber) && levelAllows(subscriber.level, entry.level))
+						safeSend(subscriber, { kind: "entry", entry });
+				}
+			}
+			const hellos = [...awaitingBacklog];
+			awaitingBacklog.clear();
+			for (const subscriber of hellos) {
+				if (!subscribers.has(subscriber)) continue;
+				safeSend(subscriber, {
+					kind: "backlog",
+					entries: ring.filter((e) => levelAllows(subscriber.level, e.level)),
+				});
+				ready.add(subscriber);
+			}
+		} finally {
+			flushing = false;
+		}
+	}
+
+	function scheduleFlush(): void {
+		if (flushScheduled || disposed) return;
+		flushScheduled = true;
+		queueMicrotask(flush);
+	}
 
 	function record(entry: LogEntry): void {
 		ring.push(entry);
 		if (ring.length > LIMITS.logRingMax) ring = ring.slice(ring.length - LIMITS.logRingMax);
-		for (const subscriber of [...subscribers]) {
-			if (levelAllows(subscriber.level, entry.level)) subscriber.send({ kind: "entry", entry });
-		}
+		// Logged while fanning out (a subscriber's send path): ring only — never re-enter.
+		if (flushing) return;
+		pending.push(entry);
+		scheduleFlush();
 	}
 
 	function push(entry: LogEntry): void {
@@ -62,9 +118,10 @@ export function installLogBridge(router: MessageRouter): LogBridge {
 	});
 
 	// The SW's direct `log.*` path (the logger has already printed the entry).
-	setLogSink((entry) => {
+	const sink = (entry: LogEntry): void => {
 		if (!disposed) record(entry);
-	});
+	};
+	setLogSink(sink);
 
 	return {
 		push,
@@ -72,11 +129,16 @@ export function installLogBridge(router: MessageRouter): LogBridge {
 		addSubscriber(subscriber) {
 			if (disposed) return () => {};
 			subscribers.add(subscriber);
-			subscriber.send({
-				kind: "backlog",
-				entries: ring.filter((e) => levelAllows(subscriber.level, e.level)),
-			});
-			return () => void subscribers.delete(subscriber);
+			return () => {
+				subscribers.delete(subscriber);
+				ready.delete(subscriber);
+				awaitingBacklog.delete(subscriber);
+			};
+		},
+		sendBacklog(subscriber) {
+			if (disposed || !subscribers.has(subscriber)) return;
+			awaitingBacklog.add(subscriber);
+			scheduleFlush();
 		},
 		setSubscriberLevel(subscriber, level) {
 			if (subscriber.level === level) return false;
@@ -89,8 +151,11 @@ export function installLogBridge(router: MessageRouter): LogBridge {
 			if (disposed) return;
 			disposed = true;
 			subscribers.clear();
+			ready.clear();
+			awaitingBacklog.clear();
+			pending = [];
 			ring = [];
-			setLogSink(null);
+			clearLogSink(sink);
 		},
 	};
 }

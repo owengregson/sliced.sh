@@ -299,9 +299,9 @@ export const COPY = {
 		rationale: {
 			base: (seconds: string, mode: string, persona: string): string =>
 				`base ${seconds}s (${mode} · ${persona})`,
-			term: (name: string, value: string): string => `${value} ${name}`,
-			total: (seconds: string, mode: string, clock: string): string =>
-				`= ${seconds}s · ${mode} · clock ${clock}`,
+			term: (name: string, seconds: string): string => `${seconds}s ${name}`,
+			factors: (comp: string, eps: string): string => `complexity ${comp} · eps ${eps}`,
+			total: (seconds: string, mode: string): string => `= ${seconds}s · ${mode}`,
 			exec: (seconds: string, delta: string): string => `actual ${seconds}s (Δ ${delta}s)`,
 			verify: (delta: string): string => `within plan (Δ ${delta}s)`,
 			warn: (delta: string): string => `drifted from plan (Δ ${delta}s)`,

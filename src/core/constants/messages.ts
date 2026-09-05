@@ -164,5 +164,10 @@ export type LogStreamMessage =
 	| { kind: "backlog"; entries: LogEntry[] }
 	| { kind: "entry"; entry: LogEntry };
 
-/** panel → SW: the SW filters the stream at source from this level down. */
-export type LogStreamCommand = { kind: "setLevel"; level: LogLevel };
+/**
+ * panel → SW: `hello` (first message on every connection) carries the level and asks for the
+ * backlog; `setLevel` moves the source filter afterwards.
+ */
+export type LogStreamCommand =
+	| { kind: "hello"; level: LogLevel }
+	| { kind: "setLevel"; level: LogLevel };
