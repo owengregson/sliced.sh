@@ -122,4 +122,10 @@ export interface SessionStats {
 	games: number;
 	moves: number;
 	avgThinkMs: number;
+	/** Task 24 (§13.6 session strip): running top-1 agreement, 0–100 (absent until the first move). */
+	top1Pct?: number;
+	/** Running average centipawn loss (absent until the first move). */
+	acpl?: number;
+	/** Consecutive finished games outside the Appendix E §1.6 band for the derived target. */
+	outOfBandStreak?: number;
 }

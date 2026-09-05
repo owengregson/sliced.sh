@@ -1,0 +1,299 @@
+/* css/views/live.css — Live game view (Appendix F §4.4 comfortable / §4.5 compact, §8.2 height
+   collapse states, §13.4 hands-off). Blocks are `space.4` apart; the eval rail sits inside the
+   padding and spans the two player rows; the move card is the only raised plate. Every collapse
+   step is a discrete `data-collapse` state on the view root — no fluid scaling. */
+
+.sl-live {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sl-space-4);
+}
+
+/* ---- board block: rail + column ---------------------------------------------------------- */
+
+.sl-live__board {
+	display: flex;
+	gap: var(--sl-space-3);
+	align-items: stretch;
+}
+
+.sl-live__rail {
+	flex: none;
+	display: flex;
+	align-items: stretch;
+	width: var(--sl-size-rail);
+}
+
+.sl-live__column {
+	flex: 1 1 auto;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: var(--sl-space-4);
+}
+
+/* player rows: 32 px (leading.2xl), caret beside the name, clock right */
+.sl-live__row {
+	display: flex;
+	align-items: center;
+	gap: var(--sl-space-2);
+	min-height: var(--sl-type-leading-2xl);
+	color: var(--sl-color-text-secondary);
+}
+
+.sl-live__row[data-active="true"] {
+	color: var(--sl-color-text-primary);
+}
+
+.sl-live__caret {
+	font-size: var(--sl-size-icon-sm);
+	color: var(--sl-color-brand-text);
+}
+
+.sl-live__name {
+	min-width: 0;
+	color: inherit;
+}
+
+.sl-live__rating {
+	flex: none;
+}
+
+.sl-live__clock {
+	flex: none;
+	margin-left: auto;
+	display: inline-flex;
+	align-items: baseline;
+}
+
+.sl-live__eval-inline {
+	flex: none;
+	color: var(--sl-color-text-primary);
+}
+
+/* eval row: numeral-lg left (space.3 from the rail), WDL right in three fixed groups */
+.sl-live__eval {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: var(--sl-space-3);
+	min-height: var(--sl-type-leading-4xl);
+}
+
+.sl-live__eval-score {
+	color: var(--sl-color-text-primary);
+}
+
+.sl-live__wdl {
+	display: inline-flex;
+	gap: var(--sl-space-3);
+}
+
+.sl-live__wdl > span {
+	display: inline-block;
+	min-width: 5ch;
+	text-align: end;
+}
+
+/* ---- lines ----------------------------------------------------------------------------- */
+
+.sl-live__lines {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sl-space-1);
+}
+
+.sl-live__lines-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--sl-space-2);
+	min-height: var(--sl-size-control-sm);
+}
+
+.sl-live__lines-title {
+	color: var(--sl-color-text-primary);
+}
+
+.sl-live__count {
+	min-width: var(--sl-size-control-sm);
+	justify-content: center;
+}
+
+/* stripe colours by index: hl.arrow, hl.arrow-2, hl.arrow-3 (§5.7) */
+.sl-live .sl-pv[data-index="1"] .sl-pv__stripe {
+	background: var(--sl-color-hl-arrow);
+}
+
+.sl-live .sl-pv[data-index="2"] .sl-pv__stripe {
+	background: var(--sl-color-hl-arrow-2);
+}
+
+.sl-live .sl-pv[data-index="3"] .sl-pv__stripe {
+	background: var(--sl-color-hl-arrow-3);
+}
+
+/* ---- strength card --------------------------------------------------------------------- */
+
+.sl-live__strength-card {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sl-space-1);
+}
+
+.sl-live__strength-title {
+	color: var(--sl-color-text-primary);
+}
+
+.sl-live__strength-row {
+	display: flex;
+	align-items: center;
+	gap: var(--sl-space-3);
+	min-height: var(--sl-size-control-lg);
+	padding: 0 var(--sl-space-3);
+	border-radius: var(--sl-radius-md);
+	background: var(--sl-color-surface-sunken);
+	box-shadow: var(--sl-shadow-inset);
+}
+
+.sl-live__strength-elo {
+	flex: none;
+	color: var(--sl-color-text-primary);
+}
+
+.sl-live__strength-label {
+	flex: 1 1 auto;
+}
+
+.sl-live__strength-open {
+	flex: none;
+	width: var(--sl-size-control-md);
+	padding: 0;
+	border-color: transparent;
+}
+
+.sl-live__strength-popover {
+	min-width: calc(var(--sl-layout-panel-min) - var(--sl-space-12));
+}
+
+.sl-live__strength-personas {
+	display: flex;
+}
+
+/* ---- toggles row ----------------------------------------------------------------------- */
+
+.sl-live__toggles-row {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: var(--sl-space-2);
+	min-height: var(--sl-size-control-lg);
+}
+
+.sl-live__toggle-slot {
+	display: inline-flex;
+	align-items: center;
+	min-height: var(--sl-size-touch);
+}
+
+.sl-live__strength-chip {
+	margin-left: auto;
+}
+
+/* ---- session strip --------------------------------------------------------------------- */
+
+.sl-live__strip-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--sl-space-2);
+	min-height: var(--sl-size-control-md);
+	padding-top: var(--sl-space-2);
+	border-top: var(--sl-hairline) solid var(--sl-color-border-subtle);
+}
+
+.sl-live__strip-stats {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: var(--sl-space-2);
+	min-width: 0;
+}
+
+.sl-live__band[data-band="in"] {
+	color: var(--sl-color-success);
+}
+
+.sl-live__band[data-band="out"] {
+	color: var(--sl-color-warn);
+}
+
+.sl-live__strip-pills {
+	display: flex;
+	flex: none;
+	gap: var(--sl-space-1);
+}
+
+/* ---- height collapse states (§8.2): opacity crossfades only, no layout animation ------- */
+
+.sl-live > *,
+.sl-live__column > * {
+	transition: opacity var(--sl-motion-duration-2-5) var(--sl-motion-easing-standard);
+}
+
+/* step 6: the view scrolls; the move card is pinned at the top of the content */
+.sl-live--scroll .sl-live__move {
+	position: sticky;
+	top: 0;
+	z-index: var(--sl-z-rail);
+}
+
+/* ---- compact (§4.5): ratings hidden, strip hidden, rail tighter to the edge ------------- */
+
+.sl-live--compact .sl-live__rating,
+.sl-live--compact .sl-live__strip {
+	display: none;
+}
+
+.sl-live--compact .sl-live__board {
+	gap: var(--sl-space-2);
+}
+
+.sl-live--compact .sl-live__strength-title {
+	display: none;
+}
+
+/* ---- hands-off (§13.4): display-only, in addition to the shell's `.sl-hands-off` -------- */
+
+.sl-live--hands-off button,
+.sl-live--hands-off a,
+.sl-live--hands-off input,
+.sl-live--hands-off [role="switch"],
+.sl-live--hands-off [role="slider"],
+.sl-live--hands-off .sl-pv {
+	pointer-events: none;
+}
+
+/* the Play button is a keybind hint only */
+.sl-move--hands-off .sl-move__action .sl-button__label,
+.sl-move--hands-off .sl-move__action .sl-button__icon {
+	display: none;
+}
+
+.sl-move--hands-off .sl-move__action .sl-button__kbd {
+	margin: 0 auto;
+}
+
+/* ---- reduced motion (§8.4) ------------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+	.sl-live > *,
+	.sl-live__column > * {
+		transition: none;
+	}
+}
+
+[data-reduced-motion="true"] .sl-live > *,
+[data-reduced-motion="true"] .sl-live__column > * {
+	transition: none;
+}

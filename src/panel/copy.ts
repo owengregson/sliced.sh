@@ -491,4 +491,37 @@ export const SETTINGS_COPY = {
 		resetAll: "Reset all settings",
 	},
 	tc: { bullet: "bullet", blitz: "blitz", rapid: "rapid", classical: "classical" },
+// ── Task 24: Live view ─────────────────────────────────────────────────────────────────────
+/** Strings the Live view adds to Appendix F §7.2 (§4.4 anatomy, §9.7 hand state, §13.6 band). */
+export const COPY_LIVE = {
+	/** Your row when the site gives no display name. */
+	you: "You",
+	cancel: "Cancel",
+	strength: {
+		header: "Strength",
+		rating: "Target rating",
+		chip: (elo: number, persona: string): string => `${elo} · ${persona}`,
+		modes: { "engine-elo": "Engine", "persona-sampling": "Persona", hybrid: "Hybrid" },
+		modeLabel: "Selection",
+	},
+	lines: {
+		count: (n: number): string => `${n}`,
+		countLabel: "Lines shown",
+	},
+	hand: {
+		label: "Hand",
+		resting: "resting",
+		exploring: "exploring",
+		moving: "moving",
+		paused: "paused (your mouse)",
+		detached: "detached",
+	},
+	band: {
+		stats: (top1: number, acpl: number): string => `${top1}% top-1 · ${acpl} ACPL`,
+		target: (lo: number, hi: number, acplLo: number, acplHi: number): string =>
+			`band ${lo}–${hi}% · ${acplLo}–${acplHi}`,
+		warning: (games: number): string => `Outside the band for ${games} games`,
+	},
+	clock: { opponent: "Opponent clock", you: "Your clock" },
+	executorLabel: "Executor",
 } as const;

@@ -155,3 +155,20 @@ export const SELECTION_CONSTANTS = deepFreeze({
 });
 
 export type SelectionConstants = typeof SELECTION_CONSTANTS;
+
+/**
+ * Appendix E §1.6 target whole-game statistics — the acceptance band the Live view's session
+ * strip reports against (Part I §13.6: "running top-1 % and ACPL against the §7.2 band for the
+ * derived target; warns after three consecutive out-of-band games"). Knots by target Elo;
+ * flat outside, the nearest knot at or below the target between them.
+ */
+export const AGREEMENT_BANDS = deepFreeze([
+	{ elo: 800, top1: [38, 45], acpl: [100, 130] },
+	{ elo: 1200, top1: [42, 48], acpl: [75, 95] },
+	{ elo: 1600, top1: [47, 53], acpl: [45, 60] },
+	{ elo: 2000, top1: [52, 58], acpl: [28, 40] },
+	{ elo: 2400, top1: [58, 66], acpl: [15, 25] },
+	{ elo: 2800, top1: [68, 75], acpl: [8, 15] },
+] as const);
+
+export type AgreementBand = (typeof AGREEMENT_BANDS)[number];

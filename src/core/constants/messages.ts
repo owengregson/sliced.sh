@@ -43,6 +43,8 @@ export const MSG = {
 	PANEL_RESET_SESSION: "sl:panel:resetSession",
 	PANEL_ENGINE_DETACH: "sl:panel:engineDetach",
 	PANEL_ENGINE_REATTACH: "sl:panel:engineReattach",
+	/** Task 24: the Live view's detached banner asks the SW to re-attach the debugger (§9.7). */
+	PANEL_REATTACH_DEBUGGER: "sl:panel:reattachDebugger",
 	// content → SW (request/response)
 	CONTENT_HELLO: "sl:content:hello",
 	CONTENT_KEYBIND: "sl:content:keybind",

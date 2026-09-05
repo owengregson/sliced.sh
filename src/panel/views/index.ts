@@ -10,6 +10,7 @@ import { instantiate, part } from "../template";
 import { VIEW_NAMES, type View, type ViewName, type ViewRegistry } from "../view";
 import { engineView } from "./engine"; // Task 26
 import { createSettingsView } from "./settings";
+import { liveView } from "./live";
 import stubHtml from "./templates/stub.html?raw";
 
 export function createStubView(name: ViewName): View {
@@ -33,3 +34,6 @@ VIEWS.settings = createSettingsView();
 
 // ── Task 26: the real Engine view replaces its stub ──────────────────────────────────────────
 VIEWS.engine = engineView;
+
+// ── Task 24: the real Live view replaces its stub ────────────────────────────────────────────
+VIEWS.live = liveView;

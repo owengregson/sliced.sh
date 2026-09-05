@@ -46,6 +46,7 @@ export interface MessagePayloadMap {
 	[MSG.PANEL_RESET_SESSION]: EmptyPayload;
 	[MSG.PANEL_ENGINE_DETACH]: EmptyPayload;
 	[MSG.PANEL_ENGINE_REATTACH]: EmptyPayload;
+	[MSG.PANEL_REATTACH_DEBUGGER]: { tabId: number };
 	// content → SW
 	[MSG.CONTENT_HELLO]: EmptyPayload;
 	[MSG.CONTENT_KEYBIND]: { action: keyof Keybinds };
@@ -84,6 +85,7 @@ export interface MessageResponseMap {
 	[MSG.PANEL_RESET_SESSION]: void;
 	[MSG.PANEL_ENGINE_DETACH]: void;
 	[MSG.PANEL_ENGINE_REATTACH]: void;
+	[MSG.PANEL_REATTACH_DEBUGGER]: void;
 	[MSG.CONTENT_HELLO]: { keybinds: Keybinds; enabled: boolean };
 	[MSG.CONTENT_KEYBIND]: void;
 	[MSG.CONTENT_CURSOR]: void;

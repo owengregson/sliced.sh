@@ -1,0 +1,29 @@
+<section class="sl-view sl-live" data-view="live" data-collapse="full">
+	<div class="sl-live__board">
+		<div class="sl-live__rail"></div>
+		<div class="sl-live__column">
+			<div class="sl-live__row-slot" data-slot="opponent"></div>
+			<div class="sl-live__eval">
+				<span class="sl-live__eval-score sl-type-numeral-lg sl-text-numerals"></span>
+				<span class="sl-live__wdl sl-type-label sl-text-secondary sl-text-numerals">
+					<span data-wdl="w"></span>
+					<span data-wdl="d"></span>
+					<span data-wdl="l"></span>
+				</span>
+			</div>
+			<div class="sl-live__move"></div>
+			<div class="sl-live__row-slot" data-slot="me"></div>
+		</div>
+	</div>
+	<div class="sl-live__lines">
+		<header class="sl-live__lines-header">
+			<!-- biome-ignore lint/a11y/useHeadingContent: filled from copy.ts at mount -->
+			<h2 class="sl-live__lines-title sl-type-title"></h2>
+			<button class="sl-chip sl-live__count sl-type-label" type="button" aria-haspopup="dialog"></button>
+		</header>
+		<div class="sl-live__pv"></div>
+	</div>
+	<div class="sl-live__strength"></div>
+	<div class="sl-live__toggles"></div>
+	<div class="sl-live__strip"></div>
+</section>
