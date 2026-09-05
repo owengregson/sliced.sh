@@ -15,10 +15,11 @@ import type { Settings } from "@typedefs/settings";
 import { budgetController, scheduleAlloc } from "./budget";
 import { TIMING_CONSTANTS } from "./constants";
 import { uniform } from "./distributions";
-import { computeFeatures, featuresToRecord } from "./features";
+import { computeFeatures, featuresToRecord, isBotPace } from "./features";
 import { allocateWindow, type MotorTimes, motorModel } from "./move-window";
 import { sampleOrientationMs } from "./orientation";
 import { samplePersona } from "./persona-latents";
+import { applyPressureAndCaps, hardCapSec } from "./pressure";
 import { buildTimingLogEntry } from "./timing-log";
 import type {
 	DistributionHead,
@@ -35,11 +36,12 @@ import type {
 	TimingMode,
 	TimingPlan,
 } from "./types";
-import { applyPressureAndCaps, hardCapSec } from "./v1-head";
 
 const C = TIMING_CONSTANTS;
 
 export type TimingSettings = Settings["timing"];
+
+export { isBotPace };
 
 export interface TimingModelOptions {
 	/** Receives every `TimingLogEntry` (creation and `observe()` updates re-send the same object). */
@@ -87,14 +89,6 @@ function cv(xs: readonly number[]): number {
 export function needsResample(plannedMs: readonly number[], candidateMs: number): boolean {
 	if (plannedMs.length < C.cvGuard.afterMoves) return false;
 	return cv([...plannedMs, candidateMs]) < C.cvGuard.minCv;
-}
-
-/** §8.4b item 5: near-constant sub-second replies mark a bot opponent. */
-export function isBotPace(oppThinkMs: readonly number[]): boolean {
-	const B = C.botPace;
-	if (oppThinkMs.length < B.minMoves) return false;
-	const last = oppThinkMs.slice(-B.minMoves);
-	return last.every((ms) => ms < B.maxReplyMs) && cv(last) < B.maxCv;
 }
 
 const IDLE_WINDOW: MoveWindowBudget = {
@@ -160,6 +154,7 @@ export class TimingModel {
 		this._state = freshState(meta.gameId, knobsFromSettings(this.settings));
 		this._persona = samplePersona(meta.gameId, meta.profile, meta.targetElo);
 		this.entries.clear();
+		this.head.reset?.();
 	}
 
 	/** Kick off head-side inference for the position (no-op for the v1 head). */
@@ -216,7 +211,6 @@ export class TimingModel {
 			st.tilt = C.tilt.moves;
 		const alloc = this.allocFor(f);
 		const sample = this.sampleGuarded(f, alloc);
-		if (st.tilt > 0) st.tilt--;
 		let { tSec, mode } = sample;
 		const why = [...sample.why];
 		const capped = applyPressureAndCaps(tSec, f);
@@ -227,30 +221,21 @@ export class TimingModel {
 			why.push(this.forbidPremove ? "no premove entered → instant" : "premove not eligible → instant");
 		}
 		if (mode !== "premove") tSec *= this.settings.speedScale;
-		const median = this.head.median(f, this._persona, alloc) * capped.comp;
-		if ((mode === "normal" || mode === "long") && isBotPace(ctx.oppThinkMsHistory)) {
-			const floor = Math.min(C.botPaceFloor * median, capped.capSec);
-			if (tSec < floor) {
-				tSec = floor;
-				why.push(`bot-pace floor ${floor.toFixed(2)} s`);
-			}
-		}
+		const median = this.head.median(f, this._persona, st, alloc) * capped.comp;
+		if (f.opp_is_bot && mode !== "premove") why.push("bot opponent: mirror coefficient floored");
 		if (mode === "premove" && ctx.site === "chesscom") tSec += C.premove.chesscomPenaltyS;
 
 		const motor = this.motorFor(f, ctx, mode);
 		const orientationMs = mode === "premove" ? 0 : sampleOrientationMs(f, this.rng);
+		const physicalS = orientationMs / 1000 + motor.totalS;
 		let totalS: number;
 		if (mode === "premove") totalS = tSec;
-		else if (mode === "instant") totalS = tSec + motor.totalS;
+		else if (mode === "instant") totalS = physicalS + tSec;
 		else {
-			// Room for orientation + motor with at least the minimum decision pause; under the
-			// hard caps the motor is compressed instead (floor `minMotorMs`).
-			const physicalS = (orientationMs / 1000 + motor.totalS) / (1 - C.window.decisionMin);
-			const floorS = Math.max(
-				C.minNormalMs / 1000,
-				Math.min(physicalS, Math.max(capped.capSec, C.motor.minMotorMs / 1000))
-			);
-			totalS = Math.max(tSec, floorS);
+			// Appendix D §5: `total = max(tSec, motor.total)`, with the §8.4b item 2 orientation
+			// latency part of the window; the hard cap (§3a.3) wins over that physical floor and
+			// compresses orientation + motor (`allocateWindow`); `minNormalMs` is the only hard floor.
+			totalS = Math.max(C.minNormalMs / 1000, Math.min(Math.max(tSec, physicalS), capped.capSec));
 		}
 		const thinkMs = totalS * 1000;
 		const motorMs = mode === "premove" ? thinkMs : Math.min(motor.totalS * 1000, thinkMs);
@@ -458,6 +443,7 @@ export class TimingModel {
 	observe(actualThinkMs: number, plan: TimingPlan): void {
 		const st = this._state;
 		st.myThinkMs.push(actualThinkMs);
+		if (st.tilt > 0) st.tilt--;
 		if ((plan.mode === "normal" || plan.mode === "long") && actualThinkMs > 0 && plan.thinkMs > 0) {
 			const shift = clamp(
 				Math.log(actualThinkMs / plan.thinkMs),

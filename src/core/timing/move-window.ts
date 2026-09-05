@@ -70,31 +70,45 @@ export interface WindowInputs {
 	previewCount: number;
 }
 
-/** Split `thinkMs` into the five phase budgets; the sum equals `thinkMs` exactly. */
+/**
+ * Split `thinkMs` into the five phase budgets; the sum equals `thinkMs` exactly.
+ * The sampled total is the master (Appendix D §3a.6): when it is shorter than
+ * orientation + motor, both are compressed into it proportionally with the
+ * orientation floor (150 ms) and the motor floor (60 ms); the decision pause
+ * is 15–40 % of whatever remains after them.
+ */
 export function allocateWindow(input: WindowInputs, rng: Rng): MoveWindowBudget {
 	const think = Math.max(0, input.thinkMs);
 	if (input.mode === "premove")
 		return { orientationMs: 0, scanMs: 0, previewMs: 0, decisionMs: 0, approachMs: think };
+	const [orientationMs, approachMs] = compressPhysical(think, input.orientationMs, input.motorMs);
 	if (input.mode === "instant") {
-		const approachMs = Math.min(input.motorMs, think);
+		// No scan, preview or decision pause: whatever is left is perceptual/reaction latency.
 		return { orientationMs: think - approachMs, scanMs: 0, previewMs: 0, decisionMs: 0, approachMs };
 	}
-	// Decision pause 15–40 % of the window, squeezed toward 15 % when orientation + approach
-	// need the room (the model floors normal windows so that this fits).
-	const maxFrac = Math.max(
-		W.decisionMin,
-		Math.min(W.decisionMax, 1 - (input.orientationMs + input.motorMs) / Math.max(1, think))
-	);
-	const decisionMs =
-		clamp(uniform(rng, W.decisionMin, W.decisionMax), W.decisionMin, maxFrac) * think;
-	const approachMs = Math.min(input.motorMs, think - decisionMs);
-	let rest = think - decisionMs - approachMs;
-	const orientationMs = Math.min(input.orientationMs, rest);
-	rest -= orientationMs;
+	const rest = Math.max(0, think - orientationMs - approachMs);
+	const decisionMs = uniform(rng, W.decisionMin, W.decisionMax) * rest;
+	const explore = rest - decisionMs;
 	const previewMs =
-		input.previewCount > 0 ? rest * Math.min(1, W.previewShare * input.previewCount) : 0;
-	const scanMs = rest - previewMs;
+		input.previewCount > 0 ? explore * Math.min(1, W.previewShare * input.previewCount) : 0;
+	// The scan absorbs the remainder so the five budgets sum to `think` exactly.
+	const scanMs = Math.max(0, think - orientationMs - approachMs - decisionMs - previewMs);
 	return { orientationMs, scanMs, previewMs, decisionMs, approachMs };
+}
+
+/** `[orientation, approach]` fitted into `think` with the 150 ms / 60 ms floors. */
+function compressPhysical(think: number, orientationMs: number, motorMs: number): [number, number] {
+	if (think >= orientationMs + motorMs) return [orientationMs, motorMs];
+	const minO = TIMING_CONSTANTS.orientation.minMs;
+	const minM = M.minMotorMs;
+	const scale = think / Math.max(1e-9, orientationMs + motorMs);
+	let o = Math.max(minO, orientationMs * scale);
+	let a = Math.max(minM, motorMs * scale);
+	if (o + a > think) {
+		a = clamp(think - o, Math.min(minM, think), think);
+		o = Math.max(0, think - a);
+	}
+	return [o, a];
 }
 
 /** Sum of the phase budgets (for invariants and tests). */

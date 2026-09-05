@@ -2,14 +2,15 @@
  * v1 parametric distribution head (Appendix D §3a.3–§3a.5, Appendix D
  * "Appendix A" reference implementation): premove / instant spike, log-normal
  * body with the AR(1) residual, Pareto long-think tail. Time-pressure
- * compression and the hard caps (§3a.3) are exported separately because the
- * `TimingModel` applies them after any head.
+ * compression, the hard caps (§3a.3) and the premove logit live in
+ * `pressure.ts` because the `TimingModel` and the ChessMimic head use them too.
  */
 
 import type { Rng } from "@core/rng";
 import { clamp } from "@core/util/clamp";
 import { TIMING_CONSTANTS } from "./constants";
 import { pareto, sigmoid } from "./distributions";
+import { longThinkCapSec, premoveLogit } from "./pressure";
 import type {
 	DistributionHead,
 	Features,
@@ -30,6 +31,15 @@ function eloDep(p: readonly [number, number], e: number): number {
 export interface BodyTerms {
 	sum: number;
 	terms: Array<[string, number]>;
+}
+
+/**
+ * `β_mirror · opp_pace` with the persona's ρ; against a bot (§8.4b item 5) the coefficient is
+ * floored so the term never drags the median below `botPaceFloor ×` the un-mirrored median.
+ */
+export function mirrorTerm(f: Pick<Features, "opp_pace" | "opp_is_bot">, p: Persona): number {
+	const term = p.rho_mirror * f.opp_pace;
+	return f.opp_is_bot ? Math.max(term, Math.log(C.botPaceFloor)) : term;
 }
 
 /** `Σ β_i f_i` of Appendix D §3a.3 with per-term contributions (mirroring uses the persona's ρ). */
@@ -56,7 +66,7 @@ export function bodyTerms(f: Features, p: Persona, e: number): BodyTerms {
 		["won", B.won * won],
 		["check", B.check * f.is_check],
 		["promo", B.promo * f.is_promotion],
-		["mirror", p.rho_mirror * f.opp_pace],
+		["mirror", mirrorTerm(f, p)],
 		["legal", B.legal * (f.n_legal - Math.log(B.legalRefMoves))],
 		["ratio", B.ratio * f.clock_ratio],
 	];
@@ -76,80 +86,11 @@ export function phiOf(e: number): number {
 	return C.phi.base + C.phi.elo * e;
 }
 
-/** Appendix D §3a.3 compression factor (1 for untimed games). */
-export function compressionFactor(f: Features): number {
-	if (f.tc === "untimed") return 1;
-	const K = C.compression;
-	const cl = f.clock_s;
-	let comp = 1;
-	if (cl < K.clockS || f.pressure < K.pressure)
-		comp *= clamp(K.floor + (1 - K.floor) * Math.min(1, cl / K.clockS), K.floor, 1);
-	if (cl < K.panicClockS) comp *= clamp(cl / K.panicClockS, K.panicFloor, 1);
-	if (f.inc_s >= K.incFloorIncS && cl > K.incFloorClockS) comp = Math.max(comp, K.incFloor);
-	return comp;
-}
-
-/** Hard cap in seconds (`∞` for untimed games). */
-export function hardCapSec(f: Features): number {
-	if (f.tc === "untimed") return Number.POSITIVE_INFINITY;
-	const K = C.caps;
-	const cl = f.clock_s;
-	let cap = K.fraction * cl;
-	if (cl < K.lowClockS && f.inc_s < K.lowIncS) cap = Math.min(cap, K.lowFraction * cl);
-	if (cl < K.tinyClockS) cap = Math.min(cap, K.tinyCapS);
-	return cap;
-}
-
-export interface CappedTime {
-	tSec: number;
-	comp: number;
-	capSec: number;
-}
-
-/** Multiplicative compression then the hard caps (Appendix D §3a.3). */
-export function applyPressureAndCaps(tSec: number, f: Features): CappedTime {
-	const comp = compressionFactor(f);
-	const capSec = hardCapSec(f);
-	return { tSec: Math.min(tSec * comp, capSec), comp, capSec };
-}
-
-/** Long-think cap: `min(0.25·C, per-class cap)`. */
-export function longThinkCapSec(f: Features): number {
-	const L = C.longThink;
-	const byClass = L.capS[f.tc];
-	return f.tc === "untimed" ? byClass : Math.min(L.capFraction * f.clock_s, byClass);
-}
-
-/** Appendix D §3a.5 premove logit (shared with the ChessMimic head's bucket-0 mapping). */
-export function premoveLogit(
-	f: Features,
-	p: Persona,
-	knobs: Pick<TimingKnobs, "piOffset">
-): number {
-	const P = C.premove;
-	const cl = f.clock_s;
-	const untimed = f.tc === "untimed";
-	return (
-		P.aTc[f.tc] +
-		P.recap * f.is_recapture +
-		P.book * f.in_book +
-		P.only * f.is_only_legal +
-		P.ponder * f.ponder_hit +
-		(!untimed && cl < P.clock10S ? P.clockUnder10 : 0) +
-		(!untimed && cl < P.clock20S ? P.clockUnder20 : 0) +
-		P.lnNReasonable * f.ln_n_reasonable +
-		P.swingBad * f.swing_bad +
-		p.pi_p +
-		knobs.piOffset +
-		(f.tc === "bullet" ? P.eloBullet * f.elo_z : 0)
-	);
-}
-
 export class V1ParametricHead implements DistributionHead {
 	readonly id = "v1-parametric" as const;
 
 	/** Body median: `alloc · exp(Σβf − mirror + s_game)` (no residual, no mirroring, no tilt). */
-	median(f: Features, p: Persona, allocSec: number): number {
+	median(f: Features, p: Persona, _st: GameTimingState, allocSec: number): number {
 		const body = bodyTerms(f, p, f.elo_z);
 		const mirror = body.terms.find(([n]) => n === "mirror")?.[1] ?? 0;
 		return allocSec * Math.exp(body.sum - mirror + p.s_game);

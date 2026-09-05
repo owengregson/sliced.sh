@@ -53,11 +53,11 @@ describe("window allocation", () => {
 		expect(WINDOW_PHASE_ORDER[0]).toBe("orientation");
 		expect(WINDOW_PHASE_ORDER.indexOf("decision")).toBe(WINDOW_PHASE_ORDER.indexOf("approach") - 1);
 	});
-	it("sums exactly to thinkMs with the decision pause at 15–40 % for normal/long moves", () => {
+	it("sums exactly to thinkMs; decision pause 15–40 % of what remains after orientation + approach", () => {
 		const rng = createRng("window");
 		for (let i = 0; i < 2000; i++) {
 			const mode = rng.next() < 0.5 ? "normal" : "long";
-			const thinkMs = (mode === "long" ? 2000 : 700) + rng.next() * 20_000;
+			const thinkMs = (mode === "long" ? 2000 : 1000) + rng.next() * 20_000;
 			const w = allocateWindow(
 				{ thinkMs, mode, orientationMs: 380, motorMs: 450, previewCount: mode === "long" ? 1 : 0 },
 				rng
@@ -65,9 +65,11 @@ describe("window allocation", () => {
 			const sum = w.orientationMs + w.scanMs + w.previewMs + w.decisionMs + w.approachMs;
 			expect(sum).toBeCloseTo(thinkMs, 6);
 			for (const v of Object.values(w)) expect(v).toBeGreaterThanOrEqual(0);
-			expect(w.decisionMs / thinkMs).toBeGreaterThanOrEqual(0.15 - 1e-9);
-			expect(w.decisionMs / thinkMs).toBeLessThanOrEqual(0.4 + 1e-9);
+			const rest = thinkMs - w.orientationMs - w.approachMs;
+			expect(w.decisionMs / rest).toBeGreaterThanOrEqual(0.15 - 1e-9);
+			expect(w.decisionMs / rest).toBeLessThanOrEqual(0.4 + 1e-9);
 			expect(w.approachMs).toBeCloseTo(450, 6);
+			expect(w.orientationMs).toBeCloseTo(380, 6);
 			if (mode === "long") expect(w.previewMs).toBeGreaterThan(0);
 			else expect(w.previewMs).toBe(0);
 		}
@@ -84,20 +86,38 @@ describe("window allocation", () => {
 			rng
 		);
 		expect(i.scanMs + i.previewMs + i.decisionMs).toBe(0);
-		expect(i.approachMs).toBe(400);
-		expect(i.orientationMs).toBe(100);
-	});
-	it("a tight normal window compresses orientation before the approach", () => {
-		const rng = createRng("w3");
-		const w = allocateWindow(
-			{ thinkMs: 500, mode: "normal", orientationMs: 380, motorMs: 400, previewCount: 0 },
+		// 500 < 380 + 400: compressed proportionally, both above their floors.
+		expect(i.orientationMs).toBeGreaterThanOrEqual(150);
+		expect(i.approachMs).toBeGreaterThanOrEqual(60);
+		expect(i.orientationMs + i.approachMs).toBeCloseTo(500, 9);
+		const wide = allocateWindow(
+			{ thinkMs: 900, mode: "instant", orientationMs: 380, motorMs: 400, previewCount: 0 },
 			rng
 		);
-		expect(w.approachMs + w.decisionMs + w.orientationMs + w.scanMs + w.previewMs).toBeCloseTo(
-			500,
-			9
+		expect(wide.approachMs).toBe(400);
+		expect(wide.orientationMs).toBe(500);
+	});
+	it("a tight normal window compresses orientation and motor with the 150 / 60 ms floors", () => {
+		const rng = createRng("w3");
+		for (const thinkMs of [250, 300, 500, 700]) {
+			const w = allocateWindow(
+				{ thinkMs, mode: "normal", orientationMs: 380, motorMs: 400, previewCount: 0 },
+				rng
+			);
+			expect(w.approachMs + w.decisionMs + w.orientationMs + w.scanMs + w.previewMs).toBeCloseTo(
+				thinkMs,
+				9
+			);
+			expect(w.orientationMs).toBeGreaterThanOrEqual(150);
+			expect(w.approachMs).toBeGreaterThanOrEqual(60);
+			expect(w.approachMs).toBeLessThanOrEqual(400);
+			for (const v of Object.values(w)) expect(v).toBeGreaterThanOrEqual(0);
+		}
+		const tight = allocateWindow(
+			{ thinkMs: 250, mode: "normal", orientationMs: 380, motorMs: 400, previewCount: 0 },
+			rng
 		);
-		expect(w.approachMs).toBeLessThanOrEqual(400);
-		expect(w.decisionMs).toBeGreaterThanOrEqual(75);
+		expect(tight.orientationMs).toBe(150);
+		expect(tight.approachMs).toBe(100);
 	});
 });

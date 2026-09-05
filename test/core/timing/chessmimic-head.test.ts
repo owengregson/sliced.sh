@@ -246,7 +246,38 @@ describe("ChessMimicHead", () => {
 		const c = ctx();
 		await h.prepare(c);
 		const f = computeFeatures(c);
-		expect(h.median(f, persona, 3)).toBeCloseTo(5.5, 10);
-		expect(h.median(f, { ...persona, s_game: Math.log(2) }, 3)).toBeCloseTo(11, 10);
+		const st = freshState("g");
+		st.fen = c.fen;
+		expect(h.median(f, persona, st, 3)).toBeCloseTo(5.5, 10);
+		expect(h.median(f, { ...persona, s_game: Math.log(2) }, st, 3)).toBeCloseTo(11, 10);
+		// Another position (or a reset head) falls back to the v1 median.
+		const other = freshState("g");
+		other.fen = "8/8/4k3/8/8/2K5/8/8 b - - 0 1";
+		expect(h.median(f, persona, other, 3)).toBe(fallback.median(f, persona, other, 3));
+		h.reset();
+		expect(h.median(f, persona, st, 3)).toBe(fallback.median(f, persona, st, 3));
+		expect(h.sample(f, persona, st, createRng(1), 3).why[0]).toContain("fallback");
+	});
+	it("a stale inference result never overwrites a newer prepare", async () => {
+		const slow: { resolve?: (v: number[]) => void } = {};
+		const h = new ChessMimicHead({
+			infer: (inputs) =>
+				inputs.playerClockS === 120
+					? new Promise((resolve) => {
+							slow.resolve = resolve;
+						})
+					: Promise.resolve(probsAt([7])),
+			fallback,
+			budgetMs: 50,
+		});
+		const first = h.prepare(ctx({ myClockMs: 120_000 }));
+		const second = h.prepare(ctx({ myClockMs: 60_000 }));
+		await second;
+		slow.resolve?.(probsAt([3]));
+		await first;
+		const st = freshState("g");
+		st.fen = ctx().fen;
+		const s = h.sample(computeFeatures(ctx({ myClockMs: 60_000 })), persona, st, createRng(1), 3);
+		expect(s.why[0]).toContain("bucket 7");
 	});
 });

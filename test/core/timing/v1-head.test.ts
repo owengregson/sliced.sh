@@ -3,9 +3,10 @@ import { describe, expect, it } from "bun:test";
 import { createRng } from "@core/rng";
 import { budgetController } from "@core/timing/budget";
 import { computeFeatures } from "@core/timing/features";
+import { applyPressureAndCaps } from "@core/timing/pressure";
 import { freshState } from "@core/timing/timing-model";
 import type { Persona } from "@core/timing/types";
-import { applyPressureAndCaps, V1ParametricHead } from "@core/timing/v1-head";
+import { V1ParametricHead } from "@core/timing/v1-head";
 import { AFTER_EXD5, ctx, line, median, pearson } from "./helpers";
 
 const persona: Persona = { s_game: 0, iota: 0.5, pi_p: 0, tau: 0.65, rho_mirror: 0.15, motor_k: 1 };
@@ -102,10 +103,13 @@ describe("v1 parametric head", () => {
 	it("median() is the body median without residual or mirroring", () => {
 		const head = new V1ParametricHead();
 		const f = computeFeatures(ctx());
-		const m = head.median(f, persona, 3);
+		const m = head.median(f, persona, freshState("g"), 3);
 		expect(m).toBeGreaterThan(2);
 		expect(m).toBeLessThan(4.5);
-		expect(head.median(f, { ...persona, s_game: Math.log(2) }, 3)).toBeCloseTo(2 * m, 8);
+		expect(head.median(f, { ...persona, s_game: Math.log(2) }, freshState("g"), 3)).toBeCloseTo(
+			2 * m,
+			8
+		);
 	});
 	it("knobs: sigmaScale widens, piOffset raises premove rate, lambdaScale raises long thinks", () => {
 		const head = new V1ParametricHead();

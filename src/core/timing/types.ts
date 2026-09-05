@@ -104,6 +104,8 @@ export interface Features {
 	dist: number;
 	opp_pace: number;
 	opp_last: number;
+	/** §8.4b item 5: the opponent replies at a near-constant sub-second pace (a bot). */
+	opp_is_bot: number;
 	my_pace_resid: number;
 	budget_used_ratio: number;
 	material_imb: number;
@@ -189,9 +191,11 @@ export interface DistributionHead {
 		allocSec: number
 	): HeadSample;
 	/** Model median think time for the position without residual/mirroring (bot-pace floor). */
-	median(f: Features, persona: Persona, allocSec: number): number;
+	median(f: Features, persona: Persona, state: GameTimingState, allocSec: number): number;
 	/** Issue asynchronous inference for `ctx` ahead of `sample` (ChessMimic); resolves when cached. */
 	prepare?(ctx: TimingContext): Promise<void>;
+	/** Drop any per-game cache (called from `startGame`). */
+	reset?(): void;
 }
 
 export interface GameMeta {

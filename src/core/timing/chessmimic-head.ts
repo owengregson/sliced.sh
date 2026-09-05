@@ -22,6 +22,7 @@ import { clamp } from "@core/util/clamp";
 import { TIMING_CONSTANTS } from "./constants";
 import { sigmoid, uniform } from "./distributions";
 import { tcClass } from "./features";
+import { premoveLogit } from "./pressure";
 import type {
 	DistributionHead,
 	Features,
@@ -30,9 +31,9 @@ import type {
 	Persona,
 	TimingContext,
 } from "./types";
-import { premoveLogit } from "./v1-head";
 
 const CM = TIMING_CONSTANTS.chessmimic;
+const UNTIMED = TIMING_CONSTANTS.untimedVirtual;
 
 // ---------------------------------------------------------------------------
 // FEN tokeniser (google-deepmind/searchless_chess `tokenizer.py`, + CLASS_TOKEN)
@@ -210,9 +211,9 @@ function placeholderScalers(band: ChessMimicBand): BandScalers {
 	const [lo = 1500, hi = 1600] = band.split("_").map(Number);
 	return {
 		rating: { mean: (lo + hi) / 2, std: (hi - lo) / Math.sqrt(12) },
-		log_player_clock: { mean: Math.log(CM.virtualClockS / 2 + 1), std: 1 },
-		log_opponent_clock: { mean: Math.log(CM.virtualClockS / 2 + 1), std: 1 },
-		log_increment: { mean: Math.log(1 + CM.virtualIncS), std: 1 },
+		log_player_clock: { mean: Math.log(UNTIMED.clockS / 2 + 1), std: 1 },
+		log_opponent_clock: { mean: Math.log(UNTIMED.clockS / 2 + 1), std: 1 },
+		log_increment: { mean: Math.log(1 + UNTIMED.incS), std: 1 },
 		source: "placeholder",
 	};
 }
@@ -270,9 +271,9 @@ function standardise(x: number, s: Scaler): number {
 /** Build the model inputs from a `TimingContext`; clockless games get the fixed virtual clock. */
 export function buildInputs(ctx: TimingContext): ChessMimicInputs {
 	const untimed = tcClass(ctx.baseSec, ctx.incSec) === "untimed";
-	const playerClockS = untimed ? CM.virtualClockS : Math.max(0, ctx.myClockMs / 1000);
-	const opponentClockS = untimed ? CM.virtualClockS : Math.max(0, ctx.oppClockMs / 1000);
-	const incrementS = untimed ? CM.virtualIncS : ctx.incSec;
+	const playerClockS = untimed ? UNTIMED.clockS : Math.max(0, ctx.myClockMs / 1000);
+	const opponentClockS = untimed ? UNTIMED.clockS : Math.max(0, ctx.oppClockMs / 1000);
+	const incrementS = untimed ? UNTIMED.incS : ctx.incSec;
 	const band = selectBand(ctx.targetElo);
 	const s = BAND_SCALERS[band];
 	const moveTokens = encodeRecentMoves(ctx.moves);
@@ -432,6 +433,8 @@ export class ChessMimicHead implements DistributionHead {
 	private readonly temperature: number;
 	private cache: CachedDistribution | null = null;
 	private lastFailure: string | null = null;
+	/** Bumped by every `prepare`/`reset`; a stale inference result never overwrites a newer cache. */
+	private generation = 0;
 
 	constructor(options: ChessMimicHeadOptions) {
 		this.infer = options.infer;
@@ -441,7 +444,15 @@ export class ChessMimicHead implements DistributionHead {
 	}
 
 	/** Issue inference for `ctx` (called as soon as the opponent's move arrives). */
+	/** Drop the per-game cache (`startGame`). */
+	reset(): void {
+		this.generation++;
+		this.cache = null;
+		this.lastFailure = null;
+	}
+
 	async prepare(ctx: TimingContext): Promise<void> {
+		const gen = ++this.generation;
 		this.cache = null;
 		let inputs: ChessMimicInputs;
 		try {
@@ -454,6 +465,7 @@ export class ChessMimicHead implements DistributionHead {
 			Promise.resolve().then(() => this.infer(inputs)),
 			this.budgetMs
 		);
+		if (gen !== this.generation) return;
 		if (!probs || probs.length !== CM.nBuckets) {
 			this.lastFailure = probs
 				? `bad shape ${probs.length}`
@@ -468,9 +480,9 @@ export class ChessMimicHead implements DistributionHead {
 		return this.cache && this.cache.fen === st.fen ? this.cache : null;
 	}
 
-	median(f: Features, p: Persona, allocSec: number): number {
-		const c = this.cache;
-		if (!c) return this.fallback.median(f, p, allocSec);
+	median(f: Features, p: Persona, st: GameTimingState, allocSec: number): number {
+		const c = this.cached(st);
+		if (!c) return this.fallback.median(f, p, st, allocSec);
 		return distributionMedianSec(c.probs) * Math.exp(p.s_game);
 	}
 
@@ -517,7 +529,7 @@ export class ChessMimicHead implements DistributionHead {
 			st.eps = phi * st.eps + Math.sqrt(1 - phi * phi) * sigma * rng.normal();
 		}
 		t *= Math.exp(p.s_game + st.eps);
-		const median = this.median(f, p, allocSec);
+		const median = this.median(f, p, st, allocSec);
 		const long = bucket >= CM.longBucketFrom || t > CM.longMedianMultiple * median;
 		why.push(`s_game=${p.s_game.toFixed(2)} ε=${st.eps.toFixed(2)}`);
 		return { tSec: t, mode: long ? "long" : "normal", why };

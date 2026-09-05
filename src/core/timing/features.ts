@@ -59,6 +59,22 @@ function pieceCounts(fen: string): { pieces: number; pawns: number } {
 	return { pieces, pawns };
 }
 
+function cvOf(xs: readonly number[]): number {
+	const m = meanOf(xs);
+	if (m <= 0) return 0;
+	let v = 0;
+	for (const x of xs) v += (x - m) ** 2;
+	return Math.sqrt(v / xs.length) / m;
+}
+
+/** §8.4b item 5: near-constant sub-second replies mark a bot opponent. */
+export function isBotPace(oppThinkMs: readonly number[]): boolean {
+	const B = TIMING_CONSTANTS.botPace;
+	if (oppThinkMs.length < B.minMoves) return false;
+	const last = oppThinkMs.slice(-B.minMoves);
+	return last.every((ms) => ms < B.maxReplyMs) && cvOf(last) < B.maxCv;
+}
+
 function meanOf(xs: readonly number[]): number {
 	if (xs.length === 0) return 0;
 	let s = 0;
@@ -76,8 +92,8 @@ export function computeFeatures(
 	state?: Pick<GameTimingState, "paceResiduals">
 ): Features {
 	const untimed = tcClass(ctx.baseSec, ctx.incSec) === "untimed";
-	const base_s = untimed ? F.untimedVirtualBaseS : ctx.baseSec;
-	const inc_s = untimed ? 0 : ctx.incSec;
+	const base_s = untimed ? TIMING_CONSTANTS.untimedVirtual.clockS : ctx.baseSec;
+	const inc_s = untimed ? TIMING_CONSTANTS.untimedVirtual.incS : ctx.incSec;
 	const tc = tcClass(ctx.baseSec, ctx.incSec);
 	const base_eff = base_s + F.incWeight * inc_s;
 	const clock_s = untimed ? base_s : Math.max(0, ctx.myClockMs / 1000);
@@ -192,6 +208,7 @@ export function computeFeatures(
 		dist,
 		opp_pace,
 		opp_last: Math.log(oppLastS + F.oppPaceOffsetS),
+		opp_is_bot: isBotPace(ctx.oppThinkMsHistory) ? 1 : 0,
 		my_pace_resid: myPaceResid(state),
 		budget_used_ratio,
 		material_imb: Math.tanh(matDiff / F.materialScale),

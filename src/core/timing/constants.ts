@@ -53,9 +53,14 @@ export const TIMING_CONSTANTS = {
 		oppPaceMinClockS: 20,
 		/** `budget_used_ratio = 1 − pressure − min(1, ply / (2·N0))`. */
 		expectedMovesN0: 40,
-		/** Untimed games (§8.4b item 1) are conditioned as this classical control. */
-		untimedVirtualBaseS: 1800,
 	},
+	/**
+	 * Clockless games (§8.4b items 1 and 6): ONE virtual context shared by the features, the
+	 * budget bypass and the ChessMimic inputs (a blitz context inside ChessMimic's training
+	 * range). The clock-pressure terms and the budget controller are bypassed, which is what
+	 * "classical conditioning" means here — not a long virtual base.
+	 */
+	untimedVirtual: { clockS: 300, incS: 0 },
 	/** Appendix D §3a.2 budget controller. */
 	budget: {
 		nRemBase: 22,
@@ -161,8 +166,11 @@ export const TIMING_CONSTANTS = {
 		clockUnder20: 0.8,
 		lnNReasonable: -0.5,
 		iota: 0.5,
+		/**
+		 * §3a.5's `−0.3·decisiveness⁻¹` term (absent from the condensed Appendix A; §3a.5 wins),
+		 * evaluated as `1 / max(decisiveness, floor)` so two equal moves give a finite penalty.
+		 */
 		decisivenessInv: -0.3,
-		/** `decisiveness⁻¹` is evaluated as `1 / max(decisiveness, floor)` (two equal moves → finite). */
 		decisivenessInvFloor: 0.25,
 		/** `t = t_motor + U(minS, minS + rangeS)`. */
 		minS: 0.05,
@@ -257,8 +265,6 @@ export const TIMING_CONSTANTS = {
 		sGameSigma: 0.2,
 		arSigma: 0.2,
 		arPhi: 0.35,
-		virtualClockS: 300,
-		virtualIncS: 0,
 		temperature: 1,
 		inferenceBudgetMs: 100,
 		bands: ["1200_1300", "1500_1600", "1800_1900"],
@@ -269,8 +275,8 @@ export const TIMING_CONSTANTS = {
 		nBuckets: 30,
 		/** Placeholder span of the open [40, ∞) bucket (the empirical samples cover 40–59 s). */
 		openBucketSpanS: 20,
-		/** Buckets ≥ this index (≥ 27 s) or `t > longMedianMultiple·median` label the sample `long`. */
-		longBucketFrom: 27,
+		/** The top 4 buckets (≥ 26 s, §3b.1) or `t > longMedianMultiple·median` label the sample `long`. */
+		longBucketFrom: 26,
 		longMedianMultiple: 6,
 	},
 	/** Appendix D §7: v2 MLP head (not shipped; kept for the knob table). */

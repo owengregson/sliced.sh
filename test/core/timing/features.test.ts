@@ -94,8 +94,9 @@ describe("computeFeatures", () => {
 		const f = computeFeatures(ctx({ baseSec: 0, incSec: 0, myClockMs: 0, oppClockMs: 0 }));
 		expect(f.tc).toBe("untimed");
 		expect(f.pressure).toBe(1);
-		expect(f.clock_s).toBe(1800);
-		expect(f.base_eff).toBe(1800);
+		expect(f.clock_s).toBe(300);
+		expect(f.base_eff).toBe(300);
+		expect(f.inc_s).toBe(0);
 	});
 	it("swing_bad / swing_good from the eval before the opponent's move", () => {
 		const bad = computeFeatures(ctx({ evalBeforeOppMove: 120 })); // now +20 → swing +100

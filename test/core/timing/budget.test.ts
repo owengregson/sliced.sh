@@ -72,6 +72,6 @@ describe("budget controller", () => {
 	it("untimed games bypass the clock budget (classical schedule)", () => {
 		const f = computeFeatures(ctx({ baseSec: 0, incSec: 0, myClockMs: 0, oppClockMs: 0 }));
 		expect(budgetController(f, persona(0.2))).toBe(scheduleAlloc(f));
-		expect(scheduleAlloc(f)).toBeCloseTo(1800 / 40, 10);
+		expect(scheduleAlloc(f)).toBeCloseTo(300 / 40, 10);
 	});
 });
