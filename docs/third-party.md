@@ -92,8 +92,9 @@ The panel's type (Lattice `tokens.type.family`) is three open-source families, a
 SIL Open Font License 1.1 (the OFL text ships next to each file). Each is a variable woff2,
 instanced to the weights the design system uses and subset to Latin plus the panel's symbols
 with `fonttools` (`pyftsubset` / `varLib.instancer`); the fonts are not modified otherwise.
-The OFL permits this bundling and subsetting; the Reserved Font Name clause is respected because
-the files are only ever referenced under the original family names.
+Subset builds are "Modified Versions" under the OFL, which may be bundled and redistributed;
+OFL §3 forbids using a Reserved Font Name for a Modified Version, and none of these families
+declares one, which is why the subsets may keep their original family names.
 
 | Family | File | Axes kept | Bytes | SHA-256 |
 |---|---|---|---|---|
@@ -102,6 +103,8 @@ the files are only ever referenced under the original family names.
 | Bricolage Grotesque | `BricolageGrotesque-Variable.woff2` | opsz 12–96, wght 400–600 (wdth pinned to 100) | 81,704 | `6b65fcf4af23b1d88e143829b121403e65d3e1a460679659615e7fc1c26edcd6` |
 
 Total 120,900 bytes (budget 266,240 = 260 KB).
+
+Each `@font-face` declares `unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+2074, U+20AC, U+2122, U+2190-2193, U+2212, U+2215, U+2264, U+2265, U+2654-265F, U+FEFF, U+FFFD`.
 
 - **Geist** — npm `geist` (https://github.com/vercel/geist-font), `dist/fonts/geist-sans/Geist-Variable.ttf`; geist@1.7.2 (font version 1.800). Copyright (c) 2023 Vercel, in collaboration with basement.studio. Licence text: `assets/fonts/LICENSE-Geist.txt`.
 - **Geist Mono** — npm `geist` (https://github.com/vercel/geist-font), `dist/fonts/geist-mono/GeistMono-Variable.ttf`; geist@1.7.2 (font version 1.700). Copyright (c) 2023 Vercel, in collaboration with basement.studio. Licence text: `assets/fonts/LICENSE-GeistMono.txt`.

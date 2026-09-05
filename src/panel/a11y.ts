@@ -210,11 +210,16 @@ function textFromContent(el: Element): string {
 	return collapse(out);
 }
 
+function escapeSelector(id: string, doc: Document): string {
+	const css = doc.defaultView?.CSS ?? (typeof CSS === "undefined" ? undefined : CSS);
+	return css ? css.escape(id) : id.replace(/["\\]/g, "\\$&");
+}
+
 function labelFor(el: Element): string {
 	const id = el.getAttribute("id");
 	const doc = el.ownerDocument;
 	if (id) {
-		const label = doc.querySelector(`label[for="${id}"]`);
+		const label = doc.querySelector(`label[for="${escapeSelector(id, doc)}"]`);
 		if (label) {
 			const text = textFromContent(label);
 			if (text) return text;
@@ -224,7 +229,10 @@ function labelFor(el: Element): string {
 	return wrapping ? textFromContent(wrapping) : "";
 }
 
-/** Simplified accname: labelledby → label → `<label>` → alt → content → title → placeholder. */
+/**
+ * Simplified accname: labelledby → aria-label → `<label>` → alt → content → title. `placeholder`
+ * is deliberately not a source: an input labelled only by its placeholder fails the audit.
+ */
 export function accessibleName(el: Element): string {
 	const labelledBy = el.getAttribute("aria-labelledby");
 	if (labelledBy) {
@@ -253,9 +261,7 @@ export function accessibleName(el: Element): string {
 		const content = textFromContent(el);
 		if (content) return content;
 	}
-	const title = collapse(el.getAttribute("title") ?? "");
-	if (title) return title;
-	return collapse(el.getAttribute("placeholder") ?? "");
+	return collapse(el.getAttribute("title") ?? "");
 }
 
 /** Interactive elements under `root` (inclusive) without an accessible name. */

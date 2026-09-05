@@ -24,7 +24,7 @@ import { createEmptyState } from "@panel/components/empty-state";
 import { createEvalBar } from "@panel/components/eval-bar";
 import { createInput } from "@panel/components/input";
 import { createKeybindCapture } from "@panel/components/keybind";
-import { createMoveCard, spellSan } from "@panel/components/move-card";
+import { createMoveCard } from "@panel/components/move-card";
 import { openPopover } from "@panel/components/popover";
 import { createPvList } from "@panel/components/pv-list";
 import { createSegment } from "@panel/components/segment";
@@ -38,13 +38,17 @@ import type { PanelStore } from "@panel/store";
 import { createThemeController, isReducedMotion, MEDIA_QUERIES } from "@panel/theme";
 import { VIEW_NAMES, type View } from "@panel/view";
 import { renderTokens } from "../../scripts/gen-tokens";
+import {
+	FONT_BUDGET_BYTES,
+	FONT_UNICODE_RANGE_CSS,
+	FONT_UNICODES,
+} from "../../scripts/vendor-engine";
 import { tokens } from "../../src/design/tokens";
 import { bootPanelDom, key, type PanelDom } from "./dom";
 import { makeSnapshot } from "./fixtures";
 
 const ROOT = path.resolve(import.meta.dir, "..", "..");
 const FONT_DIR = path.join(ROOT, "assets", "fonts");
-const FONT_BUDGET_BYTES = 260 * 1024;
 
 // ── helpers ─────────────────────────────────────────────────────────────────────────────────
 
@@ -127,7 +131,11 @@ function kitchenSinkView(): View {
 			const section = document.createElement("section");
 			section.dataset.view = "live";
 			ctx.container.append(section);
+			const pvList = createPvList(section);
+			const moveCard = createMoveCard(section);
 			const handles = [
+				pvList,
+				moveCard,
 				createButton(section, { label: COPY.move.play, icon: "action.play", kbd: "Space" }),
 				createButton(section, { label: COPY.common.close, icon: "action.cancel" }),
 				createToggle(section, {
@@ -183,24 +191,19 @@ function kitchenSinkView(): View {
 				}),
 				createClock(section),
 				createEvalBar(section),
-				createPvList(section),
-				createMoveCard(section),
 				createEmptyState(section, {
 					title: COPY.unsupported.title,
 					body: COPY.unsupported.body,
 					actions: [{ label: COPY.banner.openEngine }],
 				}),
 			];
-			const pv = handles[11];
-			if (pv && "update" in pv)
-				(pv as ReturnType<typeof createPvList>).update({
-					lines: [
-						{ multipv: 1, score: { cp: 34 }, depth: 18, pvUci: ["g1f3"], pvSan: ["Nf3"] },
-						{ multipv: 2, score: { cp: 12 }, depth: 18, pvUci: ["e2e4"], pvSan: ["e4"] },
-					],
-				});
-			const card = handles[12] as ReturnType<typeof createMoveCard>;
-			card.update({ state: "your-move", color: "w", san: "Nf3", uci: "g1→f3", kbd: "Space" });
+			pvList.update({
+				lines: [
+					{ multipv: 1, score: { cp: 34 }, depth: 18, pvUci: ["g1f3"], pvSan: ["Nf3"] },
+					{ multipv: 2, score: { cp: 12 }, depth: 18, pvUci: ["e2e4"], pvSan: ["e4"] },
+				],
+			});
+			moveCard.update({ state: "your-move", color: "w", san: "Nf3", uci: "g1→f3", kbd: "Space" });
 			return () => {
 				for (const h of handles) h.dispose();
 				section.remove();
@@ -267,9 +270,12 @@ describe("sanToSpeech", () => {
 		expect(sanToSpeech("exd5+")).toBe(`e ${COPY.a11y.takes} d5 ${COPY.a11y.check}`);
 	});
 
-	it("agrees with the move card's local spellSan on the §7.4 examples (single source at integration)", () => {
-		for (const san of ["Nf3", "O-O", "O-O-O", "exd5+", "e8=Q#", "Qxe7", "Bxf7+", "e4", "Rxh8#"])
-			expect(sanToSpeech(san)).toBe(spellSan(san));
+	it("regression: inputs the move card's former local parser got wrong", () => {
+		expect(sanToSpeech("Nbd2")).toBe("knight b d2");
+		expect(sanToSpeech("O-O+")).toBe("castles kingside check");
+		expect(sanToSpeech("e8Q")).toBe("e8 promotes to queen");
+		expect(sanToSpeech("0-0")).toBe("castles kingside");
+		expect(sanToSpeech("Nf3!?")).toBe("knight f3");
 	});
 });
 
@@ -301,12 +307,12 @@ describe("accessibleName / findUnnamedInteractive", () => {
 		expect(accessibleName(byId("d"))).toBe("Play");
 		expect(accessibleName(byId("e"))).toBe("Update");
 		expect(accessibleName(byId("f"))).toBe("Dismiss");
-		expect(accessibleName(byId("g"))).toBe("Search");
+		expect(accessibleName(byId("g"))).toBe(""); // placeholder is not a name
 		expect(accessibleName(byId("h"))).toBe("");
 		expect(accessibleName(byId("i"))).toBe("");
 		expect(accessibleName(byId("j"))).toBe("Renew");
 		expect(accessibleName(byId("k"))).toBe("");
-		expect(findUnnamedInteractive(document.body).map((el) => el.id)).toEqual(["h", "i", "k"]);
+		expect(findUnnamedInteractive(document.body).map((el) => el.id)).toEqual(["g", "h", "i", "k"]);
 	});
 
 	it("every interactive element in the mounted shell, each registered view and the components is named", async () => {
@@ -631,6 +637,13 @@ describe("fonts", () => {
 		familyName(tokens.type.family[k as keyof typeof tokens.type.family])
 	);
 
+	it("the unicode-range is the subset's range list, from one place in the vendor script", () => {
+		expect(FONT_UNICODE_RANGE_CSS).toBe(FONT_UNICODES.split(",").join(", "));
+		// × → ½ − (U+00D7, U+2192, U+00BD, U+2212) plus the arrows and figurines are covered.
+		for (const cp of ["U+0000-00FF", "U+2190-2193", "U+2212", "U+2654-265F"])
+			expect(FONT_UNICODES).toContain(cp);
+	});
+
 	it("declares one @font-face per Lattice family with font-display: swap and ../assets/fonts urls", () => {
 		expect(families).toEqual(["Geist", "Bricolage Grotesque", "Geist Mono"]);
 		expect(faces.length).toBeGreaterThanOrEqual(3);
@@ -638,6 +651,7 @@ describe("fonts", () => {
 			const face = faces.find((f) => f.includes(`font-family: "${family}"`));
 			expect({ family, found: face !== undefined }).toEqual({ family, found: true });
 			expect(face).toContain("font-display: swap");
+			expect(face).toContain(`unicode-range: ${FONT_UNICODE_RANGE_CSS};`);
 			expect(face).toMatch(
 				/src:\s*url\("\.\.\/assets\/fonts\/[A-Za-z-]+\.woff2"\)\s*format\("woff2"\)/
 			);

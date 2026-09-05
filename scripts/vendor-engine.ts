@@ -382,6 +382,12 @@ export const FONT_FAMILIES: readonly FontFamilyNotice[] = [
 export const FONT_UNICODES =
 	"U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+2074,U+20AC,U+2122,U+2190-2193,U+2212,U+2215,U+2264,U+2265,U+2654-265F,U+FEFF,U+FFFD";
 
+/** CSS `unicode-range` value for the `@font-face` blocks in `css/base.css` (same ranges). */
+export const FONT_UNICODE_RANGE_CSS = FONT_UNICODES.split(",").join(", ");
+
+/** Appendix F §9 Q4: the three subsets together must stay within this many bytes. */
+export const FONT_BUDGET_BYTES = 260 * 1024;
+
 /** Sizes + hashes of the shipped subsets (each family's `file` must exist). */
 export async function describeFonts(dir = path.join(ROOT, FONTS_DIR)): Promise<VendoredFont[]> {
 	const out: VendoredFont[] = [];
@@ -405,14 +411,17 @@ The panel's type (Lattice \`tokens.type.family\`) is three open-source families,
 SIL Open Font License 1.1 (the OFL text ships next to each file). Each is a variable woff2,
 instanced to the weights the design system uses and subset to Latin plus the panel's symbols
 with \`fonttools\` (\`pyftsubset\` / \`varLib.instancer\`); the fonts are not modified otherwise.
-The OFL permits this bundling and subsetting; the Reserved Font Name clause is respected because
-the files are only ever referenced under the original family names.
+Subset builds are "Modified Versions" under the OFL, which may be bundled and redistributed;
+OFL §3 forbids using a Reserved Font Name for a Modified Version, and none of these families
+declares one, which is why the subsets may keep their original family names.
 
 | Family | File | Axes kept | Bytes | SHA-256 |
 |---|---|---|---|---|
 ${fonts.map(row).join("\n")}
 
-Total ${total.toLocaleString("en-US")} bytes (budget 266,240 = 260 KB).
+Total ${total.toLocaleString("en-US")} bytes (budget ${FONT_BUDGET_BYTES.toLocaleString("en-US")} = 260 KB).
+
+Each \`@font-face\` declares \`unicode-range: ${FONT_UNICODE_RANGE_CSS}\`.
 
 ${fonts.map(provenance).join("\n")}
 

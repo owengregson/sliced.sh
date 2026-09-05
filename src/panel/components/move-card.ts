@@ -8,6 +8,7 @@
 
 import { UI_TIMINGS } from "@core/constants/ui";
 import { TOKENS } from "@design/tokens.generated";
+import { sanToSpeech } from "../a11y";
 import { ANIM } from "../animation-manager";
 import { COPY } from "../copy";
 import { registerEscape } from "../keys";
@@ -56,35 +57,6 @@ export interface MoveCardHandle {
 }
 
 const MS = 1000;
-
-/** SAN spelled out for `aria-live` (§7.4): "knight f3", "castles kingside". */
-export function spellSan(san: string): string {
-	const clean = san.replace(/[+#]$/g, "");
-	if (/^O-O-O/.test(san)) return COPY.a11y.castleQueen;
-	if (/^O-O/.test(san)) return COPY.a11y.castleKing;
-	const words: string[] = [];
-	const piece = COPY.a11y.pieces[clean[0] as keyof typeof COPY.a11y.pieces];
-	let rest = clean;
-	if (piece) {
-		words.push(piece);
-		rest = clean.slice(1);
-	}
-	const promo = /=([QRBN])$/.exec(rest);
-	if (promo) rest = rest.slice(0, -2);
-	if (rest.includes("x")) {
-		const [from, to] = rest.split("x");
-		if (from) words.push(from);
-		words.push(COPY.a11y.takes);
-		if (to) words.push(to);
-	} else words.push(rest);
-	if (promo?.[1]) {
-		const p = COPY.a11y.pieces[promo[1] as keyof typeof COPY.a11y.pieces];
-		if (p) words.push(COPY.a11y.promotes, p);
-	}
-	if (san.endsWith("#")) words.push(COPY.a11y.checkmate);
-	else if (san.endsWith("+")) words.push(COPY.a11y.check);
-	return words.join(" ");
-}
 
 /** Countdown label: tenths above 1 s, whole seconds below (§6.2). */
 export function formatCountdown(remainingMs: number): string {
@@ -207,7 +179,7 @@ export function createMoveCard(
 		plan.hidden = !planVisible;
 		planText.textContent = next.plan?.text ?? "";
 		if (showSan && next.san && next.state === "your-move")
-			live.textContent = COPY.move.ariaRecommended(spellSan(next.san), next.uci ?? "");
+			live.textContent = COPY.move.ariaRecommended(sanToSpeech(next.san), next.uci ?? "");
 		else live.textContent = "";
 		renderButton();
 	}
@@ -224,7 +196,7 @@ export function createMoveCard(
 		if (!hovering) button.update({ label: COPY.move.armed(formatCountdown(remainingMs)) });
 		if (seconds !== lastSpokenSecond) {
 			lastSpokenSecond = seconds;
-			button.update({ ariaLabel: COPY.move.ariaArmed(spellSan(data.san ?? ""), seconds) });
+			button.update({ ariaLabel: COPY.move.ariaArmed(sanToSpeech(data.san ?? ""), seconds) });
 		}
 	}
 
