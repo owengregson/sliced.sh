@@ -65,6 +65,8 @@ export function makeRecommendation(o: Partial<Recommendation> = {}): Recommendat
 			deadlineMs: THINK_MS,
 			rationale: [],
 			features: {},
+			orientationMs: 250,
+			window: { orientationMs: 250, scanMs: 0, previewMs: 0, decisionMs: 0, approachMs: 0 },
 		},
 		computedAt: Date.now(),
 		fen: FEN_W,

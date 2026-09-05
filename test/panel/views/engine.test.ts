@@ -197,6 +197,8 @@ function engineSnapshot(nps = 1_420_000, depth = 18): PanelSnapshot {
 			deadlineMs: 0,
 			rationale: [],
 			features: {},
+			orientationMs: 250,
+			window: { orientationMs: 250, scanMs: 0, previewMs: 0, decisionMs: 0, approachMs: 0 },
 		},
 		computedAt: 1,
 		fen: "",
