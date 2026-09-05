@@ -17,11 +17,11 @@
 import { BRIDGE_WIRE as W } from "@core/constants/bridge";
 import { defineProgram, js } from "@pagescript";
 import {
-	cursorStatements,
+	cursorListeners,
+	cursorState,
 	defineHandle,
 	definePost,
 	defineSafe,
-	focusStatements,
 	KINDS,
 	listen,
 	min,
@@ -63,7 +63,8 @@ export const lichessBridge = defineProgram({
 			),
 			definePost(p.token),
 			defineSafe(),
-			...cursorStatements(),
+			cursorState(),
+			...cursorListeners(),
 			...overlayStatements({ hosts: p.hosts, cls: p.overlayClass, colors: p.colors }),
 			js.let_("wait", p.retryMs),
 			js.let_("spent", js.num(0)),
@@ -146,7 +147,6 @@ export const lichessBridge = defineProgram({
 				{ kind: KINDS.cursor, body: [post(KINDS.cursor, i, js.id(NAMES.cursor))] },
 			]),
 			listen(p.peer),
-			...focusStatements(),
 			js.expr(js.call(js.id("subscribe"))),
 			post(KINDS.ready, undef, js.call(js.id("state"))),
 		]),

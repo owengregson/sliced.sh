@@ -10,6 +10,15 @@
  * SPOOF_PURPOSES.*)` — the same derivation `src/content/page-bridge-client.ts`
  * performs at runtime with `__SL_SPOOF_SEED__`.
  *
+ * Delivery of the §5.5 `cursor-probe` (for Task 18, the executor): the
+ * canonical path is the **bridge** — each bridge keeps the last trusted
+ * pointer position in its closure and answers the `cursor` command; the
+ * content script exposes it on the game port as `cursorProbe` →
+ * `cursorProbeResult` (falling back to its own `CursorTracker`). The
+ * `cursor-probe` program is only an explicit CDP fallback that returns `null`
+ * at once (no marker on `window` ⇒ nothing to read synchronously); it never
+ * waits.
+ *
  * Build/test-time only: this module imports `@pagescript` and must never be
  * reached from a runtime bundle.
  */
@@ -58,9 +67,17 @@ export const chesscomEntryArgs = (env: EntryEnv) => ({
 	retryMaxMs: TIMINGS.bridgeRetryMaxMs,
 });
 
+function lichessHost(): string {
+	const host = hostOfMatchPattern(URLS.lichessMatch);
+	if (host === null || host === "") {
+		throw new Error(`gen-pagescript: URLS.lichessMatch has no host: ${URLS.lichessMatch}`);
+	}
+	return host;
+}
+
 export const lichessEntryArgs = (env: EntryEnv) => ({
 	...bridgeTokens(env),
-	host: hostOfMatchPattern(URLS.lichessMatch) ?? "",
+	host: lichessHost(),
 	hosts: [SELECTORS.lichess.container],
 	colors: OVERLAY_COLORS,
 	retryMs: TIMINGS.bridgeRetryMs,

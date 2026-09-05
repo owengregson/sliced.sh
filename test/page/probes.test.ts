@@ -100,23 +100,17 @@ describe("verify-move-probe", () => {
 	});
 });
 
-describe("cursor-probe", () => {
-	it("resolves with the next trusted pointer position { x, y, t } and removes its listener; null on timeout", async () => {
+describe("cursor-probe (CDP fallback only)", () => {
+	it("returns null immediately, installs no listener and never waits", async () => {
 		const w = win();
 		const e = emit(cursorProbe, { seed: SEED });
-		const timedOut = runProgram(bindCode(e.code, e.params, { timeoutMs: 20 }), w, {}, true);
-		expect(await timedOut).toBeNull();
-
-		const pending = runProgram(bindCode(e.code, e.params, { timeoutMs: 500 }), w, {}, true);
-		const untrusted = new w.PointerEvent("pointermove", { clientX: 1, clientY: 2 });
-		w.dispatchEvent(untrusted);
-		const trusted = new w.PointerEvent("pointermove", { clientX: 10, clientY: 20 });
-		Object.defineProperty(trusted, "isTrusted", { value: true });
-		w.dispatchEvent(trusted);
-		const out = (await pending) as Record<string, unknown>;
-		expect(out.x).toBe(10);
-		expect(out.y).toBe(20);
-		expect(typeof out.t).toBe("number");
-		expect(Object.keys(out).sort()).toEqual(["t", "x", "y"]);
+		expect(e.params).toEqual([]);
+		expect(e.code).not.toContain("addEventListener");
+		expect(e.code).not.toContain("setTimeout");
+		expect(e.code).not.toContain("Promise");
+		const keysBefore = Object.keys(w);
+		const out = runProgram(e.code, w, {}, true);
+		expect(out).toBeNull();
+		expect(Object.keys(w)).toEqual(keysBefore);
 	});
 });

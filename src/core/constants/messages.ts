@@ -50,7 +50,6 @@ export const MSG = {
 	// content → SW (request/response)
 	CONTENT_HELLO: "sl:content:hello",
 	CONTENT_KEYBIND: "sl:content:keybind",
-	CONTENT_CURSOR: "sl:content:cursor",
 	// SW → content (fire-and-forget)
 	CONTENT_HIGHLIGHT: "sl:content:highlight",
 	CONTENT_CLEAR_HIGHLIGHT: "sl:content:clearHighlight",
@@ -116,6 +115,15 @@ export type GamePortMessage =
 	| { kind: "moveObserved"; san: string; ply: number; byMe: boolean; atMs: number }
 	/** Reply to `observeMove` (Task 18 executor ↔ Task 21 content). */
 	| { kind: "observeMoveResult"; id: string; ok: boolean; reason?: string }
+	/**
+	 * Reply to `cursorProbe` (the canonical §5.5 `cursor-probe` path, Task 21): the last
+	 * trusted pointer position from the MAIN-world bridge closure, else the ISOLATED tracker.
+	 */
+	| {
+			kind: "cursorProbeResult";
+			id: string;
+			position: { x: number; y: number; t: number; real: true } | null;
+	  }
 	/** Reply to `geometry`: the 8×8 board rect, every square, orientation, open promotion picker. */
 	| {
 			kind: "geometryResult";
@@ -144,7 +152,9 @@ export type GamePortCommand =
 			timeoutMs: number;
 	  }
 	/** Ask for the board geometry; answered by `geometryResult`. */
-	| { kind: "geometry"; id: string };
+	| { kind: "geometry"; id: string }
+	/** Ask for the last known trusted pointer position; answered by `cursorProbeResult`. */
+	| { kind: "cursorProbe"; id: string };
 
 /**
  * A slice of a net relayed by the SW (`handlers/engine/nnue-download.ts`).

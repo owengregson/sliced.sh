@@ -164,7 +164,8 @@ export interface SiteAdapter {
 	/** Draw the recommendation (only when asked — default off, §13.3). */
 	highlight(from: Square, to: Square, style: HighlightStyle): void;
 	arrows(lines: ArrowLine[]): void;
-	clearHighlights(): void;
+	/** Resolves once the page side has answered (or the bridge call timed out / failed). */
+	clearHighlights(): Promise<void>;
 
 	/** Click the site's own new-game / rematch control; whether one was found. */
 	tryStartNewGame(mode: NewGameMode): boolean;
@@ -200,8 +201,6 @@ export const BRIDGE_KINDS = {
 	ply: "ply",
 	/** Both directions: content asks for the last pointer position, the page answers (Task 21). */
 	cursor: "cursor",
-	/** page → content: a window focus / blur / visibilitychange edge seen by the page realm. */
-	focus: "focus",
 } as const;
 
 /** Normalised `getState` / `move` / `state` payload from either bridge. */
@@ -485,14 +484,17 @@ export abstract class AdapterBase implements SiteAdapter {
 		);
 	}
 
-	clearHighlights(): void {
+	clearHighlights(): Promise<void> {
 		const bridge = this.readyBridge();
-		if (!bridge) return;
+		if (!bridge) return Promise.resolve();
 		const payload = this.clearPayload();
 		this.highlightKeys = [];
-		bridge.call(BRIDGE_KINDS.clear, payload, BRIDGE_CALL_TIMEOUT_MS).catch((e: unknown) => {
-			log.debug("adapter.clear failed", this.site, e);
-		});
+		return bridge
+			.call(BRIDGE_KINDS.clear, payload, BRIDGE_CALL_TIMEOUT_MS)
+			.then(() => undefined)
+			.catch((e: unknown) => {
+				log.debug("adapter.clear failed", this.site, e);
+			});
 	}
 
 	observeMove(expected: UciParts, timeoutMs: number): Promise<boolean> {

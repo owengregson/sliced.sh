@@ -50,11 +50,6 @@ export interface BridgeLegalMove {
 	san?: string;
 }
 
-export interface BridgeFocus {
-	hasFocus: boolean;
-	visibility: "visible" | "hidden";
-}
-
 type Dict = Record<string, unknown>;
 
 function isDict(v: unknown): v is Dict {
@@ -132,14 +127,6 @@ function decodeCursor(p: unknown): BridgeCursor | null {
 	return { x, y, t: typeof t === "number" ? t : 0 };
 }
 
-function decodeFocus(p: unknown): BridgeFocus {
-	const d = isDict(p) ? p : {};
-	return {
-		hasFocus: d[W.hasFocus] === true,
-		visibility: d[W.visibility] === "h" ? "hidden" : "visible",
-	};
-}
-
 /** Page → content payload by kind (replies and events share the codec). */
 export function decodePayload(kind: string, p: unknown): unknown {
 	switch (kind) {
@@ -154,8 +141,6 @@ export function decodePayload(kind: string, p: unknown): unknown {
 			return decodeLegalMoves(p);
 		case BRIDGE_KINDS.cursor:
 			return decodeCursor(p);
-		case BRIDGE_KINDS.focus:
-			return decodeFocus(p);
 		case BRIDGE_KINDS.draw: {
 			const keys = isDict(p) && Array.isArray(p[W.keys]) ? (p[W.keys] as unknown[]) : [];
 			return { keys: keys.filter((k): k is string => typeof k === "string") };

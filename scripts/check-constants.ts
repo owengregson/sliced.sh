@@ -1,10 +1,14 @@
-// scripts/check-constants.ts — C1 lint: no duplicated registry literals (§4.1 rule 4).
+// scripts/check-constants.ts — C1 lint: no duplicated registry literals (§4.1 rule 4),
+// plus the §13.3 rule 2 / §9 page-realm API ban.
 //
 // Scans `src/**/*.ts` (not `.d.ts`, not generated/) for
 //   (a) string literals matching the namespaced prefixes (`sl::`, `sl:`, `sl-`, `__sl_`)
-//       that are defined in a registry file and re-declared anywhere else, and
+//       that are defined in a registry file and re-declared anywhere else,
 //   (b) numeric literals annotated with a `// const: <Name>` marker outside a registry
-//       file (the marker means "this number belongs in a registry").
+//       file (the marker means "this number belongs in a registry"), and
+//   (c) under `src/content/**` and `src/page/**` only: any occurrence of a forbidden page
+//       API (page storage, synthetic input events, speech, tab/window manipulation) —
+//       comments included, so the words never appear there at all.
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
@@ -17,6 +21,47 @@ export interface Duplicate {
 	file: string;
 	literal: string;
 	definedIn: string;
+}
+
+/** Directories whose sources run in or beside the host page (§13.3 rule 2). */
+const PAGE_REALM_DIRS = ["src/content/", "src/page/"];
+
+/** APIs that must never appear under the page-realm directories (§13.3 rule 2, §9). */
+export const FORBIDDEN_PAGE_APIS = [
+	"localStorage",
+	"sessionStorage",
+	"indexedDB",
+	"document.cookie",
+	"dispatchEvent",
+	"new PointerEvent",
+	"new MouseEvent",
+	"speechSynthesis",
+	"chrome.tabs.update",
+	"chrome.tabs.create",
+	"chrome.notifications",
+	"window.open",
+] as const;
+
+export interface ForbiddenApiHit {
+	file: string;
+	api: string;
+	line: number;
+}
+
+/** Every forbidden-API occurrence in the page-realm files of `files` (repo-relative keys). */
+export function findForbiddenPageApis(files: Record<string, string>): ForbiddenApiHit[] {
+	const out: ForbiddenApiHit[] = [];
+	for (const [file, src] of Object.entries(files)) {
+		if (!PAGE_REALM_DIRS.some((d) => file.startsWith(d))) continue;
+		const lines = src.split("\n");
+		for (let i = 0; i < lines.length; i += 1) {
+			const line = lines[i] ?? "";
+			for (const api of FORBIDDEN_PAGE_APIS) {
+				if (line.includes(api)) out.push({ file, api, line: i + 1 });
+			}
+		}
+	}
+	return out;
 }
 
 function isRegistryFile(f: string): boolean {
@@ -98,6 +143,12 @@ export function checkConstants(root = "src"): void {
 		for (const d of dups)
 			console.error(`duplicate constant "${d.literal}" in ${d.file} (defined in ${d.definedIn})`);
 		throw new Error(`${dups.length} duplicated constant(s)`);
+	}
+	const hits = findForbiddenPageApis(files);
+	if (hits.length) {
+		for (const h of hits)
+			console.error(`forbidden page API "${h.api}" in ${h.file}:${h.line} (§13.3 rule 2)`);
+		throw new Error(`${hits.length} forbidden page API use(s)`);
 	}
 }
 

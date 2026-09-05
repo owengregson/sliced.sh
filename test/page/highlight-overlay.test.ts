@@ -59,13 +59,17 @@ describe("highlight-overlay", () => {
 		expect(Object.keys(win)).toEqual(keysBefore);
 		expect(win.document.querySelectorAll("svg")).toHaveLength(0);
 		runProgram(bound, win); // second evaluation: still nothing inserted
-		sendToPage(win, command("draw", "1", { r: "w", h: [{ q: "d4" }], a: [{ f: "g1", t: "f3" }] }));
+		sendToPage(
+			win,
+			command("draw", "1", { r: "w", h: [{ q: "d2" }, { q: "d4" }], a: [{ f: "g1", t: "f3" }] })
+		);
 		// both listeners drew into the same element: still exactly one overlay
 		const svgs = win.document.querySelectorAll(`cg-container > svg.${overlayClass}`);
 		expect(svgs).toHaveLength(1);
 		expect(svgs[0]?.getAttribute("style")).toContain("pointer-events:none");
-		const rect = svgs[0]?.querySelector("rect");
-		expect(rect?.getAttribute("fill")).toBe(OVERLAY_COLORS.from); // fallback colour from TOKENS
+		const rects = svgs[0]?.querySelectorAll("rect") ?? [];
+		expect(rects[0]?.getAttribute("fill")).toBe(OVERLAY_COLORS.from); // fallback colours from TOKENS
+		expect(rects[1]?.getAttribute("fill")).toBe(OVERLAY_COLORS.to);
 		expect(svgs[0]?.querySelector("polygon")?.getAttribute("fill")).toBe(OVERLAY_COLORS.arrow);
 		expect(reply(posts, "1")?.p).toEqual({ y: [] });
 		sendToPage(win, command("clear", "2"));

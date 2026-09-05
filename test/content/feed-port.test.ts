@@ -148,8 +148,15 @@ describe("FeedPort", () => {
 		feed.post(newer);
 		rt.ports[0]?.emitDisconnect();
 		feed.post({ kind: "gameEnded", result: "1-0" });
+		feed.post({ kind: "focus", hasFocus: true, visibility: "visible", at: 9 });
 		scheduler.fire();
-		expect(rt.ports[1]?.posted).toEqual([hello, newer, { kind: "gameEnded", result: "1-0" }]);
+		// hello + last position first, then everything posted during the outage, in order
+		expect(rt.ports[1]?.posted).toEqual([
+			hello,
+			newer,
+			{ kind: "gameEnded", result: "1-0" },
+			{ kind: "focus", hasFocus: true, visibility: "visible", at: 9 },
+		]);
 		// the new port dies at once (SW still gone): Chrome loses what was flushed into it, so the
 		// next reconnect gets hello + last position again
 		rt.ports[1]?.emitDisconnect();

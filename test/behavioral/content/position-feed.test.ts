@@ -13,6 +13,7 @@
  */
 
 import { afterEach, describe, expect, it } from "bun:test";
+import type { ContentHandle } from "@content/index";
 import type { GamePortCommand, GamePortMessage } from "@core/constants/messages";
 import { PORT_NAMES } from "@core/constants/ports";
 import { type AcceptedPort, acceptPorts } from "@core/messaging/ports";
@@ -32,10 +33,11 @@ const prevChrome = (globalThis as Record<string, unknown>).chrome;
 let sim: Simulator;
 let sw: SwContext | undefined;
 let content: ContentContext | undefined;
+let booted: ContentHandle | null = null;
 
 afterEach(async () => {
-	const mod = await import("@content/index");
-	await content?.run(() => mod.currentContent()?.dispose());
+	await content?.run(() => booted?.dispose());
+	booted = null;
 	await content?.teardown();
 	await sw?.teardown();
 	await sim.dispose();
@@ -70,8 +72,14 @@ describe("position feed — content ⇄ SW over the game port", () => {
 		});
 
 		content = await bootContentContext(sim, tabId, {
-			entry: () => import("@content/index"),
+			entry: async () => {
+				// The bundle entry auto-boots at module evaluation; when the module is already
+				// cached (shared test process) boot explicitly on the tab's globals.
+				const mod = await import("@content/index");
+				booted = mod.currentContent() ?? mod.startContent();
+			},
 		});
+		expect(booted?.adapter()).not.toBeNull();
 		const of = <K extends GamePortMessage["kind"]>(kind: K) =>
 			received.filter((m) => m.kind === kind) as Array<Extract<GamePortMessage, { kind: K }>>;
 

@@ -50,7 +50,6 @@ export interface MessagePayloadMap {
 	// content → SW
 	[MSG.CONTENT_HELLO]: EmptyPayload;
 	[MSG.CONTENT_KEYBIND]: { action: keyof Keybinds };
-	[MSG.CONTENT_CURSOR]: { x: number; y: number; t: number; real: true };
 	// SW → content
 	[MSG.CONTENT_HIGHLIGHT]: { from: Square; to: Square; style: HighlightStyle };
 	[MSG.CONTENT_CLEAR_HIGHLIGHT]: EmptyPayload;
@@ -88,7 +87,6 @@ export interface MessageResponseMap {
 	[MSG.PANEL_REATTACH_DEBUGGER]: void;
 	[MSG.CONTENT_HELLO]: { keybinds: Keybinds; enabled: boolean };
 	[MSG.CONTENT_KEYBIND]: void;
-	[MSG.CONTENT_CURSOR]: void;
 	[MSG.CONTENT_HIGHLIGHT]: void;
 	[MSG.CONTENT_CLEAR_HIGHLIGHT]: void;
 	[MSG.CONTENT_SET_KEYBINDS]: void;

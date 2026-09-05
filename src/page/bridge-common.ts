@@ -17,7 +17,6 @@ import { type Expression, js, type Statement, std } from "@pagescript";
 export const KINDS = BRIDGE_KINDS;
 
 const win = js.id("window");
-const doc = js.id("document");
 
 export const NAMES = {
 	post: "post",
@@ -67,13 +66,18 @@ export function safe(expr: Expression): Expression {
 const listenerOptions = (): Expression =>
 	js.obj({ capture: js.bool(true), passive: js.bool(true) });
 
+/** `let cur = null;` — the closure slot for the last trusted pointer position. */
+export function cursorState(): Statement {
+	return js.let_(NAMES.cursor, js.nil());
+}
+
 /**
- * `let cur = null;` plus capture-phase, passive `pointermove` / `pointerdown` /
- * `pointerup` listeners on `window` that remember the last *trusted* pointer
- * position as `{ x, y, t }` (wire letters). Installed once, inside the
- * program's closure.
+ * Capture-phase, passive `pointermove` / `pointerdown` / `pointerup` listeners
+ * on `window` that remember the last *trusted* pointer position as
+ * `{ x, y, t }` (wire letters) in `cur`. Installed once, inside the program's
+ * closure, and only once the program has decided it is on its site.
  */
-export function cursorStatements(): Statement[] {
+export function cursorListeners(): Statement[] {
 	const ev = js.id("ev");
 	const handler = js.arrow(
 		["ev"],
@@ -90,52 +94,10 @@ export function cursorStatements(): Statement[] {
 		]
 	);
 	return [
-		js.let_(NAMES.cursor, js.nil()),
 		js.const_("onPointer", handler),
 		...["pointermove", "pointerdown", "pointerup"].map((type) =>
 			js.expr(
 				js.call(js.member(win, "addEventListener"), js.str(type), js.id("onPointer"), listenerOptions())
-			)
-		),
-	];
-}
-
-/**
- * Passive capture listeners for `focus` / `blur` on `window` and
- * `visibilitychange` on `document`; every edge posts
- * `{ k: "focus", p: { h: hasFocus, v: "v" | "h" } }`.
- */
-export function focusStatements(): Statement[] {
-	const report = js.arrow(
-		[],
-		[
-			post(
-				KINDS.focus,
-				js.undef(),
-				js.obj({
-					[W.hasFocus]: js.call(js.member(doc, "hasFocus")),
-					[W.visibility]: js.cond(
-						js.op(js.member(doc, "visibilityState"), "===", js.str("hidden")),
-						js.str("h"),
-						js.str("v")
-					),
-				})
-			),
-		]
-	);
-	return [
-		js.const_("onFocus", report),
-		...["focus", "blur"].map((type) =>
-			js.expr(
-				js.call(js.member(win, "addEventListener"), js.str(type), js.id("onFocus"), listenerOptions())
-			)
-		),
-		js.expr(
-			js.call(
-				js.member(doc, "addEventListener"),
-				js.str("visibilitychange"),
-				js.id("onFocus"),
-				listenerOptions()
 			)
 		),
 	];

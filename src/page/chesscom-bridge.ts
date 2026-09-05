@@ -8,7 +8,8 @@
  *
  * Presence (§13.3): no `window` property (state in this closure), no DOM
  * insertion unless `draw` arrives and native markings are unavailable
- * (overlay fallback), single-letter wire fields (`BRIDGE_WIRE`), no literal
+ * (overlay fallback), no window listener before the board exists,
+ * single-letter wire fields (`BRIDGE_WIRE`), no literal
  * selector / colour / token (all bound from `SELECTORS`, `TOKENS`,
  * `deriveToken` by the generator). Both manifest bridges load on both sites;
  * this one stays silent until the chess.com board element exists.
@@ -17,11 +18,11 @@
 import { BRIDGE_WIRE as W } from "@core/constants/bridge";
 import { defineProgram, js } from "@pagescript";
 import {
-	cursorStatements,
+	cursorListeners,
+	cursorState,
 	defineHandle,
 	definePost,
 	defineSafe,
-	focusStatements,
 	KINDS,
 	listen,
 	min,
@@ -63,7 +64,7 @@ export const chesscomBridge = defineProgram({
 		js.program([
 			definePost(p.token),
 			defineSafe(),
-			...cursorStatements(),
+			cursorState(),
 			js.let_("board", js.nil()),
 			js.let_("game", js.nil()),
 			js.let_("keys", js.arr()),
@@ -174,6 +175,7 @@ export const chesscomBridge = defineProgram({
 							js.if_(
 								js.and(game, js.and(js.member(game, "markings"), q)),
 								[
+									js.let_("n", js.num(0)),
 									js.forOf("h", orEmpty(js.member(q, W.highlights)), [
 										js.const_(
 											"key",
@@ -184,12 +186,20 @@ export const chesscomBridge = defineProgram({
 														type: js.str("highlight"),
 														data: js.obj({
 															square: js.member(js.id("h"), W.square),
-															color: js.or(js.member(js.id("h"), W.color), js.member(p.colors, "from")),
+															color: js.or(
+																js.member(js.id("h"), W.color),
+																js.cond(
+																	js.op(js.id("n"), "===", js.num(0)),
+																	js.member(p.colors, "from"),
+																	js.member(p.colors, "to")
+																)
+															),
 														}),
 													})
 												)
 											)
 										),
+										js.assign(js.id("n"), js.op(js.id("n"), "+", js.num(1))),
 										js.if_(js.id("key"), [js.expr(js.call(js.member(js.id("out"), "push"), js.id("key")))]),
 									]),
 									js.forOf("a", orEmpty(js.member(q, W.arrows)), [
@@ -300,8 +310,9 @@ export const chesscomBridge = defineProgram({
 							js.ret(),
 						]),
 						js.expr(js.call(js.id("attach"), el)),
+						// the site is confirmed: only now touch window listeners
+						...cursorListeners(),
 						listen(p.peer),
-						...focusStatements(),
 						js.expr(
 							js.call(
 								js.member(js.new_(js.id("MutationObserver"), js.id("watch")), "observe"),

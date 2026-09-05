@@ -29,6 +29,8 @@ export const TIMINGS = {
 	bridgeApiWaitMs: 15_000,
 	/** Content cursor tracker: minimum spacing of `pointermove` samples posted on the game port (Task 21). */
 	cursorReportIntervalMs: 200,
+	/** Content entry: readiness poll while a live page has no readable board yet (Task 21). */
+	contentReadyPollMs: 500,
 	/** `connectPort` reconnect backoff: base, doubling up to the cap (Task 4). */
 	portReconnectBaseMs: 250,
 	portReconnectMaxMs: 4_000,

@@ -61,6 +61,18 @@ describe("CursorTracker", () => {
 		fire("pointermove", 7, 7, true);
 		expect(samples.map((s) => s.x)).toEqual([1, 4, 5, 7]);
 	});
+	it("posts every trusted event unthrottled while the hand is active, and counts them", () => {
+		const { tracker, samples, fire } = setup(100);
+		tracker.beginHand();
+		fire("pointermove", 1, 1, true);
+		fire("pointermove", 2, 2, true);
+		fire("pointermove", 3, 3, false);
+		fire("pointermove", 4, 4, true);
+		expect(samples.map((s) => s.x)).toEqual([1, 2, 4]);
+		expect(tracker.endHand()).toBe(3);
+		fire("pointermove", 5, 5, true); // idle again: throttled
+		expect(samples.map((s) => s.x)).toEqual([1, 2, 4]);
+	});
 	it("counts real pointer events while the hand is active", () => {
 		const { tracker, fire } = setup();
 		fire("pointermove", 1, 1, true);

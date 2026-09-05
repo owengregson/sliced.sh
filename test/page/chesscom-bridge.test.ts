@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { SELECTORS } from "@content/adapters/selectors";
 import { bindCode, emit } from "@pagescript";
 import { chesscomBridge } from "../../src/page/chesscom-bridge";
-import { chesscomEntryArgs } from "../../src/page/index";
+import { chesscomEntryArgs, OVERLAY_COLORS } from "../../src/page/index";
 import {
 	command,
 	type FakeGame,
@@ -105,14 +105,24 @@ describe("chesscom-bridge — behaviour", () => {
 			expect.arrayContaining(["Move", "Load", "CreateGame", "ModeChanged", "GameOver"])
 		);
 	});
-	it("keeps retrying until the board element exists", async () => {
+	it("keeps retrying until the board element exists, and installs pointer listeners only then", async () => {
 		const booted = await boot(false);
 		await sleep(30);
 		expect(postsOf(booted.posts, "ready")).toHaveLength(0);
+		const early = new booted.win.PointerEvent("pointermove", { clientX: 7, clientY: 8 });
+		Object.defineProperty(early, "isTrusted", { value: true });
+		booted.win.dispatchEvent(early); // no listener yet: must not be remembered
 		booted.win.document.body.innerHTML = '<wc-chess-board id="board-single"></wc-chess-board>';
 		(booted.win.document.querySelector("wc-chess-board") as unknown as { game: FakeGame }).game =
 			booted.game;
 		await waitFor(() => postsOf(booted.posts, "ready").length > 0, 3_000);
+		sendToPage(booted.win, command("cursor", "c1"));
+		expect(reply(booted.posts, "c1")?.p).toBeNull();
+		const late = new booted.win.PointerEvent("pointermove", { clientX: 70, clientY: 80 });
+		Object.defineProperty(late, "isTrusted", { value: true });
+		booted.win.dispatchEvent(late);
+		sendToPage(booted.win, command("cursor", "c2"));
+		expect(reply(booted.posts, "c2")?.p).toMatchObject({ x: 70, y: 80 });
 	});
 	it("answers getState with { f, t, a, m, o, l, c, s, g, r } correlated by id", async () => {
 		const { win, posts, game } = await boot();
@@ -180,12 +190,13 @@ describe("chesscom-bridge — behaviour", () => {
 	it("falls back to the overlay svg (pointer-events none, spoofed class) when markings are unavailable", async () => {
 		const { win, posts, game } = await boot();
 		(game as unknown as { markings: unknown }).markings = undefined;
-		sendToPage(win, command("draw", "9", { r: "w", h: [{ q: "a1", c: "red" }], a: [] }));
+		sendToPage(win, command("draw", "9", { r: "w", h: [{ q: "a1", c: "red" }, { q: "a2" }], a: [] }));
 		const svg = win.document.querySelector("wc-chess-board > svg");
 		expect(svg).not.toBeNull();
 		expect(svg?.getAttribute("class")).toBe(TOKENS_FOR_SEED.overlayClass);
 		expect(svg?.getAttribute("style")).toContain("pointer-events:none");
-		expect(svg?.querySelectorAll("rect").length).toBe(1);
+		expect(svg?.querySelectorAll("rect").length).toBe(2);
+		expect(svg?.querySelectorAll("rect")[1]?.getAttribute("fill")).toBe(OVERLAY_COLORS.to);
 		expect(reply(posts, "9")?.p).toEqual({ y: [] });
 		sendToPage(win, command("clear", "10"));
 		expect(win.document.querySelector("wc-chess-board > svg")).toBeNull();

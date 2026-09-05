@@ -260,6 +260,29 @@ describe("connectPort", () => {
 		expect(rt.ports[rt2ports]?.posted).toEqual([]);
 	});
 
+	it("calls onConnect on the first connection and on every reconnect, before the queue flushes", async () => {
+		const rt = installFakeRuntime();
+		const scheduler = makeScheduler();
+		const seen: number[] = [];
+		const port = connectPort<{ n: number }, never>(PORT_NAMES.game, {
+			scheduler,
+			onConnect: () => {
+				seen.push(rt.ports.length);
+				// on a reconnect, post ahead of whatever was queued while disconnected
+				if (seen.length > 1) port.post({ n: -1 });
+			},
+		});
+		await port.ready;
+		expect(seen).toEqual([1]);
+		expect(rt.ports[0]?.posted).toEqual([]);
+		rt.ports[0]?.emitDisconnect();
+		port.post({ n: 1 });
+		scheduler.fire();
+		expect(seen).toEqual([1, 2]);
+		expect(rt.ports[1]?.posted).toEqual([{ n: -1 }, { n: 1 }]);
+		port.disconnect();
+	});
+
 	it("re-queues a message when postMessage throws on a dead port", async () => {
 		const rt = installFakeRuntime();
 		const scheduler = makeScheduler();

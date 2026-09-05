@@ -27,6 +27,13 @@ export interface ConnectPortOptions<TIn> {
 	onMessage?: (msg: TIn) => void;
 	/** Called after every disconnect (before the reconnect is scheduled). */
 	onDisconnect?: (reason: string | undefined) => void;
+	/**
+	 * Called on every successful `connect()` — the first one and each reconnect —
+	 * with the port already live. Messages queued while disconnected are parked
+	 * for the duration of the hook, so anything posted from here goes out on the
+	 * new port *ahead* of them (e.g. a re-sent `hello`).
+	 */
+	onConnect?: () => void;
 	scheduler?: PortScheduler;
 }
 
@@ -98,6 +105,12 @@ export function connectPort<TOut, TIn>(
 			return;
 		}
 		port = next;
+		if (options.onConnect) {
+			const parked = queue;
+			queue = [];
+			options.onConnect(); // its post() calls flush straight onto `next`
+			queue = queue.concat(parked);
+		}
 		next.onMessage.addListener((msg: TIn) => {
 			if (port !== next) return;
 			delayMs = TIMINGS.portReconnectBaseMs; // the peer is alive — a later drop retries promptly

@@ -119,10 +119,10 @@ describe("PageBridgeClient — wire", () => {
 		fromPage(win, { [key]: page, k: "move", p: { f: "x" } });
 		expect(seen).toEqual([{ fen: "x" }]);
 	});
-	it("decodes events by kind: move/state/load/gameover → BridgeState, legalMoves, cursor, focus", () => {
+	it("decodes events by kind: move/state/load/gameover → BridgeState, legalMoves, cursor", () => {
 		const { win, client } = makeClient();
 		const seen: Array<[string, unknown]> = [];
-		for (const k of ["state", "load", "gameover", "legalMoves", "cursor", "focus", "ply"])
+		for (const k of ["state", "load", "gameover", "legalMoves", "cursor", "ply"])
 			client.on(k, (p) => seen.push([k, p]));
 		fromPage(win, {
 			[key]: page,
@@ -148,7 +148,6 @@ describe("PageBridgeClient — wire", () => {
 			p: [{ f: "e7", t: "e5", s: "e5" }, { f: "a7", t: "a8", p: "q" }, { bad: 1 }],
 		});
 		fromPage(win, { [key]: page, k: "cursor", p: { x: 1, y: 2, t: 3 } });
-		fromPage(win, { [key]: page, k: "focus", p: { h: false, v: "h" } });
 		fromPage(win, { [key]: page, k: "ply" });
 		expect(seen).toEqual([
 			[
@@ -175,7 +174,6 @@ describe("PageBridgeClient — wire", () => {
 				],
 			],
 			["cursor", { x: 1, y: 2, t: 3 }],
-			["focus", { hasFocus: false, visibility: "hidden" }],
 			["ply", undefined],
 		]);
 	});

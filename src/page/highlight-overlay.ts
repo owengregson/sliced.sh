@@ -156,6 +156,8 @@ export function overlayStatements(p: OverlayParams): Statement[] {
 					js.expr(js.call(js.member(el, "removeChild"), js.member(el, "firstChild"))),
 				]),
 				js.const_("black", js.op(js.member(q, W.orientation), "===", js.str(BRIDGE_ORIENTATION.black))),
+				// highlights arrive as [from, to]: the fallback colour follows that order
+				js.let_("n", n(0)),
 				js.forOf("h", orEmpty(js.member(q, W.highlights)), [
 					js.const_("c", js.call(js.id("ovCell"), js.member(h, W.square), black)),
 					js.const_("rc", createSvg("rect")),
@@ -163,7 +165,19 @@ export function overlayStatements(p: OverlayParams): Statement[] {
 					setAttr(rc, "y", num(cell(1))),
 					setAttr(rc, "width", js.str("1")),
 					setAttr(rc, "height", js.str("1")),
-					setAttr(rc, "fill", js.or(js.member(h, W.color), js.member(p.colors, "from"))),
+					setAttr(
+						rc,
+						"fill",
+						js.or(
+							js.member(h, W.color),
+							js.cond(
+								js.op(js.id("n"), "===", n(0)),
+								js.member(p.colors, "from"),
+								js.member(p.colors, "to")
+							)
+						)
+					),
+					js.assign(js.id("n"), add(js.id("n"), n(1))),
 					js.expr(js.call(js.member(el, "appendChild"), rc)),
 				]),
 				js.forOf("a", orEmpty(js.member(q, W.arrows)), [

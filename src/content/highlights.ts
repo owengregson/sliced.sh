@@ -4,8 +4,10 @@
  * bridge: native `game.markings` on chess.com, the bridge-embedded overlay
  * program on lichess — and only while `Settings.automation.highlightMoves`
  * is on (default off; nothing is drawn until the service worker sends
- * `settings`). `clearForExecution()` runs before every `observeMove` so no
- * mark is present at move-submission time.
+ * `settings`). `clearForExecution()` runs before every `observeMove` and
+ * resolves only once the page side has acknowledged the clear (bounded by
+ * the bridge call timeout, `TIMINGS.adapterBridgeTimeoutMs`), so no mark is
+ * present at move-submission time.
  */
 
 import type { ArrowLine, SiteAdapter } from "@content/adapters/adapter";
@@ -17,9 +19,10 @@ export interface Highlights {
 	setEnabled(on: boolean): void;
 	highlight(from: Square, to: Square, style: HighlightStyle): void;
 	arrows(lines: ArrowLine[]): void;
-	clear(): void;
-	/** Clear before the hand moves; a no-op when nothing was drawn. */
-	clearForExecution(): void;
+	/** Resolves once the page side acknowledged (a no-op when nothing was drawn). */
+	clear(): Promise<void>;
+	/** Clear before the hand moves; resolves when the page side acknowledged. */
+	clearForExecution(): Promise<void>;
 	/** Apply a port command; returns whether it was a highlight command. */
 	apply(cmd: GamePortCommand): boolean;
 }
@@ -28,17 +31,17 @@ export function createHighlights(adapter: SiteAdapter, initiallyEnabled = false)
 	let enabled = initiallyEnabled;
 	let drawn = false;
 
-	const clear = (): void => {
-		if (!drawn) return;
+	const clear = (): Promise<void> => {
+		if (!drawn) return Promise.resolve();
 		drawn = false;
-		adapter.clearHighlights();
+		return adapter.clearHighlights();
 	};
 
 	const api: Highlights = {
 		enabled: () => enabled,
 		setEnabled(on) {
 			enabled = on;
-			if (!on) clear();
+			if (!on) void clear();
 		},
 		highlight(from, to, style) {
 			if (!enabled) return;
@@ -61,7 +64,7 @@ export function createHighlights(adapter: SiteAdapter, initiallyEnabled = false)
 					api.arrows(cmd.lines);
 					return true;
 				case "clearHighlight":
-					clear();
+					void clear();
 					return true;
 				default:
 					return false;

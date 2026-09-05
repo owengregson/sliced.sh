@@ -6,13 +6,16 @@ import type { FeedPort } from "@content/feed-port";
 import { type ContentHandle, startContent } from "@content/index";
 import { detectSite, hostOfMatchPattern } from "@content/site-detect";
 import type { GamePortCommand, GamePortMessage } from "@core/constants/messages";
-import { installWindowGlobals, type TabDom } from "@test/sim/dom/tab-dom";
+import { TIMINGS } from "@core/constants/timings";
+import { createTabDom, installWindowGlobals, type TabDom } from "@test/sim/dom/tab-dom";
 import {
 	BOARD_RECT,
 	FakeBridge,
 	type FixtureName,
 	fire,
+	installPollingObserver,
 	loadFixture,
+	loadFixtureInto,
 	pageDocument,
 	pageWindow,
 	sleep,
@@ -232,6 +235,7 @@ describe("content entry — commands", () => {
 			timeoutMs: 300,
 		});
 		expect(bridge.calls.at(-1)?.kind).toBe("clear"); // cleared before the hand moves
+		await sleep(10); // the clear is acknowledged, the watch is armed
 		playD4(dom);
 		await waitFor(() => feed.of("observeMoveResult").length === 1, 2_000);
 		expect(feed.of("observeMoveResult")[0]).toEqual({
@@ -245,6 +249,74 @@ describe("content entry — commands", () => {
 		expect(bridge.callsOf("draw")).toHaveLength(2);
 		feed.command({ kind: "clearHighlight" }); // nothing drawn: no extra bridge call
 		expect(bridge.callsOf("clear")).toHaveLength(1);
+	});
+	it("observeMove waits for the page side to acknowledge the clear before watching the board", async () => {
+		const { feed, bridge, dom } = boot("chesscom-live");
+		await waitFor(() => bridge.callsOf("getState").length > 0);
+		let ackClear: () => void = () => {};
+		bridge.responses.set(
+			"clear",
+			() =>
+				new Promise<void>((r) => {
+					ackClear = r;
+				})
+		);
+		feed.command({ kind: "settings", highlightMoves: true });
+		feed.command({ kind: "highlight", from: "d2", to: "d4", style: "both" });
+		await sleep(10);
+		feed.command({
+			kind: "observeMove",
+			id: "m3",
+			expected: { from: "d5", to: "d6" }, // empty origin: the adapter answers at once IF watching
+			timeoutMs: 400,
+		});
+		await sleep(10);
+		expect(bridge.calls.at(-1)?.kind).toBe("clear");
+		await sleep(100);
+		expect(feed.of("observeMoveResult")).toHaveLength(0); // still waiting for the clear ack
+		ackClear();
+		await waitFor(() => feed.of("observeMoveResult").length === 1, 2_000);
+		expect(feed.of("observeMoveResult")[0]).toEqual({
+			kind: "observeMoveResult",
+			id: "m3",
+			ok: false,
+			reason: "not-landed",
+		});
+	});
+	it("cursorProbe answers from the bridge closure, else from the ISOLATED tracker, else null", async () => {
+		const { feed, bridge, dom } = boot("chesscom-live");
+		await waitFor(() => bridge.callsOf("getState").length > 0);
+		feed.command({ kind: "cursorProbe", id: "c0" });
+		await sleep(10);
+		// the fake bridge has no `cursor` handler → rejected → tracker has nothing yet → null
+		expect(feed.of("cursorProbeResult")[0]).toEqual({
+			kind: "cursorProbeResult",
+			id: "c0",
+			position: null,
+		});
+		bridge.responses.set("cursor", () => ({ x: 11, y: 22, t: 33 }));
+		feed.command({ kind: "cursorProbe", id: "c1" });
+		await sleep(10);
+		expect(feed.of("cursorProbeResult")[1]).toEqual({
+			kind: "cursorProbeResult",
+			id: "c1",
+			position: { x: 11, y: 22, t: 33, real: true },
+		});
+		expect(bridge.callsOf("cursor")).toHaveLength(2); // c0 (rejected) and c1
+		// bridge answers null (no trusted pointer seen in MAIN) → the tracker's last trusted sample
+		bridge.responses.set("cursor", () => null);
+		const ev = new dom.window.PointerEvent("pointermove", { clientX: 5, clientY: 6, bubbles: true });
+		Object.defineProperty(ev, "isTrusted", { value: true });
+		dom.document.body.dispatchEvent(ev);
+		feed.command({ kind: "cursorProbe", id: "c2" });
+		await sleep(10);
+		expect(feed.of("cursorProbeResult")[2]?.position).toMatchObject({ x: 5, y: 6, real: true });
+		// bridge unavailable → tracker directly, no bridge call
+		bridge.available = false;
+		feed.command({ kind: "cursorProbe", id: "c3" });
+		await sleep(10);
+		expect(feed.of("cursorProbeResult")[3]?.position).toMatchObject({ x: 5, y: 6, real: true });
+		expect(bridge.callsOf("cursor")).toHaveLength(3); // c3 never reached the bridge
 	});
 	it("observeMove answers ok:false with a reason when the move never lands", async () => {
 		const { feed } = boot("chesscom-live");
@@ -351,6 +423,60 @@ describe("content entry — commands", () => {
 		await sleep(150);
 		expect(feed.posts.length).toBe(n);
 		handle.dispose(); // idempotent
+	});
+});
+
+describe("content entry — document_start (no <body> yet)", () => {
+	it("boots without throwing on a body-less document, defers the adapter, and completes once the body appears", async () => {
+		const dom = createTabDom("https://www.chess.com/game/live/173765478164");
+		cleanups.push(installWindowGlobals(dom.window));
+		dom.document.documentElement.innerHTML = "<head></head>";
+		dom.document.body?.remove(); // happy-dom synthesises a body; the parser has not reached it yet
+		expect(dom.document.body).toBeNull();
+		const { feed, factory } = fakeFeed();
+		const bridge = new FakeBridge();
+		bridge.responses.set("getState", () => ({}));
+		const handle = startContent({
+			window: pageWindow(dom),
+			document: pageDocument(dom),
+			bridge,
+			port: factory,
+			adapterVersion: "t1",
+		});
+		if (!handle) throw new Error("null handle");
+		cleanups.push(() => handle.dispose());
+		expect(handle.site).toBe("chesscom");
+		expect(handle.pageKind()).toBe("live-game"); // from the URL alone
+		expect(handle.adapter()).toBeNull();
+		expect(feed.posts).toEqual([]);
+		// the parser reaches <body> and the page renders the board
+		loadFixtureInto(dom, "chesscom-live");
+		installPollingObserver(dom);
+		expect(dom.document.body).not.toBeNull();
+		fire(dom, "document", "DOMContentLoaded");
+		expect(handle.adapter()).not.toBeNull();
+		expect(feed.posts[0]).toMatchObject({ kind: "hello", site: "chesscom", pageKind: "live-game" });
+		expect(feed.of("gameStarted")).toHaveLength(1);
+		expect(feed.of("position")[0]?.snapshot.ply).toBe(6);
+	});
+	it("completes the deferred boot from the readiness poll when no DOMContentLoaded arrives", async () => {
+		const dom = createTabDom("https://lichess.org/abcdefgh1234");
+		cleanups.push(installWindowGlobals(dom.window));
+		dom.document.documentElement.innerHTML = "<head></head>";
+		dom.document.body?.remove();
+		const { feed, factory } = fakeFeed();
+		const handle = startContent({
+			window: pageWindow(dom),
+			document: pageDocument(dom),
+			bridge: new FakeBridge(),
+			port: factory,
+		});
+		if (!handle) throw new Error("null handle");
+		cleanups.push(() => handle.dispose());
+		expect(handle.adapter()).toBeNull();
+		loadFixtureInto(dom, "lichess-round-white");
+		await waitFor(() => handle.adapter() !== null, TIMINGS.contentReadyPollMs * 4);
+		expect(feed.posts[0]).toMatchObject({ kind: "hello", site: "lichess" });
 	});
 });
 

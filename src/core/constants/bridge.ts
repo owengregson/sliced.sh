@@ -39,12 +39,10 @@ export const BRIDGE_WIRE = {
 	square: "q",
 	color: "c",
 	keys: "y",
-	// pointer (`cursor` reply) and focus edges (`focus` event)
+	// pointer (`cursor` reply)
 	x: "x",
 	y: "y",
 	at: "t",
-	hasFocus: "h",
-	visibility: "v",
 } as const;
 
 /** `orientation` values on the wire. */

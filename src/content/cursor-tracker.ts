@@ -2,11 +2,14 @@
  * `CursorTracker` (Task 21, §13.5): passive capture-phase `pointermove` /
  * `pointerdown` / `pointerup` listeners on `window` that record only
  * *trusted* pointer events (the real mouse). It reports the last sample as
- * `{ x, y, t, real: true }` on request, posts samples to the game port at a
- * bounded rate (`pointermove` no more than once per
- * `TIMINGS.cursorReportIntervalMs`; presses and releases always), and counts
- * real pointer events while the virtual hand is active so the service
- * worker can tell the user touched the mouse mid-execution.
+ * `{ x, y, t, real: true }` on request (`report()`, used by the
+ * `cursorProbe` responder) and posts samples on the game port (`cursor`
+ * messages carrying `t`): while the hand is idle, `pointermove` is throttled
+ * to one sample per `TIMINGS.cursorReportIntervalMs` (presses and releases
+ * always); while the virtual hand is active (`beginHand()` … `endHand()`)
+ * every trusted event is posted unthrottled, so the service worker derives
+ * `realPointerEventsDuringHand` exactly by counting the `cursor` messages
+ * timestamped inside the hand window. `endHand()` returns the same count.
  *
  * Nothing here dispatches events or reads page storage.
  */
@@ -33,7 +36,7 @@ export interface CursorTracker {
 
 export interface CursorTrackerOptions {
 	window?: Window;
-	/** Receives rate-bounded samples (moves throttled; presses/releases always). */
+	/** Receives samples: moves throttled while the hand is idle, everything while it is active. */
 	onSample?: (sample: CursorSample) => void;
 	minIntervalMs?: number;
 	now?: () => number;
@@ -58,7 +61,7 @@ export function createCursorTracker(options: CursorTrackerOptions = {}): CursorT
 		last = { x: pe.clientX, y: pe.clientY, t, real: true };
 		if (hand) realDuringHand += 1;
 		if (!options.onSample) return;
-		if (ev.type === "pointermove" && t - lastPosted < minInterval) return;
+		if (!hand && ev.type === "pointermove" && t - lastPosted < minInterval) return;
 		lastPosted = t;
 		options.onSample(last);
 	};
