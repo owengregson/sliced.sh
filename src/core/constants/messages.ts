@@ -147,7 +147,12 @@ export type GamePortMessage =
 			position: { x: number; y: number; t: number; real: true } | null;
 	  }
 	/** Task 18: reply to `geometry`. */
-	| ({ kind: "geometryResult"; id: string } & BoardGeometryReply);
+	| ({ kind: "geometryResult"; id: string } & BoardGeometryReply)
+	/**
+	 * Task 18: reply to `boardCheck` — the colour-aware occupancy of exactly the squares asked
+	 * (a square the adapter cannot classify is left out; the executor then dispatches nothing).
+	 */
+	| { kind: "boardCheckResult"; id: string; occupancy: Partial<Record<Square, Occupancy>> };
 
 /** SW → content */
 export type GamePortCommand =
@@ -164,7 +169,13 @@ export type GamePortCommand =
 	/** Task 18: square/board/promotion rects on demand (`promotion` = wait for that picker). */
 	| { kind: "geometry"; id: string; promotion?: PromoPiece; timeoutMs?: number }
 	/** Ask for the last known trusted pointer position; answered by `cursorProbeResult`. */
-	| { kind: "cursorProbe"; id: string };
+	| { kind: "cursorProbe"; id: string }
+	/**
+	 * Task 18: the executor's pre-dispatch position guard. Answer at once from the current
+	 * board with `own` / `enemy` / `empty` for each square (relative to the side the hand
+	 * plays) — colour-aware on purpose, so a capture is never mistaken for a landed move.
+	 */
+	| { kind: "boardCheck"; id: string; squares: Square[] };
 
 /**
  * A slice of a net relayed by the SW (`handlers/engine/nnue-download.ts`).

@@ -1,7 +1,7 @@
 // test/behavioral/executor/drag-move.test.ts — Step 6: the service-worker half end to end in the simulator.
 // A booted SW (debugger manager, content link, focus gate, hand ownership, executor) plays a
 // recommendation against a content context whose fake adapter answers `geometry` / `observeMove`
-// / `focus` over the game port; the tab's happy-dom sees the trusted-equivalent pointer sequence.
+// / `boardCheck` / `focus` over the game port; the tab's happy-dom sees the trusted-equivalent pointer sequence.
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
 	CDP,
@@ -12,7 +12,7 @@ import {
 	PORT_NAMES,
 } from "@core/constants";
 import { type ConnectedPort, connectPort } from "@core/messaging/ports";
-import type { Pt, Rect } from "@core/motor/types";
+import type { Occupancy, Pt, Rect } from "@core/motor/types";
 import { defaultScheduler } from "@core/util/scheduler";
 import { ContentLink } from "@service/content-link";
 import { DebuggerManager } from "@service/debugger-manager";
@@ -47,6 +47,14 @@ let windowsUpdateCalls: number;
 /** What the fake adapter saw / answered. */
 let adapter: {
 	observeRequests: Array<{ from: Square; to: Square }>;
+	/** Squares each `boardCheck` asked about. */
+	boardChecks: Square[][];
+	/** What `boardCheck` answers (defaults to the start position from White's side). */
+	occupancy: Partial<Record<Square, Occupancy>>;
+	/** Hook run when a `boardCheck` arrives (before the reply); return false to swallow it. */
+	onBoardCheck: () => boolean;
+	/** Hook run when the board `geometry` request arrives (before the reply); return false to swallow it. */
+	onGeometry: () => boolean;
 	lastDown: string | null;
 	lastUp: string | null;
 	/** Promotion picker rect the adapter reports (null = never appears). */
@@ -57,6 +65,15 @@ let adapter: {
 
 const ALL: Square[] = [];
 for (const f of "abcdefgh") for (let r = 1; r <= 8; r++) ALL.push(`${f}${r}` as Square);
+
+function startOccupancy(): Partial<Record<Square, Occupancy>> {
+	const occ: Partial<Record<Square, Occupancy>> = {};
+	for (const sq of ALL) {
+		const rank = Number(sq[1]);
+		occ[sq] = rank <= 2 ? "own" : rank >= 7 ? "enemy" : "empty";
+	}
+	return occ;
+}
 
 function buildBoard(): void {
 	const dom = sim.getTabDom(tabId);
@@ -104,7 +121,17 @@ function bootFakeAdapter(): void {
 					});
 					return;
 				}
+				if (!adapter.onGeometry()) return;
 				port.post({ kind: "geometryResult", id: cmd.id, boardRect: BOARD, flipped: false });
+			} else if (cmd.kind === "boardCheck") {
+				adapter.boardChecks.push(cmd.squares);
+				if (!adapter.onBoardCheck()) return;
+				const occupancy: Partial<Record<Square, Occupancy>> = {};
+				for (const sq of cmd.squares) {
+					const o = adapter.occupancy[sq];
+					if (o !== undefined) occupancy[sq] = o;
+				}
+				port.post({ kind: "boardCheckResult", id: cmd.id, occupancy });
 			} else if (cmd.kind === "observeMove") {
 				adapter.observeRequests.push({ from: cmd.expected.from, to: cmd.expected.to });
 				const timer = setTimeout(() => {
@@ -129,6 +156,10 @@ beforeEach(async () => {
 	buildBoard();
 	adapter = {
 		observeRequests: [],
+		boardChecks: [],
+		occupancy: startOccupancy(),
+		onBoardCheck: () => true,
+		onGeometry: () => true,
 		lastDown: null,
 		lastUp: null,
 		promotionRect: null,
@@ -412,9 +443,9 @@ describe("executor: a scheduled drag move end to end", () => {
 		expect({ x: abortRelease.x, y: abortRelease.y }).toEqual({ x: before.x, y: before.y });
 		expect(abortRelease.at - cancelledAt).toBeLessThanOrEqual(CDP.stallResyncMs);
 		// the cancelled run looked at the board once (a bounded, fresh re-check: the drop landed
-		// off-target, so still `aborted`), the replacement passed its own position guard (a second
-		// bounded observeMove: the move is not on the board) and played: press inside e2, release
-		// inside e4, verified, `executed`
+		// off-target, so still `aborted`), the replacement passed its own position guard (a
+		// colour-aware `boardCheck`: e2 still ours) and played: press inside e2, release inside
+		// e4, verified, `executed`
 		expect(executed).toHaveLength(1);
 		expect((executed[0] as ExecutionReport).result).toMatchObject({ ok: true, outcome: "executed" });
 		expect(await replacement).toMatchObject({ ok: true, outcome: "executed" });
@@ -422,22 +453,20 @@ describe("executor: a scheduled drag move end to end", () => {
 		expect(inside(releases[1] as Cmd, squareRect("e4"))).toBe(true);
 		expect((presses[1] as Cmd).at).toBeGreaterThan(abortRelease.at);
 		expect((presses[1] as Cmd).at - abortRelease.at).toBeGreaterThanOrEqual(
-			2 * EXECUTOR.recheckTimeoutMs
+			EXECUTOR.recheckTimeoutMs
 		);
-		expect((presses[1] as Cmd).at - abortRelease.at).toBeLessThan(
-			2 * EXECUTOR.recheckTimeoutMs + 1000
-		);
+		expect((presses[1] as Cmd).at - abortRelease.at).toBeLessThan(EXECUTOR.recheckTimeoutMs + 1000);
 		expect(adapter.observeRequests).toEqual([
 			{ from: "e2", to: "e4" }, // bounded re-check of the cancelled attempt
-			{ from: "e2", to: "e4" }, // the replacement's position guard
 			{ from: "e2", to: "e4" }, // the replacement's verification
 		]);
+		expect(adapter.boardChecks).toEqual([["e2", "e4"]]); // the replacement's position guard
 		expect(sim.input.pointer(tabId)?.buttons).toBe(0);
 		expect(executor.isRunning()).toBe(false);
 		expect(executor.handView()).toBe("resting");
 	});
 
-	it("cancel() after the drop landed reports `executed`, and the replacement is NOT dispatched (position changed)", async () => {
+	it("cancel() after the drop landed reports `executed`, and a parked replacement for a DIFFERENT move is dropped as position-changed without any board check", async () => {
 		const reports: Array<[string, ExecutionReport]> = [];
 		let plan: TimingPlan = plan1200();
 		await sw.run(async () => {
@@ -455,12 +484,15 @@ describe("executor: a scheduled drag move end to end", () => {
 			if ((params as { type: string }).type === "mouseReleased" && replacement === null) {
 				cancelledAt = sim.now() - START;
 				executor.cancel();
-				replacement = executor.playNow(recommendation(plan), plan);
+				// d2 is still ours, so only the outcome of the run it waited on can stop this move
+				replacement = executor.playNow(recommendation(plan, { from: "d2", to: "d4" }), plan);
 			}
 			return result;
 		});
 		await sw.run(() => sim.time.advanceUntilIdle({ maxAdvanceMs: 30_000 }));
 		expect(reports.map(([ev]) => ev)).toEqual(["executed", "skipped"]);
+		expect((reports[0] as [string, ExecutionReport])[1].rec.chosen.uci).toBe("e2e4");
+		expect((reports[1] as [string, ExecutionReport])[1].rec.chosen.uci).toBe("d2d4");
 		const first = (reports[0] as [string, ExecutionReport])[1].result;
 		expect(first).toMatchObject({ ok: true, outcome: "executed", pressed: true, attempts: 1 });
 		expect(first.error).toBeUndefined();
@@ -478,14 +510,212 @@ describe("executor: a scheduled drag move end to end", () => {
 		const cmds = commands();
 		expect(cmds.filter((c) => c.type === "mousePressed")).toHaveLength(1);
 		expect(cmds.filter((c) => c.type === "mouseReleased")).toHaveLength(1);
-		// the cancel cut the post-drop rest: nothing after the release, verification bounded
+		// the cancel cut the post-drop rest: nothing after the release, verification bounded; the
+		// parked move never reached its own guard — exactly one committed press this position
 		expect(cmds.at(-1)?.type).toBe("mouseReleased");
 		expect(adapter.observeRequests).toEqual([
 			{ from: "e2", to: "e4" }, // short-budget verification of the landed drop
-			{ from: "e2", to: "e4" }, // the replacement's position guard → already on the board
 		]);
+		expect(adapter.boardChecks).toEqual([]);
 		expect(cancelledAt).toBeGreaterThan(0);
 		expect(executor.isRunning()).toBe(false);
+		expect(executor.pendingMove()).toBeNull();
+	});
+
+	it("a replacement CAPTURE is never vetoed by the enemy piece on its destination (colour-aware guard)", async () => {
+		const events: string[] = [];
+		let plan: TimingPlan = plan1200();
+		adapter.occupancy.e4 = "own";
+		adapter.occupancy.d5 = "enemy";
+		await sw.run(async () => {
+			for (const ev of ["executed", "aborted", "skipped", "failed"] as const)
+				executor.on(ev, (r) => events.push(`${ev}:${r.rec.chosen.uci}`));
+			await executor.arm();
+			focus.positionArrived(tabId, sim.now());
+			plan = plan1200();
+			executor.schedule(recommendation(plan), plan);
+		});
+		let held = 0;
+		let replacement: Promise<unknown> | null = null;
+		sim.debugger.respond(CDP.inputDispatchMouseEvent, (params, id) => {
+			const p = params as { type: string; buttons: number };
+			if (p.type === "mouseMoved" && p.buttons === 1 && ++held === 2) {
+				executor.cancel();
+				replacement = executor.playNow(recommendation(plan, { from: "e4", to: "d5" }), plan);
+			}
+			return sim.input.send(id, CDP.inputDispatchMouseEvent, params);
+		});
+		await sw.run(() => sim.time.advanceUntilIdle({ maxAdvanceMs: 30_000 }));
+		expect(await replacement).toMatchObject({ ok: true, outcome: "executed", attempts: 1 });
+		expect(events).toEqual(["aborted:e2e4", "executed:e4d5"]);
+		const cmds = commands();
+		const presses = cmds.filter((c) => c.type === "mousePressed");
+		const releases = cmds.filter((c) => c.type === "mouseReleased");
+		expect(presses).toHaveLength(2);
+		expect(releases).toHaveLength(2);
+		expect(inside(presses[1] as Cmd, squareRect("e4"))).toBe(true);
+		expect(inside(releases[1] as Cmd, squareRect("d5"))).toBe(true);
+		expect(adapter.boardChecks).toEqual([["e4", "d5"]]);
+		expect(adapter.observeRequests).toEqual([
+			{ from: "e2", to: "e4" }, // bounded re-check of the cancelled attempt
+			{ from: "e4", to: "d5" }, // the capture's verification
+		]);
+	});
+
+	it("a replacement whose move is already on the board is vetoed by the guard (from-square no longer ours)", async () => {
+		const events: string[] = [];
+		let plan: TimingPlan = plan1200();
+		adapter.occupancy.d2 = "empty";
+		adapter.occupancy.d4 = "own";
+		await sw.run(async () => {
+			for (const ev of ["executed", "aborted", "skipped", "failed"] as const)
+				executor.on(ev, (r) => events.push(`${ev}:${r.rec.chosen.uci}:${r.result.reason ?? "-"}`));
+			await executor.arm();
+			focus.positionArrived(tabId, sim.now());
+			plan = plan1200();
+			executor.schedule(recommendation(plan), plan);
+		});
+		let held = 0;
+		let replacement: Promise<unknown> | null = null;
+		sim.debugger.respond(CDP.inputDispatchMouseEvent, (params, id) => {
+			const p = params as { type: string; buttons: number };
+			if (p.type === "mouseMoved" && p.buttons === 1 && ++held === 2) {
+				executor.cancel();
+				replacement = executor.playNow(recommendation(plan, { from: "d2", to: "d4" }), plan);
+			}
+			return sim.input.send(id, CDP.inputDispatchMouseEvent, params);
+		});
+		await sw.run(() => sim.time.advanceUntilIdle({ maxAdvanceMs: 30_000 }));
+		expect(await replacement).toMatchObject({
+			ok: false,
+			outcome: "skipped",
+			reason: EXECUTOR.reasons.positionChanged,
+			attempts: 0,
+		});
+		expect(events).toEqual([
+			`aborted:e2e4:${EXECUTOR.reasons.aborted}`,
+			`skipped:d2d4:${EXECUTOR.reasons.positionChanged}`,
+		]);
+		const cmds = commands();
+		expect(cmds.filter((c) => c.type === "mousePressed")).toHaveLength(1);
+		expect(cmds.at(-1)?.type).toBe("mouseReleased");
+		expect(adapter.boardChecks).toEqual([["d2", "d4"]]);
+		expect(adapter.observeRequests).toEqual([{ from: "e2", to: "e4" }]);
+	});
+
+	it("cancel() during the replacement's position guard reports `aborted`, not verification-unavailable", async () => {
+		const events: string[] = [];
+		let plan: TimingPlan = plan1200();
+		adapter.onBoardCheck = () => {
+			executor.cancel();
+			return false;
+		};
+		await sw.run(async () => {
+			for (const ev of ["executed", "aborted", "skipped", "failed"] as const)
+				executor.on(ev, (r) => events.push(`${ev}:${r.rec.chosen.uci}:${r.result.reason ?? "-"}`));
+			await executor.arm();
+			focus.positionArrived(tabId, sim.now());
+			plan = plan1200();
+			executor.schedule(recommendation(plan), plan);
+		});
+		let held = 0;
+		let replacement: Promise<unknown> | null = null;
+		sim.debugger.respond(CDP.inputDispatchMouseEvent, (params, id) => {
+			const p = params as { type: string; buttons: number };
+			if (p.type === "mouseMoved" && p.buttons === 1 && ++held === 2) {
+				executor.cancel();
+				replacement = executor.playNow(recommendation(plan, { from: "d2", to: "d4" }), plan);
+			}
+			return sim.input.send(id, CDP.inputDispatchMouseEvent, params);
+		});
+		await sw.run(() => sim.time.advanceUntilIdle({ maxAdvanceMs: 30_000 }));
+		expect(await replacement).toMatchObject({
+			ok: false,
+			outcome: "aborted",
+			reason: EXECUTOR.reasons.aborted,
+			attempts: 0,
+		});
+		expect(events).toEqual([
+			`aborted:e2e4:${EXECUTOR.reasons.aborted}`,
+			`aborted:d2d4:${EXECUTOR.reasons.aborted}`,
+		]);
+		expect(adapter.boardChecks).toEqual([["d2", "d4"]]);
+		expect(commands().filter((c) => c.type === "mousePressed")).toHaveLength(1);
+		expect(executor.isRunning()).toBe(false);
+	});
+
+	it("schedule() replaces a parked replacement (newest wins): the parked move is dropped, the scheduled one plays", async () => {
+		const events: string[] = [];
+		let plan: TimingPlan = plan1200();
+		await sw.run(async () => {
+			for (const ev of ["executed", "aborted", "skipped", "failed"] as const)
+				executor.on(ev, (r) => events.push(`${ev}:${r.rec.chosen.uci}:${r.result.reason ?? "-"}`));
+			await executor.arm();
+			focus.positionArrived(tabId, sim.now());
+			plan = plan1200();
+			executor.schedule(recommendation(plan), plan);
+		});
+		let held = 0;
+		let parkedResult: Promise<unknown> | null = null;
+		sim.debugger.respond(CDP.inputDispatchMouseEvent, (params, id) => {
+			const p = params as { type: string; buttons: number };
+			if (p.type === "mouseMoved" && p.buttons === 1 && ++held === 2) {
+				executor.cancel();
+				parkedResult = executor.playNow(recommendation(plan), plan);
+				expect(executor.pendingMove()?.rec.chosen.uci).toBe("e2e4");
+				const next = plan1200();
+				executor.schedule(recommendation(next, { from: "d2", to: "d4" }), next);
+				expect(executor.pendingMove()?.rec.chosen.uci).toBe("d2d4");
+			}
+			return sim.input.send(id, CDP.inputDispatchMouseEvent, params);
+		});
+		await sw.run(() => sim.time.advanceUntilIdle({ maxAdvanceMs: 30_000 }));
+		expect(await parkedResult).toMatchObject({
+			ok: false,
+			outcome: "aborted",
+			reason: EXECUTOR.reasons.dropped,
+		});
+		expect(events).toEqual([
+			`aborted:e2e4:${EXECUTOR.reasons.aborted}`,
+			`aborted:e2e4:${EXECUTOR.reasons.dropped}`,
+			"executed:d2d4:-",
+		]);
+		const cmds = commands();
+		const presses = cmds.filter((c) => c.type === "mousePressed");
+		const releases = cmds.filter((c) => c.type === "mouseReleased");
+		expect(presses).toHaveLength(2);
+		expect(inside(presses[1] as Cmd, squareRect("d2"))).toBe(true);
+		expect(inside(releases[1] as Cmd, squareRect("d4"))).toBe(true);
+		expect(adapter.boardChecks).toEqual([["d2", "d4"]]);
+		expect(executor.pendingMove()).toBeNull();
+	});
+
+	it("cancel() during the initial geometry read reports `aborted` (not `no board geometry`) and dispatches nothing", async () => {
+		const reports: Array<[string, ExecutionReport]> = [];
+		adapter.onGeometry = () => {
+			executor.cancel();
+			return false;
+		};
+		await sw.run(async () => {
+			for (const ev of ["executed", "aborted", "skipped", "failed"] as const)
+				executor.on(ev, (r) => reports.push([ev, r]));
+			await executor.arm();
+			focus.positionArrived(tabId, sim.now());
+			const plan = plan1200();
+			executor.schedule(recommendation(plan), plan);
+		});
+		await sw.run(() => sim.time.advanceUntilIdle({ maxAdvanceMs: 30_000 }));
+		expect(reports.map(([ev]) => ev)).toEqual(["aborted"]);
+		expect((reports[0] as [string, ExecutionReport])[1].result).toMatchObject({
+			ok: false,
+			outcome: "aborted",
+			reason: EXECUTOR.reasons.aborted,
+			attempts: 0,
+		});
+		expect(sim.debugger.commands).toHaveLength(0);
+		expect(adapter.observeRequests).toEqual([]);
+		expect(executor.isRunning()).toBe(false);
+		expect(executor.handView()).toBe("resting");
 	});
 
 	it("disarm() while a replacement is parked drops it: nothing is dispatched after the abort release", async () => {

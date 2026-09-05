@@ -2,7 +2,8 @@
  * SW-side registry of the per-tab game ports (`PORT_NAMES.game`, one per
  * content script). Accepts every connection, keys it by the sender's tab,
  * fans incoming `GamePortMessage`s out to per-tab / global subscribers, and
- * runs request/reply pairs correlated by `id` (`geometry`, `observeMove`)
+ * runs request/reply pairs correlated by `id` (`geometry`, `observeMove`,
+ * `boardCheck`)
  * with a timeout on the injected scheduler. The executor's verifier and the
  * `FocusGate` / `HandOwnership` consume it; Task 30's content handlers build
  * on the same object, so nothing here is executor-specific.
@@ -22,7 +23,9 @@ type ReplyKindOf<K extends RequestKind> = K extends "geometry"
 	? "geometryResult"
 	: K extends "observeMove"
 		? "observeMoveResult"
-		: never;
+		: K extends "boardCheck"
+			? "boardCheckResult"
+			: never;
 export type ReplyFor<K extends RequestKind> = Extract<GamePortMessage, { kind: ReplyKindOf<K> }>;
 /** A request without its `id`; `timeoutMs` defaults to the request budget. */
 export type RequestInput<K extends RequestKind> = { kind: K } & Omit<
