@@ -49,6 +49,10 @@ let adapter: {
 	observeRequests: Array<{ from: Square; to: Square }>;
 	lastDown: string | null;
 	lastUp: string | null;
+	/** Promotion picker rect the adapter reports (null = never appears). */
+	promotionRect: Rect | null;
+	/** Hook run when a promotion geometry request arrives (before the reply); return false to swallow it. */
+	onPromotionGeometry: () => boolean;
 };
 
 const ALL: Square[] = [];
@@ -89,6 +93,17 @@ function bootFakeAdapter(): void {
 		scheduler: defaultScheduler,
 		onMessage: (cmd) => {
 			if (cmd.kind === "geometry") {
+				if (cmd.promotion !== undefined) {
+					if (!adapter.onPromotionGeometry()) return;
+					port.post({
+						kind: "geometryResult",
+						id: cmd.id,
+						boardRect: BOARD,
+						flipped: false,
+						promotion: adapter.promotionRect,
+					});
+					return;
+				}
 				port.post({ kind: "geometryResult", id: cmd.id, boardRect: BOARD, flipped: false });
 			} else if (cmd.kind === "observeMove") {
 				adapter.observeRequests.push({ from: cmd.expected.from, to: cmd.expected.to });
@@ -112,7 +127,13 @@ beforeEach(async () => {
 	sim.time.install();
 	tabId = sim.openTab("https://lichess.org/abcd1234").tabId;
 	buildBoard();
-	adapter = { observeRequests: [], lastDown: null, lastUp: null };
+	adapter = {
+		observeRequests: [],
+		lastDown: null,
+		lastUp: null,
+		promotionRect: null,
+		onPromotionGeometry: () => true,
+	};
 	tabsUpdateCalls = 0;
 	windowsUpdateCalls = 0;
 	const realUpdate = sim.chrome.tabs.update;
@@ -165,13 +186,18 @@ afterEach(async () => {
 	await sim.dispose();
 });
 
-function recommendation(plan: TimingPlan): Recommendation {
+function recommendation(
+	plan: TimingPlan,
+	move: { from: Square; to: Square; promotion?: "q" } = { from: "e2", to: "e4" }
+): Recommendation {
+	const uci = `${move.from}${move.to}${move.promotion ?? ""}`;
 	return {
 		chosen: {
-			uci: "e2e4",
-			san: "e4",
-			from: "e2",
-			to: "e4",
+			uci,
+			san: uci,
+			from: move.from,
+			to: move.to,
+			...(move.promotion ? { promotion: move.promotion } : {}),
 			source: "engine-elo",
 			rankInLines: 0,
 			cpLoss: 0,
@@ -385,18 +411,162 @@ describe("executor: a scheduled drag move end to end", () => {
 		expect(before).toMatchObject({ type: "mouseMoved", buttons: 1 });
 		expect({ x: abortRelease.x, y: abortRelease.y }).toEqual({ x: before.x, y: before.y });
 		expect(abortRelease.at - cancelledAt).toBeLessThanOrEqual(CDP.stallResyncMs);
-		// the cancelled run wound down promptly (its re-check was aborted, not awaited for 1.2 s) and
-		// the replacement played: second press inside e2, release inside e4, verified, `executed`
+		// the cancelled run looked at the board once (a bounded, fresh re-check: the drop landed
+		// off-target, so still `aborted`), the replacement passed its own position guard (a second
+		// bounded observeMove: the move is not on the board) and played: press inside e2, release
+		// inside e4, verified, `executed`
 		expect(executed).toHaveLength(1);
 		expect((executed[0] as ExecutionReport).result).toMatchObject({ ok: true, outcome: "executed" });
 		expect(await replacement).toMatchObject({ ok: true, outcome: "executed" });
 		expect(inside(presses[1] as Cmd, squareRect("e2"))).toBe(true);
 		expect(inside(releases[1] as Cmd, squareRect("e4"))).toBe(true);
 		expect((presses[1] as Cmd).at).toBeGreaterThan(abortRelease.at);
-		expect((presses[1] as Cmd).at - abortRelease.at).toBeLessThan(EXECUTOR.recheckTimeoutMs + 1000);
-		expect(adapter.observeRequests).toEqual([{ from: "e2", to: "e4" }]);
+		expect((presses[1] as Cmd).at - abortRelease.at).toBeGreaterThanOrEqual(
+			2 * EXECUTOR.recheckTimeoutMs
+		);
+		expect((presses[1] as Cmd).at - abortRelease.at).toBeLessThan(
+			2 * EXECUTOR.recheckTimeoutMs + 1000
+		);
+		expect(adapter.observeRequests).toEqual([
+			{ from: "e2", to: "e4" }, // bounded re-check of the cancelled attempt
+			{ from: "e2", to: "e4" }, // the replacement's position guard
+			{ from: "e2", to: "e4" }, // the replacement's verification
+		]);
 		expect(sim.input.pointer(tabId)?.buttons).toBe(0);
 		expect(executor.isRunning()).toBe(false);
 		expect(executor.handView()).toBe("resting");
+	});
+
+	it("cancel() after the drop landed reports `executed`, and the replacement is NOT dispatched (position changed)", async () => {
+		const reports: Array<[string, ExecutionReport]> = [];
+		let plan: TimingPlan = plan1200();
+		await sw.run(async () => {
+			for (const ev of ["executed", "aborted", "skipped", "failed"] as const)
+				executor.on(ev, (r) => reports.push([ev, r]));
+			await executor.arm();
+			focus.positionArrived(tabId, sim.now());
+			plan = plan1200();
+			executor.schedule(recommendation(plan), plan);
+		});
+		let cancelledAt = 0;
+		let replacement: Promise<unknown> | null = null;
+		sim.debugger.respond(CDP.inputDispatchMouseEvent, (params, id) => {
+			const result = sim.input.send(id, CDP.inputDispatchMouseEvent, params);
+			if ((params as { type: string }).type === "mouseReleased" && replacement === null) {
+				cancelledAt = sim.now() - START;
+				executor.cancel();
+				replacement = executor.playNow(recommendation(plan), plan);
+			}
+			return result;
+		});
+		await sw.run(() => sim.time.advanceUntilIdle({ maxAdvanceMs: 30_000 }));
+		expect(reports.map(([ev]) => ev)).toEqual(["executed", "skipped"]);
+		const first = (reports[0] as [string, ExecutionReport])[1].result;
+		expect(first).toMatchObject({ ok: true, outcome: "executed", pressed: true, attempts: 1 });
+		expect(first.error).toBeUndefined();
+		const second = (reports[1] as [string, ExecutionReport])[1].result;
+		expect(second).toMatchObject({
+			ok: false,
+			outcome: "skipped",
+			reason: EXECUTOR.reasons.positionChanged,
+			attempts: 0,
+		});
+		expect(await replacement).toMatchObject({
+			outcome: "skipped",
+			reason: EXECUTOR.reasons.positionChanged,
+		});
+		const cmds = commands();
+		expect(cmds.filter((c) => c.type === "mousePressed")).toHaveLength(1);
+		expect(cmds.filter((c) => c.type === "mouseReleased")).toHaveLength(1);
+		// the cancel cut the post-drop rest: nothing after the release, verification bounded
+		expect(cmds.at(-1)?.type).toBe("mouseReleased");
+		expect(adapter.observeRequests).toEqual([
+			{ from: "e2", to: "e4" }, // short-budget verification of the landed drop
+			{ from: "e2", to: "e4" }, // the replacement's position guard → already on the board
+		]);
+		expect(cancelledAt).toBeGreaterThan(0);
+		expect(executor.isRunning()).toBe(false);
+	});
+
+	it("disarm() while a replacement is parked drops it: nothing is dispatched after the abort release", async () => {
+		const events: string[] = [];
+		let plan: TimingPlan = plan1200();
+		await sw.run(async () => {
+			for (const ev of ["executed", "aborted", "skipped", "failed"] as const)
+				executor.on(ev, (r) => events.push(`${ev}:${r.result.reason ?? "-"}`));
+			await executor.arm();
+			focus.positionArrived(tabId, sim.now());
+			plan = plan1200();
+			executor.schedule(recommendation(plan), plan);
+		});
+		let held = 0;
+		let replacement: Promise<unknown> | null = null;
+		sim.debugger.respond(CDP.inputDispatchMouseEvent, (params, id) => {
+			const p = params as { type: string; buttons: number };
+			if (p.type === "mouseMoved" && p.buttons === 1 && ++held === 2) {
+				executor.cancel();
+				replacement = executor.playNow(recommendation(plan), plan);
+				expect(executor.pendingMove()?.rec.chosen.uci).toBe("e2e4"); // parked, visible
+				executor.disarm();
+				expect(executor.pendingMove()).toBeNull();
+			}
+			return sim.input.send(id, CDP.inputDispatchMouseEvent, params);
+		});
+		await sw.run(() => sim.time.advanceUntilIdle({ maxAdvanceMs: 30_000 }));
+		expect(await replacement).toMatchObject({
+			ok: false,
+			outcome: "aborted",
+			reason: EXECUTOR.reasons.dropped,
+			attempts: 0,
+		});
+		expect(events).toEqual([
+			`aborted:${EXECUTOR.reasons.aborted}`,
+			`aborted:${EXECUTOR.reasons.dropped}`,
+		]);
+		const cmds = commands();
+		expect(cmds.filter((c) => c.type === "mousePressed")).toHaveLength(1);
+		expect(cmds.at(-1)?.type).toBe("mouseReleased");
+		expect(adapter.observeRequests).toEqual([{ from: "e2", to: "e4" }]); // only the bounded re-check
+		expect(executor.isArmed()).toBe(false);
+		expect(executor.isRunning()).toBe(false);
+	});
+
+	it("cancel() inside promote() is bounded by the short re-check: the picker read is aborted and the drop verified", async () => {
+		adapter.promotionRect = { left: 420, top: 60, width: 80, height: 80 };
+		const reports: Array<[string, ExecutionReport, number]> = [];
+		let cancelledAt = 0;
+		adapter.onPromotionGeometry = () => {
+			// the user cancels while the hand looks at the picker: the request is never answered
+			cancelledAt = sim.now() - START;
+			executor.cancel();
+			return false;
+		};
+		await sw.run(async () => {
+			for (const ev of ["executed", "aborted", "skipped", "failed"] as const)
+				executor.on(ev, (r) => reports.push([ev, r, sim.now() - START]));
+			await executor.arm();
+			focus.positionArrived(tabId, sim.now());
+			const plan = plan1200();
+			executor.schedule(recommendation(plan, { from: "e7", to: "e8", promotion: "q" }), plan);
+		});
+		await sw.run(() => sim.time.advanceUntilIdle({ maxAdvanceMs: 30_000 }));
+		expect(reports).toHaveLength(1);
+		const [ev, report, at] = reports[0] as [string, ExecutionReport, number];
+		expect(ev).toBe("executed");
+		expect(report.result).toMatchObject({ ok: true, outcome: "executed", pressed: true });
+		expect(
+			report.result.timeline.some(
+				(t) => t.phase === EXECUTOR.timelineNotes.promotionGeometryUnavailable
+			)
+		).toBe(true);
+		expect(cancelledAt).toBeGreaterThan(0);
+		expect(at - cancelledAt).toBeLessThanOrEqual(EXECUTOR.recheckTimeoutMs + 50);
+		const cmds = commands();
+		expect(cmds.filter((c) => c.type === "mousePressed")).toHaveLength(1); // no picker click
+		expect(adapter.observeRequests).toEqual([{ from: "e7", to: "e8" }]);
+		// the aborted picker request was dropped: a late reply to it changes nothing
+		expect(link.tabs()).toEqual([tabId]);
+		expect(executor.isRunning()).toBe(false);
+		expect(executor.pendingMove()).toBeNull();
 	});
 });

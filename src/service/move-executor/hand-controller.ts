@@ -61,7 +61,21 @@ import type { TimingPlan } from "@typedefs/timing";
 
 /** Reads board / square / promotion rects on demand (the content adapter over the game port). */
 export interface GeometryProvider {
-	read(tabId: number, promotion?: PromoPiece): Promise<BoardGeometryReply | null>;
+	read(
+		tabId: number,
+		promotion?: PromoPiece,
+		signal?: AbortSignal
+	): Promise<BoardGeometryReply | null>;
+}
+
+/**
+ * The from-square must still hold our piece when the adapter reports occupancy
+ * (§9.3 "never double-move"): a reply that says otherwise vetoes the touch.
+ */
+export function positionIntact(reply: BoardGeometryReply | null, from: Square): boolean {
+	const occ = reply?.occupancy;
+	if (!occ) return true;
+	return occ[from] === "own";
 }
 
 export interface FocusSource {
@@ -357,6 +371,7 @@ export class HandController {
 			reply = await this.readGeometry(plan.tabId);
 			readAt = this.now();
 		}
+		this.guardPosition(plan, reply);
 		let rects = this.resolveRects(plan, reply);
 		let touch = this.planTouch(plan, timing, rects, this.backend.position());
 		const approachStartAt = Math.max(
@@ -369,6 +384,7 @@ export class HandController {
 		if (this.geometry && this.now() - readAt > EXECUTOR.geometryFreshMs) {
 			const again = await this.readGeometry(plan.tabId);
 			if (again) {
+				this.guardPosition(plan, again);
 				const next = this.resolveRects(plan, again);
 				if (!sameRect(next.from, rects.from) || !sameRect(next.to, rects.to)) {
 					log.debug("hand: geometry changed during the decision pause; re-planning the touch");
@@ -674,7 +690,7 @@ export class HandController {
 	): Promise<BoardGeometryReply | null> {
 		if (!this.geometry) return null;
 		try {
-			return await this.geometry.read(tabId, promotion);
+			return await this.geometry.read(tabId, promotion, this.signal ?? undefined);
 		} catch (error) {
 			log.debug("hand: geometry read failed", {
 				tabId,
@@ -683,6 +699,16 @@ export class HandController {
 			});
 			return null;
 		}
+	}
+
+	/** Skip (never dispatch) when the adapter's occupancy says the piece is no longer on `from`. */
+	private guardPosition(plan: ExecutionPlan, reply: BoardGeometryReply | null): void {
+		if (positionIntact(reply, plan.from.square)) return;
+		log.info("hand: from-square no longer holds our piece; skipping", {
+			tabId: plan.tabId,
+			from: plan.from.square,
+		});
+		throw new SkipError(EXECUTOR.reasons.positionChanged);
 	}
 
 	private resolveRects(plan: ExecutionPlan, reply: BoardGeometryReply | null): Rects {

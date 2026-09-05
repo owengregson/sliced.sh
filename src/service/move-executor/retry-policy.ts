@@ -4,10 +4,18 @@
  * retry the board is re-checked so a move that did land (slow verification)
  * is never played twice, and the retry waits `TIMINGS.executorRetryDelayMs`.
  * A board that cannot be checked at all (`unavailable`, from the verification
- * or the re-check) is terminal: nothing is dispatched on a guess. Skips,
- * aborts and dispatch failures are final too — but when the committed press
- * went out (`pressed`) the release may have landed the move, so they are
- * verified once and upgraded to `executed` if the board shows the move.
+ * or the re-check) is terminal: nothing is dispatched on a guess.
+ *
+ * Every board check runs on a signal from `checkSignal()` — fresh at that
+ * moment, so the cancel that interrupted the attempt never poisons it; only a
+ * *further* cancel arriving during the check aborts it. An interrupted attempt
+ * whose committed press went out (`pressed`) therefore always gets one bounded
+ * `recheck()` (`EXECUTOR.recheckTimeoutMs`) and is reported truthfully:
+ * `executed` when the board shows the move, its own outcome (`pressed: true`)
+ * when it does not, and its own outcome with `verification-unavailable` in
+ * `error` only when the re-check itself was unavailable. A drop that was fully
+ * dispatched before a cancel (during the post-drop rest) is verified with the
+ * short budget instead of the full one and never retried.
  */
 
 import { EXECUTOR } from "@core/constants/cdp";
@@ -36,12 +44,15 @@ export interface RetryRunnerOptions {
 	style: ClickStyle;
 	/** Dispatch one attempt (`index` 0 = the full timed execution, later ones are instant retries). */
 	attempt(tier: ClickStyle, index: number): Promise<ExecutionResult>;
-	/** Full-budget verification after an attempt. */
-	verify(timeoutMs: number): Promise<VerifyResult>;
-	/** Short board re-check before a retry and after an interrupted attempt (never double-move). */
-	recheck(): Promise<VerifyResult>;
+	/** Verification after an attempt, bounded by `timeoutMs` and `signal`. */
+	verify(timeoutMs: number, signal: AbortSignal): Promise<VerifyResult>;
+	/** Short board re-check (`EXECUTOR.recheckTimeoutMs`) before a retry and after an interrupted attempt. */
+	recheck(signal: AbortSignal): Promise<VerifyResult>;
+	/** A signal that only a cancel arriving from now on aborts — never the one that already fired. */
+	checkSignal(): AbortSignal;
 	delay(ms: number): Promise<void>;
 	verifyTimeoutMs: number;
+	/** The execution's own signal (the attempts run on it). */
 	signal?: AbortSignal;
 }
 
@@ -73,7 +84,7 @@ export async function runWithRetry(o: RetryRunnerOptions): Promise<ExecutionResu
 			if (o.signal?.aborted) {
 				return { ...last, ok: false, outcome: "aborted", reason: EXECUTOR.reasons.aborted, attempts };
 			}
-			const pre = await o.recheck();
+			const pre = await o.recheck(o.checkSignal());
 			if (pre.outcome === "ok") {
 				log.info("executor: move landed before the retry; not re-dispatching", { tier: last.tier });
 				return { ...last, ok: true, outcome: "executed", attempts };
@@ -85,9 +96,8 @@ export async function runWithRetry(o: RetryRunnerOptions): Promise<ExecutionResu
 		if (!result.ok) {
 			if (!result.pressed) return { ...result, attempts };
 			// The committed press went out before the skip/abort: the release may have moved the
-			// piece. A short re-check (abortable) decides; a cancel must never keep the hand busy.
-			const late = await o.recheck();
-			if (o.signal?.aborted && result.outcome === "aborted") return { ...result, attempts };
+			// piece. One bounded re-check on a fresh signal decides — the board is always looked at.
+			const late = await o.recheck(o.checkSignal());
 			if (late.outcome === "ok") {
 				log.info("executor: interrupted attempt still landed the move", { outcome: result.outcome });
 				const upgraded: ExecutionResult = { ...result, ok: true, outcome: "executed", attempts };
@@ -96,20 +106,22 @@ export async function runWithRetry(o: RetryRunnerOptions): Promise<ExecutionResu
 			}
 			if (late.outcome === "unavailable") {
 				log.warn("executor: interrupted attempt could not be checked", { late });
-				const r: ExecutionResult = {
-					...result,
-					reason: EXECUTOR.reasons.verificationUnavailable,
-					attempts,
-				};
-				if (late.reason !== undefined) r.error = late.reason;
-				return r;
+				return { ...result, error: EXECUTOR.reasons.verificationUnavailable, attempts };
 			}
 			return { ...result, attempts };
 		}
-		const verdict = await o.verify(o.verifyTimeoutMs);
+		// A cancel that arrived after the drop (post-drop rest) bounds the verification and ends retries.
+		const cancelled = o.signal?.aborted === true;
+		const verdict = await o.verify(
+			cancelled ? EXECUTOR.recheckTimeoutMs : o.verifyTimeoutMs,
+			o.checkSignal()
+		);
 		if (verdict.outcome === "ok") return { ...result, attempts };
 		if (verdict.outcome === "unavailable") return unavailable(result, attempts, verdict);
-		log.warn("executor: move not verified", { tier, verdict });
+		log.warn("executor: move not verified", { tier, verdict, cancelled });
+		if (cancelled) {
+			return { ...result, ok: false, outcome: "aborted", reason: EXECUTOR.reasons.aborted, attempts };
+		}
 		last = result;
 	}
 	const base = last as ExecutionResult;

@@ -29,12 +29,22 @@ let geometryReads: Array<PromoPiece | undefined>;
 const prevChrome = (globalThis as Record<string, unknown>).chrome;
 
 let promotionReadFails = false;
+/** Occupancy the provider reports on the Nth board read (1-based); absent = no occupancy. */
+let occupancyByRead: Record<number, BoardGeometryReply["occupancy"]> = {};
+let boardReads = 0;
+let signalsSeen: Array<AbortSignal | undefined> = [];
 const provider: GeometryProvider = {
-	async read(_tabId, promotion) {
+	async read(_tabId, promotion, signal) {
 		geometryReads.push(promotion);
+		signalsSeen.push(signal);
 		if (promotion !== undefined && promotionReadFails) throw new Error("timeout");
 		const reply: BoardGeometryReply = { boardRect: BOARD, flipped: false };
 		if (promotion !== undefined) reply.promotion = promotionRect;
+		else {
+			boardReads += 1;
+			const occ = occupancyByRead[boardReads];
+			if (occ) reply.occupancy = occ;
+		}
 		return reply;
 	},
 };
@@ -52,6 +62,9 @@ beforeEach(async () => {
 	windowsUpdateCalls = 0;
 	promotionRect = null;
 	promotionReadFails = false;
+	occupancyByRead = {};
+	boardReads = 0;
+	signalsSeen = [];
 	geometryReads = [];
 	const realUpdate = sim.chrome.tabs.update;
 	sim.chrome.tabs.update = ((...args: unknown[]) => {
@@ -416,6 +429,32 @@ describe("HandController promotion", () => {
 		const next = cmds.slice(cmds.indexOf(drop) + 1)[0] as Cmd;
 		expect(next.at - drop.at).toBeGreaterThanOrEqual(700);
 		expect(next.at - drop.at).toBeLessThan(700 + PROMOTION_LOOK_DELAY_MS[0]);
+	});
+});
+
+describe("HandController position guard", () => {
+	it("skips with 'position-changed' and no press when the fresh read says the piece left the from-square", async () => {
+		occupancyByRead = { 1: { e2: "own" }, 2: { e2: "empty", e4: "own" } };
+		const ctrl = makeController(7);
+		const result = await run(ctrl, makePlan(), makeTiming());
+		expect(result).toMatchObject({
+			ok: false,
+			outcome: "skipped",
+			reason: "position-changed",
+			attempts: 0,
+		});
+		expect(commands().filter((c) => c.type !== "mouseMoved")).toHaveLength(0);
+		expect(ctrl.controller.state()).toBe("rest");
+		expect(ownership.position(tabId)).toEqual(ctrl.backend.position());
+	});
+
+	it("proceeds when occupancy confirms our piece on the from-square, and hands its signal to every read", async () => {
+		occupancyByRead = { 1: { e2: "own" }, 2: { e2: "own" } };
+		const ctrl = makeController(7);
+		const result = await run(ctrl, makePlan(), makeTiming());
+		expect(result.outcome).toBe("executed");
+		expect(signalsSeen.length).toBeGreaterThanOrEqual(2);
+		expect(signalsSeen.every((s) => s instanceof AbortSignal)).toBe(true);
 	});
 });
 

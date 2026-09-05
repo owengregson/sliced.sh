@@ -25,8 +25,14 @@ interface Harness {
 	verifies: number[];
 	rechecks: number;
 	delays: number[];
+	/** Every fresh check controller handed out by `checkSignal()`, in order. */
+	checks: AbortController[];
+	/** Called when a check starts (lets a test abort that very check = a further cancel). */
+	onCheck: (ac: AbortController) => void;
 	run(style?: ClickStyle): Promise<ExecutionResult>;
 }
+
+const ABORTED_CHECK: VerifyResult = { outcome: "unavailable", reason: "aborted" };
 
 function harness(
 	verify: VerifyResult[],
@@ -39,6 +45,8 @@ function harness(
 		verifies: [],
 		rechecks: 0,
 		delays: [],
+		checks: [],
+		onCheck: () => {},
 		run: (style = "drag") =>
 			runWithRetry({
 				style,
@@ -46,13 +54,23 @@ function harness(
 					h.attempts.push(tier);
 					return attempt(tier, i);
 				},
-				verify: async (timeoutMs) => {
+				// both checks honour their signal: an aborted check never looks at the board
+				verify: async (timeoutMs, sig) => {
 					h.verifies.push(timeoutMs);
+					h.onCheck(h.checks.at(-1) as AbortController);
+					if (sig.aborted) return ABORTED_CHECK;
 					return verify.shift() ?? { outcome: "timeout" };
 				},
-				recheck: async () => {
+				recheck: async (sig) => {
 					h.rechecks += 1;
+					h.onCheck(h.checks.at(-1) as AbortController);
+					if (sig.aborted) return ABORTED_CHECK;
 					return recheck.shift() ?? { outcome: "rejected" };
+				},
+				checkSignal: () => {
+					const ac = new AbortController();
+					h.checks.push(ac);
+					return ac.signal;
 				},
 				delay: async (ms) => {
 					h.delays.push(ms);
@@ -184,38 +202,108 @@ describe("runWithRetry", () => {
 			const missed = harness([], [{ outcome: "rejected" }], interrupted);
 			expect(await missed.run()).toMatchObject({ ok: false, outcome, reason: outcome, attempts: 1 });
 			expect(missed.attempts).toEqual(["drag"]);
-			// unavailable: surfaced, still terminal, no dispatch
+			// unavailable: its own outcome/reason stand, `verification-unavailable` in error, no dispatch
 			const dark = harness([], [{ outcome: "unavailable", reason: "no content port" }], interrupted);
 			expect(await dark.run()).toMatchObject({
 				ok: false,
 				outcome,
-				reason: EXECUTOR.reasons.verificationUnavailable,
-				error: "no content port",
+				reason: outcome,
+				pressed: true,
+				error: EXECUTOR.reasons.verificationUnavailable,
 				attempts: 1,
 			});
 			expect(dark.attempts).toEqual(["drag"]);
 		}
 	});
 
-	it("a cancelled attempt whose re-check was aborted by the same cancel stays 'aborted' (never 'unavailable')", async () => {
+	it("the cancel that interrupted the attempt never poisons the re-check: it runs on a fresh signal and the board is looked at", async () => {
+		const ac = new AbortController();
+		const interrupted = (tier: ClickStyle): ExecutionResult => {
+			ac.abort();
+			return { ...dispatched(tier), ok: false, outcome: "aborted", reason: "aborted", pressed: true };
+		};
+		const landed = harness([], [{ outcome: "ok" }], interrupted, ac.signal);
+		const up = await landed.run();
+		expect(up).toMatchObject({ ok: true, outcome: "executed", pressed: true, attempts: 1 });
+		expect(up.reason).toBeUndefined();
+		expect(landed.rechecks).toBe(1);
+		expect(landed.checks).toHaveLength(1);
+		expect(landed.checks[0]?.signal.aborted).toBe(false);
+		expect(landed.attempts).toEqual(["drag"]);
+		const missed = harness([], [{ outcome: "rejected" }], interrupted, new AbortController().signal);
+		expect(await missed.run()).toMatchObject({
+			ok: false,
+			outcome: "aborted",
+			reason: "aborted",
+			pressed: true,
+			attempts: 1,
+		});
+		expect(missed.rechecks).toBe(1);
+	});
+
+	it("only a FURTHER cancel during the re-check aborts it: 'aborted' + pressed + verification-unavailable in error", async () => {
 		const ac = new AbortController();
 		const h = harness(
 			[],
-			[{ outcome: "unavailable", reason: "aborted" }],
+			[{ outcome: "ok" }],
 			(tier) => {
 				ac.abort();
 				return { ...dispatched(tier), ok: false, outcome: "aborted", reason: "aborted", pressed: true };
 			},
 			ac.signal
 		);
-		expect(await h.run()).toMatchObject({
+		h.onCheck = (check) => check.abort(); // the second cancel lands while the re-check is in flight
+		const r = await h.run();
+		expect(r).toMatchObject({
+			ok: false,
+			outcome: "aborted",
+			reason: "aborted",
+			pressed: true,
+			error: EXECUTOR.reasons.verificationUnavailable,
+			attempts: 1,
+		});
+		expect(h.rechecks).toBe(1);
+		expect(h.attempts).toEqual(["drag"]);
+	});
+
+	it("a cancel during the post-drop rest bounds the verification (short budget, fresh signal) and never retries", async () => {
+		const ac = new AbortController();
+		const dropped = (tier: ClickStyle): ExecutionResult => {
+			ac.abort(); // cancel arrives after the drop; the controller still reports the attempt ok
+			return { ...dispatched(tier), pressed: true };
+		};
+		const ok = harness([{ outcome: "ok" }], [], dropped, ac.signal);
+		expect(await ok.run()).toMatchObject({ ok: true, outcome: "executed", attempts: 1 });
+		expect(ok.verifies).toEqual([EXECUTOR.recheckTimeoutMs]);
+		expect(ok.checks[0]?.signal.aborted).toBe(false);
+		const ac2 = new AbortController();
+		const missed = harness(
+			[{ outcome: "rejected" }],
+			[],
+			(tier) => {
+				ac2.abort();
+				return { ...dispatched(tier), pressed: true };
+			},
+			ac2.signal
+		);
+		expect(await missed.run()).toMatchObject({
 			ok: false,
 			outcome: "aborted",
 			reason: "aborted",
 			attempts: 1,
 		});
-		expect(h.rechecks).toBe(1);
-		expect(h.attempts).toEqual(["drag"]);
+		expect(missed.attempts).toEqual(["drag"]); // no click-click retry after a cancel
+		expect(missed.rechecks).toBe(0);
+		expect(missed.verifies).toEqual([EXECUTOR.recheckTimeoutMs]);
+	});
+
+	it("without a cancel the full verification budget is used and every check gets its own fresh signal", async () => {
+		const h = harness([{ outcome: "rejected" }, { outcome: "ok" }]);
+		const r = await h.run();
+		expect(r).toMatchObject({ ok: true, outcome: "executed", tier: "click", attempts: 2 });
+		expect(h.verifies).toEqual([TIMINGS.executorVerifyTimeoutMs, TIMINGS.executorVerifyTimeoutMs]);
+		expect(h.checks).toHaveLength(3); // verify, pre-retry recheck, verify
+		expect(h.checks.every((c) => !c.signal.aborted)).toBe(true);
 	});
 
 	it("an abort during the retry delay ends as aborted without dispatching again", async () => {

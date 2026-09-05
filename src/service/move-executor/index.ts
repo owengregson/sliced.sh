@@ -44,6 +44,7 @@ import {
 	type FocusSource,
 	type GeometryProvider,
 	HandController,
+	positionIntact,
 	preTouchMsOf,
 	type TimingWindow,
 } from "./hand-controller";
@@ -55,7 +56,8 @@ export interface ExecutorLink {
 	request<K extends RequestKind>(
 		tabId: number,
 		cmd: RequestInput<K>,
-		timeoutMs: number
+		timeoutMs: number,
+		signal?: AbortSignal
 	): Promise<ReplyFor<K>>;
 }
 
@@ -191,6 +193,10 @@ export class MoveExecutor {
 	private readonly listeners = new Map<ExecutorEvent, Set<(payload: never) => void>>();
 	private pending: Pending | null = null;
 	private running: Running | null = null;
+	/** A replacement waiting for a cancelled run to wind down (`cancel()`/`disarm()` drop it). */
+	private parked: { rec: Recommendation; ac: AbortController } | null = null;
+	/** The current board check's controller (a cancel arriving during the check aborts it). */
+	private checkAc: AbortController | null = null;
 	private hand: HandState = "rest";
 	private lastSkipReason: string | null = null;
 	private disposed = false;
@@ -220,7 +226,7 @@ export class MoveExecutor {
 					: "click"
 				: deps.style;
 		this.geometry = {
-			read: (tabId, promotion) => this.readGeometry(tabId, promotion),
+			read: (tabId, promotion, signal) => this.readGeometry(tabId, promotion, signal),
 		};
 	}
 
@@ -261,8 +267,11 @@ export class MoveExecutor {
 		return HAND_VIEW[this.hand];
 	}
 
+	/** The scheduled move, or a replacement parked behind a cancelled run (due now). */
 	pendingMove(): { rec: Recommendation; fireAt: number } | null {
-		return this.pending ? { rec: this.pending.rec, fireAt: this.pending.fireAt } : null;
+		if (this.pending) return { rec: this.pending.rec, fireAt: this.pending.fireAt };
+		if (this.parked) return { rec: this.parked.rec, fireAt: this.now() };
+		return null;
 	}
 
 	isRunning(): boolean {
@@ -319,10 +328,15 @@ export class MoveExecutor {
 		return this.execute(target, instantTiming(base), ctx ?? pending?.ctx ?? {});
 	}
 
-	/** Drop the pending move; abort a running one (the hand releases at once). */
+	/**
+	 * Drop the pending move and any parked replacement; abort a running one (the
+	 * hand releases at once) and the board check in flight, if any.
+	 */
 	cancel(): void {
 		this.clearPending();
+		this.parked?.ac.abort();
 		this.running?.ac.abort();
+		this.checkAc?.abort();
 	}
 
 	dispose(): void {
@@ -336,20 +350,24 @@ export class MoveExecutor {
 
 	/**
 	 * One execution at a time per tab. After `cancel()` the running execution
-	 * winds down promptly (release, abortable re-check) and a replacement
-	 * request waits for it, then plays. A second request while an execution is
-	 * still live (not cancelled) is dropped and the running promise returned:
-	 * the session owns the "one recommendation per position" rule and must
-	 * `cancel()` before scheduling a replacement — queueing here would play a
-	 * stale move. (Queued for Task 30: decide whether a newer recommendation
-	 * should abort the running one instead.)
+	 * winds down within one bounded board re-check (release, then a fresh
+	 * `EXECUTOR.recheckTimeoutMs` check that only a further cancel aborts); a
+	 * replacement request is *parked* behind it — visible to `pendingMove()`,
+	 * dropped by `cancel()` / `disarm()` / `dispose()` — and plays only if the
+	 * hand is still armed, after its own position guard (`dispatch`). A second
+	 * request while an execution is live (not cancelled) is dropped and the
+	 * running promise returned: the session owns the "one recommendation per
+	 * position" rule and must `cancel()` before scheduling a replacement —
+	 * queueing here would play a stale move. (Queued for Task 30: decide whether
+	 * a newer recommendation should abort the running one instead.)
 	 */
 	private async execute(
 		rec: Recommendation,
 		timing: TimingPlan,
 		ctx: MoveContext
 	): Promise<ExecutionResult> {
-		while (this.running) {
+		let replacement = false;
+		if (this.running) {
 			if (!this.running.ac.signal.aborted) {
 				log.warn("executor: execution already running; request dropped (cancel() first)", {
 					tabId: this.tabId,
@@ -357,11 +375,19 @@ export class MoveExecutor {
 				});
 				return this.running.done;
 			}
-			await this.running.done.catch(() => {});
+			const park = { rec, ac: new AbortController() };
+			this.parked?.ac.abort();
+			this.parked = park;
+			while (this.running && !park.ac.signal.aborted) await this.running.done.catch(() => {});
+			if (this.parked === park) this.parked = null;
+			replacement = true;
+			if (park.ac.signal.aborted || this.disposed || !this.isArmed()) {
+				return this.droppedReplacement(rec);
+			}
 		}
-		if (this.disposed) return this.disposedResult(rec);
+		if (this.disposed) return this.droppedReplacement(rec);
 		const ac = new AbortController();
-		const done = this.runOne(rec, timing, ctx, ac.signal);
+		const done = this.runOne(rec, timing, ctx, ac.signal, replacement);
 		this.running = { rec, ac, done };
 		try {
 			return await done;
@@ -370,25 +396,34 @@ export class MoveExecutor {
 		}
 	}
 
-	private disposedResult(rec: Recommendation): ExecutionResult {
-		log.debug("executor: disposed before a replacement could run", { uci: rec.chosen.uci });
-		return {
+	/** A parked replacement that `cancel()` / `disarm()` / `dispose()` dropped: reported, never dispatched. */
+	private droppedReplacement(rec: Recommendation): ExecutionResult {
+		log.info("executor: parked replacement dropped", {
+			tabId: this.tabId,
+			uci: rec.chosen.uci,
+			armed: this.isArmed(),
+			disposed: this.disposed,
+		});
+		const result: ExecutionResult = {
 			ok: false,
 			outcome: "aborted",
-			reason: EXECUTOR.reasons.aborted,
+			reason: EXECUTOR.reasons.dropped,
 			tier: this.dominantStyle,
 			attempts: 0,
 			endPoint: this.ownership.position(this.tabId) ?? { x: 0, y: 0 },
 			elapsedMs: 0,
 			timeline: [],
 		};
+		if (!this.disposed) this.emit("aborted", { rec, result });
+		return result;
 	}
 
 	private async runOne(
 		rec: Recommendation,
 		timing: TimingPlan,
 		ctx: MoveContext,
-		signal: AbortSignal
+		signal: AbortSignal,
+		replacement: boolean
 	): Promise<ExecutionResult> {
 		const t0 = this.now();
 		const fail = (reason: string, error?: string): ExecutionResult => {
@@ -414,9 +449,9 @@ export class MoveExecutor {
 				});
 				result = fail(EXECUTOR.reasons.notAttached);
 			} else {
-				const reply = await this.readGeometry(this.tabId);
+				const reply = await this.readGeometry(this.tabId, undefined, signal);
 				if (!reply) result = fail(EXECUTOR.reasons.noGeometry);
-				else result = await this.dispatch(rec, timing, ctx, reply, signal);
+				else result = await this.dispatch(rec, timing, ctx, reply, signal, replacement);
 			}
 		} catch (error) {
 			result = fail(EXECUTOR.reasons.dispatchFailed, errorMessage(error));
@@ -441,9 +476,32 @@ export class MoveExecutor {
 		timing: TimingPlan,
 		ctx: MoveContext,
 		reply: BoardGeometryReply,
-		signal: AbortSignal
+		signal: AbortSignal,
+		replacement: boolean
 	): Promise<ExecutionResult> {
 		const readAt = this.now();
+		const expected: ExpectedMove = { from: rec.chosen.from, to: rec.chosen.to };
+		if (rec.chosen.promotion) expected.promotion = rec.chosen.promotion;
+		// Position guard: never dispatch on a position that already changed (a replacement after a
+		// cancelled run, or any reply whose occupancy says the piece left the from-square).
+		const changed = await this.positionChanged(rec, reply, expected, replacement);
+		if (changed !== null) {
+			log.info("executor: position changed before the committed press; not dispatching", {
+				tabId: this.tabId,
+				uci: rec.chosen.uci,
+				reason: changed,
+			});
+			return {
+				ok: false,
+				outcome: "skipped",
+				reason: changed,
+				tier: this.dominantStyle,
+				attempts: 0,
+				endPoint: this.ownership.position(this.tabId) ?? { x: 0, y: 0 },
+				elapsedMs: this.now() - readAt,
+				timeline: [],
+			};
+		}
 		const geo = boardGeometryOf(reply);
 		const fromRect = geo.squareRect(rec.chosen.from);
 		const toRect = geo.squareRect(rec.chosen.to);
@@ -503,11 +561,9 @@ export class MoveExecutor {
 			},
 		};
 		if (rec.chosen.promotion) plan.promotion = rec.chosen.promotion;
-		const expected: ExpectedMove = { from: rec.chosen.from, to: rec.chosen.to };
-		if (rec.chosen.promotion) expected.promotion = rec.chosen.promotion;
-		const verify = (timeoutMs: number): Promise<VerifyResult> =>
+		const check = (timeoutMs: number, checkSignal: AbortSignal): Promise<VerifyResult> =>
 			this.config.verifyMoves
-				? verifyMove(this.link, this.tabId, expected, timeoutMs, signal)
+				? verifyMove(this.link, this.tabId, expected, timeoutMs, checkSignal)
 				: Promise.resolve({ outcome: "ok" });
 		try {
 			return await runWithRetry({
@@ -518,15 +574,52 @@ export class MoveExecutor {
 						index === 0 ? timing : instantTiming(timing),
 						signal
 					),
-				verify,
-				recheck: () => verify(EXECUTOR.recheckTimeoutMs),
+				verify: check,
+				recheck: (checkSignal) => check(EXECUTOR.recheckTimeoutMs, checkSignal),
+				checkSignal: () => this.freshCheckSignal(),
 				delay: (ms) => sleep(ms, this.scheduler, signal),
 				verifyTimeoutMs: TIMINGS.executorVerifyTimeoutMs,
 				signal,
 			});
 		} finally {
+			this.checkAc = null;
 			backend.dispose();
 		}
+	}
+
+	/** A board-check signal that only a cancel arriving from now on aborts. */
+	private freshCheckSignal(): AbortSignal {
+		this.checkAc = new AbortController();
+		return this.checkAc.signal;
+	}
+
+	/**
+	 * `null` when the piece is still on `from`; otherwise the skip reason. Occupancy
+	 * from the reply answers for free; a replacement without occupancy asks the
+	 * adapter whether the move is already on the board (bounded, fresh signal). An
+	 * unanswerable check counts as changed: nothing is dispatched on a guess.
+	 */
+	private async positionChanged(
+		rec: Recommendation,
+		reply: BoardGeometryReply,
+		expected: ExpectedMove,
+		replacement: boolean
+	): Promise<string | null> {
+		if (reply.occupancy) {
+			return positionIntact(reply, rec.chosen.from) ? null : EXECUTOR.reasons.positionChanged;
+		}
+		if (!replacement || !this.config.verifyMoves) return null;
+		const seen = await verifyMove(
+			this.link,
+			this.tabId,
+			expected,
+			EXECUTOR.recheckTimeoutMs,
+			this.freshCheckSignal()
+		);
+		this.checkAc = null;
+		if (seen.outcome === "ok") return EXECUTOR.reasons.positionChanged;
+		if (seen.outcome === "unavailable") return EXECUTOR.reasons.verificationUnavailable;
+		return null;
 	}
 
 	private styleFor(moveRng: ReturnType<typeof createRng>): ClickStyle {
@@ -544,7 +637,8 @@ export class MoveExecutor {
 
 	private async readGeometry(
 		tabId: number,
-		promotion?: PromoPiece
+		promotion?: PromoPiece,
+		signal?: AbortSignal
 	): Promise<BoardGeometryReply | null> {
 		try {
 			const cmd: RequestInput<"geometry"> = promotion
@@ -553,7 +647,7 @@ export class MoveExecutor {
 			const budget = promotion
 				? EXECUTOR.promotionPickerTimeoutMs + EXECUTOR.geometryTimeoutMs
 				: EXECUTOR.geometryTimeoutMs;
-			const { kind: _kind, id: _id, ...reply } = await this.link.request(tabId, cmd, budget);
+			const { kind: _kind, id: _id, ...reply } = await this.link.request(tabId, cmd, budget, signal);
 			return reply;
 		} catch (error) {
 			log.debug("executor: geometry unavailable", { tabId, error: errorMessage(error) });

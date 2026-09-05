@@ -108,6 +108,10 @@ export const EXECUTOR = {
 		dispatchFailed: "dispatch failed",
 		/** The board could not be (re-)checked: never dispatch again on a guess. */
 		verificationUnavailable: "verification-unavailable",
+		/** The from-square no longer holds our piece / the move is already on the board. */
+		positionChanged: "position-changed",
+		/** A parked replacement was dropped by `cancel()` / `disarm()` / `dispose()`. */
+		dropped: "dropped",
 	},
 	/** Zero-length `ExecutionResult.timeline` entries that annotate an execution. */
 	timelineNotes: {
