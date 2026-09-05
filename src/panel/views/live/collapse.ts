@@ -10,6 +10,12 @@
  * under the top bar). Each step is a discrete state (`data-collapse` on the view root; no fluid
  * scaling) so the layout is stable while the user drags the panel edge.
  *
+ * Reachability under the literal rule: after the PV step the layout is 504 px at every PV count
+ * (the rows are what the count adds), and the WDL fold brings it to 440 < 480, so at any
+ * available height ≥ 480 the chain has fitted by `wdl` at the latest. The reachable states are
+ * therefore `{full, strip, pv, wdl, scroll}`; the `strength` and `move` branches are kept as the
+ * transcription of steps 4–5 but the budget arithmetic never selects them.
+ *
  * Measurement: the VIEWPORT (`window.innerHeight` / `documentElement.clientWidth`), never the
  * content box — `.sl-app` is `min-height: 100vh` and grows with its content, so its own box
  * can never be smaller than the layout. A `ResizeObserver` on `.sl-app` (width changes) plus
@@ -19,7 +25,7 @@
  * ≥ `layout.panelComfortable` (420) the comfortable one (the CSS container queries mirror both).
  */
 
-import { STRENGTH_UI } from "@core/constants/ui";
+import { LIVE_LAYOUT } from "@core/constants/ui";
 import { TOKENS } from "@design/tokens.generated";
 
 /** Appendix F §8.2 budget at 360×720 (px). */
@@ -43,7 +49,7 @@ export const LIVE_BUDGET = {
 
 export const COLLAPSE_STEPS = ["strip", "pv", "wdl", "strength", "move", "scroll"] as const;
 /** §8.2 step 6 threshold on the available height. */
-export const SCROLL_BELOW_PX = STRENGTH_UI.liveScrollBelowPx;
+export const SCROLL_BELOW_PX = LIVE_LAYOUT.scrollBelowPx;
 export type CollapseStep = (typeof COLLAPSE_STEPS)[number];
 export type CollapseName = "full" | CollapseStep;
 

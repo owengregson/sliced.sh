@@ -227,10 +227,7 @@ function mountLive(ctx: ViewContext): () => void {
 		}, RING_TICK_MS);
 		preArmTimer = setTimeout(() => {
 			preArmTimer = null;
-			const toast = preArmToast;
-			preArmToast = null;
-			cancelPreArm();
-			toast?.dismiss();
+			cancelPreArm(); // dismisses the toast, stops the ring
 			void setAutoPlay(true);
 		}, UI_TIMINGS.preArmMs);
 	}
@@ -251,6 +248,10 @@ function mountLive(ctx: ViewContext): () => void {
 	doc.addEventListener("keydown", onKeyDown);
 
 	// ── hands-off lock (§13.4) ──────────────────────────────────────────────
+	// Ordering with the shell: the view locks first (its own mount/render), the shell's
+	// `lockFocusables` then records "already disabled" and restores the same values on exit,
+	// while this view is unmounted by then (a live game always ends with a remount). The
+	// view-level restore only matters when the view itself survives a hands-off exit (tests).
 	function lockControls(): void {
 		for (const el of root.querySelectorAll(LOCK_SELECTOR)) {
 			if (!locked.has(el))
@@ -322,6 +323,7 @@ function mountLive(ctx: ViewContext): () => void {
 	function render(): void {
 		const snap = snapshot;
 		if (!snap || disposed) return;
+		metrics = measureLayout(app); // cheap; a banner can appear without any resize
 		const nextHandsOff = isHandsOff(snap);
 		if (nextHandsOff !== handsOff) {
 			handsOff = nextHandsOff;

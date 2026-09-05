@@ -145,12 +145,14 @@ export function createMoveSection(options: MoveSectionOptions): MoveSectionHandl
 		executing = nowExecuting;
 
 		// A new execution result (not the one the view mounted with) → §6.3 "played". Snapshots
-		// are fresh objects every push, so results are keyed, and a new ply clears the key.
+		// are fresh objects every push, so results are keyed. An `at` stamp is a unique identity
+		// and survives ply changes; only the structural fallback is cleared by a new ply (the same
+		// shape could legitimately recur on a later move).
+		const exec = snap.session.lastExecution;
 		if (snap.session.ply !== lastPly) {
 			lastPly = snap.session.ply;
-			if (seenSnapshot) lastExecutionKey = null;
+			if (seenSnapshot && exec?.at === undefined) lastExecutionKey = null;
 		}
-		const exec = snap.session.lastExecution;
 		const key = exec ? executionKey(exec) : null;
 		if (exec && key !== lastExecutionKey && seenSnapshot) onExecution(exec, snap);
 		lastExecutionKey = key;

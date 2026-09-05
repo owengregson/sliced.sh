@@ -62,6 +62,10 @@ export const STRENGTH_UI = {
 	] as const,
 	/** Slider step for the 400–3200 target rating. */
 	sliderStep: 50,
-	/** §8.2 step 6: below this available height the Live view scrolls with the move card pinned. */
-	liveScrollBelowPx: 480,
+} as const;
+
+/** Task 24 — Live view height strategy (Appendix F §8.2). */
+export const LIVE_LAYOUT = {
+	/** Step 6: below this available height (viewport − top bar − banner) the view scrolls with the move card pinned. */
+	scrollBelowPx: 480,
 } as const;

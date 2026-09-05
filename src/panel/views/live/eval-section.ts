@@ -162,8 +162,15 @@ export function createEvalSection(options: EvalSectionOptions): EvalSectionHandl
 		options.evalRow.hidden = inline;
 		opponent.inline.hidden = !inline;
 		opponent.inline.textContent = text;
-		if (inline && valueText) opponent.inline.setAttribute("title", valueText);
-		else opponent.inline.removeAttribute("title");
+		// The numeral speaks the full value (score + WDL) too: in the scroll state the rail is
+		// hidden, so the meter's accessible value would otherwise be lost.
+		if (inline && valueText) {
+			opponent.inline.setAttribute("title", valueText);
+			opponent.inline.setAttribute("aria-label", valueText);
+		} else {
+			opponent.inline.removeAttribute("title");
+			opponent.inline.removeAttribute("aria-label");
+		}
 		me.inline.hidden = true;
 	}
 

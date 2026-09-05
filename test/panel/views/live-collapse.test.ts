@@ -85,7 +85,9 @@ describe("collapseFor (pure)", () => {
 		// Never 0 rows while a line exists; a 1-line setting (556 px) skips the PV step.
 		expect(collapseFor(556, 1).name).toBe("full");
 		expect(collapseFor(500, 1)).toMatchObject({ name: "wdl", pvMax: 1 });
-		// Five lines (668 px): the chip and compact-card steps stay reachable only above 480.
+		// Five lines (668 px). After the PV step the layout is 504 px at every PV count and the
+		// WDL fold makes it 440 < 480, so under the literal rule the reachable states are
+		// {full, strip, pv, wdl, scroll}; the `strength` / `move` branches are never selected.
 		expect(collapseFor(700, 5).name).toBe("full");
 		expect(collapseFor(650, 5).name).toBe("strip"); // 668 − 52 = 616 fits
 		expect(collapseFor(600, 5)).toMatchObject({ name: "pv", pvMax: 4 }); // 588 fits
@@ -126,6 +128,15 @@ describe("mounted view", () => {
 		expect(h.q(".sl-live__eval-inline").textContent).toBe("+1.34");
 		expect(h.q(".sl-live__eval-inline").getAttribute("title")).toContain("71");
 		expect(h.q(".sl-live__strength").hidden).toBe(false);
+		// A banner appearing without a resize is picked up on the next snapshot render.
+		const bannerSlot = h.app.querySelector<HTMLElement>(".sl-app__banner");
+		if (!bannerSlot) throw new Error("no banner slot");
+		Object.defineProperty(bannerSlot, "offsetHeight", { configurable: true, value: 40 });
+		h.store.emit(liveSnapshot()); // available 456 < 480
+		expect(h.root.dataset.collapse).toBe("scroll");
+		Object.defineProperty(bannerSlot, "offsetHeight", { configurable: true, value: 0 });
+		h.store.emit(liveSnapshot());
+		expect(h.root.dataset.collapse).toBe("wdl");
 
 		resize(360, 480); // available 436 < 480: the view scrolls, everything folded, card pinned
 		expect(h.root.dataset.collapse).toBe("scroll");
@@ -137,6 +148,12 @@ describe("mounted view", () => {
 		expect(h.q(".sl-live__strength-chip").hidden).toBe(false);
 		expect(h.q(".sl-live__strength-chip").textContent).toBe(`1500 · ${COPY.personaName.balanced}`);
 		expect(h.q(".sl-move").classList.contains("sl-move--compact")).toBe(true);
+		// The rail is hidden in this state: the inline numeral carries the meter's value.
+		expect(LIVE_CSS).toMatch(/\.sl-live--scroll \.sl-live__rail[^{]*\{[^}]*display:\s*none/);
+		expect(h.q(".sl-live__eval-inline").getAttribute("aria-label")).toBe(
+			h.q(".sl-evalbar").getAttribute("aria-valuetext")
+		);
+		expect(h.q(".sl-live__eval-inline").getAttribute("aria-label")).toContain("71% win");
 		// The card is pinned to the viewport under the sticky top bar for the whole scroll.
 		expect(LIVE_CSS).toMatch(
 			/\.sl-live--scroll \.sl-live__move[^{]*\{[^}]*position:\s*sticky;[^}]*top:\s*var\(--sl-size-control-lg\)/

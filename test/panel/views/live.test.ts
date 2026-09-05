@@ -385,6 +385,17 @@ describe("move card states (§5.6)", () => {
 		expect(count()).toBe(1);
 		await dom.tick(UI_TIMINGS.toastShortMs + 1);
 		await dom.tick(0);
+		// An `at` id survives ply changes: the same result recorded at ply N persists while the
+		// board moves on (N+1 my move, N+2 the reply) and must not re-fire.
+		let ply = idleSnapshot().session.ply;
+		for (let i = 0; i < 2; i += 1) {
+			ply += 1;
+			const later = idleSnapshot({ lastExecution: executed(2000) });
+			later.session.ply = ply;
+			h.store.emit(later);
+		}
+		expect(count()).toBe(0);
+		expect(h.q(".sl-move").classList.contains("sl-move--played")).toBe(false);
 		// Without `at`: structural identity, cleared by a ply change.
 		h.store.emit(idleSnapshot({ lastExecution: executed(undefined) }));
 		expect(count()).toBe(1);
