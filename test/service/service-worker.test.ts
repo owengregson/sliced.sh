@@ -1,7 +1,7 @@
 // test/service/service-worker.test.ts — boots the real SW entry in the simulator.
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import type { LicenseClient, LicenseResult } from "@core/auth/license-client";
-import { ALARM_NAMES, LOCAL_KEYS, MSG } from "@core/constants";
+import { ALARM_NAMES, LOCAL_KEYS, MSG, type PanelSnapshot } from "@core/constants";
 import { bootstrapServiceSystems, type ServiceSystems } from "@service/bootstrap";
 import { createSimulator, type Simulator } from "@test/sim";
 import { bootPanelContext, type PanelContext } from "@test/sim/contexts/panel-context";
@@ -59,6 +59,19 @@ describe("service worker entry", () => {
 		expect(reply.response.rawStatus).toBe("valid");
 		expect(sim.storage.data.local[LOCAL_KEYS.licenseKey]).toBe("GOLD");
 		expect(validations).toEqual(["", "GOLD"]);
+	});
+	it("round-trips PANEL_GET_SNAPSHOT (idle sources until Task 30 wires the registry)", async () => {
+		const reply = (await panel.send({ type: MSG.PANEL_GET_SNAPSHOT })) as {
+			success: boolean;
+			response: PanelSnapshot;
+		};
+		expect(reply.success).toBe(true);
+		expect(reply.response.session.state).toBe("idle");
+		expect(reply.response.site).toBeNull();
+		expect(reply.response.license.status).toBe("valid");
+		expect(reply.response.engine.state).toBe("booting");
+		expect(reply.response.autoMove).toEqual({ armed: false });
+		expect(reply.response.executor).toEqual({ debuggerAttached: false });
 	});
 	it("round-trips PANEL_RECHECK_LICENSE and PANEL_LOGOUT", async () => {
 		const recheck = (await panel.send({ type: MSG.PANEL_RECHECK_LICENSE })) as {

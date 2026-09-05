@@ -54,6 +54,15 @@ export const CONTENT_LINK_ERRORS = {
 	disposed: "disposed",
 } as const;
 
+/** Reasons the panel handlers (Task 28) reject a command with — the `MessageEnvelope.error` text. */
+export const PANEL_COMMAND_ERRORS = {
+	/** The tab has no move executor (no game session / content script on it). */
+	noExecutor: "no auto-play executor on this tab",
+	/** `playNow` needs the hand armed (the debugger attaches at arm time, never mid-game, §13.4). */
+	notArmed: "auto-play is not armed",
+	noRecommendation: "no move to play yet",
+} as const;
+
 /** Detach reasons Chrome reports on `onDetach` plus the manager's own. */
 export const DEBUGGER_DETACH_REASONS = {
 	canceledByUser: "canceled_by_user",
