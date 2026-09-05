@@ -25,3 +25,8 @@ export function createStubView(name: ViewName): View {
 export const VIEWS: ViewRegistry = Object.fromEntries(
 	VIEW_NAMES.map((name) => [name, createStubView(name)])
 ) as ViewRegistry;
+
+// ── Task 25: the real Settings view replaces its stub ────────────────────────────────────────
+import { createSettingsView } from "./settings";
+
+VIEWS.settings = createSettingsView();

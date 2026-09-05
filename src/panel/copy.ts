@@ -274,3 +274,150 @@ export function viewTitle(
 			return COPY.update.title(version);
 	}
 }
+
+// ── Task 25: settings view (Appendix F §4.6 / §7.2) ─────────────────────────────────────────
+// Row labels and help are keyed by the `Settings` leaf path so `views/settings/rows.ts` can
+// look them up by path; strings that already exist in `COPY` are referenced, not repeated.
+
+type SettingsRowCopy = Readonly<{ label: string; help?: string }>;
+
+export const SETTINGS_COPY = {
+	sections: {
+		strength: "Strength",
+		timing: "Timing",
+		execution: "Execution",
+		keybinds: "Keybinds",
+		display: "Display",
+		account: "Account",
+		advanced: "Advanced",
+	},
+	jump: "Jump to section",
+	rows: {
+		enabled: {
+			label: "Assistant",
+			help: "Off stops analysis and recommendations until you turn it back on.",
+		},
+		"strength.targetElo": { label: "Target rating" },
+		"strength.matchOpponentRating": {
+			label: "Match opponent rating",
+			help: "Derives the target rating from your opponent each game.",
+		},
+		"strength.personaEloOffset": {
+			label: "Persona offset",
+			help: "Added to the opponent's rating when matching.",
+		},
+		"strength.persona": { label: "Persona" },
+		"strength.selectionMode": { label: "Move selection" },
+		"strength.useOpeningBook": {
+			label: "Opening book",
+			help: "Plays book moves for the first 8–12 moves.",
+		},
+		"strength.blunderScale": { label: "Blunder rate" },
+		"timing.profile": { label: "Preset" },
+		"timing.speedScale": { label: "Base speed" },
+		"timing.varianceScale": { label: "Variance" },
+		"timing.premoveTendency": { label: "Premove tendency" },
+		"timing.longThinkFrequency": { label: "Long-think frequency" },
+		"timing.respectBudget": {
+			label: "Respect clock budget",
+			help: "Plays faster as the clock runs low.",
+		},
+		"execution.style": { label: "Move input" },
+		"execution.motorSpeed": { label: "Motor speed" },
+		"execution.calibrateFromMyMouse": {
+			label: "Calibrate from my mouse",
+			help: "Fits the hand to your own mouse movement between games.",
+		},
+		"execution.keepDebuggerAttached": { label: "Keep debugger attached" },
+		"execution.verifyMoves": { label: "Verify moves after playing" },
+		"execution.backend": { label: "Input backend" },
+		"execution.previewSelects": {
+			label: "Preview selections",
+			help: "Sometimes selects a piece before moving, at a modelled rate.",
+		},
+		"execution.previewSelectScale": { label: "Preview rate" },
+		"automation.autoMove": {
+			label: "Auto-play",
+			help: "Armed when a game starts. Hold the toggle in Game to arm one game.",
+		},
+		"automation.autoQueue": {
+			label: "Auto-queue",
+			help: "Starts the next game when one ends.",
+		},
+		"automation.highlightMoves": {
+			label: "Highlight moves",
+			help:
+				"Draws the recommended move on the board. Off by default: drawing on the page adds DOM the site can see (§13.3).",
+		},
+		"automation.highlightStyle": { label: "Highlight style" },
+		"keybinds.playMove": { label: "Play move" },
+		"keybinds.toggleAutoMove": { label: "Toggle auto-play" },
+		"keybinds.disable": { label: "Disable assistant" },
+		"keybinds.speakMove": { label: "Speak move" },
+		"keybinds.global": { label: "Scope" },
+		"display.evalBar": { label: "Eval bar" },
+		"display.pvCount": { label: "Lines shown" },
+		"display.uiSounds": { label: "UI sounds" },
+		"display.tts": { label: "Speak moves (TTS)" },
+		"display.ttsVoice": { label: "Voice" },
+		"display.theme": { label: "Theme" },
+		"display.reducedMotion": { label: "Reduced motion" },
+		"engine.threads": { label: "Engine threads" },
+		"engine.hashMb": { label: "Hash" },
+		"engine.depthCap": { label: "Depth cap" },
+		"engine.multiPv": { label: "Engine lines" },
+		"engine.nnue": { label: "Network" },
+		"advanced.logLevel": { label: "Debug log level" },
+		"advanced.timingLogEnabled": {
+			label: "Timing log",
+			help: "Keeps plan / exec / verify entries for export.",
+		},
+	} satisfies Record<string, SettingsRowCopy>,
+	options: {
+		profile: { manual: "Manual", fast: "Fast", natural: "Natural", slow: "Slow", custom: "Custom" },
+		selectionMode: {
+			"engine-elo": "Engine rating",
+			"persona-sampling": "Persona sampling",
+			hybrid: "Hybrid",
+		},
+		style: { drag: "Drag", click: "Click", auto: "Auto" },
+		backend: { cdp: "Chrome debugger", native: "Native" },
+		previewSelects: { auto: "Auto", off: "Off" },
+		highlightStyle: { squares: "Squares", arrows: "Arrows", both: "Both" },
+		scope: { page: "In page", global: "Global" },
+		theme: { dark: "Dark", light: "Light", system: "System" },
+		reducedMotion: { system: "System", on: "On", off: "Off" },
+		nnue: { small: "Small", big: "Big", auto: "Auto" },
+		logLevel: { silent: "Silent", error: "Error", warn: "Warn", info: "Info", debug: "Debug" },
+	},
+	format: {
+		times: (x: number): string => `${x.toFixed(2)}×`,
+		percent: (fraction: number): string => `${Math.round(fraction * 100)}%`,
+		offset: (n: number): string => (n > 0 ? `+${n}` : String(n)),
+		mb: (n: number): string => `${n} MB`,
+		threadsAuto: "Auto",
+		variance: { low: "Low", medium: "Medium", high: "High" },
+		motor: { slow: "Slow", natural: "Natural", fast: "Fast" },
+		detected: "detected",
+	},
+	stepper: { decrease: "−", increase: "+", decreaseLabel: "Decrease", increaseLabel: "Increase" },
+	voice: { default: "System default" },
+	account: {
+		noKey: "No key",
+		plan: (renews: string): string => `Pro · renews ${renews}`,
+		planNoExpiry: "Pro",
+		planInactive: "No active plan",
+		manageDevices: "Manage devices",
+		device: (platform: string, browser: string): string => `${platform} · ${browser}`,
+		browser: (version: string): string => `Chrome ${version}`,
+		browserUnknown: "Chrome",
+		platformUnknown: "This device",
+	},
+	advanced: {
+		exportTimingLog: "Export timing log",
+		exported: (n: number): string => `Exported ${n} timing entries`,
+		exportFailed: "Couldn't export the timing log.",
+		resetAll: "Reset all settings",
+	},
+	tc: { bullet: "bullet", blitz: "blitz", rapid: "rapid", classical: "classical" },
+} as const;

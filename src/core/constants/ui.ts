@@ -31,4 +31,21 @@ export const UI_TIMINGS = {
 	sliderCoarseMultiplier: 10,
 	/** §5.3: strength value from which the danger-zone hint shows. */
 	strengthDangerElo: 2_600,
+	/** §4.6 Account › License: the eye reveals the key for this long, then it re-masks. */
+	licenseRevealMs: 10_000,
 } as const;
+
+/**
+ * Appendix F §7.2 strength labels: a band applies from its `min` up to the next band's `min`
+ * (400–799 Casual · 800–1399 Club · 1400–1999 Expert · 2000–2599 Master · 2600+ Elite). The
+ * display copy for each band lives in `panel/copy.ts` (`COPY.strength.bands`).
+ */
+export const STRENGTH_LABEL_BANDS = [
+	{ min: 400, band: "casual" },
+	{ min: 800, band: "club" },
+	{ min: 1_400, band: "expert" },
+	{ min: 2_000, band: "master" },
+	{ min: 2_600, band: "elite" },
+] as const;
+
+export type StrengthBand = (typeof STRENGTH_LABEL_BANDS)[number]["band"];

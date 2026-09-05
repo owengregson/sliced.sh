@@ -32,6 +32,20 @@ export const LIMITS = {
 } as const;
 
 /**
+ * Display ranges for the settings sliders whose values are unbounded scales in storage
+ * (`settings-storage` keeps them as finite numbers; the Settings view clamps what it writes and
+ * shows to these). Ranges that exist in `LIMITS` are used from there (Task 25).
+ */
+export const SETTINGS_RANGES = {
+	personaEloOffset: { min: -400, max: 400, step: 10 },
+	speedScale: { min: 0.25, max: 3, step: 0.05 },
+	varianceScale: { min: 0, max: 2, step: 0.1 },
+	premoveTendency: { min: 0, max: 1, step: 0.05 },
+	longThinkFrequency: { min: 0, max: 3, step: 0.1 },
+	motorSpeed: { min: 0.5, max: 2, step: 0.05 },
+} as const;
+
+/**
  * §3.6: the license gate is force-valid unless `build.config.json`
  * `licenseEnforce` is true. The only runtime reference to the define.
  */

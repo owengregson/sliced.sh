@@ -1,0 +1,297 @@
+/* css/views/settings.css — Settings view (Appendix F §4.6): sticky jump chips, sections of
+   rows (label left, control right, description under), stepper and select controls, license
+   row, confirm popover body, footer. Every value is a Lattice token. */
+
+.sl-settings {
+	display: flex;
+	flex-direction: column;
+	min-height: 100%;
+}
+
+/* ---- jump chips: horizontal scroll, sticky under the top bar ---------------------------- */
+
+.sl-settings__jump {
+	position: sticky;
+	top: 0;
+	z-index: var(--sl-z-sticky);
+	margin: calc(var(--sl-space-4) * -1) calc(var(--sl-space-4) * -1) 0;
+	padding: var(--sl-space-3) var(--sl-space-4);
+	background: var(--sl-color-canvas);
+	border-bottom: var(--sl-hairline) solid var(--sl-color-border-subtle);
+	overflow-x: auto;
+	scrollbar-width: none;
+}
+
+.sl-settings__jump::-webkit-scrollbar {
+	display: none;
+}
+
+.sl-settings__jump .sl-chip-group {
+	flex-wrap: nowrap;
+	width: max-content;
+}
+
+/* ---- sections ---------------------------------------------------------------------------- */
+
+.sl-settings__sections {
+	display: flex;
+	flex-direction: column;
+	flex: 1 1 auto;
+}
+
+.sl-settings__section {
+	display: flex;
+	flex-direction: column;
+	scroll-margin-top: var(--sl-size-control-lg);
+}
+
+.sl-settings__rows {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sl-space-3);
+}
+
+/* ---- rows: control.md tall minimum; label left, control right; description under ---------- */
+
+.sl-settings-row {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sl-space-1);
+}
+
+.sl-settings-row__main {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--sl-space-3);
+	min-height: var(--sl-size-control-md);
+}
+
+.sl-settings-row__label {
+	min-width: 0;
+	color: var(--sl-color-text-primary);
+}
+
+.sl-settings-row__control {
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	flex: none;
+	min-width: 0;
+}
+
+/* stacked rows (sliders, chip groups): the control takes the full width under the label */
+.sl-settings-row--stack .sl-settings-row__main {
+	flex-direction: column;
+	align-items: stretch;
+	gap: var(--sl-space-2);
+}
+
+.sl-settings-row--stack .sl-settings-row__control {
+	justify-content: flex-start;
+	flex: 1 1 auto;
+}
+
+.sl-settings-row--stack .sl-settings-row__control > * {
+	width: 100%;
+}
+
+/* toggle rows: the switch carries the label; label first, track at the right edge */
+.sl-settings-row--toggle .sl-settings-row__label {
+	display: none;
+}
+
+.sl-settings-row--toggle .sl-settings-row__control {
+	flex: 1 1 auto;
+}
+
+.sl-settings-row--toggle .sl-toggle {
+	width: 100%;
+	flex-direction: row-reverse;
+	justify-content: space-between;
+}
+
+/* keybind rows: the capture component carries the label and lays out its own row */
+.sl-settings-row--keybind .sl-settings-row__label {
+	display: none;
+}
+
+.sl-settings-row--keybind .sl-settings-row__control {
+	flex: 1 1 auto;
+}
+
+.sl-settings-row--keybind .sl-keybind {
+	width: 100%;
+}
+
+.sl-settings-row--keybind .sl-keybind__label {
+	flex: 1 1 auto;
+}
+
+.sl-settings-row__help,
+.sl-settings-row__note {
+	color: var(--sl-color-text-secondary);
+	max-height: calc(var(--sl-type-leading-xs) * 2);
+	overflow: hidden;
+}
+
+.sl-settings-row__note {
+	color: var(--sl-color-text-tertiary);
+}
+
+.sl-settings-row__value {
+	text-align: end;
+}
+
+/* timing preset chips: the detected preset carries a brand dot */
+.sl-chip[data-detected="true"] .sl-chip__label::after {
+	content: " ·";
+	color: var(--sl-color-brand-text);
+}
+
+/* ---- stepper: [−] 3 [+] ---------------------------------------------------------------- */
+
+.sl-stepper {
+	display: inline-flex;
+	align-items: center;
+	min-width: 0;
+	border: 0;
+	gap: var(--sl-space-1);
+	height: var(--sl-size-control-sm);
+	padding: 0 var(--sl-space-1);
+	border-radius: var(--sl-radius-sm);
+	background: var(--sl-color-surface-sunken);
+	box-shadow: var(--sl-shadow-inset);
+}
+
+.sl-stepper__button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: var(--sl-size-icon-lg);
+	height: var(--sl-size-icon-lg);
+	border-radius: var(--sl-radius-xs);
+	color: var(--sl-color-text-secondary);
+	transition: background-color var(--sl-motion-duration-1) var(--sl-motion-easing-standard),
+		color var(--sl-motion-duration-1) var(--sl-motion-easing-standard);
+}
+
+.sl-stepper__button:hover {
+	background: var(--sl-color-surface-hover);
+	color: var(--sl-color-text-primary);
+}
+
+.sl-stepper__button[aria-disabled="true"] {
+	color: var(--sl-color-text-disabled);
+}
+
+.sl-stepper__value {
+	min-width: var(--sl-size-icon-lg);
+	text-align: center;
+	color: var(--sl-color-text-primary);
+}
+
+.sl-stepper[aria-disabled="true"] {
+	opacity: 0.64;
+}
+
+/* ---- select ----------------------------------------------------------------------------- */
+
+.sl-select {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	height: var(--sl-size-control-sm);
+	max-width: 100%;
+	border-radius: var(--sl-radius-sm);
+	border: var(--sl-hairline) solid var(--sl-color-border-default);
+	background: var(--sl-color-surface-sunken);
+	box-shadow: var(--sl-shadow-inset);
+}
+
+.sl-select__control {
+	height: 100%;
+	max-width: 100%;
+	padding: 0 calc(var(--sl-size-icon-md) + var(--sl-space-3)) 0 var(--sl-space-3);
+	color: var(--sl-color-text-primary);
+	text-overflow: ellipsis;
+	cursor: pointer;
+}
+
+.sl-select__control:focus-visible {
+	box-shadow: none;
+}
+
+.sl-select:focus-within {
+	border-color: var(--sl-color-brand);
+	box-shadow:
+		var(--sl-shadow-inset),
+		0 0 0 calc(var(--sl-unit) / 2) var(--sl-color-canvas),
+		0 0 0 var(--sl-unit) var(--sl-color-focus);
+}
+
+.sl-select__icon {
+	position: absolute;
+	right: var(--sl-space-2);
+	pointer-events: none;
+	color: var(--sl-color-text-secondary);
+}
+
+.sl-select[aria-disabled="true"] {
+	opacity: 0.64;
+}
+
+.sl-select__control:disabled {
+	color: var(--sl-color-text-disabled);
+	cursor: default;
+}
+
+/* ---- account ----------------------------------------------------------------------------- */
+
+.sl-settings-license {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--sl-space-1);
+}
+
+.sl-settings-license__key {
+	color: var(--sl-color-text-primary);
+}
+
+.sl-settings-account__actions {
+	justify-content: space-between;
+	padding-top: var(--sl-space-2);
+}
+
+/* ---- advanced ---------------------------------------------------------------------------- */
+
+.sl-settings-advanced__actions {
+	align-items: flex-start;
+	padding-top: var(--sl-space-2);
+}
+
+/* ---- confirm popover body -------------------------------------------------------------- */
+
+.sl-settings-confirm {
+	max-width: var(--sl-layout-panel-min);
+}
+
+.sl-settings-confirm__text {
+	color: var(--sl-color-text-primary);
+}
+
+/* ---- footer ----------------------------------------------------------------------------- */
+
+.sl-settings__footer {
+	padding: var(--sl-space-8) 0 var(--sl-space-2);
+	color: var(--sl-color-text-tertiary);
+	text-align: center;
+}
+
+/* ---- locked (hands-off, §13.4): the shell's lock plus the view's own aria-disabled -------- */
+
+.sl-settings--locked .sl-settings-row,
+.sl-settings--locked .sl-settings__jump {
+	pointer-events: none;
+	opacity: 0.64;
+}
