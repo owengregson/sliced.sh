@@ -13,6 +13,10 @@
  * `TIMINGS.debuggerIdleDetachMs` without `send`/`touch`. The keepalive is held
  * while anything is attached (an attached debugger keeps the worker alive on
  * Chrome 118+, the alarm covers older builds and the gaps).
+ *
+ * `ready` relies on Chrome always invoking the `getTargets` callback (with a
+ * result or `lastError`); the wrapper turns either into a settled promise, so
+ * a caller awaiting `ensureAttached` can never hang on the rebuild.
  */
 
 import {

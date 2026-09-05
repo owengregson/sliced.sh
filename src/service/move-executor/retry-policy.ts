@@ -38,7 +38,7 @@ export interface RetryRunnerOptions {
 	attempt(tier: ClickStyle, index: number): Promise<ExecutionResult>;
 	/** Full-budget verification after an attempt. */
 	verify(timeoutMs: number): Promise<VerifyResult>;
-	/** Short board re-check before a retry (never double-move). */
+	/** Short board re-check before a retry and after an interrupted attempt (never double-move). */
 	recheck(): Promise<VerifyResult>;
 	delay(ms: number): Promise<void>;
 	verifyTimeoutMs: number;
@@ -84,11 +84,25 @@ export async function runWithRetry(o: RetryRunnerOptions): Promise<ExecutionResu
 		if (result.outcome !== "skipped" || result.pressed) attempts += 1;
 		if (!result.ok) {
 			if (!result.pressed) return { ...result, attempts };
-			// The committed press went out before the skip/abort: the release may have moved the piece.
-			const late = await o.verify(o.verifyTimeoutMs);
+			// The committed press went out before the skip/abort: the release may have moved the
+			// piece. A short re-check (abortable) decides; a cancel must never keep the hand busy.
+			const late = await o.recheck();
+			if (o.signal?.aborted && result.outcome === "aborted") return { ...result, attempts };
 			if (late.outcome === "ok") {
 				log.info("executor: interrupted attempt still landed the move", { outcome: result.outcome });
-				return { ...result, ok: true, outcome: "executed", attempts };
+				const upgraded: ExecutionResult = { ...result, ok: true, outcome: "executed", attempts };
+				delete upgraded.reason;
+				return upgraded;
+			}
+			if (late.outcome === "unavailable") {
+				log.warn("executor: interrupted attempt could not be checked", { late });
+				const r: ExecutionResult = {
+					...result,
+					reason: EXECUTOR.reasons.verificationUnavailable,
+					attempts,
+				};
+				if (late.reason !== undefined) r.error = late.reason;
+				return r;
 			}
 			return { ...result, attempts };
 		}

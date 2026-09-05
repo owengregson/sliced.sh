@@ -14,7 +14,7 @@ import { PORT_NAMES } from "@core/constants/ports";
 import { log } from "@core/logger";
 import { type AcceptedPort, acceptPorts } from "@core/messaging/ports";
 import { errorMessage } from "@core/util/errors";
-import { defaultNow, defaultScheduler, type Scheduler } from "@core/util/scheduler";
+import { AbortedError, defaultNow, defaultScheduler, type Scheduler } from "@core/util/scheduler";
 
 export type RequestCommand = Extract<GamePortCommand, { id: string }>;
 export type RequestKind = RequestCommand["kind"];
@@ -99,34 +99,55 @@ export class ContentLink implements ContentLinkEvents {
 		return true;
 	}
 
-	/** Send a request and resolve with the reply carrying the same `id`. */
+	/**
+	 * Send a request and resolve with the reply carrying the same `id`. An
+	 * abort on `signal` rejects at once with `AbortedError` (the pending entry
+	 * and its timer are dropped; a late reply is ignored).
+	 */
 	request<K extends RequestKind>(
 		tabId: number,
 		cmd: RequestInput<K>,
-		timeoutMs: number
+		timeoutMs: number,
+		signal?: AbortSignal
 	): Promise<ReplyFor<K>> {
 		const entry = this.ports.get(tabId);
 		if (!entry) return Promise.reject(new Error(CONTENT_LINK_ERRORS.noPort));
+		if (signal?.aborted) return Promise.reject(new AbortedError());
 		this.seq += 1;
 		const id = `r${this.seq}`;
 		return new Promise<ReplyFor<K>>((resolve, reject) => {
-			const timer = this.scheduler.setTimeout(() => {
+			const settle = (): void => {
 				this.pending.delete(id);
+				this.scheduler.clearTimeout(timer);
+				signal?.removeEventListener("abort", onAbort);
+			};
+			const onAbort = (): void => {
+				settle();
+				reject(new AbortedError());
+			};
+			const timer = this.scheduler.setTimeout(() => {
+				settle();
 				log.debug("content-link: request timed out", { tabId, kind: cmd.kind, id, timeoutMs });
 				reject(new Error(CONTENT_LINK_ERRORS.timeout));
 			}, timeoutMs);
 			this.pending.set(id, {
 				tabId,
-				resolve: (msg) => resolve(msg as ReplyFor<K>),
-				reject,
+				resolve: (msg) => {
+					signal?.removeEventListener("abort", onAbort);
+					resolve(msg as ReplyFor<K>);
+				},
+				reject: (error) => {
+					signal?.removeEventListener("abort", onAbort);
+					reject(error);
+				},
 				timer,
 			});
+			signal?.addEventListener("abort", onAbort, { once: true });
 			const wire = { ...cmd, id, timeoutMs: cmd.timeoutMs ?? timeoutMs } as unknown as GamePortCommand;
 			try {
 				entry.port.post(wire);
 			} catch (error) {
-				this.pending.delete(id);
-				this.scheduler.clearTimeout(timer);
+				settle();
 				reject(error instanceof Error ? error : new Error(errorMessage(error)));
 			}
 		});

@@ -119,6 +119,35 @@ describe("ContentLink", () => {
 		expect(sim.time.pendingTimers()).toBe(0);
 	});
 
+	it("request() aborts at once on its signal, dropping the pending entry and its timer", async () => {
+		const ac = new AbortController();
+		const outcome = link.request(tabId, { kind: "geometry" }, 5000, ac.signal).then(
+			() => "resolved",
+			(e: Error) => e.message
+		);
+		await sim.time.runMicrotasks();
+		expect(sim.time.pendingTimers()).toBe(1);
+		ac.abort();
+		expect(await outcome).toBe("aborted");
+		expect(sim.time.pendingTimers()).toBe(0);
+		// a late reply to the aborted id is ignored, an already-aborted signal rejects immediately
+		const cmd = received.at(-1);
+		if (cmd?.kind !== "geometry") throw new Error("geometry command not delivered");
+		await content.run(async () => {
+			port.post({
+				kind: "geometryResult",
+				id: cmd.id,
+				boardRect: { left: 0, top: 0, width: 1, height: 1 },
+				flipped: false,
+			});
+		});
+		await sim.time.runMicrotasks();
+		await expect(link.request(tabId, { kind: "geometry" }, 5000, ac.signal)).rejects.toThrow(
+			"aborted"
+		);
+		expect(sim.time.pendingTimers()).toBe(0);
+	});
+
 	it("reports disconnects, rejects in-flight requests, and dispose() stops accepting ports", async () => {
 		const gone: number[] = [];
 		link.onDisconnect((id) => gone.push(id));

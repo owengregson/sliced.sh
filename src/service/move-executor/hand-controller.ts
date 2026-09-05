@@ -284,6 +284,7 @@ export class HandController {
 		try {
 			await this.run(plan, timing, t0, tl);
 			tl.end();
+			this.ownership.setPosition(this.tabId, this.backend.position());
 			this.setState("rest");
 			return { ok: true, outcome: "executed", attempts: 1, ...base() };
 		} catch (error) {
@@ -655,6 +656,8 @@ export class HandController {
 			);
 			await this.travel(drift);
 		} catch (error) {
+			// Whatever was dispatched before the cut is where the hand is now.
+			this.ownership.setPosition(this.tabId, this.backend.position());
 			if (error instanceof SkipError || isAbortedError(error)) {
 				log.debug("hand: post-drop rest cut short", { reason: errorMessage(error) });
 				return;

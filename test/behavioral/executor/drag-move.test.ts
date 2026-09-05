@@ -345,32 +345,58 @@ describe("executor: a scheduled drag move end to end", () => {
 		expect(executor.handView()).toBe("detached");
 	});
 
-	it("cancel() mid-drag releases the piece immediately and reports `aborted`", async () => {
-		const reports: ExecutionReport[] = [];
+	it("cancel() mid-drag releases the piece immediately, reports `aborted`, and a replacement playNow() is never dropped", async () => {
+		const aborted: ExecutionReport[] = [];
+		const executed: ExecutionReport[] = [];
+		let plan: TimingPlan = plan1200();
 		await sw.run(async () => {
-			executor.on("aborted", (r) => reports.push(r));
+			executor.on("aborted", (r) => aborted.push(r));
+			executor.on("executed", (r) => executed.push(r));
 			await executor.arm();
 			focus.positionArrived(tabId, sim.now());
-			const plan = plan1200();
+			plan = plan1200();
 			executor.schedule(recommendation(plan), plan);
 		});
 		let held = 0;
+		let cancelledAt = 0;
+		let replacement: Promise<unknown> | null = null;
 		sim.debugger.respond(CDP.inputDispatchMouseEvent, (params, id) => {
 			const p = params as { type: string; buttons: number };
-			if (p.type === "mouseMoved" && p.buttons === 1 && ++held === 2) executor.cancel();
+			if (p.type === "mouseMoved" && p.buttons === 1 && ++held === 2) {
+				cancelledAt = sim.now() - START;
+				executor.cancel();
+				// the session's documented replacement flow: cancel(), then play the next move
+				replacement = executor.playNow(recommendation(plan), plan);
+			}
 			return sim.input.send(id, CDP.inputDispatchMouseEvent, params);
 		});
 		await sw.run(() => sim.time.advanceUntilIdle({ maxAdvanceMs: 30_000 }));
-		expect(reports).toHaveLength(1);
-		expect((reports[0] as ExecutionReport).result).toMatchObject({ ok: false, outcome: "aborted" });
+		expect(aborted).toHaveLength(1);
+		const first = (aborted[0] as ExecutionReport).result;
+		expect(first).toMatchObject({ ok: false, outcome: "aborted", pressed: true, attempts: 1 });
 		const cmds = commands();
-		expect(cmds.at(-1)?.type).toBe("mouseReleased");
-		expect(cmds.at(-2)).toMatchObject({ type: "mouseMoved", buttons: 1 });
-		expect(sim.input.pointer(tabId)?.buttons).toBe(0);
-		// the committed press went out, so the interrupted attempt is verified once (the drop landed
-		// off-target here, hence still `aborted`) and never re-dispatched
-		expect((reports[0] as ExecutionReport).result.pressed).toBe(true);
+		const presses = cmds.filter((c) => c.type === "mousePressed");
+		const releases = cmds.filter((c) => c.type === "mouseReleased");
+		expect(presses).toHaveLength(2);
+		expect(releases).toHaveLength(2);
+		// the abort released at once, at the current point
+		const abortRelease = releases[0] as Cmd;
+		const before = cmds[cmds.indexOf(abortRelease) - 1] as Cmd;
+		expect(before).toMatchObject({ type: "mouseMoved", buttons: 1 });
+		expect({ x: abortRelease.x, y: abortRelease.y }).toEqual({ x: before.x, y: before.y });
+		expect(abortRelease.at - cancelledAt).toBeLessThanOrEqual(CDP.stallResyncMs);
+		// the cancelled run wound down promptly (its re-check was aborted, not awaited for 1.2 s) and
+		// the replacement played: second press inside e2, release inside e4, verified, `executed`
+		expect(executed).toHaveLength(1);
+		expect((executed[0] as ExecutionReport).result).toMatchObject({ ok: true, outcome: "executed" });
+		expect(await replacement).toMatchObject({ ok: true, outcome: "executed" });
+		expect(inside(presses[1] as Cmd, squareRect("e2"))).toBe(true);
+		expect(inside(releases[1] as Cmd, squareRect("e4"))).toBe(true);
+		expect((presses[1] as Cmd).at).toBeGreaterThan(abortRelease.at);
+		expect((presses[1] as Cmd).at - abortRelease.at).toBeLessThan(EXECUTOR.recheckTimeoutMs + 1000);
 		expect(adapter.observeRequests).toEqual([{ from: "e2", to: "e4" }]);
-		expect(cmds.filter((c) => c.type === "mousePressed")).toHaveLength(1);
+		expect(sim.input.pointer(tabId)?.buttons).toBe(0);
+		expect(executor.isRunning()).toBe(false);
+		expect(executor.handView()).toBe("resting");
 	});
 });

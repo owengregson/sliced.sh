@@ -10,6 +10,7 @@ import { CONTENT_LINK_ERRORS } from "@core/constants/cdp";
 import type { ExpectedMove } from "@core/constants/messages";
 import { log } from "@core/logger";
 import { errorMessage } from "@core/util/errors";
+import { isAbortedError } from "@core/util/scheduler";
 import type { ReplyFor, RequestInput } from "@service/content-link";
 
 export type VerifyOutcome = "ok" | "rejected" | "timeout" | "unavailable";
@@ -24,18 +25,21 @@ export interface VerifierLink {
 	request(
 		tabId: number,
 		cmd: RequestInput<"observeMove">,
-		timeoutMs: number
+		timeoutMs: number,
+		signal?: AbortSignal
 	): Promise<ReplyFor<"observeMove">>;
 }
 
+/** An abort on `signal` ends the wait at once (`unavailable`, reason `aborted`). */
 export async function verifyMove(
 	link: VerifierLink,
 	tabId: number,
 	expected: ExpectedMove,
-	timeoutMs: number
+	timeoutMs: number,
+	signal?: AbortSignal
 ): Promise<VerifyResult> {
 	try {
-		const reply = await link.request(tabId, { kind: "observeMove", expected }, timeoutMs);
+		const reply = await link.request(tabId, { kind: "observeMove", expected }, timeoutMs, signal);
 		if (reply.ok) return { outcome: "ok" };
 		return reply.reason === undefined
 			? { outcome: "rejected" }
@@ -43,7 +47,8 @@ export async function verifyMove(
 	} catch (error) {
 		const message = errorMessage(error);
 		if (message === CONTENT_LINK_ERRORS.timeout) return { outcome: "timeout" };
-		log.debug("verifier: observeMove unavailable", { tabId, error: message });
+		if (!isAbortedError(error))
+			log.debug("verifier: observeMove unavailable", { tabId, error: message });
 		return { outcome: "unavailable", reason: message };
 	}
 }

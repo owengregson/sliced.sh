@@ -165,28 +165,57 @@ describe("runWithRetry", () => {
 		expect(h.delays).toEqual([TIMINGS.executorRetryDelayMs[0]]);
 	});
 
-	it("an aborted or skipped attempt whose committed press went out is verified once (attempts 1) and upgraded when the move landed", async () => {
+	it("an aborted or skipped attempt whose committed press went out gets one short re-check (attempts 1) and is upgraded — reason dropped — when the move landed", async () => {
 		for (const outcome of ["aborted", "skipped"] as const) {
-			const landed = harness([{ outcome: "ok" }], [], (tier) => ({
+			const interrupted = (tier: ClickStyle): ExecutionResult => ({
 				...dispatched(tier),
 				ok: false,
 				outcome,
 				reason: outcome,
 				pressed: true,
-			}));
-			expect(await landed.run()).toMatchObject({ ok: true, outcome: "executed", attempts: 1 });
-			expect(landed.verifies).toHaveLength(1);
+			});
+			const landed = harness([], [{ outcome: "ok" }], interrupted);
+			const up = await landed.run();
+			expect(up).toMatchObject({ ok: true, outcome: "executed", attempts: 1 });
+			expect(up.reason).toBeUndefined();
+			expect(landed.rechecks).toBe(1);
+			expect(landed.verifies).toEqual([]); // the short budget, never the full one
 			expect(landed.attempts).toEqual(["drag"]);
-			const missed = harness([{ outcome: "rejected" }], [], (tier) => ({
-				...dispatched(tier),
+			const missed = harness([], [{ outcome: "rejected" }], interrupted);
+			expect(await missed.run()).toMatchObject({ ok: false, outcome, reason: outcome, attempts: 1 });
+			expect(missed.attempts).toEqual(["drag"]);
+			// unavailable: surfaced, still terminal, no dispatch
+			const dark = harness([], [{ outcome: "unavailable", reason: "no content port" }], interrupted);
+			expect(await dark.run()).toMatchObject({
 				ok: false,
 				outcome,
-				reason: outcome,
-				pressed: true,
-			}));
-			expect(await missed.run()).toMatchObject({ ok: false, outcome, attempts: 1 });
-			expect(missed.attempts).toEqual(["drag"]);
+				reason: EXECUTOR.reasons.verificationUnavailable,
+				error: "no content port",
+				attempts: 1,
+			});
+			expect(dark.attempts).toEqual(["drag"]);
 		}
+	});
+
+	it("a cancelled attempt whose re-check was aborted by the same cancel stays 'aborted' (never 'unavailable')", async () => {
+		const ac = new AbortController();
+		const h = harness(
+			[],
+			[{ outcome: "unavailable", reason: "aborted" }],
+			(tier) => {
+				ac.abort();
+				return { ...dispatched(tier), ok: false, outcome: "aborted", reason: "aborted", pressed: true };
+			},
+			ac.signal
+		);
+		expect(await h.run()).toMatchObject({
+			ok: false,
+			outcome: "aborted",
+			reason: "aborted",
+			attempts: 1,
+		});
+		expect(h.rechecks).toBe(1);
+		expect(h.attempts).toEqual(["drag"]);
 	});
 
 	it("an abort during the retry delay ends as aborted without dispatching again", async () => {

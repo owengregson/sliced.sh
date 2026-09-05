@@ -483,6 +483,24 @@ describe("HandController focus gate (§13.4) and hand ownership (§13.5)", () =>
 	});
 });
 
+describe("HandController post-drop rest", () => {
+	it("a gate veto during the rest ends the drift and leaves ownership exactly where the hand is", async () => {
+		sim.debugger.respond(CDP.inputDispatchMouseEvent, (params, id) => {
+			if ((params as { type: string }).type === "mouseReleased")
+				verdict = { ok: false, reason: "blur-in-window" };
+			return sim.input.send(id, CDP.inputDispatchMouseEvent, params);
+		});
+		const ctrl = makeController(7);
+		const result = await run(ctrl, makePlan(), makeTiming());
+		expect(result.outcome).toBe("executed");
+		const cmds = commands();
+		expect(cmds.at(-1)?.type).toBe("mouseReleased"); // no rest moves after the veto
+		expect(ownership.position(tabId)).toEqual(ctrl.backend.position());
+		expect(ownership.position(tabId)).toEqual(result.endPoint);
+		expect(ctrl.controller.state()).toBe("rest");
+	});
+});
+
 describe("HandController abort", () => {
 	it("an abort mid-drag releases immediately at the current point and reports 'aborted'", async () => {
 		const ac = new AbortController();

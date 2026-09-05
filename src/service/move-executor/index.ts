@@ -335,25 +335,31 @@ export class MoveExecutor {
 	// ── execution ─────────────────────────────────────────────────────────
 
 	/**
-	 * One execution at a time per tab. A second request while the hand is busy is
-	 * dropped (the running execution's promise is returned): the session owns the
-	 * "one recommendation per position" rule and must `cancel()` before
-	 * scheduling a replacement — queueing here would play a stale move.
-	 * (Queued for Task 30: decide whether a newer recommendation should abort the
-	 * running one instead.)
+	 * One execution at a time per tab. After `cancel()` the running execution
+	 * winds down promptly (release, abortable re-check) and a replacement
+	 * request waits for it, then plays. A second request while an execution is
+	 * still live (not cancelled) is dropped and the running promise returned:
+	 * the session owns the "one recommendation per position" rule and must
+	 * `cancel()` before scheduling a replacement — queueing here would play a
+	 * stale move. (Queued for Task 30: decide whether a newer recommendation
+	 * should abort the running one instead.)
 	 */
 	private async execute(
 		rec: Recommendation,
 		timing: TimingPlan,
 		ctx: MoveContext
 	): Promise<ExecutionResult> {
-		if (this.running) {
-			log.warn("executor: execution already running; request dropped (cancel() first)", {
-				tabId: this.tabId,
-				uci: rec.chosen.uci,
-			});
-			return this.running.done;
+		while (this.running) {
+			if (!this.running.ac.signal.aborted) {
+				log.warn("executor: execution already running; request dropped (cancel() first)", {
+					tabId: this.tabId,
+					uci: rec.chosen.uci,
+				});
+				return this.running.done;
+			}
+			await this.running.done.catch(() => {});
 		}
+		if (this.disposed) return this.disposedResult(rec);
 		const ac = new AbortController();
 		const done = this.runOne(rec, timing, ctx, ac.signal);
 		this.running = { rec, ac, done };
@@ -362,6 +368,20 @@ export class MoveExecutor {
 		} finally {
 			this.running = null;
 		}
+	}
+
+	private disposedResult(rec: Recommendation): ExecutionResult {
+		log.debug("executor: disposed before a replacement could run", { uci: rec.chosen.uci });
+		return {
+			ok: false,
+			outcome: "aborted",
+			reason: EXECUTOR.reasons.aborted,
+			tier: this.dominantStyle,
+			attempts: 0,
+			endPoint: this.ownership.position(this.tabId) ?? { x: 0, y: 0 },
+			elapsedMs: 0,
+			timeline: [],
+		};
 	}
 
 	private async runOne(
@@ -487,7 +507,7 @@ export class MoveExecutor {
 		if (rec.chosen.promotion) expected.promotion = rec.chosen.promotion;
 		const verify = (timeoutMs: number): Promise<VerifyResult> =>
 			this.config.verifyMoves
-				? verifyMove(this.link, this.tabId, expected, timeoutMs)
+				? verifyMove(this.link, this.tabId, expected, timeoutMs, signal)
 				: Promise.resolve({ outcome: "ok" });
 		try {
 			return await runWithRetry({
