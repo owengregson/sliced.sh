@@ -51,3 +51,17 @@ export const STRENGTH_LABEL_BANDS = [
 ] as const;
 
 export type StrengthBand = (typeof STRENGTH_LABEL_BANDS)[number]["band"];
+/** Task 24 — Live view strength card (Appendix F §4.4 item 7, §7.2 "Strength labels"). */
+export const STRENGTH_UI = {
+	/** Lower bound of each band above Casual (400–799 Casual · 800 Club · 1400 Expert · 2000 Master · 2600 Elite). */
+	bandFloors: [
+		[2600, "elite"],
+		[2000, "master"],
+		[1400, "expert"],
+		[800, "club"],
+	] as const,
+	/** Slider step for the 400–3200 target rating. */
+	sliderStep: 50,
+	/** §8.2 step 6: below this available height the Live view scrolls with the move card pinned. */
+	liveScrollBelowPx: 480,
+} as const;

@@ -82,6 +82,7 @@ export function createLinesSection(options: LinesSectionOptions): LinesSectionHa
 		popover = null;
 		chips?.dispose();
 		chips = null;
+		count.setAttribute("aria-expanded", "false");
 	}
 
 	const onCount = (event: MouseEvent): void => {
@@ -113,8 +114,10 @@ export function createLinesSection(options: LinesSectionOptions): LinesSectionHa
 				chips?.dispose();
 				chips = null;
 				popover = null;
+				count.setAttribute("aria-expanded", "false");
 			},
 		});
+		count.setAttribute("aria-expanded", "true");
 	};
 	count.addEventListener("click", onCount);
 

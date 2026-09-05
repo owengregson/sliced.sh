@@ -83,7 +83,9 @@ export function createMoveSection(options: MoveSectionOptions): MoveSectionHandl
 	let endAt: number | null = null;
 	let totalMs = 0;
 	let san: string | null = null;
-	let lastExecution: PanelSnapshot["session"]["lastExecution"] | undefined;
+	/** Key of the last execution result seen (`at`, else a structural identity). */
+	let lastExecutionKey: string | null = null;
+	let lastPly: number | null = null;
 	let seenSnapshot = false;
 	let executing = false;
 
@@ -142,10 +144,16 @@ export function createMoveSection(options: MoveSectionOptions): MoveSectionHandl
 		if (nowExecuting && !executing) card.executing();
 		executing = nowExecuting;
 
-		// A new execution result (not the one the view mounted with) → §6.3 "played".
+		// A new execution result (not the one the view mounted with) → §6.3 "played". Snapshots
+		// are fresh objects every push, so results are keyed, and a new ply clears the key.
+		if (snap.session.ply !== lastPly) {
+			lastPly = snap.session.ply;
+			if (seenSnapshot) lastExecutionKey = null;
+		}
 		const exec = snap.session.lastExecution;
-		if (exec && exec !== lastExecution && seenSnapshot) onExecution(exec, snap);
-		lastExecution = exec;
+		const key = exec ? executionKey(exec) : null;
+		if (exec && key !== lastExecutionKey && seenSnapshot) onExecution(exec, snap);
+		lastExecutionKey = key;
 		seenSnapshot = true;
 	}
 
@@ -171,6 +179,13 @@ export function createMoveSection(options: MoveSectionOptions): MoveSectionHandl
 			card.dispose();
 		},
 	};
+}
+
+/** `at` when the controller stamps it; otherwise the result's structural identity. */
+export function executionKey(exec: NonNullable<PanelSnapshot["session"]["lastExecution"]>): string {
+	if (exec.at !== undefined) return `at:${exec.at}`;
+	const timeline = exec.timeline.map((t) => `${t.phase}:${t.startMs}-${t.endMs}`).join(",");
+	return `${exec.outcome}|${exec.tier}|${exec.attempts}|${exec.elapsedMs}|${timeline}`;
 }
 
 function noteFor(snapshot: PanelSnapshot, state: MoveCardData["state"]): string | null {

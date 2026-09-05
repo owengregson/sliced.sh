@@ -316,6 +316,8 @@ describe("move card states (§5.6)", () => {
 		pointer(playButton(), "pointerenter");
 		click(playButton());
 		expect(h.store.calls.at(-1)).toEqual({ type: MSG.PANEL_CANCEL_PENDING, tabId: h.tabId });
+		expect(h.toasts()).toHaveLength(0); // only once the SW confirmed the skip
+		await dom.tick(0);
 		expect(h.toasts()[0]?.querySelector(".sl-toast__text")?.textContent).toBe(
 			COPY.toast.skipped("Nf3")
 		);
@@ -350,6 +352,52 @@ describe("move card states (§5.6)", () => {
 		expect(h.q(".sl-move").dataset.state).toBe("opponent");
 	});
 
+	it("the same execution across snapshots plays once; a new one (by `at` or ply) plays again", async () => {
+		h = await mountLive(dom.sim, idleSnapshot());
+		const executed = (
+			at: number | undefined
+		): NonNullable<ReturnType<typeof idleSnapshot>["session"]["lastExecution"]> => {
+			const e: NonNullable<ReturnType<typeof idleSnapshot>["session"]["lastExecution"]> = {
+				ok: true,
+				outcome: "executed",
+				tier: "drag",
+				attempts: 1,
+				endPoint: { x: 0, y: 0 },
+				elapsedMs: 3900,
+				timeline: [{ phase: "drag", startMs: 0, endMs: 300 }],
+			};
+			if (at !== undefined) e.at = at;
+			return e;
+		};
+		let played = 0;
+		const count = (): number =>
+			h?.toasts().filter((t) => t.classList.contains("sl-toast--success")).length ?? 0;
+		// Snapshots are fresh objects every push: the same result must not re-fire.
+		h.store.emit(idleSnapshot({ lastExecution: executed(1000) }));
+		played += count();
+		h.store.emit(idleSnapshot({ lastExecution: executed(1000) }));
+		h.store.emit(idleSnapshot({ lastExecution: executed(1000) }));
+		await dom.tick(UI_TIMINGS.toastShortMs + 1);
+		await dom.tick(0);
+		expect(played).toBe(1);
+		expect(h.toasts()).toHaveLength(0);
+		h.store.emit(idleSnapshot({ lastExecution: executed(2000) }));
+		expect(count()).toBe(1);
+		await dom.tick(UI_TIMINGS.toastShortMs + 1);
+		await dom.tick(0);
+		// Without `at`: structural identity, cleared by a ply change.
+		h.store.emit(idleSnapshot({ lastExecution: executed(undefined) }));
+		expect(count()).toBe(1);
+		await dom.tick(UI_TIMINGS.toastShortMs + 1);
+		await dom.tick(0);
+		h.store.emit(idleSnapshot({ lastExecution: executed(undefined) }));
+		expect(count()).toBe(0);
+		const next = idleSnapshot({ lastExecution: executed(undefined) });
+		next.session.ply += 2;
+		h.store.emit(next);
+		expect(count()).toBe(1);
+	});
+
 	it("Esc cancels the countdown; the play keybind plays now; port toasts surface", async () => {
 		h = await mountLive(
 			dom.sim,
@@ -360,6 +408,10 @@ describe("move card states (§5.6)", () => {
 		expect(playLabel()).toBe(COPY.move.armed("4.2"));
 		key(document, "keydown", { key: "Escape", code: "Escape" });
 		expect(h.store.calls.at(-1)).toEqual({ type: MSG.PANEL_CANCEL_PENDING, tabId: h.tabId });
+		await dom.tick(0); // the skip is confirmed → "Skipped Nf3 · auto-play stays on"
+		expect(h.toasts()[0]?.querySelector(".sl-toast__text")?.textContent).toBe(
+			COPY.toast.skipped("Nf3")
+		);
 		key(document, "keydown", { key: " ", code: "Space" });
 		expect(h.store.calls.at(-1)).toEqual({ type: MSG.PANEL_PLAY_NOW, tabId: h.tabId });
 		h.store.port({ kind: "toast", level: "warn", text: COPY.toast.playFailed });
@@ -578,10 +630,17 @@ describe("toggles row (§6.1)", () => {
 		expect(toast?.querySelector(".sl-toast__action .sl-button__label")?.textContent).toBe(
 			COPY_LIVE.cancel
 		);
-		await dom.tick(UI_TIMINGS.preArmMs - 1);
+		const ring = toast?.querySelector(".sl-ring .sl-ring__progress");
+		expect(ring).not.toBeNull(); // §6.1 step 5: the toast carries a ring
+		expect(Number(ring?.getAttribute("stroke-dashoffset"))).toBeCloseTo(0, 6);
+		await dom.tick(UI_TIMINGS.preArmMs / 2);
+		expect(Number(ring?.getAttribute("stroke-dashoffset"))).toBeGreaterThan(0);
+		await dom.tick(UI_TIMINGS.preArmMs / 2 - 1);
 		expect(h.store.calls).toEqual([]);
 		await dom.tick(1);
 		expect(h.store.calls).toEqual([{ type: MSG.PANEL_SET_AUTO_MOVE, tabId: h.tabId, armed: true }]);
+		await dom.tick(0);
+		expect(h.toasts()).toHaveLength(0); // the pre-arm toast leaves when it fires
 
 		h.store.emit(idleSnapshot());
 		key(document, "keydown", { key: "A", code: "KeyA", shiftKey: true });
@@ -629,7 +688,7 @@ describe("session strip and detached banner (§4.4 item 9, §13.6, §9.7)", () =
 		// Without an opponent the slider value is the target; without stats no band line.
 		h.store.emit(idleSnapshot({ opponent: null, stats: {} }));
 		expect(h.q(".sl-live__band").hidden).toBe(true);
-		expect(h.q(".sl-live__stats").textContent).toBe(COPY.session(6, 0, "3.1"));
+		expect(h.q(".sl-live__stats").textContent).toBe(COPY_LIVE.sessionNoStats(6, "3.1"));
 	});
 
 	it("detached banner with Reattach and Dismiss, outside hands-off only", async () => {
@@ -679,8 +738,36 @@ describe("session strip and detached banner (§4.4 item 9, §13.6, §9.7)", () =
 	});
 });
 
+describe("hands-off exit", () => {
+	it("restores every control's previous aria-disabled / tabindex (mirrors the shell)", async () => {
+		h = await mountLive(dom.sim, idleSnapshot());
+		const count = h.q(".sl-live__count");
+		count.setAttribute("tabindex", "0"); // a control that had its own tabindex
+		const row = h.qa(".sl-pv")[0];
+		expect(row?.hasAttribute("tabindex")).toBe(false);
+		h.store.emit(liveSnapshot());
+		expect(count.getAttribute("tabindex")).toBe("-1");
+		expect(count.getAttribute("aria-disabled")).toBe("true");
+		expect(h.qa(".sl-pv")[0]?.getAttribute("tabindex")).toBe("-1");
+		h.store.emit(idleSnapshot());
+		expect(count.getAttribute("tabindex")).toBe("0");
+		expect(count.hasAttribute("aria-disabled")).toBe(false);
+		for (const el of h.qa(INTERACTIVE_SELECTOR)) {
+			expect({ el: el.className, tabindex: el.getAttribute("tabindex") }).not.toEqual({
+				el: el.className,
+				tabindex: "-1",
+			});
+			expect(el.getAttribute("aria-disabled")).toBeNull();
+		}
+		// The keyboard path is live again: Space plays.
+		key(document, "keydown", { key: " ", code: "Space" });
+		expect(h.store.calls.at(-1)).toEqual({ type: MSG.PANEL_PLAY_NOW, tabId: h.tabId });
+	});
+});
+
 describe("cleanup", () => {
 	it("unmount removes the DOM, timers and listeners", async () => {
+		const baseline = dom.sim.time.pendingTimers();
 		h = await mountLive(
 			dom.sim,
 			idleSnapshot({
@@ -693,7 +780,7 @@ describe("cleanup", () => {
 		const store = h.store;
 		h.cleanup();
 		expect(content.querySelector(".sl-live")).toBeNull();
-		expect(dom.sim.time.pendingTimers()).toBeLessThan(before);
+		expect(dom.sim.time.pendingTimers()).toBe(baseline); // every view timer is gone
 		key(document, "keydown", { key: " ", code: "Space" });
 		key(document, "keydown", { key: "A", code: "KeyA", shiftKey: true });
 		await dom.tick(UI_TIMINGS.preArmMs);

@@ -241,6 +241,10 @@ export async function mountLive(
 	const overlay = document.createElement("div");
 	overlay.className = "sl-app__overlay";
 	app.append(topbar, bannerSlot, content, toasts, overlay);
+	// `.sl-app` is min-height 100vh and grows with its content: its box is never the viewport.
+	// A content box far taller/wider than any viewport proves the layout code ignores it.
+	Object.defineProperty(app, "clientHeight", { configurable: true, value: 4000 });
+	Object.defineProperty(app, "clientWidth", { configurable: true, value: 4000 });
 	const unmountToasts = mountToastLayer(toasts);
 	const unmountBanners = mountBannerSlot(bannerSlot);
 	const unmountOverlay = mountOverlayLayer(overlay);

@@ -20,8 +20,10 @@ import { MSG } from "@core/constants/messages";
 import { UI_TIMINGS } from "@core/constants/ui";
 import { log } from "@core/logger";
 import type { TypedMessage } from "@core/messaging/typed-messages";
+import { TOKENS } from "@design/tokens.generated";
 import type { Keybind } from "@typedefs/settings";
 import { type BannerHandle, showBanner } from "../components/banner";
+import { createCountdownRing } from "../components/countdown-ring";
 import { formatKeybind } from "../components/keybind";
 import { closePopovers } from "../components/popover";
 import { showToast, type ToastHandle, type ToastKind } from "../components/toast";
@@ -48,6 +50,13 @@ import liveHtml from "./templates/live.html?raw";
 
 /** §8.1: compact shows at most two PV rows. */
 const COMPACT_PV_MAX = 2;
+/** The pre-arm toast's ring drains at the ring's own linear cadence (§5.10). */
+const RING_TICK_MS = TOKENS.motion.durationMs[1];
+
+interface SavedFocusable {
+	ariaDisabled: string | null;
+	tabindex: string | null;
+}
 
 /** Everything the hands-off lock covers inside the view (mirrors the shell's selector). */
 const LOCK_SELECTOR =
@@ -95,7 +104,10 @@ function mountLive(ctx: ViewContext): () => void {
 	let detachedBanner: BannerHandle | null = null;
 	let preArmTimer: ReturnType<typeof setTimeout> | null = null;
 	let preArmToast: ToastHandle | null = null;
-	const locked = new Set<Element>();
+	let preArmRing: ReturnType<typeof createCountdownRing> | null = null;
+	let preArmTick: ReturnType<typeof setInterval> | null = null;
+	/** Controls locked by hands-off with the attributes they had before (restored on exit). */
+	const locked = new Map<Element, SavedFocusable>();
 
 	// ── dispatch ────────────────────────────────────────────────────────────
 	function send<T extends PanelCommandType>(command: TypedMessage<T>): Promise<boolean> {
@@ -134,8 +146,11 @@ function mountLive(ctx: ViewContext): () => void {
 		},
 		onCancel: () => {
 			if (handsOff) return;
-			void withTab((id) => ({ type: MSG.PANEL_CANCEL_PENDING, tabId: id }));
-			showToast("info", COPY.toast.skipped(moveSection.san ?? ""));
+			const san = moveSection.san ?? "";
+			// The toast only once the SW confirmed the skip (§6.2 step 3).
+			void withTab((id) => ({ type: MSG.PANEL_CANCEL_PENDING, tabId: id })).then((ok) => {
+				if (ok && !disposed) showToast("info", COPY.toast.skipped(san));
+			});
 		},
 	});
 	const linesSection = createLinesSection({
@@ -169,6 +184,12 @@ function mountLive(ctx: ViewContext): () => void {
 			clearTimeout(preArmTimer);
 			preArmTimer = null;
 		}
+		if (preArmTick !== null) {
+			clearInterval(preArmTick);
+			preArmTick = null;
+		}
+		preArmRing?.dispose();
+		preArmRing = null;
 		preArmToast?.dismiss();
 		preArmToast = null;
 	}
@@ -193,9 +214,23 @@ function mountLive(ctx: ViewContext): () => void {
 				onClick: cancelPreArm,
 			}
 		);
+		// §6.1 step 5: the toast carries a ring that drains over the 1 s window.
+		const startedAt = Date.now();
+		preArmRing = createCountdownRing(null, { size: "sm" });
+		preArmRing.update(UI_TIMINGS.preArmMs, UI_TIMINGS.preArmMs);
+		preArmToast.el.insertBefore(preArmRing.el, preArmToast.el.querySelector(".sl-toast__text"));
+		preArmTick = setInterval(() => {
+			preArmRing?.update(
+				Math.max(0, UI_TIMINGS.preArmMs - (Date.now() - startedAt)),
+				UI_TIMINGS.preArmMs
+			);
+		}, RING_TICK_MS);
 		preArmTimer = setTimeout(() => {
 			preArmTimer = null;
+			const toast = preArmToast;
 			preArmToast = null;
+			cancelPreArm();
+			toast?.dismiss();
 			void setAutoPlay(true);
 		}, UI_TIMINGS.preArmMs);
 	}
@@ -218,16 +253,23 @@ function mountLive(ctx: ViewContext): () => void {
 	// ── hands-off lock (§13.4) ──────────────────────────────────────────────
 	function lockControls(): void {
 		for (const el of root.querySelectorAll(LOCK_SELECTOR)) {
+			if (!locked.has(el))
+				locked.set(el, {
+					ariaDisabled: el.getAttribute("aria-disabled"),
+					tabindex: el.getAttribute("tabindex"),
+				});
 			el.setAttribute("aria-disabled", "true");
 			el.setAttribute("tabindex", "-1");
-			locked.add(el);
 		}
 	}
 
+	/** Mirrors the shell: every control gets back exactly the attributes it had. */
 	function unlockControls(): void {
-		for (const el of locked) {
-			el.removeAttribute("aria-disabled");
-			el.removeAttribute("tabindex");
+		for (const [el, saved] of locked) {
+			if (saved.ariaDisabled === null) el.removeAttribute("aria-disabled");
+			else el.setAttribute("aria-disabled", saved.ariaDisabled);
+			if (saved.tabindex === null) el.removeAttribute("tabindex");
+			else el.setAttribute("tabindex", saved.tabindex);
 		}
 		locked.clear();
 	}
@@ -235,7 +277,6 @@ function mountLive(ctx: ViewContext): () => void {
 	// ── detached banner (§4.4, §9.7) ────────────────────────────────────────
 	function applyDetachedBanner(snap: PanelSnapshot): void {
 		if (snap.executor.debuggerAttached) {
-			wasAttached = true;
 			detachedDismissed = false;
 			detachedBanner?.dismiss();
 			detachedBanner = null;
@@ -295,6 +336,7 @@ function mountLive(ctx: ViewContext): () => void {
 		root.classList.toggle("sl-live--compact", metrics.compact);
 		root.classList.toggle("sl-live--scroll", collapse.scroll);
 		if (snap.autoMove.armed || snap.executor.debuggerAttached) autoPlayUsed = true;
+		if (snap.executor.debuggerAttached) wasAttached = true;
 
 		evalSection.update({ snapshot: snap, inline: collapse.wdlFolded, compact: metrics.compact });
 		moveSection.update({
@@ -306,13 +348,13 @@ function mountLive(ctx: ViewContext): () => void {
 			snapshot: snap,
 			pvMax: collapse.pvMax,
 			compact: metrics.compact,
-			showDepth: true,
+			showDepth: metrics.comfortable,
 			handsOff,
 		});
 		strength.update({ snapshot: snap, handsOff });
 		strengthHost.hidden = collapse.strengthChip;
 		toggles.update({ snapshot: snap, handsOff, strengthChip: collapse.strengthChip });
-		strip.update({ snapshot: snap, autoPlayUsed });
+		strip.update({ snapshot: snap, autoPlayUsed, wasAttached });
 		stripHost.hidden = collapse.stripHidden;
 		applyDetachedBanner(snap);
 		if (handsOff) lockControls();
@@ -321,7 +363,12 @@ function mountLive(ctx: ViewContext): () => void {
 	const stopLayout = observeLayout({
 		app,
 		onChange: (next) => {
-			if (next.availablePx === metrics.availablePx && next.compact === metrics.compact) return;
+			if (
+				next.availablePx === metrics.availablePx &&
+				next.compact === metrics.compact &&
+				next.comfortable === metrics.comfortable
+			)
+				return;
 			metrics = next;
 			render();
 		},

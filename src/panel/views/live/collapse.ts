@@ -3,19 +3,23 @@
  *
  * The §8.2 budget (360×720, standard breakpoint) is transcribed into `LIVE_BUDGET`; where a row
  * is a token-sized control the token is used so the budget cannot drift from the CSS. The
- * available height is `viewport − top bar − banner`; `collapseFor` walks the six collapse
- * steps in the binding order (session strip → PV rows 3→2→1 → WDL fold → strength chip → move
- * card compact → scroll with the card pinned) until the layout fits. Each step is a discrete
- * state (`data-collapse` on the view root; no fluid scaling) so the layout is stable while
- * the user drags the panel edge.
+ * available height is `viewport − top bar − banner`; `collapseFor` walks the collapse steps in
+ * the binding order (session strip → PV rows 3→2→1 → WDL fold → strength chip → move card
+ * compact) until the layout fits, and — §8.2 step 6, literally — below 480 px of available
+ * height the state is always `scroll` (every step applied, the move card pinned to the viewport
+ * under the top bar). Each step is a discrete state (`data-collapse` on the view root; no fluid
+ * scaling) so the layout is stable while the user drags the panel edge.
  *
- * Measurement: a `ResizeObserver` on `.sl-app` when the platform delivers one, plus the window
- * `resize` event (the fallback that also serves happy-dom, whose observer never fires); the
- * height read is `.sl-app`'s box (min-height 100vh) or `window.innerHeight`. The top bar is a
- * fixed `control.lg` (its CSS height), the banner slot is measured. Width < `layout.panelStandard`
- * (360) is the compact breakpoint (the CSS container query on `.sl-app` mirrors it).
+ * Measurement: the VIEWPORT (`window.innerHeight` / `documentElement.clientWidth`), never the
+ * content box — `.sl-app` is `min-height: 100vh` and grows with its content, so its own box
+ * can never be smaller than the layout. A `ResizeObserver` on `.sl-app` (width changes) plus
+ * the window `resize` event (height; also the path happy-dom takes, whose observer never fires)
+ * trigger a re-measure. The top bar is a fixed `control.lg` (its CSS height), the banner slot
+ * is measured. Width < `layout.panelStandard` (360) is the compact breakpoint and
+ * ≥ `layout.panelComfortable` (420) the comfortable one (the CSS container queries mirror both).
  */
 
+import { STRENGTH_UI } from "@core/constants/ui";
 import { TOKENS } from "@design/tokens.generated";
 
 /** Appendix F §8.2 budget at 360×720 (px). */
@@ -38,6 +42,8 @@ export const LIVE_BUDGET = {
 } as const;
 
 export const COLLAPSE_STEPS = ["strip", "pv", "wdl", "strength", "move", "scroll"] as const;
+/** §8.2 step 6 threshold on the available height. */
+export const SCROLL_BELOW_PX = STRENGTH_UI.liveScrollBelowPx;
 export type CollapseStep = (typeof COLLAPSE_STEPS)[number];
 export type CollapseName = "full" | CollapseStep;
 
@@ -83,6 +89,20 @@ export function collapseFor(availablePx: number, pvCount: number): CollapseState
 		scroll: false,
 	};
 	let need = liveLayoutHeight(state.pvMax);
+	// §8.2 step 6: below 480 px the view scrolls — every step applied, the card pinned.
+	if (availablePx < SCROLL_BELOW_PX) {
+		return {
+			...state,
+			level: 6,
+			name: "scroll",
+			stripHidden: true,
+			pvMax: 1,
+			wdlFolded: true,
+			strengthChip: true,
+			moveCompact: true,
+			scroll: true,
+		};
+	}
 	const fits = (): boolean => need <= availablePx;
 	if (fits()) return state;
 
@@ -125,9 +145,12 @@ export function collapseFor(availablePx: number, pvCount: number): CollapseState
 }
 
 export interface LayoutMetrics {
-	/** Height left for the view: `.sl-app` height − top bar − banner slot. */
+	/** Height left for the view: viewport − top bar − banner slot. */
 	availablePx: number;
+	/** < 360 px (§8.1 compact). */
 	compact: boolean;
+	/** ≥ 420 px (§8.1 comfortable: PV depth column shown). */
+	comfortable: boolean;
 }
 
 export interface LayoutObserverOptions {
@@ -141,18 +164,28 @@ function heightOf(el: HTMLElement | null): number {
 	return el.offsetHeight || 0;
 }
 
+/** Viewport size — never an element's content box (see the header comment). */
+export function viewportSize(app: HTMLElement | null): { width: number; height: number } {
+	const doc = app?.ownerDocument ?? (typeof document === "undefined" ? null : document);
+	const win = doc?.defaultView ?? (typeof window === "undefined" ? null : window);
+	const root = doc?.documentElement ?? null;
+	return {
+		// clientWidth excludes a vertical scrollbar, which is what the container queries see.
+		width: root?.clientWidth || win?.innerWidth || 0,
+		height: win?.innerHeight || root?.clientHeight || 0,
+	};
+}
+
 /** Read the current metrics (exported for the view's first paint). */
 export function measureLayout(app: HTMLElement | null): LayoutMetrics {
-	const win = typeof window === "undefined" ? null : window;
-	const appHeight =
-		(app?.clientHeight || 0) > 0 ? (app?.clientHeight ?? 0) : (win?.innerHeight ?? 0);
-	const appWidth = (app?.clientWidth || 0) > 0 ? (app?.clientWidth ?? 0) : (win?.innerWidth ?? 0);
+	const { width, height } = viewportSize(app);
 	const topbar = app?.querySelector<HTMLElement>(".sl-topbar") ?? null;
 	const topbarHeight = topbar && !topbar.hidden ? LIVE_BUDGET.topBar : 0;
 	const banner = app?.querySelector<HTMLElement>(".sl-app__banner") ?? null;
 	return {
-		availablePx: Math.max(0, appHeight - topbarHeight - heightOf(banner)),
-		compact: appWidth > 0 && appWidth < TOKENS.layout.panelStandard,
+		availablePx: Math.max(0, height - topbarHeight - heightOf(banner)),
+		compact: width > 0 && width < TOKENS.layout.panelStandard,
+		comfortable: width >= TOKENS.layout.panelComfortable,
 	};
 }
 

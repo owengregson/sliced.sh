@@ -8,7 +8,7 @@
 
 import { LIMITS } from "@core/constants/limits";
 import type { PanelSnapshot } from "@core/constants/messages";
-import { UI_TIMINGS } from "@core/constants/ui";
+import { STRENGTH_UI, UI_TIMINGS } from "@core/constants/ui";
 import { log } from "@core/logger";
 import { type SettingsPatch, setSettings } from "@core/storage/settings-storage";
 import type { PersonaId, Settings } from "@typedefs/settings";
@@ -25,14 +25,9 @@ import popoverHtml from "../templates/live/strength-popover.html?raw";
 type SelectionMode = Settings["strength"]["selectionMode"];
 type BandId = keyof typeof COPY.strength.bands;
 
-/** Appendix F §7.2 "Strength labels": the lower bound of each band above Casual. */
-const BAND_FLOORS: ReadonlyArray<readonly [number, BandId]> = [
-	[2600, "elite"],
-	[2000, "master"],
-	[1400, "expert"],
-	[800, "club"],
-];
-const SLIDER_STEP = 50;
+/** Appendix F §7.2 "Strength labels" (`STRENGTH_UI.bandFloors`), typed against the copy keys. */
+const BAND_FLOORS: ReadonlyArray<readonly [number, BandId]> = STRENGTH_UI.bandFloors;
+const SLIDER_STEP = STRENGTH_UI.sliderStep;
 const PERSONAS: readonly PersonaId[] = ["cautious", "balanced", "aggressive", "blitz"];
 const MODES: readonly SelectionMode[] = ["engine-elo", "persona-sampling", "hybrid"];
 
@@ -81,6 +76,11 @@ export function createStrengthCard(host: HTMLElement): StrengthCardHandle {
 	function closePopover(): void {
 		popover?.close();
 		popover = null;
+		syncExpanded();
+	}
+
+	function syncExpanded(): void {
+		open.setAttribute("aria-expanded", popover?.open ? "true" : "false");
 	}
 
 	function disposeContent(): void {
@@ -132,8 +132,10 @@ export function createStrengthCard(host: HTMLElement): StrengthCardHandle {
 			onClose: () => {
 				disposeContent();
 				popover = null;
+				syncExpanded();
 			},
 		});
+		syncExpanded();
 	}
 
 	const onOpen = (event: MouseEvent): void => {

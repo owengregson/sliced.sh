@@ -524,4 +524,6 @@ export const COPY_LIVE = {
 	},
 	clock: { opponent: "Opponent clock", you: "Your clock" },
 	executorLabel: "Executor",
+	/** Session strip before the first measured move: no "% vs target" figure yet. */
+	sessionNoStats: (games: number, avg: string): string => `${games} games · ${avg}s avg move`,
 } as const;

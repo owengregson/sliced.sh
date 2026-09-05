@@ -77,6 +77,8 @@ export interface ExecutionResult {
 	elapsedMs: number;
 	timeline: Array<{ phase: string; startMs: number; endMs: number }>;
 	error?: string;
+	/** Task 24: epoch ms the execution finished — identifies one result across snapshots (set by Task 18's controller at integration). */
+	at?: number;
 }
 
 export interface GameSessionView {

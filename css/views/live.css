@@ -241,10 +241,21 @@
 	transition: opacity var(--sl-motion-duration-2-5) var(--sl-motion-easing-standard);
 }
 
-/* step 6: the view scrolls; the move card is pinned at the top of the content */
+/* step 6 (§8.2): the document scrolls; the move card is pinned under the sticky top bar for
+   the whole scroll. Its containing block must be the full view, so the board wrappers become
+   `display: contents` (the rail has no span to fill any more and is hidden). */
+.sl-live--scroll .sl-live__board,
+.sl-live--scroll .sl-live__column {
+	display: contents;
+}
+
+.sl-live--scroll .sl-live__rail {
+	display: none;
+}
+
 .sl-live--scroll .sl-live__move {
 	position: sticky;
-	top: 0;
+	top: var(--sl-size-control-lg);
 	z-index: var(--sl-z-rail);
 }
 

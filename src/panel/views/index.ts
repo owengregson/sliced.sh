@@ -36,4 +36,7 @@ VIEWS.settings = createSettingsView();
 VIEWS.engine = engineView;
 
 // ── Task 24: the real Live view replaces its stub ────────────────────────────────────────────
+
+// ── Task 24: the real Live view replaces its stub ────────────────────────────────────────────
+VIEWS.live = liveView;
 VIEWS.live = liveView;

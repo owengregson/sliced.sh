@@ -24,6 +24,8 @@ export interface SessionStripState {
 	snapshot: PanelSnapshot;
 	/** Auto-play has been armed or the debugger attached at some point this session. */
 	autoPlayUsed: boolean;
+	/** The debugger was attached at some point (owned by the view; shared with the banner). */
+	wasAttached: boolean;
 }
 
 export interface SessionStripHandle {
@@ -80,7 +82,6 @@ export function createSessionStrip(host: HTMLElement): SessionStripHandle {
 	const warning = part(el, ".sl-live__band-warning");
 	const pills = part(el, ".sl-live__strip-pills");
 	host.append(el);
-	let wasAttached = false;
 
 	const mk = (name: string, label: string): PillHandle => {
 		const pill = createPill(pills, { variant: "idle", icon: null, text: "" });
@@ -99,8 +100,12 @@ export function createSessionStrip(host: HTMLElement): SessionStripHandle {
 	function update(state: SessionStripState): void {
 		const snap = state.snapshot;
 		const s = snap.stats;
-		const top1 = s.top1Pct === undefined ? 0 : Math.round(s.top1Pct);
-		stats.textContent = COPY.session(s.games, top1, (s.avgThinkMs / MS).toFixed(1));
+		const avg = (s.avgThinkMs / MS).toFixed(1);
+		// No "% vs target" figure until the first measured move.
+		stats.textContent =
+			s.top1Pct === undefined
+				? COPY_LIVE.sessionNoStats(s.games, avg)
+				: COPY.session(s.games, Math.round(s.top1Pct), avg);
 
 		const hasStats = s.top1Pct !== undefined && s.acpl !== undefined;
 		band.hidden = !hasStats;
@@ -125,9 +130,8 @@ export function createSessionStrip(host: HTMLElement): SessionStripHandle {
 
 		apply(telemetry, telemetryPill(snap.focus), COPY.telemetry.label);
 		apply(hand, handPill(snap.session.hand), COPY_LIVE.hand.label);
-		if (snap.executor.debuggerAttached) wasAttached = true;
 		executor.el.hidden = !state.autoPlayUsed;
-		apply(executor, executorPill(snap, wasAttached), COPY_LIVE.executorLabel);
+		apply(executor, executorPill(snap, state.wasAttached), COPY_LIVE.executorLabel);
 	}
 
 	return {
