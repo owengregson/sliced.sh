@@ -4,13 +4,15 @@
 // build; the last block assembles a miniature `dist/` in a temp directory and runs the real
 // entry point over it, once clean and once broken in every way the step is meant to catch.
 import { afterAll, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
 	BUNDLE_BUDGETS,
+	BUNDLES,
 	checkManifest,
 	checkReferenceGraph,
+	checkWebAccessibleResources,
 	cssRefs,
 	globToRegExp,
 	htmlRefs,
@@ -18,8 +20,11 @@ import {
 	LICENSE_BUNDLE,
 	licenseHost,
 	manifestPaths,
+	readRegistry,
+	registryHosts,
 	resolveRef,
 	scanBundle,
+	unclassifiedHosts,
 	verifyDist,
 } from "../../scripts/verify-dist";
 
@@ -36,7 +41,15 @@ const MANIFEST = {
 		{ js: ["js/page/chesscom-bridge.js"], world: "MAIN" },
 		{ js: ["js/content.js"] },
 	],
-	web_accessible_resources: [{ resources: ["assets/engine/*"] }],
+};
+
+/**
+ * v2 declares no `web_accessible_resources` (§13.3). This variant exercises the path-collection
+ * and glob rules for the only shape that may ever come back — one carrying `use_dynamic_url`.
+ */
+const MANIFEST_WITH_WAR = {
+	...MANIFEST,
+	web_accessible_resources: [{ resources: ["assets/engine/*"], use_dynamic_url: true }],
 };
 
 const CLEAN_FILES = [
@@ -51,7 +64,7 @@ const CLEAN_FILES = [
 
 describe("manifestPaths", () => {
 	it("collects every declared path with its provenance", () => {
-		const paths = manifestPaths(MANIFEST);
+		const paths = manifestPaths(MANIFEST_WITH_WAR);
 		expect(paths.map((p) => p.path)).toEqual([
 			"assets/images/sliced_128.png",
 			"assets/images/sliced_128.png",
@@ -88,13 +101,19 @@ describe("globToRegExp", () => {
 describe("checkManifest", () => {
 	it("passes a well-formed manifest whose paths all exist", () => {
 		expect(checkManifest(MANIFEST, CLEAN_FILES, "2.0.0")).toEqual([]);
+		expect(checkManifest(MANIFEST_WITH_WAR, CLEAN_FILES, "2.0.0")).toEqual([]);
+	});
+
+	it("refuses a web_accessible_resources block without use_dynamic_url", () => {
+		const exposed = { ...MANIFEST, web_accessible_resources: [{ resources: ["assets/engine/*"] }] };
+		expect(checkManifest(exposed, CLEAN_FILES, "2.0.0")).toHaveLength(1);
 	});
 
 	it("reports a missing file and an unmatched resource pattern", () => {
 		const files = CLEAN_FILES.filter(
 			(f) => f !== "js/content.js" && f !== "assets/engine/sf_18.wasm"
 		);
-		const problems = checkManifest(MANIFEST, files, "2.0.0");
+		const problems = checkManifest(MANIFEST_WITH_WAR, files, "2.0.0");
 		expect(problems).toHaveLength(2);
 		expect(problems[0]).toContain("js/content.js");
 		expect(problems[1]).toContain("assets/engine/*");
@@ -181,34 +200,139 @@ describe("checkReferenceGraph", () => {
 	});
 });
 
+describe("checkWebAccessibleResources (§13.3: the fixed extension id is a probe target)", () => {
+	it("passes a manifest that declares none — v2 needs none", () => {
+		expect(checkWebAccessibleResources(MANIFEST)).toEqual([]);
+		expect(checkWebAccessibleResources({ web_accessible_resources: [] })).toEqual([]);
+		expect(checkWebAccessibleResources(null)).toEqual([]);
+	});
+
+	it("fails the v1-shaped block that exposed the engine and the sounds to both sites", () => {
+		const problems = checkWebAccessibleResources({
+			web_accessible_resources: [
+				{
+					resources: ["assets/engine/*", "assets/sounds/*"],
+					matches: ["*://*.chess.com/*", "*://*.lichess.org/*"],
+				},
+			],
+		});
+		expect(problems).toHaveLength(1);
+		expect(problems[0]).toContain("assets/engine/*, assets/sounds/*");
+		expect(problems[0]).toContain("use_dynamic_url");
+	});
+
+	it("allows a block back only with `use_dynamic_url: true` on every entry", () => {
+		expect(
+			checkWebAccessibleResources({
+				web_accessible_resources: [{ resources: ["a.png"], use_dynamic_url: true }],
+			})
+		).toEqual([]);
+		expect(
+			checkWebAccessibleResources({
+				web_accessible_resources: [
+					{ resources: ["a.png"], use_dynamic_url: true },
+					{ resources: ["b.png"] },
+				],
+			})
+		).toHaveLength(1);
+	});
+});
+
+describe("registry hosts", () => {
+	it("derives every host from absolute URLs in the registry, plus the licence endpoint", () => {
+		const hosts = registryHosts(
+			{
+				"urls.ts":
+					'const W = "https://sliced.sh";\nexport const U = { e: "https://explorer.lichess.ovh/x" };',
+				"models.ts": '"https://1e4.ai"',
+			},
+			"https://phantom.ac/slicedgg/index.php"
+		);
+		expect(hosts).toEqual(["1e4.ai", "explorer.lichess.ovh", "phantom.ac", "sliced.sh"]);
+	});
+
+	it("tolerates a licence URL that is not absolute", () => {
+		expect(licenseHost("not a url")).toBeNull();
+		expect(licenseHost("https://phantom.ac/x")).toBe("phantom.ac");
+		expect(registryHosts({ "a.ts": '"https://sliced.sh"' }, "not a url")).toEqual(["sliced.sh"]);
+	});
+
+	it("classifies every host the real registry actually contains", () => {
+		expect(unclassifiedHosts(registryHosts(readRegistry(), null))).toEqual([]);
+	});
+});
+
 describe("scanBundle", () => {
-	const host = "phantom.ac";
+	const hosts = ["phantom.ac", "sliced.sh", "lichess.org"];
 
 	it("flags a stray console call in a production bundle and names the line", () => {
-		const problems = scanBundle("js/panel.js", "let a=1;\nconsole.warn(a);\n", { dev: false, host });
+		const problems = scanBundle("js/panel.js", "let a=1;\nconsole.warn(a);\n", {
+			dev: false,
+			hosts,
+		});
 		expect(problems).toHaveLength(1);
 		expect(problems[0]).toContain("1 `console.`");
 		expect(problems[0]).toContain("line 2");
 	});
 
 	it("allows console in a dev bundle, and always allows the logger's computed access", () => {
-		expect(scanBundle("js/panel.js", "console.warn(1)", { dev: true, host })).toEqual([]);
-		expect(scanBundle("js/panel.js", "console[l](1)", { dev: false, host })).toEqual([]);
+		expect(scanBundle("js/panel.js", "console.warn(1)", { dev: true, hosts })).toEqual([]);
+		expect(scanBundle("js/panel.js", "console[l](1)", { dev: false, hosts })).toEqual([]);
 	});
 
 	it("allows the licence host only in the service-worker bundle", () => {
-		const text = `fetch("https://${host}/slicedgg/index.php")`;
-		expect(scanBundle(LICENSE_BUNDLE, text, { dev: false, host })).toEqual([]);
-		const leak = scanBundle("js/content.js", text, { dev: false, host });
-		expect(leak).toHaveLength(1);
-		expect(leak[0]).toContain(host);
-		expect(leak[0]).toContain(LICENSE_BUNDLE);
+		const text = `fetch("https://phantom.ac/slicedgg/index.php")`;
+		expect(scanBundle(LICENSE_BUNDLE, text, { dev: false, hosts })).toEqual([]);
+		for (const bundle of [BUNDLES.content, BUNDLES.panel, BUNDLES.offscreen]) {
+			const leak = scanBundle(bundle, text, { dev: false, hosts });
+			expect(leak, bundle).toHaveLength(1);
+			expect(leak[0]).toContain("phantom.ac");
+			expect(leak[0]).toContain(LICENSE_BUNDLE);
+		}
 	});
 
-	it("skips the host rule when the licence URL is not absolute", () => {
-		expect(licenseHost("not a url")).toBeNull();
-		expect(licenseHost("https://phantom.ac/slicedgg/index.php")).toBe("phantom.ac");
-		expect(scanBundle("js/content.js", "phantom.ac", { dev: false, host: null })).toEqual([]);
+	it("keeps every registry host out of the page realm, SW and panel aside", () => {
+		const text = `const u = "https://sliced.sh/manifest.json";`;
+		expect(scanBundle(BUNDLES.serviceWorker, text, { dev: false, hosts })).toEqual([]);
+		expect(scanBundle(BUNDLES.panel, text, { dev: false, hosts })).toEqual([]);
+		const leak = scanBundle(BUNDLES.content, text, { dev: false, hosts });
+		expect(leak).toHaveLength(1);
+		expect(leak[0]).toContain("sliced.sh");
+		expect(scanBundle("js/page/chesscom-bridge.js", text, { dev: false, hosts })).toHaveLength(1);
+	});
+
+	it("does not mistake a match pattern for a URL — content carries both site patterns", () => {
+		const patterns = `["*://*.chess.com/*","*://*.lichess.org/*"]`;
+		expect(scanBundle(BUNDLES.content, patterns, { dev: false, hosts })).toEqual([]);
+		// …but a real lichess URL in the content bundle still fails.
+		expect(scanBundle(BUNDLES.content, `"https://lichess.org/"`, { dev: false, hosts })).toHaveLength(
+			1
+		);
+	});
+
+	it("ignores a host it cannot classify (reported once by unclassifiedHosts instead)", () => {
+		expect(
+			scanBundle(BUNDLES.content, `"https://unknown.example/"`, {
+				dev: false,
+				hosts: ["unknown.example"],
+			})
+		).toEqual([]);
+		expect(unclassifiedHosts(["unknown.example", "sliced.sh"])).toEqual(["unknown.example"]);
+	});
+});
+
+describe("the shipped manifest", () => {
+	const source = JSON.parse(
+		readFileSync(path.resolve(import.meta.dir, "../../manifest.json"), "utf8")
+	) as Record<string, unknown>;
+
+	it("exposes nothing to the page: no web_accessible_resources at all (§13.3)", () => {
+		expect(source.web_accessible_resources).toBeUndefined();
+		expect(checkWebAccessibleResources(source)).toEqual([]);
+	});
+
+	it("still pins the key, so the id stays stable across the v1 upgrade", () => {
+		expect(typeof source.key).toBe("string");
 	});
 });
 
@@ -275,6 +399,20 @@ describe("verifyDist over a built tree", () => {
 		files["js/content.js"] = `const u="https://phantom.ac/x";`;
 		files["pages/panel.html"] = `<script src="../js/gone.js"></script>`;
 		expect(() => verifyDist(build(files), { version: "2.0.0" })).toThrow(/3 problem/);
+	});
+
+	it("fails when a budgeted bundle was never built at all", () => {
+		const files = clean();
+		delete files["js/content.js"];
+		// Missing from the manifest's content_scripts *and* from the budget list.
+		expect(() => verifyDist(build(files), { version: "2.0.0" })).toThrow(/was not built/);
+	});
+
+	it("fails a release build that still carries a source map, and allows one in dev", () => {
+		const files = clean();
+		files["js/panel.js.map"] = '{"version":3,"sourcesContent":["…"]}';
+		expect(() => verifyDist(build(files), { version: "2.0.0" })).toThrow(/must ship no source map/);
+		expect(verifyDist(build(files), { version: "2.0.0", dev: true }).problems).toEqual([]);
 	});
 
 	it("keeps console out of the failure set for a dev build", () => {

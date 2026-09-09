@@ -15,6 +15,15 @@
  * version string all leave the stored value exactly as it was — an outage must not make the
  * panel claim an update, nor withdraw one it already announced.
  *
+ * The failure modes here are *permanent-looking*: a missing `host_permissions` entry (CORS), a
+ * site that serves a PWA web-app manifest at that path (no `version` field), or a path that
+ * 404s all produce "no update available" forever and look identical to a healthy check. So a
+ * failed read is a `log.warn` carrying the URL and a machine-readable `reason`, not a `debug`
+ * line: `log.warn` reaches the service-worker console *and* the panel's Engine log through the
+ * log bridge, which makes the silent-forever path visible in the product's own diagnostics.
+ * `manifest.json` carries the `host_permissions` entry for the product origin
+ * (`test/scripts/manifest-hosts.test.ts` asserts it) so CORS is not one of them.
+ *
  * The flag is written only when it changes: the panel re-renders on `storage.onChanged`, and a
  * write every six hours with the same value would re-raise the interrupt after the user chose
  * "Later".
@@ -44,6 +53,12 @@ export interface UpdateCheckOptions {
 
 export type UpdateOutcome = "current" | "available" | "unreachable";
 
+/**
+ * Why a check could not read the published manifest. `no-version` is the one that most looks
+ * healthy: the site answered 200 with JSON that simply is not the extension manifest.
+ */
+export type UnreachableReason = "network" | "http-status" | "not-json" | "no-version";
+
 export interface UpdateCheckResult {
 	outcome: UpdateOutcome;
 	/** The site's version, or `null` when it could not be read. */
@@ -51,6 +66,8 @@ export interface UpdateCheckResult {
 	current: string;
 	/** Whether `LOCAL_KEYS.updateAvailable` was written (it is written only on a change). */
 	changed: boolean;
+	/** `null` on a successful read. */
+	reason: UnreachableReason | null;
 }
 
 /** A Chrome extension version: one to four dot-separated integers. */
@@ -116,22 +133,42 @@ export async function checkForUpdate(options: UpdateCheckOptions = {}): Promise<
 	const timeoutMs = options.timeoutMs ?? TIMINGS.licenseValidateTimeoutMs;
 
 	let latest: string | null = null;
+	let reason: UnreachableReason | null = null;
 	try {
 		const response = await fetchImpl(url, {
 			cache: "no-store",
 			signal: AbortSignal.timeout(timeoutMs),
 		});
-		if (!response.ok) throw new Error(`HTTP ${response.status}`);
-		latest = readPublishedVersion(await response.json());
-		if (latest === null) throw new Error("no usable `version` in the published manifest");
+		if (!response.ok) {
+			reason = "http-status";
+			throw new Error(`HTTP ${response.status}`);
+		}
+		let body: unknown;
+		try {
+			body = await response.json();
+		} catch (error) {
+			reason = "not-json";
+			throw error;
+		}
+		latest = readPublishedVersion(body);
+		if (latest === null) {
+			reason = "no-version";
+			throw new Error(`no \`version\` string in the JSON served at ${url}`);
+		}
 	} catch (error) {
-		// Offline, blocked, or a site that answered with something else: leave the flag alone.
-		log.debug("update-check: could not read the published manifest", errorMessage(error));
-		return { outcome: "unreachable", latest: null, current, changed: false };
+		// Offline, blocked, or a site that answered with something else: leave the flag alone,
+		// but say so loudly enough to be seen — see the module comment.
+		reason = reason ?? "network";
+		log.warn("update-check: could not read the published manifest", {
+			url,
+			reason,
+			error: errorMessage(error),
+		});
+		return { outcome: "unreachable", latest: null, current, changed: false, reason };
 	}
 
 	const available = isNewerVersion(latest, current);
 	const changed = await storeVerdict(available, latest);
 	if (changed) log.info("update-check", { current, latest, available });
-	return { outcome: available ? "available" : "current", latest, current, changed };
+	return { outcome: available ? "available" : "current", latest, current, changed, reason: null };
 }

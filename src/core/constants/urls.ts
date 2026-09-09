@@ -38,8 +38,6 @@ export const URLS = {
 	/** Task 34: onnxruntime sources; the MIT text is vendored from `<raw>/v<version>/LICENSE`. */
 	onnxruntimeRepo: "https://github.com/microsoft/onnxruntime",
 	onnxruntimeRaw: "https://raw.githubusercontent.com/microsoft/onnxruntime/",
-	chesscomMatch: "*://*.chess.com/*",
-	lichessMatch: "*://*.lichess.org/*",
 	// Task 23: panel links (Appendix F §4.1 / §4.2 / §4.3)
 	chesscom: "https://www.chess.com/",
 	chesscomPlay: "https://www.chess.com/play/online",

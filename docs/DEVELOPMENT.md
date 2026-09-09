@@ -84,12 +84,19 @@ Run as part of the build, or on its own with `bun run verify:dist`. It fails the
 
 - a path declared in the manifest that is not in `dist/` (icons, side panel, service worker,
   content scripts; `web_accessible_resources` patterns must match at least one file);
+- a `web_accessible_resources` block without `use_dynamic_url: true` on every entry — with `key`
+  pinned, a web-accessible path is a presence probe for any script on a matched site (§13.3), so
+  v2 declares none at all;
 - an unresolvable same-package reference reachable from the HTML — `src`/`href`, then `url()`
   and `@import` transitively through the CSS, so a missing font or stylesheet fails here;
 - `js/panel.js` over 400 KB or `js/content.js` over 250 KB (every bundle's size is printed);
 - a literal `console.` in a production bundle (the logger's own use is `console[level]`, a
   computed member, so any literal one is a stray call);
-- the licence host appearing anywhere but `js/service-worker.js`.
+- a host from the constants registry appearing in a bundle `HOST_OWNERS` does not allow — the
+  licence host outside the service worker, or *any* registry host in `content.js` or a
+  `js/page/*.js` — and a registry host that `HOST_OWNERS` does not classify at all;
+- a `.js.map` in a release package (dev maps embed the original TypeScript, so they are checked
+  for absence rather than scanned).
 
 Those size ceilings are a specification, not a knob. If a build breaches one, the finding is the
 size — report it and shrink the bundle.
@@ -188,10 +195,8 @@ from a CDN — the extension CSP forbids remote script and the panel must work o
 `licenseEnforce: false`. Every key therefore validates as `valid` regardless of what the endpoint
 says; the endpoint's real verdict is preserved in `LicenseState.rawStatus` for diagnostics and is
 what the Engine view shows. This is deliberate and inherited from v1 (whose gate was
-`if (reply.includes('"valid"') || true)`), but it means **a shipped build performs no licence
-enforcement at all**. To test or ship real gating, set `licenseEnforce: true` in
-`build.config.json` and rebuild — then verify the expired/invalid/IP-limit paths in
-`docs/qa-checklist.md`.
+`if (reply.includes('"valid"') || true)`): there are no locks right now, by intent. Leave the
+flag, the gate and the login view's force-valid path alone.
 
 ---
 

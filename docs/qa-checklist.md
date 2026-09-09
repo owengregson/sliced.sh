@@ -42,6 +42,8 @@ not run is `not run`, never a tick.
 | A4 | Open a supported site and wait for the engine | `chrome://extensions` → "Inspect views: offscreen.html" exists | |
 | A5 | Navigate to a non-supported site (e.g. example.com) with the panel open | "Not on a supported site" view with working chess.com / lichess links | |
 | A6 | `bun run build` (release), load *that* `dist/` unpacked in a second profile | Card reads **sliced.gg** (no `(dev)`, no `version_name`); everything above still holds | |
+| A7 | On a chess.com tab's page console, run `fetch("chrome-extension://" + "<the extension id from chrome://extensions>" + "/assets/sounds/make_move.wav")` | **Rejects.** v2 declares no `web_accessible_resources`, so a page cannot confirm the extension is installed (§13.3). A success here is a critical finding | |
+| A8 | Same, with the engine: `.../assets/engine/sf_18_smallnet.wasm` | Rejects, same reason | |
 
 ---
 
@@ -166,8 +168,15 @@ Open the offscreen document's console (`chrome://extensions` → Inspect views: 
 
 ## F. Adapter selectors vs the live DOM (deferred from Task 20)
 
-The adapters were built against fixtures **hand-written from Appendix C's verified DOM
-descriptions, not live captures**. This section replaces that assumption with evidence. For each
+The adapters were built against fixtures hand-written from Appendix C's DOM descriptions rather
+than live captures. **Most of that gap is now closed.** On 2026-09-09 every board, piece,
+coordinate, clock, player and move-list selector was checked against live chess.com and lichess
+in a real browser, and the first ladder entry hit in every case — including the obfuscated lila
+tags (`aPp` 1, `Z7yx` 28, `qZM` 14, `.a1t` 1) and chess.com's move list (`wc-simple-move-list` 1,
+`.node.main-line-ply` 43, `.node-highlight-content.selected` 1). Those rows are struck below.
+
+What remains needs a game *state* a read-only pass cannot reach: promotion pickers, game-over
+modals, follow-up controls, and anything that needs the extension installed and armed. For each
 row, open DevTools on the live page and check the selector in `src/content/adapters/selectors.ts`
 against what is actually there.
 
@@ -177,31 +186,32 @@ against what is actually there.
 | F2 | `chesscom.botCard` / `botName` / `botRating` — `.bot-component*` | chess.com "Play computer" bot picker | The bot's name and rating are read; the §13.6 opponent-matched target gets a real number | |
 | F3 | `chesscom.username`, `playerTop`/`playerBottom` | live game | Correct top/bottom assignment in both orientations | |
 | F4 | `lichess.playerName` = `name`, `playerRating` = `rating` (element *children* of `.ruser-*`) | live lichess game | Both resolve; confirm they are really child elements and not attributes on the parent | |
-| F5 | `div.element-pool` pooled pieces | chess.com, after several captures | The pool exists, holds recycled `.piece` elements, and sits outside `wc-chess-board` | |
-| F6 | `chesscom.moveList` / `moveNode` / `moveSelected` ladders | live game | The first candidate in each ladder matches (if a later one matches, the ladder is stale — record which index) | |
-| F7 | `lichess.moves` / `move` tag ladders (`aPp`, `Z7yx`, `kwdb`, …) | live game | Record which index matched. lila rotates these tags; a fall-through to `.moves`/`.tview2` is expected but worth knowing | |
+| F5 | `div.element-pool` pooled pieces | chess.com, after several captures | The pool itself is **already confirmed** (3 on `/play/computer`). What remains: after several captures, confirm it holds recycled `.piece` elements and that the adapter's piece read never picks one up (a stale piece in the panel's position is the symptom) | |
+| ~~F6~~ | ~~chess.com move-list ladders~~ | — | **Struck — verified live 2026-09-09**: `wc-simple-move-list` 1, `.main-line-row` 23, `.node.main-line-ply` 43, `.node-highlight-content` 43, `.node-highlight-content.selected` 1, all first ladder entry | done |
+| ~~F7~~ | ~~lichess move/tag ladders~~ | — | **Struck — verified live 2026-09-09**: `aPp` 1, `Z7yx` 28, `qZM` 14, `.a1t` 1, all first ladder entry. The lila tag rotation the ladder exists to survive has not happened since the research pass | done |
 | F8 | `chesscom.gameOver` ladder + `gameOverHeaderClassRe` | after a win, a loss and a draw | Result is classified correctly in all three | |
 | F9 | Run the content self-check (`self-check.ts` probe output in the SW log) | every selector concern reports a matched index; nothing reports "no candidate" | |
 
 Anything that only matches at a later ladder index, or not at all, should be captured as a real
-DOM snapshot into `test/fixtures/` so the regression is caught next time.
+DOM snapshot into `test/fixtures/` so the regression is caught next time. Note also that the
+live pass found chess.com resolving `wc-chess-board#board-play-computer` — the *second* board
+ladder entry — on `/play/computer`, which is expected and exact, not a fall-through.
 
 ---
 
 ## G. Licence paths
 
 `build.config.json` ships `licenseEnforce: false`, so the gate is forced open and every key
-validates. Run G1–G3 on the shipped build; for G4–G7 rebuild with `licenseEnforce: true`.
+validates. **That is intended — there are no locks right now.** Do not flip the flag, and do not
+treat "a bad key was accepted" as a finding. What is worth checking is that the login flow works
+and that the endpoint's real verdict is still visible for diagnostics.
 
 | # | Do | Expect | Observed |
 |---|---|---|---|
 | G1 | Fresh profile, first open | Login view; the version line reads the build version | |
 | G2 | Enter a well-formed key | Accepted; the panel proceeds to Waiting/Live | |
-| G3 | Engine view → licence block | Shows `status: valid` **and** the endpoint's real `rawStatus` — confirm `rawStatus` is not being masked | |
-| G4 | `licenseEnforce: true`, rebuild, enter a bad key | Login view shows the error copy; the extension does not assist | |
-| G5 | Same build, an expired key | Expired view with the date and the renew action | |
-| G6 | Same build, a key already active on 2 devices | The IP-limit copy, with "Manage devices" | |
-| G7 | Same build, go offline and reopen the panel | The last valid verdict is kept — a network error must never lock the user out (H.12) | |
+| G3 | Engine view → licence block | Shows `status: valid` **and** the endpoint's real `rawStatus` — confirm `rawStatus` is not being masked by the force-valid path | |
+| G4 | Go offline and reopen the panel | The last stored verdict is kept; a network error never changes the state (H.12) | |
 
 ---
 
@@ -215,6 +225,7 @@ validates. Run G1–G3 on the shipped build; for G4–G7 rebuild with `licenseEn
 | H4 | Click **Restart and update** | The extension reloads (`chrome.runtime.reload()`); the panel reconnects. Confirm a live game is not disrupted beyond the reload | |
 | H5 | Set `sl::update-available` to `false` | Interrupt and banner both disappear | |
 | H6 | Let the licence alarm fire with the site reachable (or call `checkForUpdate()` from the SW console) | Version compared against the site's `manifest.json`; the flag matches reality; the value is written **only** when it changes | |
+| H7 | Watch the SW console across H6 | **No `update-check: could not read the published manifest` warning.** If one appears, read its `reason`: `network` (usually CORS — check `host_permissions` covers `https://sliced.sh/*`), `http-status` (the path 404s), `not-json`, or `no-version` (the site is serving a PWA web-app manifest at `/manifest.json`, not the extension's). Each of these makes the check silently mean "no update" forever, which is why it warns | |
 
 ---
 
@@ -374,12 +385,14 @@ DevTools › Rendering › Emulate CSS media feature `forced-colors: active`. Sc
 These are real, known, and deliberately not fixed in this pass. Confirm the symptom matches the
 description; if it differs, *that* is the finding.
 
-**L1 — the master toggle does nothing.** `Settings.enabled` is written by
+**L1 — the master toggle does not stop anything. This is a known *bug*, not a gap.** The
+Settings row's own copy promises "Off stops analysis and recommendations until you turn it back
+on", and that is currently false. `Settings.enabled` is written by
 `src/service/handlers/settings/set-enabled.ts` and carried in the panel snapshot, but the only
 consumer is `moveCardState()` in `src/panel/views/live/move-section.ts`, which greys the move
 card. Nothing in `src/service/**` reads it, so with the toggle **off** the extension still
-analyses, still recommends, still highlights and — if armed — still plays. The gate belongs in
-the SW session (`src/service/game-session/**`).
+analyses, still recommends, still highlights and — if armed — still plays. Being fixed
+separately; the gate belongs in the SW session (`src/service/game-session/**`).
 
 **L2 — the Network control is inert.** `Settings.engine.nnue` (`small` | `big` | `auto`, default
 `auto`) is read only by the Settings view to render its control. `EngineController` never passes

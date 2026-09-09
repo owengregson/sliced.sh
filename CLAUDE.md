@@ -56,8 +56,10 @@ Ports: `sl-panel` (SW ↔ panel), `sl-engine` (SW ↔ offscreen), `sl-game` (SW 
 ## Conventions
 
 These are the plan's §1.3 global constraints, numbered so briefs and reviews can cite them.
-Each one has something that enforces it — if you are about to break a convention, you are about
-to make a check fail.
+Most are machine-enforced, and each entry names what enforces it. Two are **not**, and are worth
+knowing as such: "templates live in `*.html`, imported `?raw`" (C3) and "every module that owns
+listeners or timers exposes a dispose" (C6) rest on review, not on a lint. Everything else fails
+a check if you break it.
 
 **C1 — one definition per constant.** Every storage key, alarm name, port name, message type,
 URL, limit, timing and selector lives in a registry: `src/core/constants/*.ts`,
@@ -94,8 +96,11 @@ name `sliced`, accent `#ffa71f`, dark-first. All user-facing strings live once i
 `chrome.runtime.lastError`, so core modules run against the simulator in `test/sim/` instead of
 a browser. Every module that owns a listener, timer, RAF or observer returns a
 cleanup/dispose function, and panel views return theirs from `mount()`.
-No `any` (outside `*.d.ts` shims), no non-null `!` outside tests, no `console.*` outside
-`src/core/logger.ts` — use `log` from `@core/logger`.
+No `any` (outside `*.d.ts` shims), no non-null `!`, no `console.*` outside `src/core/logger.ts`
+— use `log` from `@core/logger`.
+*Enforced by:* `biome.json`'s `src/**` override (`noExplicitAny` and `noNonNullAssertion` are
+errors there and off elsewhere, because scripts and tests legitimately use both), `noConsole`,
+and `verify-dist`'s `console.` scan of the built bundles.
 
 **C7 — the telemetry contract (§13) applies to every change.** No untrusted input events, no
 focus changes, no page storage, no DOM or global signatures, rate-controlled preview selections,
@@ -156,10 +161,19 @@ corresponding source. Regenerate the notice with `bun run vendor:engine`; **neve
 `build.config.json` sets `licenseEnforce: false`, so every key validates as `valid` while the
 real verdict is kept in `rawStatus` for diagnostics. Flip the build flag to test real gating.
 
-**`verify-dist` restricts the licence host to the service-worker bundle.** `LICENSE_ENDPOINT` is
-a separate export from `URLS` for exactly that reason — a bundler inlines an object literal
-whole, and the licence vendor's hostname must not ship inside `content.js`, which runs on
-chess.com's origin.
+**A bundler inlines an object literal whole, and that is a §13.3 problem.** Importing one member
+of `URLS` shipped *every* URL in it — including `sliced.sh`, which names the product — into
+whatever bundle did the importing. `LICENSE_ENDPOINT` and `SITE_MATCHES` are therefore separate
+top-level exports, so the page-realm bundles carry only the two match patterns they need.
+`verify-dist` polices this: `HOST_OWNERS` says which bundles may carry each host in the registry,
+and a host it does not classify fails the build.
+
+**The manifest must expose nothing to the page.** `key` is pinned, so the extension id is fixed
+and knowable; a `web_accessible_resources` entry would let any script on chess.com or lichess
+`fetch("chrome-extension://<id>/…")` and read success as a definitive "sliced is installed".
+v2 declares none — the engine assets load in the offscreen document and the sounds in the side
+panel, both extension pages — and `verify-dist` fails the build if the block returns without
+`use_dynamic_url: true`.
 
 ---
 

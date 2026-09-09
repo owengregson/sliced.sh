@@ -17,7 +17,7 @@ beforeEach(() => {
 const settle = () => sim.time.runMicrotasks();
 
 describe("isChessHost", () => {
-	it("derives the host test from URLS.chesscomMatch / lichessMatch", () => {
+	it("derives the host test from SITE_MATCHES.chesscom / lichess", () => {
 		expect(isChessHost("https://www.chess.com/play/online")).toBe(true);
 		expect(isChessHost("https://chess.com/")).toBe(true);
 		expect(isChessHost("https://lichess.org/abc123")).toBe(true);

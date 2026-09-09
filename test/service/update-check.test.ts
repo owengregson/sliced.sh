@@ -20,6 +20,7 @@ import {
 	isNewerVersion,
 	isVersion,
 	readPublishedVersion,
+	type UnreachableReason,
 } from "@service/update-check";
 import { createSimulator, type Simulator } from "@test/sim";
 
@@ -115,6 +116,7 @@ describe("checkForUpdate", () => {
 			latest: "2.1.0",
 			current: "2.0.0",
 			changed: true,
+			reason: null,
 		});
 		expect(stored()).toEqual({ flag: true, version: "2.1.0" });
 	});
@@ -164,25 +166,32 @@ describe("checkForUpdate", () => {
 			[LOCAL_KEYS.updateAvailable]: true,
 			[LOCAL_KEYS.updateVersion]: "2.1.0",
 		});
-		const failures: Array<{ name: string; fetch: FetchLike }> = [
+		const failures: Array<{ name: string; reason: UnreachableReason; fetch: FetchLike }> = [
 			{
 				name: "network error",
+				reason: "network",
 				fetch: async () => {
 					throw new Error("offline");
 				},
 			},
-			{ name: "HTTP 503", fetch: serving("", 503).fetch },
-			{ name: "not JSON", fetch: serving("<html>maintenance</html>").fetch },
-			{ name: "no version", fetch: serving(JSON.stringify({ manifest_version: 3 })).fetch },
-			{ name: "junk version", fetch: serving(manifest("soon™")).fetch },
+			{ name: "HTTP 503", reason: "http-status", fetch: serving("", 503).fetch },
+			{ name: "not JSON", reason: "not-json", fetch: serving("<html>maintenance</html>").fetch },
+			{
+				// The permanent-looking one: a PWA web-app manifest served at the same path.
+				name: "a manifest with no version",
+				reason: "no-version",
+				fetch: serving(JSON.stringify({ name: "sliced", icons: [] })).fetch,
+			},
+			{ name: "junk version", reason: "no-version", fetch: serving(manifest("soon™")).fetch },
 		];
-		for (const { name, fetch } of failures) {
+		for (const { name, reason, fetch } of failures) {
 			const result = await checkForUpdate({ fetch, currentVersion: "2.0.0" });
 			expect(result, name).toEqual({
 				outcome: "unreachable",
 				latest: null,
 				current: "2.0.0",
 				changed: false,
+				reason,
 			});
 			expect(stored(), name).toEqual({ flag: true, version: "2.1.0" });
 		}

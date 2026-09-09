@@ -1,11 +1,11 @@
 /**
  * Hostname → `Site` (Task 21). The only source of the site hostnames is the
- * `URLS.*Match` match patterns (C1); a pattern `*://*.chess.com/*` names the
+ * `SITE_MATCHES` patterns (C1); a pattern `*://*.chess.com/*` names the
  * host `chess.com`, and a hostname matches when it equals the host or ends
  * with `.<host>`.
  */
 
-import { URLS } from "@core/constants/urls";
+import { SITE_MATCHES } from "@core/constants/match-patterns";
 import type { Site } from "@typedefs/game";
 
 const MATCH_HOST_RE = /^[^:]+:\/\/(?:\*\.)?([^/*]+)\//;
@@ -21,8 +21,8 @@ export function hostMatches(hostname: string, host: string): boolean {
 }
 
 const SITES: ReadonlyArray<readonly [Site, string]> = [
-	["chesscom", URLS.chesscomMatch],
-	["lichess", URLS.lichessMatch],
+	["chesscom", SITE_MATCHES.chesscom],
+	["lichess", SITE_MATCHES.lichess],
 ];
 
 export function detectSite(hostname: string): Site | null {

@@ -70,13 +70,8 @@
 		"*://*.lichess.org/*",
 		"https://explorer.lichess.ovh/*",
 		"https://tests.stockfishchess.org/*",
-		"https://data.stockfishchess.org/*"
-	],
-	"web_accessible_resources": [
-		{
-			"resources": ["assets/engine/*", "assets/sounds/*"],
-			"matches": ["*://*.chess.com/*", "*://*.lichess.org/*"]
-		}
+		"https://data.stockfishchess.org/*",
+		"https://sliced.sh/*"
 	],
 	"cross_origin_embedder_policy": {
 		"value": "require-corp"

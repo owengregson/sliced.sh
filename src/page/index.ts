@@ -6,7 +6,7 @@
  *
  * Every bind-time value comes from a registry (C1): selectors from
  * `SELECTORS`, colours from `TOKENS`, timings from `TIMINGS`, hostnames from
- * `URLS`, and the direction tokens / overlay class from `deriveToken(seed,
+ * `SITE_MATCHES`, and the direction tokens / overlay class from `deriveToken(seed,
  * SPOOF_PURPOSES.*)` — the same derivation `src/content/page-bridge-client.ts`
  * performs at runtime with `__SL_SPOOF_SEED__`.
  *
@@ -25,9 +25,9 @@
 
 import { SELECTORS } from "@content/adapters/selectors";
 import { hostOfMatchPattern } from "@content/site-detect";
+import { SITE_MATCHES } from "@core/constants/match-patterns";
 import { SPOOF_PURPOSES } from "@core/constants/spoof";
 import { TIMINGS } from "@core/constants/timings";
-import { URLS } from "@core/constants/urls";
 import { deriveToken } from "@core/spoof";
 import { TOKENS } from "@design/tokens.generated";
 import type { AnyPageProgram, EntryEnv } from "@pagescript";
@@ -68,9 +68,9 @@ export const chesscomEntryArgs = (env: EntryEnv) => ({
 });
 
 function lichessHost(): string {
-	const host = hostOfMatchPattern(URLS.lichessMatch);
+	const host = hostOfMatchPattern(SITE_MATCHES.lichess);
 	if (host === null || host === "") {
-		throw new Error(`gen-pagescript: URLS.lichessMatch has no host: ${URLS.lichessMatch}`);
+		throw new Error(`gen-pagescript: SITE_MATCHES.lichess has no host: ${SITE_MATCHES.lichess}`);
 	}
 	return host;
 }

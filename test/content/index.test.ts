@@ -106,7 +106,7 @@ function playD4(dom: TabDom): void {
 }
 
 describe("site-detect", () => {
-	it("maps hostnames to Site through URLS.*Match", () => {
+	it("maps hostnames to Site through SITE_MATCHES", () => {
 		expect(hostOfMatchPattern("*://*.chess.com/*")).toBe("chess.com");
 		expect(hostOfMatchPattern("nonsense")).toBeNull();
 		expect(detectSite("www.chess.com")).toBe("chesscom");

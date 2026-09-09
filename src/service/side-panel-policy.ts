@@ -4,12 +4,12 @@
  * globally. `install()` sets `openPanelOnActionClick` once, disables the
  * global default, reconciles existing tabs, and follows
  * `tabs.onUpdated` / `onActivated` / `onRemoved`. The host test is derived
- * from `URLS.chesscomMatch` / `URLS.lichessMatch` (no second literal).
+ * from `SITE_MATCHES.chesscom` / `SITE_MATCHES.lichess` (no second literal).
  */
 
 import { sidePanelSetBehavior, sidePanelSetOptions } from "@core/chrome/side-panel";
 import { onTabActivated, onTabRemoved, onTabUpdated, tabsGet, tabsQuery } from "@core/chrome/tabs";
-import { URLS } from "@core/constants/urls";
+import { SITE_MATCHES } from "@core/constants/match-patterns";
 import { log } from "@core/logger";
 
 export const PANEL_PAGE_PATH = "pages/panel.html";
@@ -31,7 +31,7 @@ export function hostTestFromMatchPattern(pattern: string): (hostname: string) =>
 	return (host) => host === exact;
 }
 
-const HOST_TESTS = [URLS.chesscomMatch, URLS.lichessMatch].map(hostTestFromMatchPattern);
+const HOST_TESTS = [SITE_MATCHES.chesscom, SITE_MATCHES.lichess].map(hostTestFromMatchPattern);
 
 export function isChessHost(url: string | undefined): boolean {
 	if (!url) return false;

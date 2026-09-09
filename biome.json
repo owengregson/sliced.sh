@@ -110,6 +110,19 @@
 					}
 				}
 			}
+		},
+		{
+			"includes": ["src/**", "!src/**/*.d.ts"],
+			"linter": {
+				"rules": {
+					"style": {
+						"noNonNullAssertion": "error"
+					},
+					"suspicious": {
+						"noExplicitAny": "error"
+					}
+				}
+			}
 		}
 	]
 }

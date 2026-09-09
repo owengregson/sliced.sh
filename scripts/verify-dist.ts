@@ -1,20 +1,30 @@
 // scripts/verify-dist.ts — build step 10 (§11.2): the packaged tree is loadable and clean.
 //
-// Five families of check, all against `dist/` as it will be zipped:
+// Seven families of check, all against `dist/` as it will be zipped:
 //
 //   1. every path the stamped manifest declares exists (globs in
 //      `web_accessible_resources` must match at least one file);
-//   2. every same-origin reference reachable from the extension's HTML resolves —
+//   2. the manifest exposes nothing to the page. `web_accessible_resources` must be absent, or
+//      every entry must carry `use_dynamic_url: true`. The manifest pins `key`, so the extension
+//      id is fixed and knowable: any script on a matched site could `fetch()` a web-accessible
+//      path and read success as a definitive "sliced is installed" — the strongest presence
+//      signal §13.3 exists to prevent, and stronger than any inlined string. `use_dynamic_url`
+//      rotates the token per session, which is the only form that is safe to reintroduce;
+//   3. every same-origin reference reachable from the extension's HTML resolves —
 //      `src`/`href` in the pages, then `url(…)` and `@import` transitively through the CSS,
 //      so a missing font or an unstamped stylesheet fails the build instead of the panel;
-//   3. bundle sizes are reported and the two budgeted entries are capped
+//   4. bundle sizes are reported and the two budgeted entries are capped
 //      (`js/panel.js` 400 KB, `js/content.js` 250 KB — §11.2);
-//   4. no `console.` survives in a production bundle (`@core/logger` is the only sanctioned
+//   5. no `console.` survives in a production bundle (`@core/logger` is the only sanctioned
 //      console use and reaches it through a computed member, `console[level]`, so a literal
 //      `console.` in a shipped bundle is always a stray call);
-//   5. the licence host (`build.config.json` → `licenseUrl`) appears only in the service-worker
-//      bundle. The licence client runs in the SW; the same string in `content.js` would put the
-//      vendor's hostname on chess.com's origin, which is a free detection signal (§13.3).
+//   6. **host ownership**: every host that appears in the constants registry may appear only in
+//      the bundles `HOST_OWNERS` names, and a host that is not in that table fails the build —
+//      so adding a URL forces a decision about which realms may see it, instead of a bundler
+//      quietly inlining an object literal into `content.js` (§13.3 rule 2);
+//   7. a production build ships no `.js.map`. Dev maps embed `sourcesContent`, i.e. the original
+//      TypeScript including comments that name the licence endpoint, so they are checked for
+//      absence rather than scanned — see `SOURCE_MAP_RE` below.
 //
 // Everything below the `verifyDist` entry point is a pure function over strings so
 // `test/scripts/verify-dist.test.ts` can exercise the rules without a real build.
@@ -32,8 +42,54 @@ export const BUNDLE_BUDGETS: Readonly<Record<string, number>> = {
 	"js/content.js": 250 * KIB,
 };
 
+/** Bundle roles, as dist-relative paths (`HOST_OWNERS` keys off them). */
+export const BUNDLES = {
+	serviceWorker: "js/service-worker.js",
+	panel: "js/panel.js",
+	offscreen: "js/offscreen.js",
+	content: "js/content.js",
+} as const;
+
 /** The one bundle allowed to carry the licence host: the licence client runs in the SW. */
-export const LICENSE_BUNDLE = "js/service-worker.js";
+export const LICENSE_BUNDLE = BUNDLES.serviceWorker;
+
+const SW_AND_PANEL = [BUNDLES.serviceWorker, BUNDLES.panel] as const;
+
+/**
+ * Which bundles may carry each host found in `src/core/constants/**` (plus the build config's
+ * licence endpoint). A derived host that is missing from this table fails the build: classifying
+ * a new URL is the point of the rule, not a formality.
+ *
+ * The service worker owns every outbound request; the panel carries the whole registry because
+ * `src/panel/actions.ts` imports `URLS` as an object to resolve `data-url="…"` links, and a
+ * bundler inlines an object literal whole. Neither is reachable from a page — the panel and the
+ * offscreen document are extension pages. What must stay empty is the page realm: `content.js`
+ * runs in the ISOLATED world on the site's own origin, and `js/page/*.js` run in MAIN.
+ */
+export const HOST_OWNERS: Readonly<Record<string, readonly string[]>> = {
+	// Licence vendor — the client runs only in the SW.
+	"phantom.ac": [BUNDLES.serviceWorker],
+	// Product site: the update poll (SW) and the panel's links.
+	"sliced.sh": SW_AND_PANEL,
+	// Opening explorer, NNUE mirror and its redirect target — all fetched by the SW.
+	"explorer.lichess.ovh": SW_AND_PANEL,
+	"tests.stockfishchess.org": SW_AND_PANEL,
+	"data.stockfishchess.org": SW_AND_PANEL,
+	// The two sites, as navigable links in the panel's Not-supported view.
+	"www.chess.com": SW_AND_PANEL,
+	"lichess.org": SW_AND_PANEL,
+	// Upstream metadata for the vendored components (licence notices, not requests).
+	"github.com": SW_AND_PANEL,
+	"raw.githubusercontent.com": SW_AND_PANEL,
+	"polyformproject.org": SW_AND_PANEL,
+	"1e4.ai": SW_AND_PANEL,
+};
+
+/** Registry sources scanned for hosts (repo-relative). */
+export const REGISTRY_DIR = "src/core/constants";
+
+/** Source maps must never reach a release package. */
+const SOURCE_MAP_RE = /\.js\.map$/;
 
 /** Manifest keys that must never come back (§12.2 drops the self-hosted CRX update feed). */
 export const FORBIDDEN_MANIFEST_KEYS = ["update_url"] as const;
@@ -45,6 +101,8 @@ export interface VerifyOptions {
 	version?: string;
 	/** Licence endpoint whose host is bundle-restricted (default: `build.config.json`). */
 	licenseUrl?: string;
+	/** Hosts to police (default: derived from `REGISTRY_DIR` + `licenseUrl`); injectable for tests. */
+	hosts?: readonly string[];
 }
 
 export interface SizeRow {
@@ -156,6 +214,7 @@ export function checkManifest(
 		problems.push("manifest has no `key` — the extension ID would not be stable (§12.2)");
 	for (const key of FORBIDDEN_MANIFEST_KEYS)
 		if (key in manifest) problems.push(`manifest declares \`${key}\` — dropped in v2 (§12.2)`);
+	problems.push(...checkWebAccessibleResources(manifest));
 
 	for (const declared of manifestPaths(manifest)) {
 		if (declared.glob) {
@@ -169,7 +228,34 @@ export function checkManifest(
 	return problems;
 }
 
-// ── 2. HTML / CSS reference graph ──────────────────────────────────────────────────────────
+/**
+ * §13.3: the manifest pins `key`, so the extension id is fixed and any script on a matched site
+ * can probe `fetch("chrome-extension://<id>/<path>")` for a web-accessible resource; a success is
+ * a definitive presence signal. v2 declares none — the engine assets are loaded by the offscreen
+ * document and the sounds by the side panel, both of which are extension pages that need no
+ * declaration (`grep -r "runtime.getURL" src/content src/page` is empty). If the block ever
+ * returns, every entry must carry `use_dynamic_url: true`, which rotates the URL token per
+ * session and makes the probe useless.
+ */
+export function checkWebAccessibleResources(manifest: unknown): string[] {
+	if (!isRecord(manifest)) return [];
+	const declared = manifest.web_accessible_resources;
+	if (declared === undefined) return [];
+	const entries = asArray(declared);
+	if (entries.length === 0) return [];
+	const problems: string[] = [];
+	for (let i = 0; i < entries.length; i += 1) {
+		const entry = entries[i];
+		const resources = isRecord(entry) ? asArray(entry.resources).join(", ") : String(entry);
+		if (!isRecord(entry) || entry.use_dynamic_url !== true)
+			problems.push(
+				`web_accessible_resources[${i}] (${resources}) has no \`use_dynamic_url: true\` — a fixed extension id plus a web-accessible path is a presence probe from any matched site (§13.3)`
+			);
+	}
+	return problems;
+}
+
+// ── 3. HTML / CSS reference graph ──────────────────────────────────────────────────────────
 
 const HTML_REF_RE = /\b(?:src|href)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
 const CSS_URL_RE = /url\(\s*(?:"([^"]*)"|'([^']*)'|([^)'"]*))\s*\)/g;
@@ -252,7 +338,7 @@ export function checkReferenceGraph(
 	return problems;
 }
 
-// ── 3–5. bundle content ────────────────────────────────────────────────────────────────────
+// ── 4–7. bundle content ────────────────────────────────────────────────────────────────────
 
 /** Host of the licence endpoint, or `null` when `licenseUrl` is not an absolute URL. */
 export function licenseHost(licenseUrl: string): string | null {
@@ -263,6 +349,38 @@ export function licenseHost(licenseUrl: string): string | null {
 	}
 }
 
+const URL_LITERAL_RE = /https?:\/\/([A-Za-z0-9.-]+)/g;
+
+/**
+ * Every distinct host mentioned by an absolute URL in the registry sources, plus the licence
+ * endpoint's. Sorted, so the failure message is stable.
+ */
+export function registryHosts(
+	sources: Record<string, string>,
+	licenseUrl: string | null
+): string[] {
+	const hosts = new Set<string>();
+	for (const text of Object.values(sources))
+		for (const m of text.matchAll(URL_LITERAL_RE)) if (m[1]) hosts.add(m[1]);
+	const licence = licenseUrl === null ? null : licenseHost(licenseUrl);
+	if (licence !== null) hosts.add(licence);
+	return [...hosts].sort();
+}
+
+/**
+ * A host is looked for as `//<host>`, not bare: `*://*.lichess.org/*` is a match pattern, not a
+ * URL, and the content script legitimately carries both site patterns. Only a real absolute URL
+ * literal has the `//` in front of the host.
+ */
+export function hostNeedle(host: string): string {
+	return `//${host}`;
+}
+
+/** Hosts derived from the registry that `HOST_OWNERS` does not classify. */
+export function unclassifiedHosts(hosts: readonly string[]): string[] {
+	return hosts.filter((h) => HOST_OWNERS[h] === undefined);
+}
+
 /** Line number (1-based) of the first occurrence of `needle`, or 0. */
 function firstLine(text: string, needle: string): number {
 	const at = text.indexOf(needle);
@@ -271,7 +389,8 @@ function firstLine(text: string, needle: string): number {
 
 export interface ScanOptions {
 	dev: boolean;
-	host: string | null;
+	/** Hosts derived from the constants registry; each is looked up in `HOST_OWNERS`. */
+	hosts: readonly string[];
 }
 
 /** Content rules for one shipped bundle (§11.2 step 10). */
@@ -284,11 +403,18 @@ export function scanBundle(file: string, text: string, options: ScanOptions): st
 				`${file}: ${hits} \`console.\` call(s) in a production bundle (first at line ${firstLine(text, "console.")})`
 			);
 	}
-	const host = options.host;
-	if (host !== null && file !== LICENSE_BUNDLE && text.includes(host))
-		problems.push(
-			`${file}: contains the licence host "${host}" — it belongs only in ${LICENSE_BUNDLE}`
-		);
+	for (const host of options.hosts) {
+		const needle = hostNeedle(host);
+		if (!text.includes(needle)) continue;
+		const owners = HOST_OWNERS[host];
+		if (owners === undefined) continue; // reported once, by `unclassifiedHosts`
+		if (!owners.includes(file))
+			problems.push(
+				`${file}: contains the registry host "${host}" — HOST_OWNERS allows it only in ${
+					owners.length === 0 ? "no bundle" : owners.join(", ")
+				} (§13.3)`
+			);
+	}
 	return problems;
 }
 
@@ -304,6 +430,16 @@ export function walkFiles(dir: string, base = dir, acc: string[] = []): string[]
 	return acc;
 }
 
+/** The constants registry's sources, keyed by file name. */
+export function readRegistry(
+	dir = path.resolve(import.meta.dir, "..", REGISTRY_DIR)
+): Record<string, string> {
+	const out: Record<string, string> = {};
+	for (const entry of readdirSync(dir))
+		if (entry.endsWith(".ts")) out[entry] = readFileSync(path.join(dir, entry), "utf8");
+	return out;
+}
+
 function formatBytes(bytes: number): string {
 	if (bytes >= KIB * KIB) return `${(bytes / (KIB * KIB)).toFixed(1)} MiB`;
 	return `${(bytes / KIB).toFixed(1)} KiB`;
@@ -316,7 +452,8 @@ function formatBytes(bytes: number): string {
 export function verifyDist(dist: string, options: VerifyOptions = {}): VerifyReport {
 	const dev = options.dev === true;
 	const version = options.version ?? pkg.version;
-	const host = licenseHost(options.licenseUrl ?? config.licenseUrl);
+	const hosts =
+		options.hosts ?? registryHosts(readRegistry(), options.licenseUrl ?? config.licenseUrl);
 
 	const files = walkFiles(dist).sort();
 	const present = new Set(files);
@@ -363,11 +500,21 @@ export function verifyDist(dist: string, options: VerifyOptions = {}): VerifyRep
 	for (const budgeted of Object.keys(BUNDLE_BUDGETS))
 		if (!present.has(budgeted)) problems.push(`${budgeted} was not built`);
 
-	// 4–5. bundle content
+	// 5–6. bundle content. A host the registry introduced but `HOST_OWNERS` does not classify is
+	// reported once here rather than per bundle: the fix is to classify it, not to move it.
+	for (const host of unclassifiedHosts(hosts))
+		problems.push(
+			`registry host "${host}" is not in HOST_OWNERS — add it to scripts/verify-dist.ts and say which bundles may carry it (§13.3)`
+		);
 	for (const file of scripts) {
 		const text = read(file);
-		if (text !== null) problems.push(...scanBundle(file, text, { dev, host }));
+		if (text !== null) problems.push(...scanBundle(file, text, { dev, hosts }));
 	}
+
+	// 7. no source maps in a release package (they embed the original TypeScript).
+	if (!dev)
+		for (const file of files.filter((f) => SOURCE_MAP_RE.test(f)))
+			problems.push(`${file}: a production build must ship no source map`);
 
 	const totalBytes = files.reduce((sum, f) => sum + statSync(path.join(dist, f)).size, 0);
 	const width = Math.max(...sizes.map((r) => r.file.length), 20);

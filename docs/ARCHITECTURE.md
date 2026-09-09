@@ -91,9 +91,11 @@ through the MAIN-world bridge, never by touching page globals directly. Every se
 in `src/content/adapters/selectors.ts` (C1), and `self-check.ts` re-validates them periodically so
 a site redesign degrades loudly instead of silently.
 
-> The fixtures these adapters were built against are hand-built from Appendix C's verified DOM
-> descriptions, not live captures. Confirming them against the real sites is a
-> `docs/qa-checklist.md` item.
+> The fixtures were hand-built from Appendix C's DOM descriptions rather than live captures, but
+> the selectors themselves were checked against live chess.com and lichess on 2026-09-09 and the
+> first ladder entry hit in every case. What is still unconfirmed is the markup behind game
+> states a read-only pass cannot reach — promotion pickers, game-over modals, follow-up controls
+> — which `docs/qa-checklist.md` §F tracks.
 
 ### 4.2 pagescript (§5; `src/pagescript/`, `src/page/`)
 
@@ -183,7 +185,9 @@ package. Four bundles come out (`service-worker.js`, `offscreen.js`, `panel.js` 
 
 Distribution is a zip plus the unpacked folder. The v1 `update_url` is gone — Chrome no longer
 installs self-hosted CRXs outside enterprise policy — but the manifest `key` is preserved, so the
-extension ID is unchanged from v1 and a 1.x install upgrades in place. `src/service/update-check.ts`
+extension ID is unchanged from v1 and a 1.x install upgrades in place. Because that id is fixed
+and knowable, the manifest declares **no** `web_accessible_resources`: a web-accessible path
+would let any script on a matched site probe for the extension's presence (§13.3). `src/service/update-check.ts`
 polls `URLS.websiteManifest` on the licence alarm and raises `LOCAL_KEYS.updateAvailable`;
 `src/service/lifecycle.ts` migrates the eleven flat 1.x storage keys on first run after an update.
 
@@ -193,9 +197,10 @@ polls `URLS.websiteManifest` on the licence alarm and raises `LOCAL_KEYS.updateA
 
 Two settings are written, stored and rendered, but nothing acts on them. Both controls persist
 their value, so they look functional and are not. Recorded here (and in `docs/qa-checklist.md`)
-so a QA pass reports them as known rather than new.
+so a QA pass reports them as known rather than new. The first is a bug against the product's own
+copy and is being fixed separately; the second is unbuilt wiring.
 
 | Setting | What actually happens | Where the wiring belongs |
 |---|---|---|
-| `Settings.enabled` — the master toggle | `set-enabled.ts` writes it and the snapshot carries it, but the only consumer is `moveCardState()` in `src/panel/views/live/move-section.ts`, which greys the move card. Nothing in `src/service/**` reads it: analysis, recommendation, highlighting and auto-play all continue while it is off. | The SW session (`src/service/game-session/**`, Task 30): refuse to analyse, recommend, highlight or execute while it is false, and let the panel route to a disabled state rather than a greyed card. |
+| `Settings.enabled` — the master toggle (**a known bug, not a design gap**: the row's copy promises "Off stops analysis and recommendations until you turn it back on") | `set-enabled.ts` writes it and the snapshot carries it, but the only consumer is `moveCardState()` in `src/panel/views/live/move-section.ts`, which greys the move card. Nothing in `src/service/**` reads it: analysis, recommendation, highlighting and auto-play all continue while it is off. Being fixed separately. | The SW session (`src/service/game-session/**`): refuse to analyse, recommend, highlight or execute while it is false, and let the panel route to a disabled state rather than a greyed card. |
 | `Settings.engine.nnue` — `small` \| `big` \| `auto` (default `auto`) | Read only by the Settings view's row (`views/settings/rows.ts`) to render the control. `EngineController` never passes it on, so the running variant is always the bundled smallnet and the on-demand full-build nets are never requested. | `src/service/engine-controller.ts`'s configure path: choose the `ENGINE_FILES` target from the setting, and trigger the `nnue-request` download of `LIMITS.nnueBigNames` when the choice is not `small`. |
