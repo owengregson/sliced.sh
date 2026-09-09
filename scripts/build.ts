@@ -11,9 +11,11 @@ export interface BuildOptions {
 	/** Spoof seed for this build (default: `SL_SPOOF_SEED` env, else a fresh random one). */
 	spoofSeed?: string;
 }
-/** `BuildOptions` with the seed resolved once for the whole pipeline (`runBuild`). */
+/** `BuildOptions` with the per-build values resolved once for the whole pipeline (`runBuild`). */
 export interface BuildEnv extends BuildOptions {
 	spoofSeed: string;
+	/** `__SL_BUILD__`; also mirrored into a dev manifest's `version_name`. */
+	buildStamp: string;
 }
 export const ROOT = path.resolve(import.meta.dir, "..");
 export const DIST = path.join(ROOT, "dist");
@@ -72,9 +74,18 @@ export const steps: Step[] = [
 			(await import("./stamp-manifest.ts")).stampManifest(DIST, {
 				dev: o.dev,
 				version: pkg.version,
+				build: o.buildStamp,
 			}),
 	},
-	{ name: "verify", run: async () => (await import("./verify-dist.ts")).verifyDist(DIST) },
+	{
+		name: "verify",
+		run: async (o) =>
+			void (await import("./verify-dist.ts")).verifyDist(DIST, {
+				dev: o.dev,
+				version: pkg.version,
+				licenseUrl: config.licenseUrl,
+			}),
+	},
 	{
 		name: "package",
 		run: async (o) => {
@@ -105,7 +116,7 @@ const rawHtmlPlugin: import("bun").BunPlugin = {
 async function bundle(o: BuildEnv): Promise<void> {
 	const define = {
 		__SL_VERSION__: JSON.stringify(pkg.version),
-		__SL_BUILD__: JSON.stringify(new Date().toISOString()),
+		__SL_BUILD__: JSON.stringify(o.buildStamp),
 		__SL_SPOOF_SEED__: JSON.stringify(o.spoofSeed),
 		__SL_LICENSE_URL__: JSON.stringify(config.licenseUrl),
 		__SL_LICENSE_ENFORCE__: JSON.stringify(config.licenseEnforce === true),
@@ -154,7 +165,11 @@ async function bundle(o: BuildEnv): Promise<void> {
 }
 
 export async function runBuild(o: BuildOptions): Promise<void> {
-	const env: BuildEnv = { ...o, spoofSeed: o.spoofSeed ?? newSpoofSeed() };
+	const env: BuildEnv = {
+		...o,
+		spoofSeed: o.spoofSeed ?? newSpoofSeed(),
+		buildStamp: new Date().toISOString(),
+	};
 	for (const s of steps) {
 		const t = performance.now();
 		await s.run(env);

@@ -1,6 +1,6 @@
 /**
  * `LicenseClient` over the phantom.ac endpoint (§3.6):
- * `GET {URLS.licenseEndpoint}?key=…&type=gold` with `cache: "reload"` and an
+ * `GET {LICENSE_ENDPOINT}?key=…&type=gold` with `cache: "reload"` and an
  * `AbortSignal.timeout`. The endpoint wraps its verdict in page text, so the
  * first `{…}` JSON object in the body is what gets parsed. `fetch` is
  * injectable for tests.
@@ -8,7 +8,7 @@
 
 import type { LicenseClient, LicenseResult, LicenseVerdict } from "@core/auth/license-client";
 import { TIMINGS } from "@core/constants/timings";
-import { URLS } from "@core/constants/urls";
+import { LICENSE_ENDPOINT } from "@core/constants/urls";
 import { errorMessage } from "@core/util/errors";
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
@@ -76,7 +76,7 @@ export class PhantomLicenseClient implements LicenseClient {
 
 	constructor(options: PhantomLicenseClientOptions = {}) {
 		this.fetchImpl = options.fetch ?? ((input, init) => fetch(input, init));
-		this.endpoint = options.endpoint ?? URLS.licenseEndpoint;
+		this.endpoint = options.endpoint ?? LICENSE_ENDPOINT;
 		this.timeoutMs = options.timeoutMs ?? TIMINGS.licenseValidateTimeoutMs;
 	}
 

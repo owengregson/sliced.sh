@@ -1,6 +1,17 @@
+/**
+ * The licence endpoint (build-time `__SL_LICENSE_URL__`; default
+ * `https://phantom.ac/slicedgg/index.php`) is a **separate top-level binding, not a `URLS`
+ * member**. A bundler inlines an object literal whole, so while it lived inside `URLS` the
+ * vendor's hostname shipped in `panel.js` *and* `content.js` — and `content.js` runs on the
+ * origin of the site we are trying not to be recognised on (§13.3). As its own export it is
+ * tree-shaken out of every bundle that does not import the licence client, which only the
+ * service worker does. `scripts/verify-dist.ts` fails the build if the host reappears
+ * anywhere but `js/service-worker.js`.
+ */
+export const LICENSE_ENDPOINT: string = __SL_LICENSE_URL__;
+
 export const URLS = {
 	website: "https://sliced.sh",
-	licenseEndpoint: __SL_LICENSE_URL__, // build-time; default https://phantom.ac/slicedgg/index.php
 	lichessExplorer: "https://explorer.lichess.ovh/lichess",
 	nnueMirror: "https://tests.stockfishchess.org/api/nn/",
 	/**

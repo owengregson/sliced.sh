@@ -5,7 +5,7 @@ import {
 	type FetchLike,
 	PhantomLicenseClient,
 } from "@core/auth/phantom-license-client";
-import { TIMINGS, URLS } from "@core/constants";
+import { LICENSE_ENDPOINT, TIMINGS } from "@core/constants";
 
 interface Call {
 	url: string;
@@ -47,7 +47,7 @@ describe("PhantomLicenseClient.validate", () => {
 		await client.validate("a b&c");
 		expect(calls).toHaveLength(1);
 		const call = calls[0]!;
-		expect(call.url).toBe(`${URLS.licenseEndpoint}?key=a%20b%26c&type=gold`);
+		expect(call.url).toBe(`${LICENSE_ENDPOINT}?key=a%20b%26c&type=gold`);
 		expect(call.init?.cache).toBe("reload");
 		expect(call.init?.signal).toBeInstanceOf(AbortSignal);
 		expect(TIMINGS.licenseValidateTimeoutMs).toBeGreaterThan(0);
@@ -66,7 +66,7 @@ describe("PhantomLicenseClient.validate", () => {
 	it("allows an empty key", async () => {
 		const { fetch, calls } = fetchReturning('{"status":"invalid"}');
 		await new PhantomLicenseClient({ fetch }).validate("");
-		expect(calls[0]?.url).toBe(`${URLS.licenseEndpoint}?key=&type=gold`);
+		expect(calls[0]?.url).toBe(`${LICENSE_ENDPOINT}?key=&type=gold`);
 	});
 	it("passes a numeric expiresAt through", async () => {
 		const { fetch } = fetchReturning('{"status":"valid","expiresAt":1700000000000}');
