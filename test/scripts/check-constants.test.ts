@@ -133,5 +133,16 @@ it("scans the `code` export of every emitted page program and fails closed on an
 it("checkEmittedPrograms fails closed when the generated directory is missing", () => {
 	const missing = mkdtempSync(path.join(tmpdir(), "sl-gen-"));
 	rmSync(missing, { recursive: true, force: true });
-	expect(() => checkEmittedPrograms(missing)).toThrow(/gen:pagescript/);
+	expect(() => checkEmittedPrograms(missing)).toThrow(/is missing.*gen:pagescript/s);
+});
+
+it("checkEmittedPrograms fails closed when the generated directory exists but is empty", () => {
+	// "scanned nothing" must never read as "found nothing wrong": a cleaned or half-finished
+	// generation leaves the directory behind with no programs in it.
+	const empty = mkdtempSync(path.join(tmpdir(), "sl-gen-empty-"));
+	try {
+		expect(() => checkEmittedPrograms(empty)).toThrow(/holds no emitted page program/);
+	} finally {
+		rmSync(empty, { recursive: true, force: true });
+	}
 });

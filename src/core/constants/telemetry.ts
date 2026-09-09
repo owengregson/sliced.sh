@@ -8,6 +8,7 @@
  */
 
 import {
+	CLICK,
 	MOTOR_DEFAULTS,
 	PATH,
 	PREVIEW,
@@ -99,7 +100,13 @@ export const TELEMETRY_BANDS = {
 	/** §13.5 / §9.6a: pointer continuity. */
 	pointer: {
 		maxStepPx: MAX_HAND_STEP_PX,
-		/** Press and release of a click land within this distance. */
-		clickDriftMaxPx: 2,
+		/**
+		 * Press and release of a click land within this distance. §13.5 states 2 px; the
+		 * generator is tighter than that and the band follows it — `clickReleasePoint` offsets
+		 * the *rounded* press point by an integer ±`CLICK.releaseDriftPx` on each axis and
+		 * `CdpMouse` rounds every dispatch, so the furthest a release can land is that offset's
+		 * diagonal.
+		 */
+		clickDriftMaxPx: CLICK.releaseDriftPx * Math.SQRT2,
 	},
 } as const;

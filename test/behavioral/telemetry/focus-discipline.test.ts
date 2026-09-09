@@ -1,15 +1,30 @@
 // test/behavioral/telemetry/focus-discipline.test.ts — Task 33 Step 1, the automated substitute for
 // the manual focus check (docs/qa/focus-discipline.md). happy-dom has no window-focus model, so
 // only the rows the simulator can honestly answer are recorded here: a `chrome.commands` shortcut,
-// a CDP click on a focused page, a tab switch, the browser losing focus, and the arm-time debugger
-// attach. Panel click / typing and the attach infobar are recorded on real Chrome (Task 31 QA).
+// an in-page keybind, a CDP click on a focused page, a tab switch, the browser losing focus, and
+// the debugger attaching at arm time and detaching on disarm. Panel click / typing, and Chrome's
+// own behaviour behind rows 5 and 6, are recorded on real Chrome (Task 31 QA).
 import { afterEach, describe, expect, it } from "bun:test";
 import { onCommand } from "@core/chrome/commands";
 import { EXECUTOR } from "@core/constants/cdp";
 import { WINDOW_ID_NONE } from "@test/sim/chrome/windows";
 import { SIM_TELEMETRY } from "@test/sim/telemetry/constants";
-import { runSimulatedGame, type SimulatedGame } from "@test/sim/telemetry/harness";
+import {
+	runSimulatedGame,
+	type SimulatedGame,
+	type SimulatedMove,
+} from "@test/sim/telemetry/harness";
 import type { ExecutionResult } from "@typedefs/game";
+
+const SHORTCUT = SIM_TELEMETRY.shortcut;
+
+/** The exploration phases of a move's timeline (`scan` hovers and `preview` selections). */
+const exploration = (m: SimulatedMove): string[] =>
+	m.result.timeline.filter((t) => t.phase === "scan" || t.phase === "preview").map((t) => t.phase);
+
+/** When the touch began, relative to the start of the move window. */
+const approachStart = (m: SimulatedMove): number =>
+	m.result.timeline.find((t) => t.phase === "approach")?.startMs ?? Number.POSITIVE_INFINITY;
 
 let game: SimulatedGame | null = null;
 afterEach(async () => {
@@ -18,17 +33,24 @@ afterEach(async () => {
 });
 
 describe("focus discipline: rows the simulator can record (Step 1)", () => {
-	it("row: a chrome.commands shortcut while the page is focused plays the move now with no blur/focus on the page", async () => {
+	it("row: a chrome.commands shortcut while the page is focused plays a long normal move now, with no blur/focus on the page", async () => {
 		let playedNowAt = -1;
 		let played: ExecutionResult | null | undefined;
+		// The shortcut has to land on a move that would otherwise take a *long* think, or "it
+		// collapsed the window" is unfalsifiable: an instant/premove plan skips exploration and
+		// drops at the motor floor whether the shortcut fires or not. So search for the first
+		// `normal` move whose plan is at least `shortcut.minThinkMs` and fire there.
+		let shortcutAt = -1;
 		game = await runSimulatedGame({
 			seed: "commands-row",
-			moves: 2,
+			moves: SHORTCUT.searchMoves,
 			// `onCommand` reaches `chrome.commands` through the typed wrapper, so it only resolves
 			// inside the service worker's context — subscribe and unsubscribe there (the harness
 			// runs `duringMove` under `sw.context.run`, which installs the simulator's `chrome`).
-			duringMove: async ({ index, retryOf, sim, sw, site }) => {
-				if (index !== 1 || retryOf !== undefined) return;
+			duringMove: async ({ index, retryOf, plan, sim, sw, site }) => {
+				if (retryOf !== undefined || shortcutAt >= 0) return;
+				if (plan.mode !== "normal" || plan.thinkMs < SHORTCUT.minThinkMs) return;
+				shortcutAt = index;
 				// the lifecycle's `commands.onCommand` → session → executor path, reduced to the executor
 				const off = onCommand((command) => {
 					if (command !== "play-best-move") return;
@@ -45,20 +67,29 @@ describe("focus discipline: rows the simulator can record (Step 1)", () => {
 				}
 			},
 		});
-		// the shortcut reached the executor through `chrome.commands` and owned the pending move
+		// a qualifying move existed and the shortcut reached the executor through `chrome.commands`
+		expect(shortcutAt).toBeGreaterThanOrEqual(0);
 		expect(playedNowAt).toBeGreaterThan(0);
-		const move = game.moves[1]!;
+		const move = game.moves[shortcutAt]!;
+		// stated explicitly, so a future seed change fails here instead of quietly re-vacating the row
+		expect(move.plan.mode).toBe("normal");
+		expect(move.plan.thinkMs).toBeGreaterThanOrEqual(SHORTCUT.minThinkMs);
 		expect(move.result).toMatchObject({ ok: true, outcome: "executed" });
 		expect(played).toMatchObject({ ok: true, outcome: "executed" });
-		// the shortcut collapsed the think window: the drop landed before the planned deadline …
+		// the shortcut collapsed the think window: no exploration, the touch starts at once, and the
+		// drop lands in a fraction of the planned think
 		const hold = move.observation?.ac.MoveHoldTime ?? Number.POSITIVE_INFINITY;
-		expect(hold).toBeLessThan(move.plan.thinkMs);
-		expect(move.result.timeline.some((t) => t.phase === "scan" || t.phase === "preview")).toBe(false);
-		// … which the same seeded game without the shortcut does not do: it uses the full window
-		const control = await runSimulatedGame({ seed: "commands-row", moves: 2 });
+		expect(hold).toBeLessThan(move.plan.thinkMs * SHORTCUT.maxHoldFraction);
+		expect(exploration(move)).toEqual([]);
+		expect(approachStart(move)).toBeLessThanOrEqual(SIM_TELEMETRY.collapsedPreTouchMs);
+		// … which the same seeded game without the shortcut does not do: same plan, but it explores
+		// and holds the piece for the whole window
+		const control = await runSimulatedGame({ seed: "commands-row", moves: SHORTCUT.searchMoves });
 		try {
-			const same = control.moves[1]!;
+			const same = control.moves[shortcutAt]!;
 			expect(same.plan.thinkMs).toBe(move.plan.thinkMs);
+			expect(exploration(same).length).toBeGreaterThan(0);
+			expect(approachStart(same)).toBeGreaterThan(SIM_TELEMETRY.collapsedPreTouchMs);
 			expect(same.observation?.ac.MoveHoldTime ?? 0).toBeGreaterThan(hold);
 		} finally {
 			await control.dispose();
@@ -67,6 +98,23 @@ describe("focus discipline: rows the simulator can record (Step 1)", () => {
 		expect(game.site.pageFocusEvents()).toEqual({ blur: 0, focus: 0 });
 		expect(game.focusApiCalls).toEqual({ tabsUpdate: 0, windowsUpdate: 0, bringToFront: 0 });
 		expect(game.acs.every((ac) => ac.BlurCount === 0 && ac.EventTrusted)).toBe(true);
+	});
+
+	it("row: an in-page keybind captured by the content script fires without any blur or focus on the page", async () => {
+		game = await runSimulatedGame({ seed: "keybind-row", moves: 2 });
+		const site = game.site;
+		expect(site.keybindActions()).toEqual([]);
+		// the content script's capture-phase `keydown` listener owns the page-scoped shortcuts
+		// (§13.4); a keypress never moves focus, so the window sees no blur/focus edge at all
+		await game.sw.context.run(async () => {
+			site.pressKey({ key: " ", code: "Space" });
+			site.pressKey({ key: "x", code: "KeyX", shiftKey: true });
+			await game!.sim.time.runMicrotasks();
+		});
+		expect(site.keybindActions()).toEqual(["playMove", "disable"]);
+		expect(site.pageFocusEvents()).toEqual({ blur: 0, focus: 0 });
+		expect(game.focusApiCalls).toEqual({ tabsUpdate: 0, windowsUpdate: 0, bringToFront: 0 });
+		expect(game.acs.every((ac) => ac.BlurCount === 0 && ac.DidToggle === false)).toBe(true);
 	});
 
 	it("row: a CDP click on an already-focused page produces pointer events only — no focus or blur event", async () => {
@@ -133,6 +181,25 @@ describe("focus discipline: rows the simulator can record (Step 1)", () => {
 		const replay = game.moves.find((m) => m.index === 1 && m.retryOf !== undefined);
 		expect(replay?.result).toMatchObject({ ok: true, outcome: "executed" });
 		expect(game.focusApiCalls).toEqual({ tabsUpdate: 0, windowsUpdate: 0, bringToFront: 0 });
+	});
+
+	it("row: the debugger detaches when the hand is disarmed, with no blur or focus on the page", async () => {
+		game = await runSimulatedGame({ seed: "detach-row", moves: 2 });
+		expect(game.sim.debugger.attachments.filter((a) => a.action === "detach")).toEqual([]);
+		const detachedAt = game.sim.now();
+		await game.sw.context.run(async () => {
+			game!.sw.executor.disarm();
+			await game!.sw.debugger.detach(game!.tabId);
+		});
+		await game.sim.time.runMicrotasks();
+		// the infobar goes away (a layout change, never a focus change) and the page is none the wiser
+		const detaches = game.sim.debugger.attachments.filter((a) => a.action === "detach");
+		expect(detaches).toHaveLength(1);
+		expect(detaches[0]!.at).toBeGreaterThanOrEqual(detachedAt);
+		expect(game.sw.debugger.isAttached(game.tabId)).toBe(false);
+		expect(game.site.pageFocusEvents()).toEqual({ blur: 0, focus: 0 });
+		expect(game.focusApiCalls).toEqual({ tabsUpdate: 0, windowsUpdate: 0, bringToFront: 0 });
+		expect(game.acs.every((ac) => ac.BlurCount === 0 && ac.DidToggle === false)).toBe(true);
 	});
 
 	it("row: the debugger attaches once, at arm time, before the first move window — never inside one", async () => {

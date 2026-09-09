@@ -6,11 +6,58 @@
  * fake evaluation lines the harness feeds the timing model.
  */
 
+import { CLICK, MIN_JERK, MOTOR_DEFAULTS, PATH, PROFILE_NOISE } from "@core/motor/constants";
+
+/** Viewport rect of the simulated board (a 640 px chess.com-sized board). */
+const BOARD = { left: 100, top: 60, size: 640 } as const;
+/** Where the real mouse rested before auto-play was armed (off the board). */
+const REST_POINT = { x: 900, y: 400 } as const;
+
+/** Both profile jitters at their upper clamp — the widest a sampled motor range gets. */
+const MAX_PROFILE_STRETCH = (1 + PROFILE_NOISE.perGameOffset) * (1 + PROFILE_NOISE.perMoveClamp);
+
+/** The longest straight line the hand can travel: the diagonal of the board plus its rest point. */
+const MAX_TRAVEL_PX = Math.hypot(
+	Math.max(BOARD.left + BOARD.size, REST_POINT.x) - Math.min(BOARD.left, REST_POINT.x),
+	Math.max(BOARD.top + BOARD.size, REST_POINT.y) - Math.min(BOARD.top, REST_POINT.y)
+);
+/** The longest drag: corner to corner of the board. */
+const BOARD_DIAGONAL_PX = Math.hypot(BOARD.size, BOARD.size);
+const SQUARE_PX = BOARD.size / 8;
+
+/**
+ * `path-generator.ts:fittsMs` at the profile's nominal parameters (no jitter): the Shannon-form
+ * movement time for `distPx` onto a `widthPx` target, floored by the speed cap.
+ */
+function nominalFittsMs(distPx: number, widthPx: number): number {
+	const m = MOTOR_DEFAULTS;
+	const id = Math.log2(distPx / Math.max(PATH.minWidthPx, widthPx) + 1);
+	const mt = (m.fittsA + m.fittsB * id) * 1000 * m.travelSpeedScale;
+	const capFloor =
+		((MIN_JERK.peakSpeedFactor * distPx) / (m.peakSpeedCapPxPerS * PATH.capHeadroom)) * 1000;
+	return Math.max(mt, capFloor);
+}
+
+/**
+ * Plausibility ceiling for one whole touch (approach → grab → drag → drop) on this board,
+ * derived from the motor profile rather than guessed: the two Fitts movements the hand makes
+ * — the longest approach (`MAX_TRAVEL_PX` onto one square) and the longest drag (the board
+ * diagonal) — at the per-move jitter ceiling (`PATH.fittsJitter[1]`), plus the grab and drop
+ * pauses at their own sampled ceilings. Anything longer is a generator bug, not a hand.
+ * (Measured max over the 200-move timing-shape run: 2148 ms, ≈ 15 % under this.)
+ */
+const MAX_TOUCH_MS = Math.ceil(
+	(nominalFittsMs(MAX_TRAVEL_PX, SQUARE_PX) + nominalFittsMs(BOARD_DIAGONAL_PX, SQUARE_PX)) *
+		PATH.fittsJitter[1] +
+		CLICK.preGrabPauseMs[1] +
+		MOTOR_DEFAULTS.grabDelayMs[1] * MAX_PROFILE_STRETCH +
+		PATH.grabWobble.points[1] * PATH.grabWobble.dtMs[1] +
+		MOTOR_DEFAULTS.releaseSettleMs[1] * MAX_PROFILE_STRETCH
+);
+
 export const SIM_TELEMETRY = {
-	/** Viewport rect of the simulated board (a 640 px chess.com-sized board). */
-	board: { left: 100, top: 60, size: 640 },
-	/** Where the real mouse rested before auto-play was armed (off the board). */
-	restPoint: { x: 900, y: 400 },
+	board: BOARD,
+	restPoint: REST_POINT,
 	/** Virtual-clock start of every harness run (ms epoch). */
 	startAt: 1_000_000,
 	/** The scripted bot opponent replies after this much think time (uniform, ms). */
@@ -34,11 +81,9 @@ export const SIM_TELEMETRY = {
 	 * (`hand-controller.ts`: `approachStartAt = max(now, t0 + think − approach − touch)`).
 	 */
 	deadlineToleranceMs: 150,
-	/**
-	 * Plausibility ceiling for one whole touch (approach → grab → drag → drop) on the
-	 * simulated 640 px board: a longer "hand movement" would be a generator bug, not a hand.
-	 */
-	maxTouchMs: 2500,
+	maxTouchMs: MAX_TOUCH_MS,
+	/** The approach starting this early into the window means the pre-touch phases collapsed (ms). */
+	collapsedPreTouchMs: 1,
 	/** Slack for comparing two times the virtual clock computed by different float paths (ms). */
 	clockEpsilonMs: 0.001,
 	/** The driver steps the virtual clock by this much while a move runs (ms). */
@@ -56,4 +101,12 @@ export const SIM_TELEMETRY = {
 	 * 30 moves of a rapid game are preview-eligible, so 12 games give ≈ 276.
 	 */
 	previewPool: { games: 12, movesPerGame: 30 },
+	/**
+	 * The `chrome.commands` / keybind rows (Step 1) fire the shortcut on the first `normal`
+	 * move whose planned think is at least `minThinkMs` — long enough that the control run
+	 * really does explore, so "the shortcut collapsed the window" is a measurable claim and
+	 * not a no-op on a move that was instant anyway. The search runs over `searchMoves` moves
+	 * and the test fails loudly if no such move turns up.
+	 */
+	shortcut: { minThinkMs: 5000, searchMoves: 12, maxHoldFraction: 0.5 },
 } as const;

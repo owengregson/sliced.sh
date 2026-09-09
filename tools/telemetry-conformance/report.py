@@ -154,10 +154,11 @@ def summarize(entries: list[dict[str, Any]], target_elo: int) -> dict[str, Any]:
     normal_holds: list[float] = []
     pressure: list[float] = []
     comfortable: list[float] = []
-    log_hold: list[float] = []
+    log_hold_n: list[float] = []
+    log_n_reasonable: list[float] = []
+    log_hold_alloc: list[float] = []
     log_alloc: list[float] = []
     under_floor: list[dict[str, Any]] = []
-    complexity_axis = ["alloc"]
     for e in entries:
         h = hold_ms(e)
         if h is None:
@@ -174,17 +175,29 @@ def summarize(entries: list[dict[str, Any]], target_elo: int) -> dict[str, Any]:
                     pressure.append(h)
                 elif clock >= BANDS["compression"]["comfortableClockMs"]:
                     comfortable.append(h)
-            # §13.6 complexity axis: `telemetry.nReasonable` when the export has it (Task 30
-            # on), else the model's per-move allocation `alloc` -- a clock-driven stand-in,
-            # so the printed line says which axis was used.
-            complexity = (e.get("telemetry") or {}).get("nReasonable")
-            if not isinstance(complexity, (int, float)):
-                complexity = e.get("alloc")
-            else:
-                complexity_axis[0] = "n_reasonable"
-            if isinstance(complexity, (int, float)) and complexity > 0:
-                log_hold.append(math.log(max(1.0, h)))
-                log_alloc.append(math.log(complexity))
+            # §13.6 complexity axis. Both candidates are collected separately and the axis is
+            # chosen once, over the whole batch: mixing `n_reasonable` rows with `alloc` rows
+            # (a partially migrated export) would correlate the hold time against two different
+            # quantities at once and report a meaningless r.
+            n_reasonable = (e.get("telemetry") or {}).get("nReasonable")
+            if isinstance(n_reasonable, (int, float)) and n_reasonable > 0:
+                log_hold_n.append(math.log(max(1.0, h)))
+                log_n_reasonable.append(math.log(n_reasonable))
+            alloc = e.get("alloc")
+            if isinstance(alloc, (int, float)) and alloc > 0:
+                log_hold_alloc.append(math.log(max(1.0, h)))
+                log_alloc.append(math.log(alloc))
+
+    # `n_reasonable` is the axis §13.6 actually asks about; `alloc` is the clock-driven stand-in
+    # a pre-Task-30 export leaves behind, printed but never asserted.
+    on_n_reasonable = len(log_hold_n) >= 2
+    complexity_axis = "n_reasonable" if on_n_reasonable else "alloc"
+    complexity_rows = len(log_hold_n) if on_n_reasonable else len(log_hold_alloc)
+    corr = (
+        pearson(log_hold_n, log_n_reasonable)
+        if on_n_reasonable
+        else pearson(log_hold_alloc, log_alloc)
+    )
 
     p = stats(pressure)
     c = stats(comfortable)
@@ -196,13 +209,18 @@ def summarize(entries: list[dict[str, Any]], target_elo: int) -> dict[str, Any]:
         "hold": stats(holds),
         "holdNormal": stats(normal_holds),
         "underFloor": under_floor,
-        "holdVsComplexity": pearson(log_hold, log_alloc),
-        "complexityAxis": complexity_axis[0],
+        "holdVsComplexity": corr,
+        "complexityAxis": complexity_axis,
+        "complexityRows": complexity_rows,
         "compression": {"pressure": p, "comfortable": c, "ratio": (p["mean"] / c["mean"]) if p["n"] and c["n"] and c["mean"] else None},
         "targetElo": target_elo,
         "band": band_for(target_elo),
         "ac": None,
         "quality": None,
+        # A partially migrated export (some games recorded before Task 30, some after) carries
+        # `telemetry` on only some rows; the ac/quality sections then describe that subset, and
+        # the report has to say so rather than presenting it as the whole batch.
+        "telemetryRows": len(telemetry),
     }
 
     if not telemetry:
@@ -310,7 +328,7 @@ def render(summary: dict[str, Any], paths: list[str]) -> tuple[str, bool]:
     lines.append(
         f"  [{verdict(corr_ok) if corr_checked else 'INFO'}] ln(hold) vs ln({summary['complexityAxis']}) r="
         + ("n/a" if corr is None else f"{corr:.2f}")
-        + f" (min {BANDS['holdTime']['complexityCorrMin']})"
+        + f" over {summary['complexityRows']} moves (min {BANDS['holdTime']['complexityCorrMin']})"
         + ("" if corr_checked else f" — n_reasonable {MISSING}, not asserted")
     )
     comp = summary["compression"]
@@ -336,6 +354,11 @@ def render(summary: dict[str, Any], paths: list[str]) -> tuple[str, bool]:
     if ac is None:
         lines.append(f"  {MISSING} — TimingLogEntry.telemetry is filled by the GameSession from Task 30 on")
     else:
+        if summary["telemetryRows"] < summary["moves"]:
+            lines.append(
+                f"  [INFO] telemetry on {summary['telemetryRows']} of {summary['moves']} rows —"
+                f" a partially migrated export; everything below describes that subset only"
+            )
         blur_ok = ac["blur"] <= BANDS["blurCountMax"] and ac["toggles"] == 0 and ac["focusFieldsSet"] == 0
         lines.append(
             f"  [{verdict(blur_ok)}] blur {ac['blur']} (max {BANDS['blurCountMax']}) · toggles {ac['toggles']}"
@@ -414,11 +437,11 @@ def main(argv: list[str]) -> int:
     entries = load_entries(args.files)
     summary = summarize(entries, args.target_elo)
     summary["files"] = args.files
-    if args.json:
-        print(json.dumps(summary, indent=2, sort_keys=True, default=str))
-        return 0
+    # Render either way: the verdicts are what the exit status reports, so `--json` gates a
+    # pipeline exactly like the text mode does.
     text, ok = render(summary, args.files)
-    print(text)
+    summary["acceptance"] = "PASS" if ok else "FAIL"
+    print(json.dumps(summary, indent=2, sort_keys=True, default=str) if args.json else text)
     return 0 if ok else 1
 
 

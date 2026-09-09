@@ -101,9 +101,17 @@ describe("telemetry: pointer continuity (Step 2e)", () => {
 		});
 		const skipped = game.moves.find((m) => m.index === 1 && !m.result.ok);
 		expect(skipped).toBeDefined();
+		// both timestamps must exist: a `NaN` bound would make every comparison below false and
+		// leave `between` trivially empty, i.e. the assertion would pass by not running.
+		expect(skipped?.blurAt).toBeDefined();
+		expect(skipped?.blurSeenAt).toBeDefined();
+		const blurAt = skipped?.blurAt ?? Number.NaN;
 		const blurSeenAt = skipped?.blurSeenAt ?? Number.NaN;
+		expect(Number.isFinite(blurAt)).toBe(true);
+		expect(Number.isFinite(blurSeenAt)).toBe(true);
 		// the page saw no pointer event between the gate's veto and the click back into the board
-		const focusBackAt = skipped ? skipped.blurAt! + SIM_TELEMETRY.refocusPauseMs : Number.NaN;
+		const focusBackAt = blurAt + SIM_TELEMETRY.refocusPauseMs;
+		expect(focusBackAt).toBeGreaterThan(blurSeenAt);
 		const between = game.sim.input.events.filter((e) => e.at > blurSeenAt && e.at < focusBackAt);
 		expect(between).toEqual([]);
 	});

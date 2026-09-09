@@ -9,7 +9,8 @@ signal the corpus documents. This document is where that claim is checked, actio
 Two kinds of row live in the table below:
 
 - **simulator** — recorded automatically by `test/behavioral/telemetry/focus-discipline.test.ts`
-  against the extension simulator plus the `ac` shadow. These rows re-run on every `bun run check`
+  against the extension simulator plus the `ac` shadow, with the real `FocusGate`, `MoveExecutor`,
+  `installFocusEdges` and `installKeybinds` in the loop. These rows re-run on every `bun run check`
   and cannot silently rot.
 - **real Chrome (Task 31 QA)** — *not yet recorded*. happy-dom has no window-focus model
   (`document.hasFocus()` is always `true`, nothing blurs a tab), so the simulator cannot answer
@@ -55,17 +56,17 @@ whether the counters moved. Copy the probe log into the row's notes.
 
 | # | Action | Source | Blur? | Focus? | Observed |
 |---|--------|--------|-------|--------|----------|
-| 3 | `chrome.commands` shortcut while the page is focused | **simulator** | no | no | `pageFocusEvents() = {blur: 0, focus: 0}`; the shortcut reaches `MoveExecutor.playNow()` through `chrome.commands.onCommand` inside the service worker, collapses the think window (the same seeded game without the shortcut uses the full window) and every `ac` keeps `BlurCount 0`, `EventTrusted true`. No `tabs.update`, `windows.update` or `Page.bringToFront`. |
+| 3 | `chrome.commands` shortcut while the page is focused | **simulator** | no | no | `pageFocusEvents() = {blur: 0, focus: 0}`; the shortcut reaches `MoveExecutor.playNow()` through `chrome.commands.onCommand` inside the service worker and every `ac` keeps `BlurCount 0`, `EventTrusted true`. No `tabs.update`, `windows.update` or `Page.bringToFront`. The row fires on the first `normal` move with a planned think of ≥ 5 s so the effect is measurable: with the shortcut the hand skips exploration entirely, starts its touch at 0 ms and drops after **1790 ms of a 5892 ms plan**; the same seeded game *without* it explores (two `scan` phases), starts the touch at 4516 ms and drops at 5763 ms. |
+| 4 | In-page keybind captured by the content script | **simulator** | no | no | The real `installKeybinds` listener runs on the simulated page; a trusted `keydown` (`Space`, `Shift+X`) fires `playMove` / `disable` and the window records no `blur` or `focus` at all. A keypress never moves focus, which is the whole reason §13.4 routes every in-game control through a shortcut. |
 | 5 | CDP click on an already-focused page | **simulator** | no | no | The tab's DOM sees `pointerdown`/`pointerup` (and `mousedown`/`mouseup`) only; no `focus` or `blur` event is dispatched, and every `ac` keeps `BlurCount 0`. Chrome's real `Input.dispatchMouseEvent` behaviour still has to be confirmed on a live tab — see row 5r. |
 | 6 | Debugger attach at arm time | **simulator** | no | no | Exactly one `attach` for the whole game, at arm time, at or before the first move window's `positionArrived`; no attach ever falls inside a window (`positionAt < at ≤ submittedAt`). The infobar's *layout* effect is not modelled — see row 6r. |
+| 7 | Debugger detach on disarm | **simulator** | no | no | `disarm()` + `DebuggerManager.detach` produce exactly one `detach`, `isAttached` turns false, and the page still records `{blur: 0, focus: 0}`. Same fidelity as row 6: the *event* side is asserted, the infobar's layout effect is not — see row 6r. |
 | 8 | Tab switch during a move window | **simulator** | (user's) | (user's) | The executor **waits**: the move is `skipped` with reason `hidden`, nothing but the already-scheduled `mouseMoved` is dispatched, and the move is played only after a fresh position on the game tab. `tabs.update` stays at 0 — the extension never pulls the tab back. |
 | 9 | Browser window loses focus (`windows.onFocusChanged` → `WINDOW_ID_NONE`) | **simulator** | (user's) | (user's) | The move is `skipped` with reason `unfocused`, nothing is dispatched, and the replay after refocus executes. No focus-moving API is called. |
 | 1 | Side-panel button click | real Chrome (Task 31 QA) | expected **yes** | expected yes on return | *to be recorded on real Chrome in Task 31 QA* |
 | 2 | Typing in a side-panel input | real Chrome (Task 31 QA) | expected **yes** | expected yes on return | *to be recorded on real Chrome in Task 31 QA* |
-| 4 | In-page keybind (content script) | real Chrome (Task 31 QA) | expected no | expected no | *to be recorded on real Chrome in Task 31 QA* |
 | 5r | CDP click on a live chess.com tab | real Chrome (Task 31 QA) | expected no | expected no | *to be recorded on real Chrome in Task 31 QA* |
 | 6r | Debugger attach infobar (layout shift, focus side effects) | real Chrome (Task 31 QA) | expected no blur; layout shift only | expected no | *to be recorded on real Chrome in Task 31 QA* |
-| 7 | Debugger detach | real Chrome (Task 31 QA) | expected no | expected no | *to be recorded on real Chrome in Task 31 QA* |
 
 Every simulator row above is an assertion, not a note: if one stops holding,
 `test/behavioral/telemetry/focus-discipline.test.ts` fails.
@@ -83,13 +84,18 @@ Every simulator row above is an assertion, not a note: if one stops holding,
   not focused, the executor waits and the panel's telemetry pill turns to "blur seen"; the move is
   played only after a fresh position arrives. Rows 8 and 9 are the simulator's proof of that.
 - **The debugger attaches once, in the waiting view.** Rows 6/6r exist because an attach inside a
-  move window would put the infobar's layout shift into the same window as the move.
+  move window would put the infobar's layout shift into the same window as the move; row 7 is the
+  same assertion for the detach on disarm.
+- **Only the panel rows are genuinely out of reach.** Rows 3, 4, 6 and 7 are all "the extension did
+  something and the page's window saw no focus edge", which the simulator answers exactly. Rows 5r
+  and 6r are the same actions checked against *Chrome's own* behaviour rather than the simulator's
+  model of it, and rows 1–2 are the premise nothing here can establish.
 
 ## 5. What the simulator cannot tell us
 
 happy-dom has no window-focus model, so anything that depends on Chrome actually moving focus
 between two documents in the same browser window (the side panel and the tab) is out of its reach.
-That is the whole of rows 1, 2, 4, 5r, 6r and 7. The simulator's `panelClick()` asserts the
+That is the whole of rows 1, 2, 5r and 6r. The simulator's `panelClick()` asserts the
 *consequence* we designed for ("a blur reaches the gate, the move is skipped"), which is worth
 testing on its own, but it cannot establish the *premise* ("a panel click blurs the page"). Only
 row 1 on real Chrome can.

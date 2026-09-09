@@ -47,6 +47,14 @@ band; a single game only gets the weak invariants.
 The hold-time CV, the complexity correlation and the time-pressure compression ratio have their own
 minimum sample sizes in `TELEMETRY_BANDS` and are skipped below them rather than asserted on noise.
 
+## Prerequisites
+
+`ac-model.ts` and the two test files need nothing but Bun. **`report.py` needs `python3` (3.9+),
+and so does `conformance.test.ts`, which spawns it** — which means `bun run check` needs `python3`
+too. That is deliberate: a missing interpreter fails the suite loudly rather than skipping the only
+tests that exercise the offline report. Task 31's CI image must therefore include `python3`. The
+script uses the standard library only (`argparse`, `json`, `math`) — no packages, no virtualenv.
+
 ## Running the harness
 
 ```sh
@@ -102,7 +110,15 @@ Each file is what the panel's **Engine view → Export** button writes: a JSON a
 `TimingLogEntry` (`src/types/timing.ts`). Exit status is 0 when every band passes, 1 otherwise.
 
 It prints four sections — sources, hold time (§8.4a), `ac` blob (§13.2) and move quality (§13.6) —
-with a `[PASS]`/`[FAIL]`/`[INFO]` verdict per band and one `acceptance:` line at the end.
+with a `[PASS]`/`[FAIL]`/`[INFO]` verdict per band and one `acceptance:` line at the end. `--json`
+prints the same verdicts as a summary object (with an `acceptance` field) and returns the same exit
+status, so either mode can gate a pipeline.
+
+A partially migrated export — some games recorded before Task 30, some after — is reported as such
+(`[INFO] telemetry on N of M rows`), and the `ac`/quality sections then describe that subset only.
+The §13.6 complexity correlation is computed on one axis for the whole batch: `n_reasonable` when
+any row carries it (asserted), the clock-driven `alloc` column otherwise (printed as `[INFO]`,
+never asserted — a low r there says nothing about complexity).
 
 ### What Task 30 must fill, and where
 

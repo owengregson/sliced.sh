@@ -49,11 +49,14 @@ interface Run {
 	out: string;
 }
 
-async function report(file: string): Promise<Run> {
-	const proc = Bun.spawn(["python3", REPORT_PY, "--target-elo", String(BATCH.targetElo), file], {
-		stdout: "pipe",
-		stderr: "pipe",
-	});
+async function report(file: string, ...flags: string[]): Promise<Run> {
+	const proc = Bun.spawn(
+		["python3", REPORT_PY, "--target-elo", String(BATCH.targetElo), ...flags, file],
+		{
+			stdout: "pipe",
+			stderr: "pipe",
+		}
+	);
 	const out = await new Response(proc.stdout).text();
 	const err = await new Response(proc.stderr).text();
 	const code = await proc.exited;
@@ -191,7 +194,8 @@ describe("offline conformance: report.py", () => {
 				},
 			};
 		});
-		const { code, out } = await report(write("tampered.json", bad));
+		const file = write("tampered.json", bad);
+		const { code, out } = await report(file);
 		expect(out).toContain("[FAIL] blur 1 (max 0)");
 		expect(out).toContain("[FAIL] EventTrusted on all");
 		expect(out).toContain("[FAIL] ACPL");
@@ -199,5 +203,42 @@ describe("offline conformance: report.py", () => {
 		expect(out).toContain("zero blur/toggle");
 		expect(out).toContain("event trust");
 		expect(code).toBe(1);
+		// `--json` reports the same verdict, so a pipeline can gate on either mode
+		const asJson = await report(file, "--json");
+		expect(asJson.code).toBe(1);
+		expect(JSON.parse(asJson.out).acceptance).toBe("FAIL");
+	});
+
+	it("`--json` on a clean export exits 0 and carries the same verdict as the text mode", async () => {
+		const { code, out } = await report(write("task30-json.json", rows), "--json");
+		expect(code).toBe(0);
+		const parsed = JSON.parse(out) as Record<string, unknown>;
+		expect(parsed.acceptance).toBe("PASS");
+		expect(parsed.telemetryRows).toBe(rows.length);
+		expect(parsed.complexityAxis).toBe("n_reasonable");
+	});
+
+	it("says how many rows carry telemetry when only some of the export has been migrated", async () => {
+		// one game exported before Task 30, three after: the ac/quality sections describe the
+		// migrated subset and the report has to say so instead of implying it covers everything.
+		const migrated = rows.length - BATCH.movesPerGame;
+		const partial = rows.map((r, i) => {
+			if (i >= BATCH.movesPerGame) return r;
+			const { telemetry: _telemetry, ...rest } = r;
+			return rest as TimingLogEntry;
+		});
+		const file = write("partial.json", partial);
+		const { code, out } = await report(file);
+		expect(out).toContain(`[INFO] telemetry on ${migrated} of ${rows.length} rows`);
+		expect(out).toContain("partially migrated export");
+		// the complexity correlation stays on one axis: the migrated rows only, never a mix of
+		// `n_reasonable` and `alloc` rows correlated together (which reports a meaningless r)
+		expect(out).toContain("[PASS] ln(hold) vs ln(n_reasonable)");
+		const parsed = JSON.parse((await report(file, "--json")).out) as Record<string, unknown>;
+		expect(parsed.complexityAxis).toBe("n_reasonable");
+		expect(parsed.complexityRows).toBeLessThan(migrated);
+		expect(parsed.complexityRows).toBeGreaterThan(0);
+		expect(out).toContain("acceptance: PASS");
+		expect(code).toBe(0);
 	});
 });

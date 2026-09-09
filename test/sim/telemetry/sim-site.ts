@@ -18,7 +18,9 @@
 
 import { installFocusEdges } from "@content/adapters/adapter";
 import { type CursorTracker, createCursorTracker } from "@content/cursor-tracker";
+import { installKeybinds, type KeybindAction } from "@content/keybinds";
 import { type GamePortCommand, type GamePortMessage, PORT_NAMES } from "@core/constants";
+import { DEFAULT_KEYBINDS } from "@core/constants/defaults";
 import { type ConnectedPort, connectPort } from "@core/messaging/ports";
 import { defaultScheduler } from "@core/util/scheduler";
 import type { Simulator } from "@test/sim";
@@ -49,6 +51,10 @@ export interface SimulatedSite {
 	clickIntoBoard(): void;
 	/** The real mouse (not CDP): a trusted pointer event at viewport `(x, y)`. */
 	realPointer(type: "pointermove" | "pointerdown" | "pointerup", x: number, y: number): void;
+	/** A trusted `keydown` on the page window — the in-page keybind path (§13.4). */
+	pressKey(init: { key: string; code: string; shiftKey?: boolean }): void;
+	/** Keybind actions the content script's capture-phase listener fired, in order. */
+	keybindActions(): KeybindAction[];
 	/** `blur` / `focus` events the page window saw. */
 	pageFocusEvents(): { blur: number; focus: number };
 	lastBlurAt(): number | null;
@@ -88,6 +94,8 @@ export async function createSimulatedSite(
 	let port: ConnectedPort<GamePortMessage> | null = null;
 	let tracker: CursorTracker | null = null;
 	let removeFocusEdges: () => void = () => {};
+	let removeKeybinds: () => void = () => {};
+	const keybindActions: KeybindAction[] = [];
 	const pending: Array<{
 		id: string;
 		from: Square;
@@ -160,6 +168,15 @@ export async function createSimulatedSite(
 				window: win,
 				onSample: (s) => port?.post({ kind: "cursor", ...s }),
 			});
+			// The page-scoped half of §13.4's "every in-game control is a shortcut": `global: false`
+			// keeps this listener live (with `global` on, `chrome.commands` owns the shortcut instead).
+			removeKeybinds = installKeybinds(
+				() => ({ ...DEFAULT_KEYBINDS, global: false }),
+				(action) => {
+					keybindActions.push(action);
+				},
+				{ window: win, now: sim.now }
+			);
 			port.post({ kind: "focus", hasFocus: true, visibility: "visible", at: sim.now() });
 			const rest = SIM_TELEMETRY.restPoint;
 			port.post({ kind: "cursor", x: rest.x, y: rest.y, t: sim.now(), real: true });
@@ -222,12 +239,26 @@ export async function createSimulatedSite(
 			win.dispatchEvent(new dom.window.Event("focus") as unknown as Event);
 		},
 		realPointer: pointer,
+		pressKey(init) {
+			const ev = new dom.window.KeyboardEvent("keydown", {
+				bubbles: true,
+				cancelable: true,
+				composed: true,
+				key: init.key,
+				code: init.code,
+				shiftKey: init.shiftKey ?? false,
+			});
+			Object.defineProperty(ev, "isTrusted", { value: true, configurable: true });
+			win.dispatchEvent(ev as unknown as Event);
+		},
+		keybindActions: () => [...keybindActions],
 		pageFocusEvents: () => ({ ...focusEvents }),
 		lastBlurAt: () => lastBlurAt,
 		observeRequests: () => [...observeRequests],
 		async dispose() {
 			for (const p of pending.splice(0)) clearTimeout(p.timer);
 			removeFocusEdges();
+			removeKeybinds();
 			tracker?.dispose();
 			shadow.dispose();
 			win.removeEventListener("blur", countBlur, true);

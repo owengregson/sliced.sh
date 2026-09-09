@@ -193,16 +193,19 @@ function walk(dir: string, acc: Record<string, string>, includeGenerated = false
 	}
 }
 
-/** The emitted page programs; fails closed when `gen:pagescript` has not run. */
+/**
+ * The emitted page programs; fails closed when `gen:pagescript` has not run — a missing
+ * directory *and* an empty one (a half-finished or cleaned generation), because both mean
+ * "nothing was scanned", which must never read as "nothing was wrong".
+ */
 export function checkEmittedPrograms(generatedDir = GENERATED_PAGE_DIR): void {
 	const dir = path.resolve(REPO_ROOT, generatedDir);
-	if (!existsSync(dir)) {
-		throw new Error(
-			`${generatedDir} is missing: run \`bun run gen:pagescript\` before check-constants (the emitted page programs are scanned for forbidden words)`
-		);
-	}
+	const hint = `run \`bun run gen:pagescript\` before check-constants (the emitted page programs are scanned for forbidden words)`;
+	if (!existsSync(dir)) throw new Error(`${generatedDir} is missing: ${hint}`);
 	const files: Record<string, string> = {};
 	walk(dir, files, true);
+	if (Object.keys(files).length === 0)
+		throw new Error(`${generatedDir} holds no emitted page program: ${hint}`);
 	const hits = findForbiddenProgramSubstrings(files);
 	if (hits.length) {
 		for (const h of hits)

@@ -5,6 +5,10 @@
 // stop that mirror drifting — generate a JSON file from the registry at build time, or check the
 // literal from a test — this is the second, which is the simpler: no generated artefact, no extra
 // step in `bun run check`, and the failure lands on whoever changed the registry.
+//
+// The comparison is exhaustive in both directions: a *deep* key-path set (so a threshold added to
+// `report.py` at any nesting depth has to be registered here) and a whole-object `toEqual` (so no
+// value can drift and nothing can go missing).
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -22,49 +26,52 @@ function reportBands(): Record<string, unknown> {
 	return JSON.parse(match[1]) as Record<string, unknown>;
 }
 
+/** Every dotted path to a leaf (arrays are leaves), sorted — a key set that sees nesting. */
+function keyPaths(value: unknown, prefix = ""): string[] {
+	if (value === null || typeof value !== "object" || Array.isArray(value)) return [prefix];
+	return Object.entries(value as Record<string, unknown>)
+		.flatMap(([k, v]) => keyPaths(v, prefix ? `${prefix}.${k}` : k))
+		.sort();
+}
+
+/** The mirror `report.py` is expected to hold, built from the registries. */
+const B = TELEMETRY_BANDS;
+const expected = {
+	blurCountMax: B.blurCountMax,
+	multiSelect: {
+		rate: [B.multiSelect.rate[0], B.multiSelect.rate[1]],
+		hardMax: B.multiSelect.hardMax,
+		minMovesForBand: B.multiSelect.minMovesForBand,
+		minMovesForNonZero: B.multiSelect.minMovesForNonZero,
+		minThinkMs: B.multiSelect.minThinkMs,
+		minClockMs: B.multiSelect.minClockMs,
+	},
+	holdTime: {
+		cvMin: B.holdTime.cvMin,
+		cvAfterMoves: B.holdTime.cvAfterMoves,
+		minMs: B.holdTime.minMs,
+		complexityCorrMin: B.holdTime.complexityCorrMin,
+	},
+	compression: {
+		pressureClockMs: B.compression.pressureClockMs,
+		comfortableClockMs: B.compression.comfortableClockMs,
+		maxMeanRatio: B.compression.maxMeanRatio,
+		minMovesPerSide: B.compression.minMovesPerSide,
+	},
+	orientationMinMs: B.orientationMinMs,
+	agreement: AGREEMENT_BANDS.map((b) => ({ elo: b.elo, top1: [...b.top1], acpl: [...b.acpl] })),
+};
+
 describe("report.py mirrors the TypeScript band registries", () => {
-	it("exposes exactly the mirrored keys (a new mirror must be added here too)", () => {
-		expect(Object.keys(reportBands()).sort()).toEqual([
-			"agreement",
-			"blurCountMax",
-			"compression",
-			"holdTime",
-			"multiSelect",
-			"orientationMinMs",
-		]);
+	it("mirrors exactly these thresholds, at every depth (a new one must be registered here too)", () => {
+		expect(keyPaths(reportBands())).toEqual(keyPaths(expected));
 	});
 
-	it("every mirrored §13 threshold equals TELEMETRY_BANDS", () => {
-		const B = TELEMETRY_BANDS;
-		expect(reportBands()).toMatchObject({
-			blurCountMax: B.blurCountMax,
-			multiSelect: {
-				rate: [B.multiSelect.rate[0], B.multiSelect.rate[1]],
-				hardMax: B.multiSelect.hardMax,
-				minMovesForBand: B.multiSelect.minMovesForBand,
-				minMovesForNonZero: B.multiSelect.minMovesForNonZero,
-				minThinkMs: B.multiSelect.minThinkMs,
-				minClockMs: B.multiSelect.minClockMs,
-			},
-			holdTime: {
-				cvMin: B.holdTime.cvMin,
-				cvAfterMoves: B.holdTime.cvAfterMoves,
-				minMs: B.holdTime.minMs,
-				complexityCorrMin: B.holdTime.complexityCorrMin,
-			},
-			compression: {
-				pressureClockMs: B.compression.pressureClockMs,
-				comfortableClockMs: B.compression.comfortableClockMs,
-				maxMeanRatio: B.compression.maxMeanRatio,
-				minMovesPerSide: B.compression.minMovesPerSide,
-			},
-			orientationMinMs: B.orientationMinMs,
-		});
+	it("every mirrored value equals the registry it came from", () => {
+		expect(reportBands()).toEqual(expected);
 	});
 
 	it("the §7.2 agreement band table is mirrored knot for knot", () => {
-		expect(reportBands().agreement).toEqual(
-			AGREEMENT_BANDS.map((b) => ({ elo: b.elo, top1: [...b.top1], acpl: [...b.acpl] }))
-		);
+		expect(reportBands().agreement).toEqual(expected.agreement);
 	});
 });

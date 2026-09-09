@@ -60,10 +60,15 @@ describe("telemetry: timing shape over 200 simulated moves (Step 2f)", () => {
 			// the four (f) bands, stated explicitly with N
 			expect(summary.holdNormal.n).toBeGreaterThanOrEqual(TELEMETRY_BANDS.holdTime.cvAfterMoves);
 			expect(summary.holdNormal.cv).toBeGreaterThanOrEqual(TELEMETRY_BANDS.holdTime.cvMin);
+			// §9.6a's 250 ms floor holds on both sides of the plan: on the realised hold *and* on the
+			// planned think. Only the second can catch a timing-model regression — the motor floors
+			// the realised hold upward (a sub-250 ms plan would still drop late enough to pass), so
+			// asserting the hold alone would hide exactly the bug this band exists to find.
 			acs.forEach((ac, i) => {
 				const m = meta[i]!;
-				if (m.mode !== "premove" && m.mode !== "instant")
-					expect(ac.MoveHoldTime).toBeGreaterThanOrEqual(TELEMETRY_BANDS.holdTime.minMs);
+				if (m.mode === "premove" || m.mode === "instant") return;
+				expect(m.thinkMs).toBeGreaterThanOrEqual(TELEMETRY_BANDS.holdTime.minMs);
+				expect(ac.MoveHoldTime).toBeGreaterThanOrEqual(TELEMETRY_BANDS.holdTime.minMs);
 			});
 			expect(summary.holdVsComplexity).not.toBeNull();
 			expect(summary.holdVsComplexity ?? 0).toBeGreaterThanOrEqual(
