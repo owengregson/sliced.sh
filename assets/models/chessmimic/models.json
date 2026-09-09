@@ -1,0 +1,67 @@
+{
+ "upstream": {
+  "repo": "https://github.com/thomasj02/1e4_ai",
+  "commit": "8fcca2319e828b9d14b8def5c3ee9bc8bf1e3f12",
+  "license": "PolyForm-Noncommercial-1.0.0"
+ },
+ "export": {
+  "script": "tools/data/08_export_chessmimic.py",
+  "opset": 14,
+  "precision": "fp16",
+  "torch": "2.14.0",
+  "onnx": "1.22.0",
+  "onnxruntime": "1.29.0",
+  "inputs": {
+   "input_ids": "int32 [batch, 90]",
+   "scaled_rating": "float32 [batch]",
+   "clock_features": "float32 [batch, 3]"
+  },
+  "outputs": {
+   "probs": "float32 [batch, 30]"
+  }
+ },
+ "bands": {
+  "1200_1300": {
+   "file": "1200_1300.onnx",
+   "bytes": 18200481,
+   "sha256": "623b2489d2909734d1b5f6d6b5c45c97043fedd5d659429f4868ec706d614991",
+   "checkpoint": {
+    "path": "backend/models/clock_model/1200_1300_brier/model.ckpt",
+    "lfsOid": "15bc91e5cdce84d7f65fd6dc828b341959f51e5a04c0d3b3638b0f96108cd48d",
+    "bytes": 107535521
+   },
+   "fp32Bytes": 36059775,
+   "weights": "44 float16 initializers behind Cast",
+   "fixturePositions": 312,
+   "maxAbsProbDiffOnnxVsTorch": 0.0009388327598571777
+  },
+  "1500_1600": {
+   "file": "1500_1600.onnx",
+   "bytes": 18200481,
+   "sha256": "5ea34ab9598ff67c9e94ff1658bc3aa9bfc9a62965514f0531a4cbc8adcd7e9b",
+   "checkpoint": {
+    "path": "backend/models/clock_model/1500_1600_brier/model.ckpt",
+    "lfsOid": "03a421db3e4799a2dcf7c5b14df30f4d03292ed23d57db145f0fcd6264c4b359",
+    "bytes": 107535521
+   },
+   "fp32Bytes": 36059775,
+   "weights": "44 float16 initializers behind Cast",
+   "fixturePositions": 366,
+   "maxAbsProbDiffOnnxVsTorch": 0.001458093523979187
+  },
+  "1800_1900": {
+   "file": "1800_1900.onnx",
+   "bytes": 18200481,
+   "sha256": "121bc7a7fa7920f9b0cf55dfe642f1e32e33a82dea23831bfbc018fa8d8f6f22",
+   "checkpoint": {
+    "path": "backend/models/clock_model/1800_1900_brier/model.ckpt",
+    "lfsOid": "f7b6c7772cb31132ff6504e2d575059c838713f4c99e4e285e0c48050999b416",
+    "bytes": 107535521
+   },
+   "fp32Bytes": 36059775,
+   "weights": "44 float16 initializers behind Cast",
+   "fixturePositions": 322,
+   "maxAbsProbDiffOnnxVsTorch": 0.0010201632976531982
+  }
+ }
+}

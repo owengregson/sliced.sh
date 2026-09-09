@@ -2,3 +2,5 @@ assets/engine/*.nnue binary
 assets/engine/*.wasm binary
 assets/books/*.bin binary
 assets/fonts/*.woff2 binary
+assets/vendor/onnxruntime/*.wasm binary
+assets/models/chessmimic/*.onnx binary

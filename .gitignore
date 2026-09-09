@@ -10,3 +10,7 @@ css/tokens.css
 
 # Python bytecode from tools/data
 __pycache__/
+
+# Task 34: ChessMimic export scratch (upstream clone, LFS checkpoints, venv)
+tools/data/upstream/
+tools/data/.venv/

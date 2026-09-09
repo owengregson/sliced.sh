@@ -31,6 +31,7 @@
 		"astring": "^1.9.0",
 		"fake-indexeddb": "^6.2.5",
 		"happy-dom": "^16.0.0",
+		"onnxruntime-web": "1.29.0",
 		"typescript": "^5.9.3"
 	},
 	"engines": {

@@ -17,6 +17,7 @@ Nothing here runs in the extension or in `bun run check`. Python 3.10+, dependen
 | 4 | `04_train.py data/features.jsonl` (optional) | 28→96→96→32 FiLM MLP, masked CE, 5 % hold-out by game id |
 | 5 | `05_export.py data/v2-mlp.pt` (optional) | float16 JSON weights |
 | 6 | `06_eval.py data/features.jsonl SIMULATED.jsonl [--filter allie] [--out report.json]` | interval NLL, CRPS, marginal shape (quantiles, spike/tail mass, Hill index) per rating × tc × phase × clock bucket, and the real-vs-simulated per-game classifier AUC |
+| 8 | `08_export_chessmimic.py [--bands …] [--precision fp16\|int8] [--positions 1000]` (Task 34) | clones `thomasj02/1e4_ai` at the pinned commit into `tools/data/upstream/` (git-ignored), fetches the band checkpoints through the Git LFS batch API (SHA-256 verified), exports `assets/models/chessmimic/<band>.onnx` (opset 14, fp16 weights) + `scalers.json` / `buckets.json` / `vocab.json` / `models.json`, and writes `test/fixtures/chessmimic-reference.json`; needs `torch onnx onnxruntime numpy chess` — recipe in the script's docstring and in `docs/models.md` |
 
 Simulated rows come from the extension's timing log (`LOCAL_KEYS.timingLog`, exported from the
 Engine view) or from the Task 33 harness driving `TimingModel` over the sampled games: one row per

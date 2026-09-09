@@ -10,6 +10,14 @@ export const URLS = {
 	 * permission bypass CORS. `test/scripts/manifest-hosts.test.ts` keeps them in sync.
 	 */
 	nnueMirrorHosts: ["https://tests.stockfishchess.org/*", "https://data.stockfishchess.org/*"],
+	/**
+	 * Task 34: ChessMimic bands that are registered but not bundled download from here
+	 * (`<band>.onnx`, verified against `CHESSMIMIC_BAND_FILES`); the three shipped bands never do.
+	 */
+	chessmimicBandBase: "https://sliced.sh/models/chessmimic/",
+	/** Task 34: onnxruntime sources; the MIT text is vendored from `<raw>/v<version>/LICENSE`. */
+	onnxruntimeRepo: "https://github.com/microsoft/onnxruntime",
+	onnxruntimeRaw: "https://raw.githubusercontent.com/microsoft/onnxruntime/",
 	chesscomMatch: "*://*.chess.com/*",
 	lichessMatch: "*://*.lichess.org/*",
 	// Task 23: panel links (Appendix F §4.1 / §4.2 / §4.3)
