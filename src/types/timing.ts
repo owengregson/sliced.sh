@@ -6,6 +6,7 @@
 
 import type { Square } from "@typedefs/game";
 import type { PersonaId } from "@typedefs/settings";
+import type { MoveTelemetryRecord } from "@typedefs/telemetry";
 
 export type TimingMode = "premove" | "instant" | "normal" | "long";
 
@@ -52,4 +53,9 @@ export interface TimingLogEntry {
 	eps: number;
 	topTerms: Array<[string, number]>;
 	persona: PersonaId;
+	/**
+	 * Task 33 / Task 30: the move's `ac`-equivalent telemetry, filled by the `GameSession`
+	 * once the execution result is in; absent in exports written before Task 30.
+	 */
+	telemetry?: MoveTelemetryRecord;
 }

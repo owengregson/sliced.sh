@@ -10,6 +10,7 @@
 			"src/**",
 			"scripts/**",
 			"test/**",
+			"tools/**",
 			"pages/**",
 			"*.json",
 			"*.ts",
@@ -78,7 +79,7 @@
 	},
 	"overrides": [
 		{
-			"includes": ["scripts/**", "test/**"],
+			"includes": ["scripts/**", "test/**", "tools/**"],
 			"linter": {
 				"rules": {
 					"suspicious": {
@@ -88,7 +89,7 @@
 			}
 		},
 		{
-			"includes": ["test/**"],
+			"includes": ["test/**", "tools/**"],
 			"linter": {
 				"rules": {
 					"correctness": {

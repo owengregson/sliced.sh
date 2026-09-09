@@ -6,5 +6,5 @@ status=0
 while IFS= read -r f; do
 	if [[ "${1:-}" == "--no-int" && "$f" == test/integration/* ]]; then continue; fi
 	bun test "$f" || status=1
-done < <(find test -name '*.test.ts' | sort)
+done < <(find test tools -name '*.test.ts' | sort)
 exit $status

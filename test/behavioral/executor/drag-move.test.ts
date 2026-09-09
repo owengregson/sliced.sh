@@ -2,6 +2,10 @@
 // A booted SW (debugger manager, content link, focus gate, hand ownership, executor) plays a
 // recommendation against a content context whose fake adapter answers `geometry` / `observeMove`
 // / `boardCheck` / `focus` over the game port; the tab's happy-dom sees the trusted-equivalent pointer sequence.
+//
+// Task 33: the `ac` shadow (`test/sim/telemetry/ac-shadow.ts`) watches the same tab, so every run
+// that actually dispatches a move is also held to `assertHumanShapedAc` — the §13.2 human-shape
+// model — and every run that must dispatch nothing is checked to have submitted nothing.
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
 	CDP,
@@ -23,8 +27,13 @@ import { type ExecutionReport, MoveExecutor } from "@service/move-executor";
 import { createSimulator, type Simulator } from "@test/sim";
 import { bootContentContext, type ContentContext } from "@test/sim/contexts/content-context";
 import { bootSwContext, type SwContext } from "@test/sim/contexts/sw-context";
+import { type AcShadow, createAcShadow, type SiteModel } from "@test/sim/telemetry/ac-shadow";
 import type { Recommendation, Square } from "@typedefs/game";
 import type { TimingPlan } from "@typedefs/timing";
+import {
+	type AcMoveMeta,
+	assertHumanShapedAc,
+} from "../../../tools/telemetry-conformance/ac-model";
 import { BOARD, inside, squareRect } from "../../core/motor/fixtures";
 
 const START = 1_000_000;
@@ -42,6 +51,9 @@ let focus: FocusGate;
 let ownership: HandOwnership;
 let executor: MoveExecutor;
 let port: ConnectedPort<GamePortMessage>;
+let shadow: AcShadow;
+/** What the shadow's site model saw submitted (`[from, to]` per move). */
+let submitted: Array<[Square, Square]>;
 let tabsUpdateCalls: number;
 let windowsUpdateCalls: number;
 /** What the fake adapter saw / answered. */
@@ -165,6 +177,25 @@ beforeEach(async () => {
 		promotionRect: null,
 		onPromotionGeometry: () => true,
 	};
+	// The page's own view of the hand (Task 33): the fake `fps` plugin on this tab's DOM. Its site
+	// model is the fixture's occupancy plus "any square is a legal destination of an own piece",
+	// which is all the selection model needs here (`previewScale: 0`, so no preview presses).
+	submitted = [];
+	const shadowModel: SiteModel = {
+		squareOf: (target) => {
+			const id = (target as { id?: string } | null)?.id ?? "";
+			return ALL.includes(id as Square) ? (id as Square) : null;
+		},
+		occupancy: (sq) => adapter.occupancy[sq] ?? "empty",
+		legalDestinations: (sq) => (adapter.occupancy[sq] === "own" ? ALL.filter((s) => s !== sq) : []),
+		submit: (from, to) => {
+			submitted.push([from, to]);
+			return true;
+		},
+	};
+	const shadowDom = sim.getTabDom(tabId);
+	if (!shadowDom) throw new Error("no dom");
+	shadow = createAcShadow(shadowDom, shadowModel, { now: sim.now });
 	tabsUpdateCalls = 0;
 	windowsUpdateCalls = 0;
 	const realUpdate = sim.chrome.tabs.update;
@@ -204,6 +235,7 @@ beforeEach(async () => {
 	await sim.time.runMicrotasks();
 });
 afterEach(async () => {
+	shadow.dispose();
 	await sw.run(() => {
 		executor.dispose();
 		focus.dispose();
@@ -258,6 +290,30 @@ const plan1200 = (): TimingPlan => ({
 	orientationMs: 600,
 	window: { orientationMs: 600, scanMs: 0, previewMs: 0, decisionMs: 0, approachMs: 300 },
 });
+
+/**
+ * Task 33 / ruling 7: what the page's `fps` shadow saw is held to the shared §13.2 model. The
+ * shadow's period opens at `beforeEach` (no clock advance happens before the first
+ * `positionArrived`), so its `MoveHoldTime` is the move's elapsed time. The fixture has no clock,
+ * so every move is trivial for the preview band — `previewScale` is 0 here anyway.
+ */
+function assertShadowAc(plan: TimingPlan, expected: Array<[Square, Square]>): void {
+	expect(submitted).toEqual(expected);
+	const meta: AcMoveMeta[] = shadow.observations.map(() => ({
+		mode: plan.mode,
+		thinkMs: plan.thinkMs,
+		clockMs: 0,
+	}));
+	const summary = assertHumanShapedAc(
+		shadow.observations.map((o) => o.ac),
+		{ moves: meta }
+	);
+	expect(summary.blurCount).toBe(0);
+	expect(summary.toggles).toBe(0);
+	expect(summary.untrusted).toBe(0);
+	expect(summary.focusFieldsSet).toBe(0);
+	expect(summary.multiSelect.count).toBe(0);
+}
 
 interface Cmd {
 	method: string;
@@ -351,6 +407,13 @@ describe("executor: a scheduled drag move end to end", () => {
 		expect(tabsUpdateCalls).toBe(0);
 		expect(windowsUpdateCalls).toBe(0);
 		expect(sim.debugger.attachments.filter((a) => a.action === "attach")).toHaveLength(1);
+		// and the page's own `fps` shadow saw one human-shaped move (§13.2)
+		assertShadowAc(plan1200(), [["e2", "e4"]]);
+		const blob = shadow.observations[0]?.ac;
+		expect(blob?.MoveHoldTime).toBeCloseTo(release.at, 6);
+		expect(blob?.PointerOffset).toBeGreaterThan(0);
+		expect(shadow.observations[0]?.lichessBlur).toBe(0);
+		expect(shadow.pendingSelection()).toBeNull();
 	});
 
 	it("a blur inside the move window skips the move (no press, nothing after the edge) and reports `skipped`", async () => {
@@ -382,6 +445,9 @@ describe("executor: a scheduled drag move end to end", () => {
 		expect(adapter.observeRequests).toEqual([]);
 		expect(executor.handView()).toBe("paused");
 		expect(focus.snapshot(tabId)).toEqual({ pageHasFocus: true, blurSeenThisMove: true });
+		// the page never saw a submission, so there is no `ac` blob to be shaped at all
+		expect(shadow.observations).toEqual([]);
+		expect(submitted).toEqual([]);
 	});
 
 	it("without an arm-time attachment the move fails with the user-facing reason and nothing is dispatched", async () => {
@@ -522,6 +588,8 @@ describe("executor: a scheduled drag move end to end", () => {
 		expect(cancelledAt).toBeGreaterThan(0);
 		expect(executor.isRunning()).toBe(false);
 		expect(executor.pendingMove()).toBeNull();
+		// exactly one human-shaped move reached the page — the parked replacement never pressed
+		assertShadowAc(plan, [["e2", "e4"]]);
 	});
 
 	it("a replacement whose destination the adapter cannot classify is skipped as verification-unavailable (fail closed)", async () => {

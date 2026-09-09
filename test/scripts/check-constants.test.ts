@@ -1,9 +1,16 @@
 // test/scripts/check-constants.test.ts
 import { expect, it } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import {
+	checkEmittedPrograms,
 	FORBIDDEN_PAGE_APIS,
+	FORBIDDEN_PAGE_SUBSTRINGS,
 	findDuplicateLiterals,
 	findForbiddenPageApis,
+	findForbiddenProgramSubstrings,
+	findForbiddenSubstrings,
 } from "../../scripts/check-constants";
 
 it("flags a registry literal re-declared outside the registry", () => {
@@ -87,4 +94,44 @@ it("covers the §13.3 rule 2 / §9 list and passes clean page-realm sources", ()
 			"src/content/ok.ts": `win.addEventListener("keydown", fn, true); chrome.runtime.connect({ name });`,
 		})
 	).toEqual([]);
+});
+
+it("the §13.3 rule 5 word list is the seven words, and findForbiddenSubstrings reports the ones present", () => {
+	expect([...FORBIDDEN_PAGE_SUBSTRINGS]).toEqual([
+		"sliced",
+		"engine",
+		"stockfish",
+		"eval",
+		"bestmove",
+		"fen",
+		"analysis",
+	]);
+	expect(findForbiddenSubstrings("const k = window.__x; document.querySelector(s)")).toEqual([]);
+	expect(
+		findForbiddenSubstrings('const fen = game.getFen(); postMessage({ engine: "stockfish" })')
+	).toEqual(["engine", "stockfish", "fen"]);
+});
+
+it("scans the `code` export of every emitted page program and fails closed on an unreadable module", () => {
+	const clean = `export const name = "probe";\nexport const code = ${JSON.stringify("(() => { const a = window.__t; })();")};\n`;
+	const dirty = `export const code = ${JSON.stringify("window.postMessage({ bestmove: 1, fen: 2 })")};\n`;
+	const broken = `export const code = 42;\n`;
+	expect(
+		findForbiddenProgramSubstrings({
+			"src/page/generated/probe.ts": clean,
+			"src/page/generated/bridge.ts": dirty,
+			"src/page/generated/odd.ts": broken,
+			"src/page/index.ts": `const engine = "stockfish"; // registry source, not emitted code`,
+		})
+	).toEqual([
+		{ file: "src/page/generated/bridge.ts", word: "bestmove" },
+		{ file: "src/page/generated/bridge.ts", word: "fen" },
+		{ file: "src/page/generated/odd.ts", word: "<unreadable>" },
+	]);
+});
+
+it("checkEmittedPrograms fails closed when the generated directory is missing", () => {
+	const missing = mkdtempSync(path.join(tmpdir(), "sl-gen-"));
+	rmSync(missing, { recursive: true, force: true });
+	expect(() => checkEmittedPrograms(missing)).toThrow(/gen:pagescript/);
 });

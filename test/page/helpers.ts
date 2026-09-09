@@ -10,6 +10,7 @@
 import { SPOOF_PURPOSES } from "@core/constants/spoof";
 import { deriveToken } from "@core/spoof";
 import { Window } from "happy-dom";
+import { FORBIDDEN_PAGE_SUBSTRINGS, findForbiddenSubstrings } from "../../scripts/check-constants";
 
 export const SEED = "page-test-seed";
 
@@ -20,12 +21,11 @@ export const TOKENS_FOR_SEED = {
 	overlayClass: deriveToken(SEED, SPOOF_PURPOSES.overlayClass),
 } as const;
 
-export const FORBIDDEN = ["sliced", "engine", "stockfish", "eval", "bestmove", "fen", "analysis"];
+/** The seven §13.3 rule 5 words, from the build lint (`scripts/check-constants.ts`), once. */
+export const FORBIDDEN = FORBIDDEN_PAGE_SUBSTRINGS;
 
 /** Substrings of the seven forbidden words present in `code` (case-sensitive, as §13.3 lists them). */
-export function forbiddenIn(code: string): string[] {
-	return FORBIDDEN.filter((w) => code.includes(w));
-}
+export const forbiddenIn = findForbiddenSubstrings;
 
 export function makeWindow(url: string): Window {
 	const win = new Window({ url });

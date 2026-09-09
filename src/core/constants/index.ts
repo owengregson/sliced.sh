@@ -11,6 +11,7 @@ export * from "./ports";
 export * from "./sounds";
 export * from "./spoof";
 export * from "./storage-keys";
+export * from "./telemetry";
 export * from "./timings";
 export * from "./toasts";
 export * from "./ui";

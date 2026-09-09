@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>focus probe</title>
+		<style>
+			:root { color-scheme: dark; }
+			body {
+				margin: 0;
+				padding: 16px;
+				background: #16150f;
+				color: #e8e6df;
+				font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+			}
+			h1 { font-size: 15px; margin: 0 0 4px; }
+			p { margin: 0 0 12px; color: #a09a88; max-width: 70ch; }
+			.row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+			button {
+				font: inherit;
+				color: inherit;
+				background: #26241a;
+				border: 1px solid #3b382a;
+				border-radius: 4px;
+				padding: 4px 10px;
+				cursor: pointer;
+			}
+			#counts span { margin-right: 12px; }
+			b { color: #ffa71f; }
+			#log {
+				margin: 0;
+				padding: 10px;
+				height: 60vh;
+				overflow: auto;
+				background: #0f0e0a;
+				border: 1px solid #2a2820;
+				border-radius: 4px;
+				white-space: pre;
+			}
+			#target {
+				width: 220px;
+				height: 90px;
+				display: grid;
+				place-items: center;
+				background: #1e1c14;
+				border: 1px dashed #4a4635;
+				border-radius: 4px;
+				user-select: none;
+			}
+			input { font: inherit; color: inherit; background: #0f0e0a; border: 1px solid #3b382a; padding: 4px 6px; border-radius: 4px; }
+		</style>
+	</head>
+	<body>
+		<h1>focus probe — Task 33 Step 1 (docs/qa/focus-discipline.md)</h1>
+		<p>
+			Logs every <code>window</code> <code>focus</code>/<code>blur</code>, every
+			<code>document</code> <code>visibilitychange</code> and every pointer event on the target
+			box, each with <code>performance.now()</code>, <code>document.hasFocus()</code>,
+			<code>document.visibilityState</code> and <code>event.isTrusted</code>. Open it in a tab,
+			run one action from the procedure, then copy the log into the results table.
+		</p>
+		<div class="row">
+			<button id="clear" type="button">clear</button>
+			<button id="copy" type="button">copy log</button>
+			<input id="typing" type="text" size="18" placeholder="type here (in-page)" />
+			<div id="target">CDP / mouse target</div>
+		</div>
+		<div class="row" id="counts">
+			<span>blur <b id="c-blur">0</b></span>
+			<span>focus <b id="c-focus">0</b></span>
+			<span>visibilitychange <b id="c-vis">0</b></span>
+			<span>pointerdown <b id="c-down">0</b></span>
+			<span>pointerup <b id="c-up">0</b></span>
+			<span>hasFocus <b id="c-has">?</b></span>
+		</div>
+		<pre id="log"></pre>
+		<script>
+			(() => {
+				const log = document.getElementById("log");
+				const counts = { blur: 0, focus: 0, vis: 0, down: 0, up: 0 };
+				const cell = {
+					blur: document.getElementById("c-blur"),
+					focus: document.getElementById("c-focus"),
+					vis: document.getElementById("c-vis"),
+					down: document.getElementById("c-down"),
+					up: document.getElementById("c-up"),
+					has: document.getElementById("c-has"),
+				};
+
+				const pad = (s, n) => String(s).padEnd(n);
+				function line(kind, event) {
+					const t = performance.now().toFixed(1).padStart(10);
+					const trusted = event && "isTrusted" in event ? String(event.isTrusted) : "-";
+					const at =
+						event && "clientX" in event && event.clientX !== undefined
+							? `${Math.round(event.clientX)},${Math.round(event.clientY)}`
+							: "-";
+					log.textContent +=
+						`${t} ms  ${pad(kind, 18)} hasFocus=${pad(document.hasFocus(), 6)}` +
+						` visibility=${pad(document.visibilityState, 9)} isTrusted=${pad(trusted, 6)} at=${at}\n`;
+					log.scrollTop = log.scrollHeight;
+					cell.has.textContent = String(document.hasFocus());
+				}
+
+				function bump(key) {
+					counts[key] += 1;
+					cell[key].textContent = String(counts[key]);
+				}
+
+				addEventListener("blur", (e) => {
+					bump("blur");
+					line("window blur", e);
+				});
+				addEventListener("focus", (e) => {
+					bump("focus");
+					line("window focus", e);
+				});
+				document.addEventListener("visibilitychange", (e) => {
+					bump("vis");
+					line("visibilitychange", e);
+				});
+				const target = document.getElementById("target");
+				for (const type of ["pointerdown", "pointerup", "pointermove"]) {
+					target.addEventListener(type, (e) => {
+						if (type === "pointerdown") bump("down");
+						if (type === "pointerup") bump("up");
+						if (type !== "pointermove") line(type, e);
+					});
+				}
+				document.getElementById("typing").addEventListener("keydown", (e) => line("keydown", e));
+				document.getElementById("clear").addEventListener("click", () => {
+					log.textContent = "";
+					for (const key of Object.keys(counts)) {
+						counts[key] = 0;
+						cell[key].textContent = "0";
+					}
+				});
+				document.getElementById("copy").addEventListener("click", () => {
+					navigator.clipboard.writeText(log.textContent);
+				});
+
+				line("probe loaded", null);
+			})();
+		</script>
+	</body>
+</html>

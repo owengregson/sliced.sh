@@ -8,8 +8,11 @@
 //       file (the marker means "this number belongs in a registry"), and
 //   (c) under `src/content/**` and `src/page/**` only: any occurrence of a forbidden page
 //       API (page storage, synthetic input events, speech, tab/window manipulation) —
-//       comments included, so the words never appear there at all.
-import { readdirSync, readFileSync, statSync } from "node:fs";
+//       comments included, so the words never appear there at all,
+//   (d) the emitted page programs (`src/page/generated/<name>.ts`, written by
+//       `gen:pagescript` earlier in the pipeline): the `code` a MAIN-world script ships must
+//       contain none of the §13.3 rule 5 product/engine words (Task 33).
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
 const REGISTRY_DIRS = ["src/core/constants/", "src/design/", "src/content/adapters/selectors.ts"];
@@ -42,6 +45,20 @@ export const FORBIDDEN_PAGE_APIS = [
 	"window.open",
 ] as const;
 
+/** Words that must never appear in an emitted page program (§13.3 rule 5). Case-sensitive, as listed. */
+export const FORBIDDEN_PAGE_SUBSTRINGS = [
+	"sliced",
+	"engine",
+	"stockfish",
+	"eval",
+	"bestmove",
+	"fen",
+	"analysis",
+] as const;
+
+/** Directory `gen:pagescript` writes the emitted programs to (repo-relative). */
+export const GENERATED_PAGE_DIR = "src/page/generated/";
+
 export interface ForbiddenApiHit {
 	file: string;
 	api: string;
@@ -60,6 +77,45 @@ export function findForbiddenPageApis(files: Record<string, string>): ForbiddenA
 				if (line.includes(api)) out.push({ file, api, line: i + 1 });
 			}
 		}
+	}
+	return out;
+}
+
+/** The forbidden words present in `code`. */
+export function findForbiddenSubstrings(code: string): string[] {
+	return FORBIDDEN_PAGE_SUBSTRINGS.filter((w) => code.includes(w));
+}
+
+export interface ForbiddenProgramHit {
+	file: string;
+	word: string;
+}
+
+const CODE_EXPORT_RE = /^export const code = (".*");$/m;
+
+/**
+ * The emitted `code` of every generated page program in `files` (keys under
+ * `GENERATED_PAGE_DIR`) that contains a forbidden word. A generated module without a
+ * parsable `code` export is reported as a hit on `"<unreadable>"` so it can never pass unseen.
+ */
+export function findForbiddenProgramSubstrings(
+	files: Record<string, string>
+): ForbiddenProgramHit[] {
+	const out: ForbiddenProgramHit[] = [];
+	for (const [file, src] of Object.entries(files)) {
+		if (!file.startsWith(GENERATED_PAGE_DIR) || !file.endsWith(".ts")) continue;
+		const m = CODE_EXPORT_RE.exec(src);
+		let code: unknown;
+		try {
+			code = m ? JSON.parse(m[1] ?? "") : undefined;
+		} catch {
+			code = undefined;
+		}
+		if (typeof code !== "string") {
+			out.push({ file, word: "<unreadable>" });
+			continue;
+		}
+		for (const word of findForbiddenSubstrings(code)) out.push({ file, word });
 	}
 	return out;
 }
@@ -124,14 +180,34 @@ export function findDuplicateLiterals(files: Record<string, string>): Duplicate[
 const REPO_ROOT = path.resolve(import.meta.dir, "..");
 
 /** Collect `*.ts` sources keyed by repo-relative posix path (so REGISTRY_DIRS match). */
-function walk(dir: string, acc: Record<string, string>): void {
+function walk(dir: string, acc: Record<string, string>, includeGenerated = false): void {
 	for (const e of readdirSync(dir)) {
 		const p = path.join(dir, e);
 		if (statSync(p).isDirectory()) {
-			if (!/generated|node_modules/.test(p)) walk(p, acc);
+			if (/node_modules/.test(p)) continue;
+			if (/generated/.test(p) && !includeGenerated) continue;
+			walk(p, acc, includeGenerated);
 		} else if (p.endsWith(".ts") && !p.endsWith(".d.ts")) {
 			acc[path.relative(REPO_ROOT, p).split(path.sep).join("/")] = readFileSync(p, "utf8");
 		}
+	}
+}
+
+/** The emitted page programs; fails closed when `gen:pagescript` has not run. */
+export function checkEmittedPrograms(generatedDir = GENERATED_PAGE_DIR): void {
+	const dir = path.resolve(REPO_ROOT, generatedDir);
+	if (!existsSync(dir)) {
+		throw new Error(
+			`${generatedDir} is missing: run \`bun run gen:pagescript\` before check-constants (the emitted page programs are scanned for forbidden words)`
+		);
+	}
+	const files: Record<string, string> = {};
+	walk(dir, files, true);
+	const hits = findForbiddenProgramSubstrings(files);
+	if (hits.length) {
+		for (const h of hits)
+			console.error(`forbidden word "${h.word}" in emitted page program ${h.file} (§13.3 rule 5)`);
+		throw new Error(`${hits.length} forbidden word(s) in emitted page programs`);
 	}
 }
 
@@ -150,6 +226,7 @@ export function checkConstants(root = "src"): void {
 			console.error(`forbidden page API "${h.api}" in ${h.file}:${h.line} (§13.3 rule 2)`);
 		throw new Error(`${hits.length} forbidden page API use(s)`);
 	}
+	checkEmittedPrograms();
 }
 
 if (import.meta.main) checkConstants();

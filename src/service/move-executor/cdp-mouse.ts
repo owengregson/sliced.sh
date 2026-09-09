@@ -88,7 +88,9 @@ export class CdpMouse {
 
 	/**
 	 * Dispatch `path` honouring `dtMs` against the clock; resyncs after a stall >
-	 * `stallResyncMs`. `beforePoint` runs before every dispatch and may throw.
+	 * `stallResyncMs`. `beforePoint` runs once the point is due, immediately
+	 * before its dispatch (not before the wait: a focus edge that lands while a
+	 * point's timer is armed must still stop that point, §9.6a), and may throw.
 	 */
 	async travel(
 		path: readonly PathPoint[],
@@ -98,9 +100,11 @@ export class CdpMouse {
 		let due = this.now();
 		for (const pt of path) {
 			throwIfAborted(signal);
-			beforePoint?.();
 			due += pt.dtMs;
-			await this.moveAt(pt, due, signal);
+			await this.waitUntil(due, signal);
+			throwIfAborted(signal);
+			beforePoint?.();
+			await this.dispatch("mouseMoved", pt, this.buttons);
 			if (this.now() - due > CDP.stallResyncMs) due = this.now();
 		}
 	}
