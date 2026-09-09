@@ -708,7 +708,15 @@ describe("settings view · advanced and footer", () => {
 		const depth = q(row(h.root, "engine.depthCap"), "[role=slider]");
 		expect(depth.getAttribute("aria-valuemin")).toBe(String(LIMITS.depthMin));
 		expect(depth.getAttribute("aria-valuemax")).toBe(String(LIMITS.depthMax));
-		expect(q(h.root, ".sl-settings__footer").textContent).toBe(COPY.footer("test", "test"));
-		expect(q(h.root, ".sl-settings__footer").textContent).toBe("sliced vtest · build test");
+		expect(q(h.root, ".sl-settings__footer-version").textContent).toBe(COPY.footer("test", "test"));
+		expect(q(h.root, ".sl-settings__footer-version").textContent).toBe("sliced vtest · build test");
+		// Task 34: third-party notices next to the version (strings only in copy.ts).
+		expect(q(h.root, '.sl-settings__footer-notice[data-notice="engine"]').textContent).toBe(
+			COPY.notices.engine
+		);
+		expect(q(h.root, '.sl-settings__footer-notice[data-notice="timing"]').textContent).toBe(
+			COPY.notices.timing
+		);
+		expect(COPY.notices.timing).toContain("PolyForm Noncommercial 1.0.0");
 	});
 });

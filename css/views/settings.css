@@ -288,6 +288,10 @@
 	text-align: center;
 }
 
+.sl-settings__footer-notice {
+	margin-top: var(--sl-space-4);
+}
+
 /* ---- locked (hands-off, §13.4): the shell's lock plus the view's own aria-disabled -------- */
 
 .sl-settings--locked .sl-settings-row,

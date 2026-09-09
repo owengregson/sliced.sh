@@ -230,6 +230,11 @@ export const COPY = {
 	},
 	ring: { remaining: (seconds: string): string => `in ${seconds}s` },
 	footer: (version: string, build: string): string => `sliced v${version} · build ${build}`,
+	/** Third-party notices under the footer (Task 34; the full texts are in docs/third-party.md). */
+	notices: {
+		engine: "Stockfish 18 · GPL-3.0 / AGPL-3.0 · lichess-org/stockfish-web",
+		timing: "ChessMimic timing model © 2026 Thomas Johnson · PolyForm Noncommercial 1.0.0",
+	},
 	common: {
 		close: "Close",
 		back: "Back",

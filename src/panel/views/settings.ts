@@ -410,7 +410,11 @@ export function createSettingsView(overrides: Partial<SettingsViewDeps> = {}): V
 			const jumpHost = part(root, ".sl-settings__jump");
 			const sectionsHost = part(root, ".sl-settings__sections");
 			jumpHost.setAttribute("aria-label", SETTINGS_COPY.jump);
-			part(root, ".sl-settings__footer").textContent = COPY.footer(deps.version, deps.build);
+			part(root, ".sl-settings__footer-version").textContent = COPY.footer(deps.version, deps.build);
+			part(root, '.sl-settings__footer-notice[data-notice="engine"]').textContent =
+				COPY.notices.engine;
+			part(root, '.sl-settings__footer-notice[data-notice="timing"]').textContent =
+				COPY.notices.timing;
 
 			let settings: Settings = ctx.snapshot?.settings ?? { ...DEFAULT_SETTINGS };
 			let license: LicenseState = ctx.snapshot?.license ?? { status: "unknown", checkedAt: 0 };
