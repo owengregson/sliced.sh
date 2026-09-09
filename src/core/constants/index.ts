@@ -12,6 +12,7 @@ export * from "./models";
 export * from "./ports";
 export * from "./search";
 export * from "./sounds";
+export * from "./speech";
 export * from "./spoof";
 export * from "./storage-keys";
 export * from "./telemetry";

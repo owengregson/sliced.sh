@@ -83,6 +83,12 @@ export interface ExecutionResult {
 	san?: string;
 	/** §13.2 `PointerOffset`: pointer path length the hand dispatched during this execution, px. */
 	pointerOffsetPx?: number;
+	/**
+	 * §13.2 `DidSelectMultiplePieces`: the squares the hand *pressed* other than the committed
+	 * from-square — the preview selections (§9.3a) and any deselect click. With the committed
+	 * press these are the distinct pieces the page saw selected in this move window.
+	 */
+	previewedSquares?: Square[];
 	/** The committed press was dispatched — even a skipped/aborted attempt may have landed the move. */
 	pressed?: boolean;
 }

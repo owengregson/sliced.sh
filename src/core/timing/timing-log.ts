@@ -10,6 +10,7 @@ import { chromeLocalGet, chromeLocalSet } from "@core/chrome/storage";
 import { LIMITS } from "@core/constants/limits";
 import { LOCAL_KEYS } from "@core/constants/storage-keys";
 import type { PersonaId } from "@typedefs/settings";
+import type { MoveTelemetryRecord } from "@typedefs/telemetry";
 import type { TimingLogEntry, TimingMode } from "@typedefs/timing";
 
 const TOP_TERMS = 5;
@@ -67,6 +68,22 @@ export class TimingLogWriter {
 			const e = this.buffer[i];
 			if (e && e.gameId === gameId && e.ply === ply) {
 				e.actualMs = actualMs;
+				this.dirty = true;
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Attach the move's §13.2 telemetry record to the entry for `(gameId, ply)`
+	 * (latest match). Task 30's `GameSession` calls it once the execution result is in.
+	 */
+	attachTelemetry(gameId: string, ply: number, telemetry: MoveTelemetryRecord): boolean {
+		for (let i = this.buffer.length - 1; i >= 0; i--) {
+			const e = this.buffer[i];
+			if (e && e.gameId === gameId && e.ply === ply) {
+				e.telemetry = telemetry;
 				this.dirty = true;
 				return true;
 			}

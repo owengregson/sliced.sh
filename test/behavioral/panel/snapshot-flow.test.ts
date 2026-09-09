@@ -243,6 +243,7 @@ describe("panel ↔ service worker: snapshot flow", () => {
 		const parked: ExecutorHandle = {
 			isArmed: () => true,
 			pendingMove: () => ({ rec, fireAt: sim.now() }),
+			runningMove: () => null,
 			handView: () => "resting",
 			on: () => () => {},
 			arm: async () => {},

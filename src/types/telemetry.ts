@@ -44,7 +44,7 @@ export type LichessBlurBit = 0 | 1;
  * | `orientationMs` | `TimingPlan.orientationMs` (§8.4b item 2). |
  * | `multiSelectEligible` | the move is "non-trivial" for the §13.2 preview band: `plan.mode` is `normal`/`long`, `plan.thinkMs ≥ PREVIEW.gZeroMs` and the clock is at least `PREVIEW.clockFloorMs` (`isNonTrivial` in `tools/telemetry-conformance/ac-model.ts`). |
  * | `nReasonable` | `n_reasonable` of the position (`TimingContext` / `MoveContext`): the offline report's complexity axis, which the timing columns alone do not carry. |
- * | `top1` | the played move was the engine's first line (`Recommendation.chosen.rankInLines === 0`). |
+ * | `top1` | the played move was the engine's first line. `ChosenMove.rankInLines` is **1-based** (`selectMove` sets `1` for the best line; `0` means the move was not among the lines at all, which is what the book and a premove report), so this is `rankInLines === 1`. |
  * | `cpLoss` | `Recommendation.chosen.cpLoss` — the §13.6 ACPL input. |
  *
  * `test/sim/telemetry/harness.ts` (`telemetryRecordOf`, `timingLogOf`) builds exactly

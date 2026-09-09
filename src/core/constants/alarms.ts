@@ -14,3 +14,12 @@ export const ALARM_CADENCE_MINUTES = {
 } as const;
 
 export type AlarmName = (typeof ALARM_NAMES)[keyof typeof ALARM_NAMES];
+
+/**
+ * `Keepalive.hold` reasons owned outside the debugger manager
+ * (`DEBUGGER_KEEPALIVE_REASON` in `@core/constants/cdp` is the other one).
+ * `game` is held by the session registry while any tab is live (§3.3).
+ */
+export const KEEPALIVE_REASONS = {
+	game: "game",
+} as const;

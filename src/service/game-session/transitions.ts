@@ -13,7 +13,9 @@
  *     (`GamePortMessage.hello`), i.e. what moves `idle → waiting-for-game`;
  *   - `handStarted` — the executor result that reports the hand leaving rest,
  *     i.e. what moves `recommended → executing` on the *scheduled* path
- *     (`playNow` is the manual one).
+ *     (`playNow` is the manual one);
+ *   - `recommended` — the §3.2 pipeline answered for the current position,
+ *     i.e. what moves `analysing → recommended`.
  */
 
 import { log } from "@core/logger";
@@ -40,7 +42,8 @@ export const GAME_SESSION_EVENTS = [
 	"armAutoMove",
 	"disarm",
 	"disable",
-	// executor results
+	// pipeline / executor results
+	"recommended",
 	"handStarted",
 	"executed",
 	"failed",
@@ -119,6 +122,7 @@ const OPPONENT_TURN: Row = {
 const ANALYSING: Row = {
 	...LIVE_COMMON,
 	hello: "live:my-turn:analysing",
+	recommended: "live:my-turn:recommended",
 	// The user asked to play before the engine answered: the session queues it.
 	playNow: "live:my-turn:analysing",
 	armAutoMove: "live:my-turn:analysing",
@@ -130,6 +134,8 @@ const ANALYSING: Row = {
 const RECOMMENDED: Row = {
 	...LIVE_COMMON,
 	hello: "live:my-turn:recommended",
+	// A refreshed recommendation for the same position (a deeper search, a re-plan).
+	recommended: "live:my-turn:recommended",
 	playNow: "live:my-turn:executing",
 	armAutoMove: "live:my-turn:recommended",
 	disarm: "live:my-turn:recommended",
@@ -141,6 +147,8 @@ const RECOMMENDED: Row = {
 const EXECUTING: Row = {
 	...LIVE_COMMON,
 	hello: "live:my-turn:executing",
+	// A newer recommendation while the hand runs does not interrupt it.
+	recommended: "live:my-turn:executing",
 	playNow: "live:my-turn:executing",
 	armAutoMove: "live:my-turn:executing",
 	// The hand was stopped mid-move; the recommendation for this position still stands.

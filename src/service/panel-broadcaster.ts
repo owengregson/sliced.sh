@@ -80,6 +80,7 @@ export type ExecutorHandle = Pick<
 	MoveExecutor,
 	| "isArmed"
 	| "pendingMove"
+	| "runningMove"
 	| "handView"
 	| "on"
 	| "arm"
@@ -384,9 +385,15 @@ export class PanelBroadcaster {
 
 		const autoMove: PanelSnapshot["autoMove"] = { armed: executor?.isArmed() ?? false };
 		const pending = executor?.pendingMove() ?? null;
-		if (pending) {
-			autoMove.scheduledAt = pending.rec.plan.deadlineMs;
-			autoMove.plan = pending.rec.plan;
+		// A move whose deadline is `now + thinkMs` is never *parked* — the hand owns the whole
+		// window — so once it starts the countdown (Task 24) reads the plan the hand is running.
+		// An `instant` plan (`playNow`, a retry) has nothing to count down and reports none.
+		const running = pending === null ? (executor?.runningMove() ?? null) : null;
+		const scheduled =
+			pending?.rec.plan ?? (running && running.plan.mode !== "instant" ? running.plan : null);
+		if (scheduled) {
+			autoMove.scheduledAt = scheduled.deadlineMs;
+			autoMove.plan = scheduled;
 		}
 
 		const executorState: PanelSnapshot["executor"] = {

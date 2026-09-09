@@ -247,6 +247,8 @@ export class HandController {
 	private signal: AbortSignal | null = null;
 	/** The committed press went out (a release may land the move even on abort/skip). */
 	private pressedCommitted = false;
+	/** Squares pressed in this execution besides the committed from-square (§13.2). */
+	private previewed: Square[] = [];
 	/** Clock time of the drop (second click / release); `null` until then. */
 	private dropAt: number | null = null;
 
@@ -277,9 +279,17 @@ export class HandController {
 		this.pressedCommitted = false;
 		this.dropAt = null;
 		const startedPx = this.backend.travelledPx?.() ?? 0;
+		this.previewed = [];
 		const base = (): Pick<
 			ExecutionResult,
-			"tier" | "endPoint" | "elapsedMs" | "timeline" | "pressed" | "san" | "pointerOffsetPx"
+			| "tier"
+			| "endPoint"
+			| "elapsedMs"
+			| "timeline"
+			| "pressed"
+			| "san"
+			| "pointerOffsetPx"
+			| "previewedSquares"
 		> => ({
 			tier: plan.style,
 			endPoint: this.backend.position(),
@@ -288,6 +298,7 @@ export class HandController {
 			pressed: this.pressedCommitted,
 			san: plan.expected.san ?? plan.expected.uci,
 			pointerOffsetPx: (this.backend.travelledPx?.() ?? 0) - startedPx,
+			previewedSquares: [...this.previewed],
 		});
 		const verdict = this.focus.canExecute(plan.tabId);
 		if (!verdict.ok) {
@@ -436,6 +447,11 @@ export class HandController {
 	private async perform(a: HandAction, m: MotorProfile): Promise<void> {
 		if (a.kind === "preview" && a.preview) {
 			const pv = a.preview;
+			// §13.2 counts *pieces* the page saw selected: the previewed piece always, and the
+			// resolving click only in the `switch-to-idle` form, where the square it clicks is an
+			// own piece (an empty / enemy square only clears the selection, it never makes one).
+			this.previewed.push(pv.piece);
+			if (pv.deselect?.occupancy === "own") this.previewed.push(pv.deselect.square);
 			await this.travel(pv.approach);
 			await this.pause(pv.prePressMs);
 			await this.press(pv.press);

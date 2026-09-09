@@ -91,6 +91,34 @@ afterEach(async () => {
 });
 
 describe("RemoteEngine over the simulator", () => {
+	it("an ensureHost rejection on the first connect does not leave the transport dead (Task 30)", async () => {
+		const side = await bootOffscreen();
+		let calls = 0;
+		const statuses: EngineStatus[] = [];
+		const engine = await (sw as SwContext).run(async () => {
+			const e = new RemoteEngine({
+				ensureHost: () => {
+					calls += 1;
+					return calls === 1 ? Promise.reject(new Error("no offscreen")) : Promise.resolve();
+				},
+				variant: "smallnet",
+				threads: 1,
+			});
+			e.onStatus((s) => statuses.push(s));
+			await settle();
+			await e.ready;
+			return e;
+		});
+		expect(calls).toBeGreaterThanOrEqual(1);
+		expect(statuses.length).toBeGreaterThan(0);
+		await (sw as SwContext).run(() => {
+			engine.send("uci");
+			return settle();
+		});
+		expect(side.current().commands.length).toBeGreaterThan(0);
+		engine.dispose();
+	});
+
 	it("awaits ensureHost, connects, queues sends before ready, and relays lines and status", async () => {
 		const side = await bootOffscreen();
 		const ensureCalls: number[] = [];

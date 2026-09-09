@@ -19,9 +19,10 @@
 import { installFocusEdges } from "@content/adapters/adapter";
 import { type CursorTracker, createCursorTracker } from "@content/cursor-tracker";
 import { installKeybinds, type KeybindAction } from "@content/keybinds";
-import { type GamePortCommand, type GamePortMessage, PORT_NAMES } from "@core/constants";
+import { type GamePortCommand, type GamePortMessage, MSG, PORT_NAMES } from "@core/constants";
 import { DEFAULT_KEYBINDS } from "@core/constants/defaults";
 import { type ConnectedPort, connectPort } from "@core/messaging/ports";
+import { sendTyped } from "@core/messaging/typed-messages";
 import { defaultScheduler } from "@core/util/scheduler";
 import type { Simulator } from "@test/sim";
 import { bootContentContext, type ContentContext } from "@test/sim/contexts/content-context";
@@ -29,12 +30,25 @@ import type { TabDom } from "@test/sim/dom/tab-dom";
 import { type AcShadow, createAcShadow } from "@test/sim/telemetry/ac-shadow";
 import { SIM_TELEMETRY } from "@test/sim/telemetry/constants";
 import { createSimBoard, type SimBoard } from "@test/sim/telemetry/sim-board";
-import type { Color, PositionSnapshot, Site, Square } from "@typedefs/game";
+import type {
+	Color,
+	GameMeta,
+	GameResult,
+	PageKind,
+	PositionSnapshot,
+	Site,
+	Square,
+} from "@typedefs/game";
 
 export interface SimulatedSiteOptions {
 	site?: Site;
 	myColor?: Color;
 	fen?: string;
+	gameId?: string;
+	pageKind?: PageKind;
+	/** Task 30: forward in-page keybinds to the service worker as `CONTENT_KEYBIND`. */
+	sendKeybinds?: boolean;
+	timeControl?: { baseMs: number; incMs: number };
 }
 
 export interface SimulatedSite {
@@ -60,6 +74,20 @@ export interface SimulatedSite {
 	lastBlurAt(): number | null;
 	/** Every `observeMove` request the executor made. */
 	observeRequests(): Array<{ from: Square; to: Square }>;
+	/** Every command the service worker sent down the game port, in order (Task 30). */
+	commands(): GamePortCommand[];
+	/** Post a raw feed message (Task 30: reconnect replays, races the board cannot produce). */
+	post(msg: GamePortMessage): void;
+	/** Task 30: the port `hello` a real content script sends on boot. */
+	hello(pageKind?: PageKind): void;
+	/** Task 30: `gameStarted` for the current board. */
+	startGame(meta?: Partial<GameMeta>): void;
+	/** Task 30: `gameEnded`. */
+	endGame(result?: GameResult): void;
+	/** Task 30: the §13.6 opponent identity. */
+	opponent(info: { isBot: boolean; name: string; ratingEstimate: number | null }): void;
+	/** The game id every `position` / `gameStarted` carries. */
+	readonly gameId: string;
 	dispose(): Promise<void>;
 }
 
@@ -73,6 +101,8 @@ export async function createSimulatedSite(
 	const dom: TabDom = tabDom;
 	const site: Site = options.site ?? "chesscom";
 	const myColor: Color = options.myColor ?? "w";
+	const gameId = options.gameId ?? "sim-game";
+	const pageKind: PageKind = options.pageKind ?? "live-game";
 	const board = createSimBoard(dom, { myColor, ...(options.fen ? { fen: options.fen } : {}) });
 	const shadow = createAcShadow(dom, board, { now: sim.now });
 	const win = dom.window as unknown as Window;
@@ -81,6 +111,7 @@ export async function createSimulatedSite(
 	let pageFocused = true;
 	let lastBlurAt: number | null = null;
 	const observeRequests: Array<{ from: Square; to: Square }> = [];
+	const received: GamePortCommand[] = [];
 	Object.defineProperty(doc, "hasFocus", { configurable: true, value: () => pageFocused });
 	const countBlur = (): void => {
 		focusEvents.blur += 1;
@@ -117,6 +148,7 @@ export async function createSimulatedSite(
 	board.onChange(settle);
 
 	const onCommand = (cmd: GamePortCommand): void => {
+		received.push(cmd);
 		if (!port) return;
 		if (cmd.kind === "geometry") {
 			if (cmd.promotion !== undefined) {
@@ -174,6 +206,9 @@ export async function createSimulatedSite(
 				() => ({ ...DEFAULT_KEYBINDS, global: false }),
 				(action) => {
 					keybindActions.push(action);
+					if (options.sendKeybinds !== true) return;
+					// The real content script forwards the action to the service worker (Task 21).
+					sendTyped({ type: MSG.CONTENT_KEYBIND, action }).catch(() => {});
 				},
 				{ window: win, now: sim.now }
 			);
@@ -187,7 +222,7 @@ export async function createSimulatedSite(
 		const last = board.lastMove();
 		const s: PositionSnapshot = {
 			site,
-			gameId: "sim-game",
+			gameId,
 			fen: board.fen(),
 			ply: board.ply(),
 			sideToMove: board.chess.turn() as Color,
@@ -195,6 +230,7 @@ export async function createSimulatedSite(
 			clocks: { w: { ms: clocks.w, running: true }, b: { ms: clocks.b, running: true } },
 			capturedAt: sim.now(),
 		};
+		if (options.timeControl) s.timeControl = { ...options.timeControl };
 		if (last) s.lastMove = { from: last.from, to: last.to, san: last.san };
 		return s;
 	}
@@ -222,10 +258,44 @@ export async function createSimulatedSite(
 		board,
 		shadow,
 		content,
+		gameId,
 		arrive(opponentUci, clocks) {
 			if (opponentUci !== null) board.applyOpponent(opponentUci);
 			shadow.positionArrived(sim.now());
-			port?.post({ kind: "position", snapshot: snapshot(clocks) });
+			const s = snapshot(clocks);
+			port?.post({ kind: "position", snapshot: s });
+			const last = board.lastMove();
+			if (last)
+				port?.post({
+					kind: "moveObserved",
+					san: last.san,
+					ply: last.ply,
+					byMe: last.byMe,
+					atMs: sim.now(),
+				});
+		},
+		hello(kind = pageKind) {
+			port?.post({ kind: "hello", site, pageKind: kind, adapterVersion: "sim" });
+		},
+		startGame(meta = {}) {
+			port?.post({
+				kind: "gameStarted",
+				game: {
+					gameId,
+					site,
+					pageKind,
+					myColor,
+					...(options.timeControl ? { timeControl: { ...options.timeControl } } : {}),
+					startedAt: sim.now(),
+					...meta,
+				},
+			});
+		},
+		endGame(result = "1-0") {
+			port?.post({ kind: "gameEnded", result });
+		},
+		opponent(info) {
+			port?.post({ kind: "opponent", ...info });
 		},
 		panelClick() {
 			if (!pageFocused) return;
@@ -255,6 +325,10 @@ export async function createSimulatedSite(
 		pageFocusEvents: () => ({ ...focusEvents }),
 		lastBlurAt: () => lastBlurAt,
 		observeRequests: () => [...observeRequests],
+		commands: () => [...received],
+		post(msg) {
+			port?.post(msg);
+		},
 		async dispose() {
 			for (const p of pending.splice(0)) clearTimeout(p.timer);
 			removeFocusEdges();

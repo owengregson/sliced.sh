@@ -197,10 +197,20 @@ export class RemoteEngine implements EngineTransport {
 	// ── internals ────────────────────────────────────────────────────────
 
 	private async connect(): Promise<void> {
-		let port: ConnectedPort<EnginePortCommand>;
+		// A failed `ensureHost()` must not leave the transport dead for the life of the service
+		// worker (Task 12 hazard): connect anyway. `connectPort` retries with backoff, and its
+		// `onDisconnect` re-runs `ensureHost`, so a document that could not be created on the
+		// first turn is created on one of the retries.
 		try {
 			await this.ensureHost();
-			if (this.disposed) return;
+		} catch (error) {
+			log.error("remote-engine: ensureHost failed; connecting anyway", {
+				error: errorMessage(error),
+			});
+		}
+		if (this.disposed) return;
+		let port: ConnectedPort<EnginePortCommand>;
+		try {
 			port = connectPort<EnginePortCommand, EnginePortMessage>(PORT_NAMES.engine, {
 				onMessage: (m) => this.onPortMessage(m),
 				onDisconnect: (reason) => {
@@ -219,9 +229,9 @@ export class RemoteEngine implements EngineTransport {
 				scheduler: this.scheduler,
 			});
 		} catch (error) {
-			// `connectPort` retries failed `runtime.connect` calls itself; reaching here means
-			// `ensureHost` threw or the port could not even be created. Queued commands stay
-			// queued; the SW constructs a fresh transport on its next life.
+			// `connectPort` retries failed `runtime.connect` calls itself; reaching here means the
+			// port object could not even be created. Queued commands stay queued; the SW
+			// constructs a fresh transport on its next life.
 			log.error("remote-engine: connect failed", { error: errorMessage(error) });
 			return;
 		}

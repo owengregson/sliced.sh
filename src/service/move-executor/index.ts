@@ -118,6 +118,8 @@ interface Pending {
 
 interface Running {
 	rec: Recommendation;
+	/** The plan the hand is actually working through (an instant plan for `playNow`/retries). */
+	timing: TimingPlan;
 	ac: AbortController;
 	done: Promise<ExecutionResult>;
 }
@@ -303,6 +305,17 @@ export class MoveExecutor {
 		return this.running !== null;
 	}
 
+	/**
+	 * The move the hand is working through right now and the plan it is running —
+	 * which is what the panel's countdown reads once the move has left `pendingMove()`
+	 * (a plan whose deadline is `now + thinkMs` is never parked: the hand owns the
+	 * whole window).
+	 */
+	runningMove(): { rec: Recommendation; plan: TimingPlan } | null {
+		const running = this.running;
+		return running ? { rec: running.rec, plan: running.timing } : null;
+	}
+
 	on<E extends ExecutorEvent>(event: E, cb: (payload: ExecutorEvents[E]) => void): () => void {
 		let set = this.listeners.get(event);
 		if (!set) {
@@ -426,7 +439,7 @@ export class MoveExecutor {
 		if (this.disposed) return this.droppedReplacement(rec);
 		const ac = new AbortController();
 		const done = this.runOne(rec, timing, ctx, ac.signal, replacement);
-		this.running = { rec, ac, done };
+		this.running = { rec, timing, ac, done };
 		try {
 			return await done;
 		} finally {
