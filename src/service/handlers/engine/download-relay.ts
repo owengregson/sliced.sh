@@ -11,7 +11,8 @@
  * relay buffered the whole body first, that per-chunk budget would silently become a total
  * budget for the fetch — a 72 MB NNUE below ~5 Mbit/s would be abandoned while progressing
  * perfectly well. Emitting while reading keeps the budget measuring what it claims to measure:
- * silence.
+ * silence. A floor remains, one slice per stall budget (~35 kB/s for a 4 MiB chunk in 120 s);
+ * it is ~17x lower, not gone.
  *
  * `total` must be exact on the final chunk, because the store completes when it has that many
  * distinct indices. It is taken from `Content-Length` when the server sends one (so the panel's
@@ -205,7 +206,10 @@ export function attachDownloadRelay(
 			}
 			// No readable body: buffer, then slice. The store's stall budget then covers the whole
 			// fetch rather than the gap between chunks, so this path is for doubles and polyfills.
-			log.debug(`${spec.label}: response has no readable body; buffering`, { name });
+			// Warn, not debug: on a real `Response` this branch should be unreachable, so reaching
+			// it in production means the stall budget has quietly become a whole-fetch budget
+			// again — the regression this streaming path exists to prevent.
+			log.warn(`${spec.label}: response has no readable body; buffering`, { name });
 			const bytes = new Uint8Array(await res.arrayBuffer());
 			for (const chunk of encodeChunks(bytes, chunkBytes, (i, t, b) => spec.chunk(name, i, t, b)))
 				port.post(chunk);

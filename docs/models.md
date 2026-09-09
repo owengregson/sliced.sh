@@ -280,7 +280,14 @@ Both asset families share one policy, because both go through `AssetStore`:
 | Budget | Constant | Value | What it bounds |
 |---|---|---|---|
 | Stall | `TIMINGS.assetDownloadStallMs` | 120 s | Gap between chunks that make progress. The real bound. |
-| Total | `TIMINGS.assetDownloadTotalMs` | 60 min | The whole transfer. A backstop against a pathological trickle; sized so a ~72 MB NNUE still completes on ~160 kbit/s. |
+| Total | `TIMINGS.assetDownloadTotalMs` | 60 min | The whole transfer. A backstop against a pathological trickle. |
+
+The slowest link a large asset survives is set by the **stall** budget, not the total: one
+`LIMITS.nnueChunkBytes` slice (4 MiB) must fill within `TIMINGS.assetDownloadStallMs` (120 s),
+so the floor is roughly 35 kB/s (~280 kbit/s). Below that a ~72 MB NNUE is abandoned even though
+it is progressing, and `EngineHost.applyNnue` swallows the failure — the engine plays the session
+on the small net. That is ~17x better than the buffering relay it replaced (~5 Mbit/s), but it is
+a real floor, not an absent one. Raising `chunkBytes` or the stall budget moves it.
 
 Only a **new, non-empty** chunk index rearms the stall budget, so a repeated or empty chunk cannot
 extend a download. The stall budget is only meaningful because the relay streams: a relay that
