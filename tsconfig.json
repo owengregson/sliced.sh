@@ -32,5 +32,5 @@
 		}
 	},
 	"include": ["src/**/*.ts", "scripts/**/*.ts", "test/**/*.ts", "tools/**/*.ts"],
-	"exclude": ["node_modules", "dist", "legacy"]
+	"exclude": ["node_modules", "dist"]
 }

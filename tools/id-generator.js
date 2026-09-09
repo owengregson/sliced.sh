@@ -1,3 +1,11 @@
+// tools/id-generator.js — vanity extension-ID miner, kept from the v1 tree (Task 31).
+//
+// Not part of the build and not loaded by anything: it is pasted into the DevTools console on a
+// CRX key-generator page and clicks its "Generate MV3 Manifest" button until the resulting
+// extension ID contains a chosen substring, printing the matching key pair. The ID it produced
+// is pinned by `manifest.json`'s `key`, which v2 preserves so the extension ID never changes
+// (§12.2) — so this is only needed if that identity is ever deliberately abandoned.
+
 const requestedText = prompt("What string should the CRX ID contain?");
 
 let button = (document.querySelector('[title="Generate MV3 Manifest"]'));
