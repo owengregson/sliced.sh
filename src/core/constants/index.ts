@@ -10,6 +10,7 @@ export * from "./limits";
 export * from "./messages";
 export * from "./models";
 export * from "./ports";
+export * from "./search";
 export * from "./sounds";
 export * from "./spoof";
 export * from "./storage-keys";

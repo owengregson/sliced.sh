@@ -41,6 +41,12 @@ export interface TimingContext {
 	targetElo: number;
 	profile: PersonaProfile;
 	engineReady: boolean;
+	/**
+	 * §7.3 / Task 30: the opening book answered for this position. The feature's other half —
+	 * "we are playing the engine's best move early" — is derived from the lines; this is the
+	 * book half, which only the session knows.
+	 */
+	inBook?: boolean;
 	inputMethod: "drag" | "click";
 	autoQueen: boolean;
 	nowMs: number;

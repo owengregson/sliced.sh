@@ -46,7 +46,8 @@ function lineCp(l: EvalLine): number {
 	return cpEquivalent(l.score);
 }
 
-function pieceCounts(fen: string): { pieces: number; pawns: number } {
+/** Non-pawn pieces and pawns on the board (the budget controller's `N_rem` inputs). */
+export function pieceCounts(fen: string): { pieces: number; pawns: number } {
 	const parts = parseFen(fen);
 	if (!parts) return { pieces: 0, pawns: 0 };
 	let pieces = 0;
@@ -129,7 +130,9 @@ export function computeFeatures(
 	const is_only_legal = cls?.isOnlyMove || nLegal === 1 ? 1 : 0;
 	const is_forced =
 		n_reasonable === 1 && decisiveness > Math.log(1 + F.forcedCp / F.decisivenessScaleCp) ? 1 : 0;
-	const in_book = ctx.ply < F.bookMaxPly && chosenIdx === 0 ? 1 : 0;
+	// Either half puts us "in book": the session's book policy answered (§7.3), or we are early
+	// and playing the engine's best move.
+	const in_book = ctx.inBook === true || (ctx.ply < F.bookMaxPly && chosenIdx === 0) ? 1 : 0;
 	const ponder_hit =
 		prevMove !== undefined && ctx.expectedOppReply !== null && prevMove === ctx.expectedOppReply
 			? 1

@@ -166,18 +166,11 @@ export function tcClass(tc: TimeControl): TcClass {
 }
 
 /**
- * The timing preset a detected time control pre-selects (Appendix F §4.6). The preset chips
- * are display-only: the view shows this preset for the detected class without writing it, and
- * only a user pick writes `timing.profile`. `@core/timing` must apply this same mapping when it
- * derives the effective profile from the detected class at integration (Task 30), so what the
- * chips show is what the timing model uses.
+ * The timing preset a detected time control pre-selects (Appendix F §4.6), from the registry the
+ * `GameSession` applies (Task 30) — the chips show exactly what the timing model runs. The
+ * chips stay display-only: only a user pick writes `timing.profile`.
  */
-export const PROFILE_FOR_TC_CLASS: Readonly<Record<TcClass, Settings["timing"]["profile"]>> = {
-	bullet: "fast",
-	blitz: "natural",
-	rapid: "natural",
-	classical: "slow",
-};
+export { PROFILE_FOR_TC_CLASS } from "@core/constants/timings";
 
 /** "blitz 3+2" for the "Detected: …" note. */
 export function formatTimeControl(tc: TimeControl): string {

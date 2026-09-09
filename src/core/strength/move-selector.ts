@@ -48,12 +48,13 @@ export function endgameTauFor(E: number, phase: Phase | undefined): number {
 export function selectionParams(
 	E: number,
 	state: Pick<SelectionState, "top1Streak">,
-	phase?: Phase
+	phase?: Phase,
+	tauScale = 1
 ): SelectionParams {
 	const streak = state.top1Streak >= C.tau.streakLength;
 	const endgameTau = endgameTauFor(E, phase);
 	return {
-		tau: tauFor(E) * (streak ? C.tau.streakMultiplier : 1) * endgameTau,
+		tau: tauFor(E) * (streak ? C.tau.streakMultiplier : 1) * endgameTau * tauScale,
 		sigma: sigmaFor(E),
 		gap: gapFor(E),
 		beta: betaFor(E),
@@ -243,7 +244,7 @@ export function selectMove(
 		return finish(toCandidate(r, (idx >= 0 ? idx : 0) + 1), "engine-elo", topCpRaw, ctx, rationale);
 	}
 
-	const params = selectionParams(E, state, ctx.phase);
+	const params = selectionParams(E, state, ctx.phase, ctx.tauScale ?? 1);
 	rationale.push(
 		`σ=${fmt(params.sigma, 1)} τ=${fmt(params.tau)} G=${fmt(params.gap, 0)} β=${params.beta}`
 	);
