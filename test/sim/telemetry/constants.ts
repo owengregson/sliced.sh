@@ -43,8 +43,12 @@ function nominalFittsMs(distPx: number, widthPx: number): number {
  * derived from the motor profile rather than guessed: the two Fitts movements the hand makes
  * — the longest approach (`MAX_TRAVEL_PX` onto one square) and the longest drag (the board
  * diagonal) — at the per-move jitter ceiling (`PATH.fittsJitter[1]`), plus the grab and drop
- * pauses at their own sampled ceilings. Anything longer is a generator bug, not a hand.
- * (Measured max over the 200-move timing-shape run: 2148 ms, ≈ 15 % under this.)
+ * pauses at their own sampled ceilings. This is a plausibility scale that tracks the profile,
+ * NOT a hard upper bound: the per-move jitter is applied to the Fitts terms but the persona and
+ * time-control multipliers, the overshoot branch and the hesitation pauses are not modelled, so
+ * a legitimate touch can exceed it on a slow persona. It exists to catch a generator that has
+ * come off its profile entirely, and it moves with `MOTOR_DEFAULTS`/`PATH` instead of freezing
+ * a literal. (Measured max over the 200-move timing-shape run: 2148 ms.)
  */
 const MAX_TOUCH_MS = Math.ceil(
 	(nominalFittsMs(MAX_TRAVEL_PX, SQUARE_PX) + nominalFittsMs(BOARD_DIAGONAL_PX, SQUARE_PX)) *

@@ -45,7 +45,8 @@ BANDS = json.loads("""
     "cvMin": 0.5,
     "cvAfterMoves": 12,
     "minMs": 250,
-    "complexityCorrMin": 0.2
+    "complexityCorrMin": 0.2,
+    "complexityMinRows": 12
   },
   "compression": {
     "pressureClockMs": 30000,
@@ -212,6 +213,7 @@ def summarize(entries: list[dict[str, Any]], target_elo: int) -> dict[str, Any]:
         "holdVsComplexity": corr,
         "complexityAxis": complexity_axis,
         "complexityRows": complexity_rows,
+        "complexityAsserted": complexity_rows >= BANDS["holdTime"]["complexityMinRows"],
         "compression": {"pressure": p, "comfortable": c, "ratio": (p["mean"] / c["mean"]) if p["n"] and c["n"] and c["mean"] else None},
         "targetElo": target_elo,
         "band": band_for(target_elo),
@@ -323,13 +325,25 @@ def render(summary: dict[str, Any], paths: list[str]) -> tuple[str, bool]:
     # The §13.6 complexity check needs the position's `n_reasonable`. Only `telemetry` carries it,
     # so on a pre-Task-30 export the correlation is printed against the clock-driven `alloc`
     # column as information and is *not* asserted -- a low r there says nothing about complexity.
-    corr_checked = summary["complexityAxis"] == "n_reasonable"
+    # Pearson r over a handful of points is dominated by noise (over two it is exactly +/-1),
+    # so the correlation is asserted only once the axis carries `complexityMinRows`; below that
+    # it is printed as information, like the pre-Task-30 `alloc` axis.
+    corr_checked = summary["complexityAxis"] == "n_reasonable" and summary["complexityAsserted"]
     corr_ok = (not corr_checked) or corr is None or corr >= BANDS["holdTime"]["complexityCorrMin"]
+    if summary["complexityAxis"] != "n_reasonable":
+        note = f" - n_reasonable {MISSING}, not asserted"
+    elif not summary["complexityAsserted"]:
+        note = (
+            f" - only {summary['complexityRows']} of the"
+            f" {BANDS['holdTime']['complexityMinRows']} rows this needs, not asserted"
+        )
+    else:
+        note = ""
     lines.append(
         f"  [{verdict(corr_ok) if corr_checked else 'INFO'}] ln(hold) vs ln({summary['complexityAxis']}) r="
         + ("n/a" if corr is None else f"{corr:.2f}")
         + f" over {summary['complexityRows']} moves (min {BANDS['holdTime']['complexityCorrMin']})"
-        + ("" if corr_checked else f" — n_reasonable {MISSING}, not asserted")
+        + note
     )
     comp = summary["compression"]
     comp_checked = (

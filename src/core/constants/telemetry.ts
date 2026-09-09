@@ -79,6 +79,12 @@ export const TELEMETRY_BANDS = {
 		 */
 		complexityCorrMin: 0.2,
 		/**
+		 * Rows the complexity axis needs before its correlation is asserted. Pearson r over two
+		 * points is exactly ±1, so a barely-migrated export would coin-flip a PASS or a FAIL;
+		 * below this the report prints r and says the sample is too small.
+		 */
+		complexityMinRows: 12,
+		/**
 		 * The page's `MoveHoldTime` never runs past the hand's own drop time, and precedes
 		 * it by at most one committed press hold (a click-click submits on the press).
 		 */
@@ -105,8 +111,10 @@ export const TELEMETRY_BANDS = {
 		 * generator is tighter than that and the band follows it — `clickReleasePoint` offsets
 		 * the *rounded* press point by an integer ±`CLICK.releaseDriftPx` on each axis and
 		 * `CdpMouse` rounds every dispatch, so the furthest a release can land is that offset's
-		 * diagonal.
+		 * diagonal. Clamped to §13.5's stated 2 px: the derivation may only ever make this
+		 * gate stricter than the spec, never looser (raising `releaseDriftPx` must not
+		 * silently stop the suite enforcing §13.5).
 		 */
-		clickDriftMaxPx: CLICK.releaseDriftPx * Math.SQRT2,
+		clickDriftMaxPx: Math.min(2, CLICK.releaseDriftPx * Math.SQRT2),
 	},
 } as const;

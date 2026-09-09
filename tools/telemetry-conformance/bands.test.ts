@@ -51,6 +51,7 @@ const expected = {
 		cvAfterMoves: B.holdTime.cvAfterMoves,
 		minMs: B.holdTime.minMs,
 		complexityCorrMin: B.holdTime.complexityCorrMin,
+		complexityMinRows: B.holdTime.complexityMinRows,
 	},
 	compression: {
 		pressureClockMs: B.compression.pressureClockMs,

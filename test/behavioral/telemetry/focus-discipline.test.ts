@@ -89,6 +89,9 @@ describe("focus discipline: rows the simulator can record (Step 1)", () => {
 			const same = control.moves[shortcutAt]!;
 			expect(same.plan.thinkMs).toBe(move.plan.thinkMs);
 			expect(exploration(same).length).toBeGreaterThan(0);
+			// `approachStart` returns +Infinity when there is no approach phase at all, which
+			// would satisfy a bare `toBeGreaterThan`; the control must have a real one.
+			expect(Number.isFinite(approachStart(same))).toBe(true);
 			expect(approachStart(same)).toBeGreaterThan(SIM_TELEMETRY.collapsedPreTouchMs);
 			expect(same.observation?.ac.MoveHoldTime ?? 0).toBeGreaterThan(hold);
 		} finally {
