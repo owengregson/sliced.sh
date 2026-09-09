@@ -146,7 +146,9 @@ export function createGameStack(options: GameStackOptions): GameStack {
 	// engine with `pendingOptions` must not be starved by a running ponder (Task 13), so every
 	// session's `go infinite` is stopped when one is waiting.
 	const applySettings = (next: Settings): void => {
+		const first = settings === DEFAULT_SETTINGS;
 		settings = next;
+		if (!first) registry.settingsChanged();
 		if (controller.status().pendingOptions) registry.stopSearches("engine options pending");
 	};
 	const offSettings = onSettingsChanged(applySettings);

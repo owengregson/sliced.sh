@@ -182,6 +182,34 @@ describe("game session: the full move cycle (Step 2a)", () => {
 		expect((await h.snapshot()).session.lastExecution?.outcome).toBe("executed");
 	});
 
+	it("arming in `waiting-for-game` attaches the debugger before any game starts (§13.4)", async () => {
+		h = await createGameHarness({ manualStart: true });
+		await h.drive(() => h.site.hello());
+		const session = h.session();
+		expect(session.currentState()).toBe("waiting-for-game");
+		expect(h.debuggerManager.isAttached(h.tabId)).toBe(false);
+
+		await h.sw.run(() => session.command("armAutoMove"));
+		expect(h.debuggerManager.isAttached(h.tabId)).toBe(true);
+		expect(h.executor()?.isArmed()).toBe(true);
+		// The attach happened with no game and no position — outside every move window.
+		expect(session.view().gameId).toBeNull();
+		const attaches = h.sim.debugger.attachments.filter((a) => a.action === "attach");
+		expect(attaches).toHaveLength(1);
+
+		// The game then starts with the hand still armed and the debugger still attached.
+		await h.drive(() => h.site.startGame());
+		expect(h.session().currentState()).toBe("live:opponent-turn");
+		expect(await h.until(() => h.executor()?.isArmed() === true, 2_000)).toBe(true);
+		expect(h.debuggerManager.isAttached(h.tabId)).toBe(true);
+		await h.arrive();
+		expect(await h.until(() => h.session().currentState() === "live:opponent-turn", 60_000)).toBe(
+			true
+		);
+		// Still exactly one attach: nothing re-attached mid-game.
+		expect(h.sim.debugger.attachments.filter((a) => a.action === "attach")).toHaveLength(1);
+	});
+
 	it("the content script's hello opens the session and the SW answers CONTENT_HELLO with the keybinds", async () => {
 		h = await createGameHarness({ manualStart: true });
 		const reply = await h.sw.run(() =>

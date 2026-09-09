@@ -341,6 +341,14 @@ export class GameSession implements SessionSource {
 		}
 	}
 
+	/**
+	 * The settings changed: re-send what the content script acts on (`highlightMoves`, the
+	 * keybinds — §13.3 rule 4 keeps both off/default until the worker says otherwise).
+	 */
+	onSettingsChanged(): void {
+		this.pushContentSettings();
+	}
+
 	/** Stop a running ponder / panel search (Task 13's `pendingOptions`, §6.4). */
 	stopSearch(): Promise<void> {
 		return this.ponderer?.stop() ?? Promise.resolve();
@@ -401,8 +409,25 @@ export class GameSession implements SessionSource {
 		this.site = site;
 		this.pageKind = pageKind;
 		this.apply("hello");
+		// §13.4: the hand must be armable *in the waiting view*, so the debugger's infobar (and
+		// whatever it shifts) lands outside every move window. The executor therefore exists from
+		// the moment the page says hello; `startGame` replaces it with the game's own profile and
+		// carries the armed state (and the attachment) across.
+		this.ensureExecutor(site);
 		this.pushContentSettings();
 		this.deps.notify();
+	}
+
+	/** A pre-game executor so `arm()` works before the first position (§13.4). */
+	private ensureExecutor(site: Site): void {
+		if (this.executorHandle) return;
+		this.attachExecutor({
+			site,
+			persona: this.deps.getSettings().strength.persona,
+			// No time control is known yet; the game's own class replaces this at `startGame`.
+			tcClass: motorTcClass("untimed"),
+			gameSeed: `${this.seed}:pregame`,
+		});
 	}
 
 	/** The tab navigated away from the game (`navigated`) or was closed (`tabRemoved`). */
@@ -880,9 +905,13 @@ export class GameSession implements SessionSource {
 	// ── executor plumbing ──────────────────────────────────────────────────
 
 	private attachExecutor(config: Parameters<ExecutorFactory>[0]): void {
-		const wasArmed = this.executorHandle?.isArmed() ?? false;
-		this.detachExecutor();
+		const previous = this.executorHandle;
+		const wasArmed = previous?.isArmed() ?? false;
 		const executor = this.deps.createExecutor(config);
+		for (const off of this.executorOffs.splice(0)) off();
+		// A factory may legitimately hand the same executor back (one hand for the whole tab);
+		// only a *replacement* retires the old one.
+		if (previous && previous !== executor) previous.dispose();
 		this.executorHandle = executor;
 		this.executorOffs = [
 			executor.on("executed", (report) => this.onExecuted(report)),

@@ -98,6 +98,9 @@ export class SessionRegistry implements GameSessionRegistry, SnapshotSources {
 			scheduler: this.scheduler,
 			rng: createRng(`${deps.seed ?? "sl"}:auto-queue`),
 		});
+		// A port that connected before this registry existed (an SW that built its stack in an
+		// unusual order) still gets a session.
+		for (const tabId of deps.link.tabs()) this.ensure(tabId);
 		this.offs.push(
 			deps.link.onConnect((tabId) => void this.ensure(tabId)),
 			deps.link.onDisconnect((tabId) => this.drop(tabId, "disconnected")),
@@ -156,6 +159,11 @@ export class SessionRegistry implements GameSessionRegistry, SnapshotSources {
 	stopSearches(reason: string): void {
 		log.debug("session-registry: stopping searches", { reason, sessions: this.sessions.size });
 		for (const entry of this.sessions.values()) void entry.session.stopSearch();
+	}
+
+	/** A settings write: every session re-sends what the content script acts on (§13.3 rule 4). */
+	settingsChanged(): void {
+		for (const entry of this.sessions.values()) entry.session.onSettingsChanged();
 	}
 
 	/** The session for `tabId`, created on demand (the content port is already up). */
