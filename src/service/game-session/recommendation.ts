@@ -222,7 +222,7 @@ export class RecommendationPipeline {
 		const budget = searchBudget(plannedThinkMs, tc, settings);
 
 		// §7.3 item 3 + §3.2 step 1: the book and the engine run at the same time.
-		const bookPending = this.bookMove(input, tc);
+		const bookPending = this.bookMove(input);
 		const analysis = await this.analyse(snapshot, budget, input.signal);
 		if (input.signal?.aborted) return null;
 		const book = await bookPending;
@@ -233,7 +233,6 @@ export class RecommendationPipeline {
 		const chosen = this.choose(input, lines, book, analysis, shallow);
 		if (!chosen) return null;
 
-		const nReasonable = Math.max(1, lines.length);
 		const timingCtx: TimingContext = {
 			fen: snapshot.fen,
 			ply: snapshot.ply,
@@ -259,6 +258,11 @@ export class RecommendationPipeline {
 		};
 		if (book !== null) timingCtx.inBook = true;
 		const plan = this.timing.planMove(timingCtx);
+		// Appendix D §2 feature 11, *not* the MultiPV count: `K` is a function of the time budget
+		// (§7.5's 3/6/8 ladder), so reporting it as `n_reasonable` would put a driver of the think
+		// time on the complexity axis and make `report.py`'s `ln(hold) vs ln(n_reasonable)`
+		// correlation spurious. `planMove` has just computed the real one.
+		const nReasonable = Math.max(1, plan.features.n_reasonable ?? 1);
 
 		const best = lines[0];
 		const rec: Recommendation = {
@@ -277,7 +281,7 @@ export class RecommendationPipeline {
 	}
 
 	/** §7.3: the book move for this position, or `null` (disabled, out of book, or it threw). */
-	private async bookMove(input: RecommendationInput, _tc: TcClass): Promise<ChosenMove | null> {
+	private async bookMove(input: RecommendationInput): Promise<ChosenMove | null> {
 		const policy = this.book;
 		if (!policy || !input.settings.strength.useOpeningBook) return null;
 		const ctx: BookContext = {

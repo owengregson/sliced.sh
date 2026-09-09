@@ -45,8 +45,8 @@ export interface MoveWindowClose {
 	orientationMs: number;
 	multiSelectEligible: boolean;
 	nReasonable: number;
-	top1: boolean;
-	cpLoss: number;
+	/** The §13.6 pair, omitted for a move with no engine evaluation (§13.6 / `isScoredMove`). */
+	quality?: { top1: boolean; cpLoss: number } | undefined;
 	/** Epoch ms of the drop. */
 	at: number;
 }
@@ -134,15 +134,18 @@ export class MoveWindow {
 		this.startedAt = null;
 		this.edges.length = 0;
 		const lichessBlur: LichessBlurBit = blurs.length > 0 ? 1 : 0;
-		return {
+		const record: MoveTelemetryRecord = {
 			ac,
 			lichessBlur,
 			orientationMs: c.orientationMs,
 			multiSelectEligible: c.multiSelectEligible,
 			nReasonable: c.nReasonable,
-			top1: c.top1,
-			cpLoss: c.cpLoss,
 		};
+		if (c.quality) {
+			record.top1 = c.quality.top1;
+			record.cpLoss = c.quality.cpLoss;
+		}
+		return record;
 	}
 
 	/** Drop the window without producing a record (the move was skipped / the position moved on). */

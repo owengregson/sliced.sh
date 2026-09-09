@@ -3,7 +3,10 @@
 // lands the move is played straight away (`t_premove ~ U(0, TIMING_CONSTANTS.premove.maxS)` =
 // within 120 ms), with no fresh search. Any other reply falls back to the normal pipeline.
 import { afterEach, describe, expect, it } from "bun:test";
+import { chromeLocalGet } from "@core/chrome/storage";
+import { LOCAL_KEYS } from "@core/constants/storage-keys";
 import { TIMING_CONSTANTS } from "@core/timing/constants";
+import type { SessionStats } from "@typedefs/game";
 import { createGameHarness, type GameHarness } from "./harness";
 
 let h: GameHarness;
@@ -78,6 +81,30 @@ describe("game session: premove (Step 2c)", () => {
 			expect(await h.until(() => h.executor()?.runningMove() !== null, 1_000)).toBe(true);
 			expect(h.sim.now() - arrivedAt).toBeLessThanOrEqual(PREMOVE_WINDOW_MS + 20);
 			expect(h.executor()?.runningMove()?.rec.chosen.uci).toBe(rec.chosen.uci);
+
+			// §13.6: a premove is decided before its position exists, so it carries no engine
+			// evaluation — it must not be folded into the quality pair as a zero-loss non-top-1
+			// move, which would drag both numbers down in exactly the speeds §7.4 premoves in.
+			expect(rec.chosen.rankInLines).toBe(0);
+			expect(await h.until(() => h.session().currentState() === "live:opponent-turn", 30_000)).toBe(
+				true
+			);
+			const stats = await h.sw.run(
+				() => chromeLocalGet(LOCAL_KEYS.sessionStats) as Promise<SessionStats | undefined>
+			);
+			expect(stats?.moves).toBe(2); // the normal move, then the premove
+			expect(stats?.scoredMoves).toBe(1); // only the searched one
+			// §8.6: the premove has a row of its own (it never went through `planMove`), and it is
+			// the *only* played row without a quality pair — every searched move carries one.
+			const playedRows = h.timingLog.entries().filter((e) => e.actualMs !== null);
+			const unscored = playedRows.filter((e) => e.telemetry?.top1 === undefined);
+			expect(unscored).toHaveLength(1);
+			const premoveRow = unscored[0];
+			expect(premoveRow?.mode).toBe("premove");
+			expect(premoveRow?.telemetry).toBeDefined();
+			expect(premoveRow?.telemetry?.cpLoss).toBeUndefined();
+			expect(premoveRow?.telemetry?.ac.EventTrusted).toBe(true);
+			expect(playedRows.filter((e) => typeof e.telemetry?.top1 === "boolean")).toHaveLength(1);
 		}
 		// §7.4's premove probability is a per-game draw; if no seed drew one the test is inert.
 		expect(fired).toBe(true);

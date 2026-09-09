@@ -273,6 +273,10 @@ def summarize(entries: list[dict[str, Any]], target_elo: int) -> dict[str, Any]:
     losses = [float(t["telemetry"]["cpLoss"]) for t in telemetry if isinstance(t["telemetry"].get("cpLoss"), (int, float))]
     summary["quality"] = {
         "n": len(top1),
+        # A premove is decided before its position exists and an unranked book move has neither a
+        # rank nor a loss, so both omit the pair: the band is computed over the rows that carry it.
+        "scored": len(top1),
+        "total": len(telemetry),
         "top1Pct": (100.0 * sum(1 for t in top1 if t["telemetry"]["top1"]) / len(top1)) if top1 else None,
         "acpl": (sum(losses) / len(losses)) if losses else None,
     }
@@ -415,6 +419,12 @@ def render(summary: dict[str, Any], paths: list[str]) -> tuple[str, bool]:
     else:
         top1_ok = quality["top1Pct"] is None or band["top1"][0] <= quality["top1Pct"] <= band["top1"][1]
         acpl_ok = quality["acpl"] is None or band["acpl"][0] <= quality["acpl"] <= band["acpl"][1]
+        # A premove is decided before its position exists and an unranked book move has no rank or
+        # loss, so both omit the pair; the band is computed over the rows that carry it.
+        lines.append(
+            f"  scored         {quality['scored']} of {quality['total']} moves carry an engine "
+            "evaluation (a premove / unranked book move carries none)"
+        )
         lines.append(
             f"  [{verdict(top1_ok)}] top-1 "
             + ("n/a" if quality["top1Pct"] is None else f"{quality['top1Pct']:.1f} %")

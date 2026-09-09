@@ -25,27 +25,38 @@ export const EMPTY_STATS: Readonly<SessionStats> = Object.freeze({
 export interface MoveOutcome {
 	/** Realised think time of the move (ms). */
 	thinkMs: number;
-	/** The played move was the engine's first line. */
+	/**
+	 * The move carries an engine evaluation, so it belongs in the §13.6 quality pair. A premove
+	 * (decided before the position existed) and a book move the engine's lines never ranked do
+	 * not: scoring them as zero-loss non-top-1 moves would drag both numbers down.
+	 */
+	scored: boolean;
+	/** The played move was the engine's first line (only read when `scored`). */
 	top1: boolean;
-	/** Centipawn loss of the played move. */
+	/** Centipawn loss of the played move (only read when `scored`). */
 	cpLoss: number;
 }
 
 /**
- * Running per-move accumulator. `moves` is the divisor for all three means, so
- * a `SessionStats` read back from storage resumes exactly where it left off.
+ * Running per-move accumulator. `moves` counts every move played and is the divisor for
+ * `avgThinkMs`; `scoredMoves` counts the evaluated ones and is the divisor for the §13.6 pair,
+ * so a `SessionStats` read back from storage resumes exactly where it left off on both axes.
  */
 export function foldMove(stats: SessionStats, move: MoveOutcome): SessionStats {
-	const n = stats.moves + 1;
-	const mean = (previous: number | undefined, value: number): number =>
-		((previous ?? 0) * stats.moves + value) / n;
-	return {
+	const moves = stats.moves + 1;
+	const next: SessionStats = {
 		...stats,
-		moves: n,
-		avgThinkMs: mean(stats.avgThinkMs, move.thinkMs),
-		top1Pct: mean(stats.top1Pct, move.top1 ? PERCENT : 0),
-		acpl: mean(stats.acpl, Math.max(0, move.cpLoss)),
+		moves,
+		avgThinkMs: ((stats.avgThinkMs ?? 0) * stats.moves + move.thinkMs) / moves,
 	};
+	if (!move.scored) return next;
+	const scored = (stats.scoredMoves ?? 0) + 1;
+	const mean = (previous: number | undefined, value: number): number =>
+		((previous ?? 0) * (scored - 1) + value) / scored;
+	next.scoredMoves = scored;
+	next.top1Pct = mean(stats.top1Pct, move.top1 ? PERCENT : 0);
+	next.acpl = mean(stats.acpl, Math.max(0, move.cpLoss));
+	return next;
 }
 
 /**

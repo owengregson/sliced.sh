@@ -20,7 +20,7 @@
  * position instead.
  */
 
-import { legalMoves, parseUci, uciToSan } from "@core/chess/san";
+import { legalMoves, uciToSan } from "@core/chess/san";
 import { sanToSpeech } from "@core/chess/san-speech";
 import { isSquare } from "@core/chess/squares";
 import { chromeLocalGet, chromeLocalSet } from "@core/chrome/storage";
@@ -28,13 +28,9 @@ import { LIMITS } from "@core/constants/limits";
 import type { GamePortCommand, GamePortMessage } from "@core/constants/messages";
 import { LOCAL_KEYS } from "@core/constants/storage-keys";
 import { TELEMETRY_BANDS } from "@core/constants/telemetry";
-import {
-	MANUAL_TIMING_PROFILE,
-	PROFILE_FOR_TC_CLASS,
-	TIMING_PROFILE_KNOBS,
-} from "@core/constants/timings";
+import type { TimingProfile } from "@core/constants/timings";
 import { log } from "@core/logger";
-import type { MoveCandidate, TimeControlClass } from "@core/motor/types";
+import type { TimeControlClass } from "@core/motor/types";
 import { createRng, type Rng } from "@core/rng";
 import type { BookPolicy } from "@core/strength/book/book-policy";
 import { createSelectionState } from "@core/strength/move-selector";
@@ -44,6 +40,7 @@ import type { SelectionState } from "@core/strength/types";
 import { TIMING_CONSTANTS } from "@core/timing/constants";
 import { tcClass } from "@core/timing/features";
 import type { TimingLogWriter } from "@core/timing/timing-log";
+import { buildTimingLogEntry } from "@core/timing/timing-log";
 import { TimingModel } from "@core/timing/timing-model";
 import type { DistributionHead, TcClass, TimingContext } from "@core/timing/types";
 import { clamp } from "@core/util/clamp";
@@ -56,6 +53,7 @@ import type { EngineController } from "@service/engine-controller";
 import type { FocusGate } from "@service/focus-gate";
 import type { HandOwnership } from "@service/hand-ownership";
 import type { ExecutionReport, MoveContext, MoveExecutor } from "@service/move-executor";
+import { candidatesFromLines } from "@service/move-executor";
 import type { OpponentView, SessionGameView, SessionSource } from "@service/panel-broadcaster";
 import type {
 	ChosenMove,
@@ -69,9 +67,11 @@ import type {
 	SessionStats,
 	Site,
 	Square,
+	TimeControl,
 } from "@typedefs/game";
 import type { PersonaId, Settings } from "@typedefs/settings";
 import { PonderController } from "./ponder";
+import { autoPlayAllowed, effectiveTimingProfile, timingSettingsFor } from "./presets";
 import type { RecommendationInput, RecommendationOutcome } from "./recommendation";
 import { RecommendationPipeline } from "./recommendation";
 import { EMPTY_STATS, foldGame, foldMove } from "./stats";
@@ -85,6 +85,35 @@ const MS_PER_S = 1000;
  * move was not among the engine's lines at all — what the opening book and a premove report.
  */
 const TOP_LINE_RANK = 1;
+
+/**
+ * `LOCAL_KEYS.sessionStats` is one key for the whole worker, and every fold is a
+ * read-modify-write: a `recordMove` racing a `finishGame` (or a second tab's session) would
+ * otherwise drop one of them. Every fold in the worker goes through this one chain.
+ */
+let statsChain: Promise<void> = Promise.resolve();
+
+function queueStatsWrite(fold: (stats: SessionStats) => SessionStats): Promise<void> {
+	statsChain = statsChain.then(async () => {
+		try {
+			const stored = (await chromeLocalGet(LOCAL_KEYS.sessionStats)) as SessionStats | undefined;
+			await chromeLocalSet(LOCAL_KEYS.sessionStats, fold(stored ?? { ...EMPTY_STATS }));
+		} catch (error) {
+			log.debug("game-session: session stats not written", { error: errorMessage(error) });
+		}
+	});
+	return statsChain;
+}
+
+/**
+ * §13.6: a move the quality pair may be computed over. A premove is decided before the position
+ * it is played in exists, and a book move the engine's lines never ranked has neither a rank nor a
+ * loss — both report `rankInLines: 0` and `cpLoss: 0`, which would score as a zero-loss non-top-1
+ * move and pull `top1Pct` *and* `acpl` down in exactly the speed classes §7.4 premoves in.
+ */
+function isScoredMove(chosen: ChosenMove): boolean {
+	return chosen.source !== "premove" && chosen.rankInLines >= TOP_LINE_RANK;
+}
 
 /** `t_premove ~ U(0, maxS)` — §7.4 / Appendix D §3a.5 (120 ms). */
 const PREMOVE_WINDOW_MS = TIMING_CONSTANTS.premove.maxS * MS_PER_S;
@@ -112,7 +141,7 @@ export interface GameSessionDeps {
 	debugger: Pick<DebuggerManager, "isAttached">;
 	focus: Pick<FocusGate, "positionArrived" | "onEdge" | "snapshot">;
 	ownership: Pick<HandOwnership, "realPointerCount">;
-	timingLog: Pick<TimingLogWriter, "append" | "markActual" | "attachTelemetry">;
+	timingLog: Pick<TimingLogWriter, "append" | "upsert" | "markActual" | "attachTelemetry">;
 	autoQueue: Pick<AutoQueue, "schedule" | "cancel">;
 	createExecutor: ExecutorFactory;
 	/**
@@ -212,6 +241,10 @@ export class GameSession implements SessionSource {
 	private lastPositionKey: string | null = null;
 	/** The position before the current one — what the §7.4 premove policy replays our move from. */
 	private priorFen: string | null = null;
+	/** The timing profile in force this game (§4.6); `null` until a game starts. */
+	private profile: TimingProfile | null = null;
+	/** The time control that profile was derived from (`null` = none was known yet). */
+	private profiledTimeControl: TimeControl | null = null;
 	private pipelineAc: AbortController | null = null;
 	private moves: string[] = [];
 	private oppThinkMs: number[] = [];
@@ -491,6 +524,7 @@ export class GameSession implements SessionSource {
 		const previous = this.snapshot;
 		this.priorFen = previous?.fen ?? null;
 		this.snapshot = snapshot;
+		this.reprofile(snapshot);
 		this.rec = null;
 		const myTurn = snapshot.myColor !== null && snapshot.sideToMove === snapshot.myColor;
 		const at = this.now();
@@ -505,6 +539,53 @@ export class GameSession implements SessionSource {
 		}
 		if (await this.tryPremove(snapshot)) return;
 		await this.runPipeline(snapshot);
+	}
+
+	/**
+	 * §4.6: an adapter that reports the time control on the first `position` rather than on
+	 * `gameStarted` must still get its preset. The model is rebuilt once, before anything has
+	 * been planned this game, so no per-game state is lost; afterwards the profile is frozen.
+	 */
+	private reprofile(snapshot: PositionSnapshot): void {
+		const tc = snapshot.timeControl;
+		const timing = this.timing;
+		if (!tc || !timing || this.profiledTimeControl !== null || this.myThinkMs.length > 0) return;
+		const meta = this.game;
+		if (!meta) return;
+		this.game = { ...meta, timeControl: tc };
+		this.profiledTimeControl = tc;
+		const settings = this.deps.getSettings();
+		const next = timingSettingsFor(settings.timing, tc);
+		this.profile = next.profile;
+		const [baseSec, incSec] = this.timeControlSeconds(this.game);
+		this.startClockMs = baseSec * MS_PER_S;
+		this.timing = new TimingModel(
+			this.deps.head,
+			next,
+			createRng(`${this.seed}:${meta.gameId}:timing`),
+			{ onEntry: (entry) => this.deps.timingLog.upsert(entry) }
+		);
+		this.timing.startGame({
+			targetElo: this.targetElo(),
+			profile: settings.strength.persona,
+			baseSec,
+			incSec,
+			site: meta.site,
+			gameId: meta.gameId,
+		});
+		this.pipeline = this.deps.createPipeline
+			? this.deps.createPipeline(this.timing)
+			: this.deps.engine
+				? new RecommendationPipeline({
+						engine: this.deps.engine,
+						timing: this.timing,
+						book: this.deps.book,
+					})
+				: null;
+		log.debug("game-session: time control learned from the first position", {
+			tabId: this.deps.tabId,
+			profile: next.profile,
+		});
 	}
 
 	/** Opponent's turn: ponder (§6.4) and prepare a premove candidate (§7.4). */
@@ -585,21 +666,17 @@ export class GameSession implements SessionSource {
 
 	/** `manual` never auto-plays ("Never auto-plays; shows recommendations only.", §4.6). */
 	private autoMoveAllowed(settings: Settings): boolean {
-		return this.effectiveProfile(settings) !== MANUAL_TIMING_PROFILE;
+		return autoPlayAllowed(
+			this.profile ?? effectiveTimingProfile(settings.timing.profile, this.currentTimeControl())
+		);
 	}
 
 	private moveContext(rec: Recommendation): MoveContext {
 		const snapshot = this.snapshot;
-		const candidates: MoveCandidate[] = [];
-		rec.lines.forEach((line, i) => {
-			const uci = line.pvUci[0];
-			const parts = uci === undefined ? null : parseUci(uci);
-			if (!uci || !parts) return;
-			candidates.push({ from: parts.from, to: parts.to, uci, probability: 1 / (i + 1) });
-		});
 		const ctx: MoveContext = {
 			nReasonable: this.recNReasonable,
-			candidates,
+			// The executor's own rank-weighted derivation (Task 18) — one definition, not two.
+			candidates: candidatesFromLines(rec),
 			legalDestinations: (sq: Square) => this.legalDestinations(sq),
 		};
 		if (snapshot?.myColor) ctx.myClockMs = snapshot.clocks[snapshot.myColor].ms;
@@ -726,6 +803,25 @@ export class GameSession implements SessionSource {
 			fen: snapshot.fen,
 		};
 		this.rec = rec;
+		this.recNReasonable = 1;
+		// §8.6 wants a row per *played* move, and a premove never goes through `planMove` (it was
+		// decided during the opponent's turn), so the session writes its row itself — otherwise
+		// `markActual` / `attachTelemetry` would have nothing to attach to and the move would be
+		// missing from the export entirely.
+		this.deps.timingLog.append(
+			buildTimingLogEntry({
+				gameId: this.game?.gameId ?? "",
+				ply: snapshot.ply,
+				mode: "premove",
+				plannedMs: fireInMs,
+				alloc: 0,
+				clockMs: snapshot.myColor ? snapshot.clocks[snapshot.myColor].ms : 0,
+				comp: 1,
+				eps: 0,
+				terms: [],
+				persona: settings.strength.persona,
+			})
+		);
 		this.apply("recommended");
 		this.deps.notify();
 		executor.schedule(rec, rec.plan, this.moveContext(rec));
@@ -844,13 +940,13 @@ export class GameSession implements SessionSource {
 		const tc = tcClass(baseSec, incSec);
 		this.startClockMs = baseSec * MS_PER_S;
 		const targetElo = this.targetElo();
+		const timing = timingSettingsFor(settings.timing, meta.timeControl);
+		this.profile = timing.profile;
+		this.profiledTimeControl = meta.timeControl ?? null;
 
-		this.timing = new TimingModel(
-			this.deps.head,
-			this.timingSettings(settings, tc),
-			createRng(`${gameSeed}:timing`),
-			{ onEntry: (entry) => this.deps.timingLog.append(entry) }
-		);
+		this.timing = new TimingModel(this.deps.head, timing, createRng(`${gameSeed}:timing`), {
+			onEntry: (entry) => this.deps.timingLog.upsert(entry),
+		});
 		this.timing.startGame({
 			targetElo,
 			profile: settings.strength.persona,
@@ -916,8 +1012,8 @@ export class GameSession implements SessionSource {
 		this.executorOffs = [
 			executor.on("executed", (report) => this.onExecuted(report)),
 			executor.on("failed", (report) => this.onFailed(report)),
-			executor.on("aborted", () => this.window.discard()),
-			executor.on("skipped", () => this.window.discard()),
+			executor.on("aborted", (report) => this.onNotExecuted(report, "aborted")),
+			executor.on("skipped", (report) => this.onNotExecuted(report, "skipped")),
 			executor.on("hand", (hand) => {
 				if (hand !== "rest") this.apply("handStarted");
 			}),
@@ -943,13 +1039,30 @@ export class GameSession implements SessionSource {
 	}
 
 	private onFailed(report: ExecutionReport): void {
-		this.apply("failed");
 		log.warn("game-session: execution failed", {
 			tabId: this.deps.tabId,
 			uci: report.rec.chosen.uci,
 			reason: report.result.reason ?? null,
 		});
+		this.onNotExecuted(report, "failed");
+	}
+
+	/**
+	 * Every outcome that is not `executed` is a `failed` edge for §3.3: the hand has stopped and
+	 * the move did not land, so `live:my-turn:executing` must fall back to `recommended` rather
+	 * than sit in a state whose hand is at rest. This is the path a §13.4 blur cancel takes
+	 * (`aborted`), as well as the position guard (`skipped`) and a genuine failure.
+	 */
+	private onNotExecuted(report: ExecutionReport, outcome: "aborted" | "skipped" | "failed"): void {
+		this.apply("failed");
 		this.window.discard();
+		log.debug("game-session: move did not land", {
+			tabId: this.deps.tabId,
+			outcome,
+			uci: report.rec.chosen.uci,
+			reason: report.result.reason ?? null,
+			state: this.state,
+		});
 		this.deps.notify();
 	}
 
@@ -969,8 +1082,10 @@ export class GameSession implements SessionSource {
 				orientationMs: rec.plan.orientationMs,
 				multiSelectEligible: this.multiSelectEligible(rec, snapshot),
 				nReasonable: this.recNReasonable,
-				top1: rec.chosen.rankInLines === TOP_LINE_RANK,
-				cpLoss: rec.chosen.cpLoss,
+				// §13.6: only a move the engine actually ranked carries a quality pair.
+				quality: isScoredMove(rec.chosen)
+					? { top1: rec.chosen.rankInLines === TOP_LINE_RANK, cpLoss: rec.chosen.cpLoss }
+					: undefined,
 				at: result.at ?? this.now(),
 			});
 			if (record) this.deps.timingLog.attachTelemetry(this.game.gameId, snapshot.ply, record);
@@ -978,6 +1093,7 @@ export class GameSession implements SessionSource {
 		void this.updateStats((stats) =>
 			foldMove(stats, {
 				thinkMs: result.elapsedMs,
+				scored: isScoredMove(rec.chosen),
 				top1: rec.chosen.rankInLines === TOP_LINE_RANK,
 				cpLoss: rec.chosen.cpLoss,
 			})
@@ -1106,33 +1222,13 @@ export class GameSession implements SessionSource {
 	}
 
 	/**
-	 * §4.6: a *detected* preset wins over a stored preset, exactly as the Settings
-	 * view's chips display it; `manual` and `custom` are the user's own choice and
-	 * are never overridden.
+	 * The time control the presets are keyed on — the game's, else the one the first position
+	 * brought. `startGame` freezes the profile it derives from this into `profile`, and
+	 * `autoMoveAllowed` reads the frozen value, so the model's knobs and the "may I auto-play"
+	 * answer can never disagree mid-game.
 	 */
-	private effectiveProfile(settings: Settings): Settings["timing"]["profile"] {
-		const stored = settings.timing.profile;
-		if (stored === MANUAL_TIMING_PROFILE || stored === "custom") return stored;
-		const snapshot = this.snapshot ?? null;
-		const tc = snapshot?.timeControl ?? this.game?.timeControl;
-		if (!tc) return stored;
-		const cls = tcClass(tc.baseMs / MS_PER_S, tc.incMs / MS_PER_S);
-		return cls === "untimed" ? stored : PROFILE_FOR_TC_CLASS[cls];
-	}
-
-	/** The timing knobs the model runs with: the sliders scaled by the effective preset. */
-	private timingSettings(settings: Settings, _tc: TcClass): Settings["timing"] {
-		const profile = this.effectiveProfile(settings);
-		const knobs =
-			profile === "fast" || profile === "natural" || profile === "slow"
-				? TIMING_PROFILE_KNOBS[profile]
-				: null;
-		if (!knobs) return settings.timing;
-		return {
-			...settings.timing,
-			profile,
-			speedScale: settings.timing.speedScale * knobs.speedScale,
-		};
+	private currentTimeControl(): TimeControl | undefined {
+		return this.game?.timeControl ?? this.snapshot?.timeControl;
 	}
 
 	private timingContextFor(rec: Recommendation): TimingContext {
@@ -1165,13 +1261,7 @@ export class GameSession implements SessionSource {
 		};
 	}
 
-	private async updateStats(fold: (stats: SessionStats) => SessionStats): Promise<void> {
-		try {
-			const stored = (await chromeLocalGet(LOCAL_KEYS.sessionStats)) as SessionStats | undefined;
-			const next = fold(stored ?? { ...EMPTY_STATS });
-			await chromeLocalSet(LOCAL_KEYS.sessionStats, next);
-		} catch (error) {
-			log.debug("game-session: session stats not written", { error: errorMessage(error) });
-		}
+	private updateStats(fold: (stats: SessionStats) => SessionStats): Promise<void> {
+		return queueStatsWrite(fold);
 	}
 }

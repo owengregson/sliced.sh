@@ -142,4 +142,12 @@ export interface SessionStats {
 	acpl?: number;
 	/** Consecutive finished games outside the Appendix E §1.6 band for the derived target. */
 	outOfBandStreak?: number;
+	/**
+	 * Moves the §13.6 quality pair was computed over — the ones that carry an engine evaluation.
+	 * A premove is decided before the position exists and a book move outside the engine's lines
+	 * has no rank or loss, so both are excluded from `top1Pct` / `acpl` (they would otherwise
+	 * score as zero-loss non-top-1 moves and drag the pair down in exactly the speed classes
+	 * §7.4 premoves in). `moves` still counts every move played.
+	 */
+	scoredMoves?: number;
 }

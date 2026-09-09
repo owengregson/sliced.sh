@@ -48,10 +48,10 @@ function snapshot(overrides: Partial<PositionSnapshot> = {}): PositionSnapshot {
 	};
 }
 
-function lines(uci: string[], depth = 14): EvalLine[] {
+function lines(uci: string[], depth = 14, cps?: number[]): EvalLine[] {
 	return uci.map((u, i) => ({
 		multipv: i + 1,
-		score: { cp: 30 - i * 10 },
+		score: { cp: cps?.[i] ?? 30 - i * 10 },
 		depth,
 		pvUci: [u],
 		pvSan: [u],
@@ -94,11 +94,16 @@ function fakeEngine(result: (req: AnalysisRequest) => AnalysisResult | null, elo
 	};
 }
 
-function analysisOf(req: AnalysisRequest, uci: string[], depth: number): AnalysisResult {
+function analysisOf(
+	req: AnalysisRequest,
+	uci: string[],
+	depth: number,
+	cps?: number[]
+): AnalysisResult {
 	const final = {
 		id: req.id,
 		depth,
-		lines: lines(uci, depth),
+		lines: lines(uci, depth, cps),
 		nodes: 1000,
 		nps: 100_000,
 		timeMs: 100,
@@ -275,6 +280,24 @@ describe("recommendation pipeline (§3.2)", () => {
 		expect(["e2e4", "d2d4"]).toContain(out?.rec.chosen.uci ?? "");
 		// The full line set still reaches the panel; only the selector's pool was trimmed.
 		expect(out?.rec.lines.length).toBe(4);
+	});
+
+	it("nReasonable is the position's `n_reasonable` feature, not the MultiPV count", async () => {
+		// Six lines, but only the top two are inside `TIMING_CONSTANTS.features.nReasonableCp`
+		// (40 cp) of the best — `K` is a function of the *time budget* (§7.5's 3/6/8 ladder), so
+		// reporting it as `n_reasonable` would put a driver of the think time on the complexity
+		// axis and make `report.py`'s `ln(hold) vs ln(n_reasonable)` correlation spurious.
+		const uci = ["e2e4", "d2d4", "g1f3", "c2c4", "b1c3", "a2a3"];
+		const cps = [30, 10, -400, -450, -500, -600];
+		const engine = fakeEngine((req) => analysisOf(req, uci, 14, cps));
+		const pipeline = new RecommendationPipeline({ engine, timing: model(), book: null });
+		const out = await pipeline.run(input());
+		expect(out).not.toBeNull();
+		expect(out?.rec.lines).toHaveLength(uci.length);
+		expect(out?.nReasonable).toBe(2);
+		expect(out?.nReasonable).not.toBe(out?.rec.lines.length);
+		// …and it is exactly what the timing model computed for this position.
+		expect(out?.nReasonable).toBe(out?.rec.plan.features.n_reasonable);
 	});
 
 	it("returns null when the engine answers nothing and there is no book move", async () => {

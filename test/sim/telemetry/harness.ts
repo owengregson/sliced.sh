@@ -110,10 +110,6 @@ export interface SimulatedMove {
 	plan: TimingPlan;
 	nReasonable: number;
 	myClockMs: number;
-	/** The played move was the engine's first line (`Recommendation.chosen.rankInLines === 0`). */
-	top1: boolean;
-	/** `Recommendation.chosen.cpLoss` — the §13.6 ACPL input. */
-	cpLoss: number;
 	result: ExecutionResult;
 	commands: MouseCommand[];
 	/** The site's blur inside this window, when one was injected … */
@@ -176,8 +172,11 @@ export const executorDriver: MoveDriver = {
  * The `MoveTelemetryRecord` of one simulated move — the shape Task 30's `GameSession`
  * must attach to its own timing-log row (`src/types/telemetry.ts` lists each field's
  * source). `null` for a move that submitted nothing (a focus skip), which has no `ac`.
- * `top1` / `cpLoss` come from the recommendation the harness fabricates, so they are the
- * *plumbing*, not a strength claim: Task 30 fills them from the selection layer.
+ *
+ * The record carries **no §13.6 quality pair**: this path has no selection layer (the harness
+ * plays the engine's first line every move), so a `top1` here would be a hard-coded 100 % rather
+ * than a measurement. `test/sim/telemetry/session-driver.ts` runs the real `selectMove` and the
+ * `GameSession` fills the pair from the resulting `Recommendation`.
  */
 export function telemetryRecordOf(move: SimulatedMove): MoveTelemetryRecord | null {
 	const obs = move.observation;
@@ -188,8 +187,6 @@ export function telemetryRecordOf(move: SimulatedMove): MoveTelemetryRecord | nu
 		orientationMs: move.plan.orientationMs,
 		multiSelectEligible: isNonTrivial(moveMetaOf(move)),
 		nReasonable: move.nReasonable,
-		top1: move.top1,
-		cpLoss: move.cpLoss,
 	};
 }
 
@@ -375,7 +372,10 @@ export async function runSimulatedGame(options: SimulatedGameOptions): Promise<S
 			from: chosen.slice(0, 2) as Square,
 			to: chosen.slice(2, 4) as Square,
 			source: "engine-elo",
-			rankInLines: 0,
+			// The harness always plays `lines[0]`; `rankInLines` is 1-based (`selectMove` numbers
+			// the best line `1`), so this path is honestly "the engine's first line, every move" —
+			// which is exactly why it exports no quality pair (`telemetryRecordOf`).
+			rankInLines: 1,
 			cpLoss: 0,
 			rationale: [],
 		},
@@ -418,8 +418,6 @@ export async function runSimulatedGame(options: SimulatedGameOptions): Promise<S
 			plan,
 			nReasonable,
 			myClockMs: clocks.w,
-			top1: rec.chosen.rankInLines === 0,
-			cpLoss: rec.chosen.cpLoss,
 			result: {
 				ok: false,
 				outcome: "failed",

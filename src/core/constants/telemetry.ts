@@ -17,6 +17,9 @@ import {
 } from "@core/motor/constants";
 import { TIMING_CONSTANTS } from "@core/timing/constants";
 
+/** Standard deviations of the drag-preview return draw the conformance gate allows (§13.5). */
+const DRAG_RETURN_SIGMAS = 5;
+
 /** Both profile jitters at their upper clamp: the widest a sampled motor range can get. */
 const MAX_PROFILE_STRETCH = (1 + PROFILE_NOISE.perGameOffset) * (1 + PROFILE_NOISE.perMoveClamp);
 
@@ -107,6 +110,13 @@ export const TELEMETRY_BANDS = {
 	pointer: {
 		maxStepPx: MAX_HAND_STEP_PX,
 		/**
+		 * The speed the *dispatched* pointer may reach, px/s. `MAX_HAND_STEP_PX` is that cap over
+		 * one sample interval, so this is the same bound expressed per second — the one that has
+		 * to hold once a path's `dtMs` is rescaled (Task 30 fits the approach to its window
+		 * budget, `rescalePath`, which shortens the waits without moving the points).
+		 */
+		maxSpeedPxPerS: (MAX_HAND_STEP_PX * 1000) / SAMPLE_INTERVAL_MS,
+		/**
 		 * Press and release of a click land within this distance. §13.5 states 2 px; the
 		 * generator is tighter than that and the band follows it — `clickReleasePoint` offsets
 		 * the *rounded* press point by an integer ±`CLICK.releaseDriftPx` on each axis and
@@ -116,5 +126,15 @@ export const TELEMETRY_BANDS = {
 		 * silently stop the suite enforcing §13.5).
 		 */
 		clickDriftMaxPx: Math.min(2, CLICK.releaseDriftPx * Math.SQRT2),
+		/**
+		 * A *drag* preview (§9.3a) presses a piece, drags out and releases back on the same
+		 * square, so its press/release pair sits on the same square without being a click:
+		 * `preview-select.ts` draws the release as `pressAt + N(0, PREVIEW.dragReturnSigmaPx)`
+		 * per axis and clamps it inside the piece's own square. The drift is therefore a 2-D
+		 * Gaussian radius, gated at `DRAG_RETURN_SIGMAS`σ — a radius beyond 5σ has probability
+		 * `e^-12.5 ≈ 4 × 10⁻⁶` per press, so a generator that starts releasing away from its
+		 * press fails at once, and the gate never widens to the square it is clamped into.
+		 */
+		dragReturnMaxPx: PREVIEW.dragReturnSigmaPx * DRAG_RETURN_SIGMAS,
 	},
 } as const;

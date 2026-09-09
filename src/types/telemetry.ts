@@ -44,8 +44,13 @@ export type LichessBlurBit = 0 | 1;
  * | `orientationMs` | `TimingPlan.orientationMs` (§8.4b item 2). |
  * | `multiSelectEligible` | the move is "non-trivial" for the §13.2 preview band: `plan.mode` is `normal`/`long`, `plan.thinkMs ≥ PREVIEW.gZeroMs` and the clock is at least `PREVIEW.clockFloorMs` (`isNonTrivial` in `tools/telemetry-conformance/ac-model.ts`). |
  * | `nReasonable` | `n_reasonable` of the position (`TimingContext` / `MoveContext`): the offline report's complexity axis, which the timing columns alone do not carry. |
- * | `top1` | the played move was the engine's first line. `ChosenMove.rankInLines` is **1-based** (`selectMove` sets `1` for the best line; `0` means the move was not among the lines at all, which is what the book and a premove report), so this is `rankInLines === 1`. |
- * | `cpLoss` | `Recommendation.chosen.cpLoss` — the §13.6 ACPL input. |
+ * | `top1` | the played move was the engine's first line. `ChosenMove.rankInLines` is **1-based** (`selectMove` sets `1` for the best line; `0` means the move was not among the lines at all, which is what the book and a premove report), so this is `rankInLines === 1`. **Omitted** when the move carries no engine evaluation. |
+ * | `cpLoss` | `Recommendation.chosen.cpLoss` — the §13.6 ACPL input. **Omitted** with `top1`. |
+ *
+ * `top1` / `cpLoss` are optional on purpose: a premove is decided before the position it is
+ * played in exists and a book move outside the engine's lines has neither a rank nor a loss, so
+ * both would otherwise be exported as a zero-loss non-top-1 move and drag the §13.6 pair down.
+ * `report.py` computes the pair over the rows that carry them and reports how many that was.
  *
  * `test/sim/telemetry/harness.ts` (`telemetryRecordOf`, `timingLogOf`) builds exactly
  * this record from the simulated game, so Task 30's writer can be diffed against it.
@@ -56,6 +61,8 @@ export interface MoveTelemetryRecord {
 	orientationMs: number;
 	multiSelectEligible: boolean;
 	nReasonable: number;
-	top1: boolean;
-	cpLoss: number;
+	/** Absent when the move carries no engine evaluation (a premove, an unranked book move). */
+	top1?: boolean;
+	/** Absent with `top1`. */
+	cpLoss?: number;
 }

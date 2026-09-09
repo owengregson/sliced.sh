@@ -154,6 +154,11 @@ describe("game session: the full move cycle (Step 2a)", () => {
 		expect(snapshot.focus.blurSeenThisMove).toBe(true);
 		expect(snapshot.focus.pageHasFocus).toBe(false);
 		expect(h.executor()?.pendingMove()).toBeNull();
+		// The hand has stopped, so the session must not sit in `executing` with nothing running —
+		// the recommendation for this position still stands and the panel must show that.
+		expect(await h.until(() => h.executor()?.runningMove() === null, 2_000)).toBe(true);
+		expect(h.session().currentState()).toBe("live:my-turn:recommended");
+		expect((await h.snapshot()).session.hand).toBe("resting");
 
 		// The move is not played for this position — the extension waits instead of taking focus.
 		await h.advance(Math.max(0, deadline - h.sim.now()) + 20_000);

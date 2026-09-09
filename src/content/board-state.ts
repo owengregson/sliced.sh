@@ -64,7 +64,7 @@ export function occupancyOf(
 export interface PromotionWaitOptions {
 	/** Total budget; the executor sends its own (`EXECUTOR.promotionPickerTimeoutMs`). */
 	timeoutMs: number;
-	/** Poll spacing (default `TIMINGS.contentReadyPollMs / 10` ≈ one frame). */
+	/** Poll spacing (default `PROMOTION_POLL_MS` ≈ one frame). */
 	pollMs?: number;
 	now?: () => number;
 	setTimeout?: (fn: () => void, ms: number) => unknown;

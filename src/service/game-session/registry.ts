@@ -62,6 +62,12 @@ export interface SessionRegistryDeps {
 	activeTabId(): Promise<number | null>;
 	/** Task 34: warm the ChessMimic band for a target Elo. */
 	warmTiming?: ((targetElo: number) => void) | undefined;
+	/**
+	 * Task 13: `EngineController.status().pendingOptions` — a settings change waiting for the
+	 * engine to go idle. The registry owns the whole reaction to a settings write so the service
+	 * worker and any harness take the same path.
+	 */
+	engineHasPendingOptions?: (() => boolean) | undefined;
 	/** Called with each new executor so the broadcaster can surface its results. */
 	observeExecutor?: ((tabId: number, executor: MoveExecutor) => () => void) | undefined;
 	now?: () => number;
@@ -161,9 +167,22 @@ export class SessionRegistry implements GameSessionRegistry, SnapshotSources {
 		for (const entry of this.sessions.values()) void entry.session.stopSearch();
 	}
 
-	/** A settings write: every session re-sends what the content script acts on (§13.3 rule 4). */
+	/**
+	 * A settings write. Every session re-sends what the content script acts on (§13.3 rule 4), and
+	 * — when the write left the engine with a deferred options diff — every running `go infinite`
+	 * is stopped: `EngineController` only applies a diff while the engine is idle, so a live
+	 * ponder would hold it busy and the change would never land.
+	 */
 	settingsChanged(): void {
 		for (const entry of this.sessions.values()) entry.session.onSettingsChanged();
+		// `EngineController` marks the diff pending from its *own* settings subscriber, so whether
+		// it has already run depends on registration order. Reading the flag one microtask later
+		// makes the reaction order-independent: every subscriber of this write has run by then,
+		// and a deferred diff stays pending until the engine goes idle.
+		queueMicrotask(() => {
+			if (this.disposed) return;
+			if (this.deps.engineHasPendingOptions?.() === true) this.stopSearches("engine options pending");
+		});
 	}
 
 	/** The session for `tabId`, created on demand (the content port is already up). */

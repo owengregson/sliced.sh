@@ -138,8 +138,16 @@ than guessing. The fields, and where the session gets each of them:
 | `orientationMs` | `TimingPlan.orientationMs` (§8.4b item 2). `0` on a premove, which the report excludes. |
 | `multiSelectEligible` | `isNonTrivial({ mode, thinkMs, clockMs })` — `normal`/`long` mode, `thinkMs ≥ PREVIEW.gZeroMs`, clock ≥ `PREVIEW.clockFloorMs`. |
 | `nReasonable` | `n_reasonable` of the position. Without it the report cannot check the §13.6 complexity correlation and downgrades that line to `[INFO]` against the clock-driven `alloc` column. |
-| `top1` | `Recommendation.chosen.rankInLines === 0`. |
-| `cpLoss` | `Recommendation.chosen.cpLoss` — the ACPL input. |
+| `top1` | `Recommendation.chosen.rankInLines === 1` — `rankInLines` is **1-based** (`selectMove` numbers the best line `1`; `0` means the move was not among the engine's lines at all, which is what the opening book and a premove report). **Optional**: a move with no engine evaluation omits it. |
+| `cpLoss` | `Recommendation.chosen.cpLoss` — the ACPL input. **Optional**, omitted with `top1`. |
+
+A premove is decided before the position it is played in exists and a book move outside the
+engine's lines has neither a rank nor a loss, so both omit the pair rather than exporting a
+zero-loss non-top-1 move; `report.py` computes the §13.6 pair over the rows that carry it and
+prints how many that was. The direct-executor harness path
+(`telemetryRecordOf`) omits the pair entirely — it has no selection layer, so a `top1` there would
+be a hard-coded 100 %; `test/sim/telemetry/session-driver.ts` runs the real `selectMove` through
+the `GameSession` and produces a measured one.
 
 `test/sim/telemetry/harness.ts`'s `telemetryRecordOf` already builds exactly this record from a
 simulated game, so Task 30's writer can be diffed against it.

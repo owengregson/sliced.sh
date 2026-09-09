@@ -10,6 +10,7 @@ import { runSimulatedGame, type SimulatedGame } from "@test/sim/telemetry/harnes
 import { assertHumanShapedAc, moveMetaOf } from "../../../tools/telemetry-conformance/ac-model";
 
 const FORBIDDEN_METHODS = ["Page.bringToFront", "Emulation.setFocusEmulationEnabled"];
+const MS_PER_S = 1000;
 
 let game: SimulatedGame | null = null;
 afterEach(async () => {
@@ -35,6 +36,7 @@ describe("telemetry: pointer continuity (Step 2e)", () => {
 		// the page's view starts at the first event it sees: the step from the arm-time rest point
 		// to the first dispatch is invisible to it (and is bounded below, from the CDP side)
 		let prev: { x: number; y: number } | null = null;
+		let prevAt: number | null = null;
 		let periodStart = Number.NEGATIVE_INFINITY;
 		let periodEnd = Number.NEGATIVE_INFINITY;
 		let cursor = 0;
@@ -44,13 +46,22 @@ describe("telemetry: pointer continuity (Step 2e)", () => {
 			// the hand's own path length over the period: sum of steps between consecutive dispatches
 			let length = 0;
 			while (cursor < all.length && (all[cursor]?.at ?? Number.POSITIVE_INFINITY) <= periodEnd) {
-				const p = all[cursor]?.params as { x: number; y: number };
-				if (prev) {
+				const record = all[cursor];
+				const p = record?.params as { x: number; y: number };
+				if (prev && record) {
 					const step = Math.hypot(p.x - prev.x, p.y - prev.y);
 					length += step;
 					expect(step).toBeLessThanOrEqual(TELEMETRY_BANDS.pointer.maxStepPx);
+					// …and the *schedule* respects the same cap. This is the invariant that has to
+					// hold once a path's waits are rescaled (Task 30 fits the approach to its window
+					// budget): `rescalePath` floors every `dtMs` at `step / peakSpeedCap`, so a
+					// shorter wait can never outrun the profile. `CDP.minSleepMs` is the allowance
+					// for a point whose remaining wait was too small to be worth a timer.
+					const dtMs = record.at - (prevAt ?? record.at) + CDP.minSleepMs;
+					expect(step).toBeLessThanOrEqual((TELEMETRY_BANDS.pointer.maxSpeedPxPerS * dtMs) / MS_PER_S);
 				}
 				prev = { x: p.x, y: p.y };
+				prevAt = record?.at ?? prevAt;
 				cursor += 1;
 			}
 			expect(obs.ac.PointerOffset).toBeCloseTo(length, 6);
@@ -64,12 +75,14 @@ describe("telemetry: pointer continuity (Step 2e)", () => {
 		for (const obs of game.observations) {
 			for (const press of obs.diag.presses) {
 				// §13.5's 2 px is the drift of a *click* — a press and release with no pointer
-				// motion between them. A preview drag that snaps back releases on its own square
-				// too, and its release is a whole path away from the press by design.
+				// motion between them. A preview drag snaps back to its own square too, so it
+				// also lands `releaseSquare === square`, but its release is drawn around the
+				// press (`PREVIEW.dragReturnSigmaPx`) rather than offset by a pixel, and it gets
+				// its own — still tight — gate.
 				if (press.square !== null && press.releaseSquare === press.square) {
 					if (press.movesDuring === 0)
 						expect(press.driftPx).toBeLessThanOrEqual(TELEMETRY_BANDS.pointer.clickDriftMaxPx);
-					else expect(press.driftPx).toBeLessThanOrEqual(SIM_TELEMETRY.squareDiagonalPx);
+					else expect(press.driftPx).toBeLessThanOrEqual(TELEMETRY_BANDS.pointer.dragReturnMaxPx);
 				}
 			}
 			const commit = obs.diag.presses[obs.diag.presses.length - 1];

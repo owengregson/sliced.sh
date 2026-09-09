@@ -62,6 +62,30 @@ export class TimingLogWriter {
 		this.dirty = true;
 	}
 
+	/**
+	 * Append `entry`, or update the row it belongs to. `TimingModel` re-sends the *same object*
+	 * to its `onEntry` sink whenever `observe()` fills in the realised time, so a sink that
+	 * always appended would put the same row in the ring several times — and, because they are
+	 * one object, a later `markActual` / `attachTelemetry` would appear to hit all of them.
+	 * Callers that receive model entries use this; a caller building rows itself uses `append`.
+	 */
+	upsert(entry: TimingLogEntry): void {
+		const at = this.buffer.lastIndexOf(entry);
+		if (at >= 0) {
+			this.dirty = true;
+			return;
+		}
+		for (let i = this.buffer.length - 1; i >= 0; i--) {
+			const e = this.buffer[i];
+			if (e && e.gameId === entry.gameId && e.ply === entry.ply) {
+				this.buffer[i] = entry;
+				this.dirty = true;
+				return;
+			}
+		}
+		this.append(entry);
+	}
+
 	/** Record the realised think time on the entry for `(gameId, ply)` (latest match). */
 	markActual(gameId: string, ply: number, actualMs: number): boolean {
 		for (let i = this.buffer.length - 1; i >= 0; i--) {

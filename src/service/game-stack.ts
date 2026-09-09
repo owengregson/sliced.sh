@@ -132,6 +132,7 @@ export function createGameStack(options: GameStackOptions): GameStack {
 			}
 		},
 		warmTiming: (targetElo) => inferPort.warm(selectBand(targetElo)),
+		engineHasPendingOptions: () => controller.status().pendingOptions,
 		observeExecutor: (tabId, executor) => broadcaster.observeExecutor(tabId, executor),
 	});
 
@@ -148,8 +149,9 @@ export function createGameStack(options: GameStackOptions): GameStack {
 	const applySettings = (next: Settings): void => {
 		const first = settings === DEFAULT_SETTINGS;
 		settings = next;
+		// The registry owns the whole reaction (content re-push + the `pendingOptions` stop), so
+		// this path and any harness driving the registry directly cannot drift apart.
 		if (!first) registry.settingsChanged();
-		if (controller.status().pendingOptions) registry.stopSearches("engine options pending");
 	};
 	const offSettings = onSettingsChanged(applySettings);
 	void getSettings().then(applySettings, (error: unknown) =>

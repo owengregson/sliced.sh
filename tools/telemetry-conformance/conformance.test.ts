@@ -155,7 +155,24 @@ describe("offline conformance: report.py", () => {
 		expect(out).toContain("[PASS] top-1");
 		expect(out).toContain("[PASS] ACPL");
 		expect(out).toContain("acceptance: PASS");
+		expect(out).toContain(`scored         ${rows.length} of ${rows.length} moves`);
 		expect(out).not.toContain("not in export");
+		expect(code).toBe(0);
+	});
+
+	it("moves with no engine evaluation are left out of the §13.6 pair and counted", async () => {
+		// A premove (and a book move the engine's lines never ranked) omits `top1` / `cpLoss`:
+		// folding it in would score a zero-loss non-top-1 move and pull both numbers down.
+		const unscored = 6;
+		const mixed = rows.map((row, i) => {
+			if (!row.telemetry || i >= unscored) return row;
+			const { top1: _top1, cpLoss: _cpLoss, ...telemetry } = row.telemetry;
+			return { ...row, telemetry };
+		});
+		const { code, out } = await report(write("mixed-quality.json", mixed));
+		expect(out).toContain(`scored         ${rows.length - unscored} of ${rows.length} moves`);
+		expect(out).toContain("[PASS] top-1");
+		expect(out).toContain("[PASS] ACPL");
 		expect(code).toBe(0);
 	});
 

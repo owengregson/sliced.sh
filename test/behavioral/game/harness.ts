@@ -141,6 +141,9 @@ export async function createGameHarness(options: GameHarnessOptions = {}): Promi
 			settings = await getSettings();
 			offSettings = onSettingsChanged((next) => {
 				settings = next;
+				// The same reaction `createGameStack` installs (content re-push + the Task 13
+				// `pendingOptions` stop) — one implementation, driven from both places.
+				registry.settingsChanged();
 			});
 			keepalive = new Keepalive();
 			debuggerManager = new DebuggerManager({
@@ -183,6 +186,7 @@ export async function createGameHarness(options: GameHarnessOptions = {}): Promi
 				license: () => LICENSE,
 				engineStatus: () => undefined,
 				activeTabId: () => Promise.resolve(tabId),
+				engineHasPendingOptions: () => controller.status().pendingOptions,
 				observeExecutor: (id, executor) => broadcaster.observeExecutor(id, executor),
 				now: sim.now,
 				scheduler: defaultScheduler,

@@ -5,6 +5,7 @@ import { LIMITS } from "@core/constants/limits";
 import { LOCAL_KEYS } from "@core/constants/storage-keys";
 import { buildTimingLogEntry, TimingLogWriter } from "@core/timing/timing-log";
 import { createSimulator } from "@test/sim";
+import type { TimingLogEntry } from "@typedefs/timing";
 
 beforeEach(() => {
 	(globalThis as Record<string, unknown>).chrome = createSimulator().chrome;
@@ -67,5 +68,48 @@ describe("timing log", () => {
 		w.append(entry(0));
 		expect(await w.flush()).toBe(true);
 		expect(await w.flush()).toBe(false);
+	});
+});
+
+describe("TimingLogWriter.upsert (Task 30)", () => {
+	const row = (ply: number): TimingLogEntry =>
+		buildTimingLogEntry({
+			gameId: "g",
+			ply,
+			mode: "normal",
+			plannedMs: 1000,
+			alloc: 1,
+			clockMs: 60_000,
+			comp: 1,
+			eps: 0,
+			terms: [],
+			persona: "balanced",
+		});
+
+	it("never stores the same model entry twice (`onEntry` re-sends it on `observe()`)", () => {
+		const w = new TimingLogWriter();
+		const entry = row(1);
+		w.upsert(entry);
+		entry.actualMs = 1234; // what `TimingModel.observe()` does before re-sending
+		w.upsert(entry);
+		w.upsert(entry);
+		expect(w.entries()).toHaveLength(1);
+		expect(w.entries()[0]?.actualMs).toBe(1234);
+	});
+
+	it("replaces the row for a `(gameId, ply)` a fresh object re-plans", () => {
+		const w = new TimingLogWriter();
+		w.upsert(row(1));
+		const replanned = { ...row(1), plannedMs: 4200 };
+		w.upsert(replanned);
+		expect(w.entries()).toHaveLength(1);
+		expect(w.entries()[0]?.plannedMs).toBe(4200);
+	});
+
+	it("appends a row for a ply it has not seen", () => {
+		const w = new TimingLogWriter();
+		w.upsert(row(1));
+		w.upsert(row(2));
+		expect(w.entries().map((e) => e.ply)).toEqual([1, 2]);
 	});
 });
