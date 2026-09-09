@@ -45,6 +45,8 @@ export interface OpenTabOptions {
 	active?: boolean;
 	width?: number;
 	height?: number;
+	/** The browser window the tab belongs to (default 1); `active` is per window. */
+	windowId?: number;
 }
 
 export interface OpenedTab {
@@ -193,7 +195,7 @@ export function createSimulator(options: SimulatorOptions = {}): Simulator {
 
 	function openTab(url: string, opts: OpenTabOptions = {}): OpenedTab {
 		let created: chrome.tabs.Tab | undefined;
-		tabs.api.create({ url, active: opts.active ?? true }, (tab) => {
+		tabs.api.create({ url, active: opts.active ?? true, windowId: opts.windowId ?? 1 }, (tab) => {
 			created = tab;
 		});
 		const tabId = created?.id;

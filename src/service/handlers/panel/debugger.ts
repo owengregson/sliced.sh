@@ -6,8 +6,8 @@
 
 import { PANEL_COMMAND_ERRORS } from "@core/constants/cdp";
 import { MSG } from "@core/constants/messages";
+import { TOAST_KEYS } from "@core/constants/toasts";
 import type { MessageRouter } from "@core/messaging/router";
-import { COPY } from "@panel/copy";
 import type { PanelHandlerDeps } from "@service/handlers/panel";
 
 export function registerDebuggerHandlers(
@@ -24,7 +24,7 @@ export function registerDebuggerHandlers(
 		} finally {
 			deps.broadcaster.notify();
 		}
-		if (executor) deps.broadcaster.toast("info", COPY.toast.reattached);
+		if (executor) void deps.broadcaster.toast("info", { key: TOAST_KEYS.reattached }, msg.tabId);
 	});
 
 	router.on(MSG.PANEL_DETACH_DEBUGGER, async (msg) => {

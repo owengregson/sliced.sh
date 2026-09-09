@@ -30,7 +30,8 @@ export type EmptyPayload = Record<never, never>;
 /** Request payloads (everything on the message besides `type`). */
 export interface MessagePayloadMap {
 	// panel → SW
-	[MSG.PANEL_GET_SNAPSHOT]: EmptyPayload;
+	/** `windowId`: the panel's window once known (see `PanelPortCommand`); else the last-focused one. */
+	[MSG.PANEL_GET_SNAPSHOT]: { windowId?: number };
 	[MSG.PANEL_PLAY_NOW]: { tabId: number };
 	[MSG.PANEL_SET_AUTO_MOVE]: { tabId: number; armed: boolean };
 	[MSG.PANEL_CANCEL_PENDING]: { tabId: number };

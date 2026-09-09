@@ -5,11 +5,13 @@
  * `src/core/messaging/typed-messages.ts` (Task 4).
  */
 
+import type { TOAST_KEYS } from "@core/constants/toasts";
 import type { LogEntry } from "@core/logger";
 import type { Occupancy, Rect } from "@core/motor/types";
 import type { EngineStatus, EngineVariant, EvalLine } from "@typedefs/engine";
 import type {
 	ChosenMove,
+	ExecutionResult,
 	GameMeta,
 	GameResult,
 	GameSessionView,
@@ -119,11 +121,28 @@ export interface ExpectedMove {
 	promotion?: PromoPiece;
 }
 
+export type ToastLevel = "info" | "warn" | "error";
+
+/** A port toast by registry key (`TOAST_KEYS`); the panel renders `COPY.toast[key]` (Task 28). */
+export type PanelToast =
+	| {
+			key: typeof TOAST_KEYS.played;
+			args: { san: string; elapsedMs: number; tier: ExecutionResult["tier"] };
+	  }
+	| { key: typeof TOAST_KEYS.notVerified }
+	| { key: typeof TOAST_KEYS.reattached };
+
 /** SW → panel */
 export type PanelPortMessage =
 	| { kind: "snapshot"; snapshot: PanelSnapshot }
-	| { kind: "toast"; level: "info" | "warn" | "error"; text: string }
+	| ({ kind: "toast"; level: ToastLevel } & PanelToast)
 	| { kind: "timingLog"; entry: TimingLogEntry };
+
+/**
+ * panel → SW, on every (re)connect: the window the panel lives in. A side-panel port's
+ * `sender` carries no tab or window, so the snapshot's game tab is keyed on this (Task 28).
+ */
+export type PanelPortCommand = { kind: "hello"; windowId: number };
 
 /** content → SW */
 export type GamePortMessage =

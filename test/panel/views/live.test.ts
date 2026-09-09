@@ -7,7 +7,8 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { chromeLocalGet } from "@core/chrome/storage";
-import { LOCAL_KEYS, MSG, UI_TIMINGS } from "@core/constants";
+import { LOCAL_KEYS, MSG, TOAST_KEYS, UI_TIMINGS } from "@core/constants";
+import { TOKENS } from "@design/tokens.generated";
 import { currentBannerKind } from "@panel/components/banner";
 import { COPY, COPY_LIVE } from "@panel/copy";
 import { bootShell, type PanelShell } from "@panel/shell";
@@ -288,13 +289,21 @@ describe("move card states (§5.6)", () => {
 		expect(card.dataset.state).toBe("engine-stopped");
 	});
 
-	it("play button: Play move → Auto-playing in 4.2s → hover Cancel this move → Playing…; toast on executed", async () => {
+	it("play button: disabled until armed → Play move → Auto-playing in 4.2s → hover Cancel this move → Playing…; flash on executed", async () => {
 		h = await mountLive(dom.sim, idleSnapshot());
+		// §13.4: the hand plays only once armed (the debugger attaches at arm time, never
+		// mid-game) — until then the button is a label and a keybind hint.
 		expect(playLabel()).toBe(COPY.move.play);
+		expect(playButton().getAttribute("aria-disabled")).toBe("true");
+		click(playButton());
+		expect(h.store.calls).toEqual([]);
+
+		const plan = makeRecommendation().plan;
+		h.store.emit(idleSnapshot({ autoMove: { armed: true } }));
+		expect(playButton().getAttribute("aria-disabled")).toBeNull();
 		click(playButton());
 		expect(h.store.calls).toEqual([{ type: MSG.PANEL_PLAY_NOW, tabId: h.tabId }]);
 
-		const plan = makeRecommendation().plan;
 		h.store.emit(
 			idleSnapshot({ autoMove: { armed: true, scheduledAt: Date.now() + THINK_MS, plan } })
 		);
@@ -323,7 +332,8 @@ describe("move card states (§5.6)", () => {
 		);
 		pointer(playButton(), "pointerleave");
 
-		// Executing → "Playing…"; executed → success toast + card flash + opponent state.
+		// Executing → "Playing…"; executed → card flash + opponent state. The "Played …" toast is
+		// the service worker's (a `toast` port message), not this view's.
 		h.store.emit(liveSnapshot({ state: "live:my-turn:executing", autoMove: { armed: true, plan } }));
 		expect(playLabel()).toBe(COPY.move.executing);
 		expect(playButton().getAttribute("aria-busy")).toBe("true");
@@ -344,15 +354,12 @@ describe("move card states (§5.6)", () => {
 			})
 		);
 		await dom.tick(0);
-		expect(h.toasts()[0]?.classList.contains("sl-toast--success")).toBe(true);
-		expect(h.toasts()[0]?.querySelector(".sl-toast__text")?.textContent).toBe(
-			COPY.toast.played("Nf3", "3.9", COPY.execution.drag)
-		);
+		expect(h.toasts().filter((t) => t.classList.contains("sl-toast--success"))).toHaveLength(0);
 		expect(h.q(".sl-move").classList.contains("sl-move--played")).toBe(true);
 		expect(h.q(".sl-move").dataset.state).toBe("opponent");
 	});
 
-	it("the same execution across snapshots plays once; a new one (by `at` or ply) plays again", async () => {
+	it("the same execution across snapshots flashes once; a new one (by `at` or ply) flashes again", async () => {
 		h = await mountLive(dom.sim, idleSnapshot());
 		const executed = (
 			at: number | undefined
@@ -369,22 +376,22 @@ describe("move card states (§5.6)", () => {
 			if (at !== undefined) e.at = at;
 			return e;
 		};
-		let played = 0;
-		const count = (): number =>
-			h?.toasts().filter((t) => t.classList.contains("sl-toast--success")).length ?? 0;
+		// §6.3: the card's border flash is what a played move shows here (the toast is the SW's).
+		const flashing = (): boolean => h?.q(".sl-move").classList.contains("sl-move--played") ?? false;
+		const flashEnds = async (): Promise<void> => {
+			await dom.tick(TOKENS.motion.durationMs[4] + 1);
+			expect(flashing()).toBe(false);
+		};
 		// Snapshots are fresh objects every push: the same result must not re-fire.
 		h.store.emit(idleSnapshot({ lastExecution: executed(1000) }));
-		played += count();
+		expect(flashing()).toBe(true);
+		await flashEnds();
 		h.store.emit(idleSnapshot({ lastExecution: executed(1000) }));
 		h.store.emit(idleSnapshot({ lastExecution: executed(1000) }));
-		await dom.tick(UI_TIMINGS.toastShortMs + 1);
-		await dom.tick(0);
-		expect(played).toBe(1);
-		expect(h.toasts()).toHaveLength(0);
+		expect(flashing()).toBe(false);
 		h.store.emit(idleSnapshot({ lastExecution: executed(2000) }));
-		expect(count()).toBe(1);
-		await dom.tick(UI_TIMINGS.toastShortMs + 1);
-		await dom.tick(0);
+		expect(flashing()).toBe(true);
+		await flashEnds();
 		// An `at` id survives ply changes: the same result recorded at ply N persists while the
 		// board moves on (N+1 my move, N+2 the reply) and must not re-fire.
 		let ply = idleSnapshot().session.ply;
@@ -393,20 +400,18 @@ describe("move card states (§5.6)", () => {
 			const later = idleSnapshot({ lastExecution: executed(2000) });
 			later.session.ply = ply;
 			h.store.emit(later);
+			expect(flashing()).toBe(false);
 		}
-		expect(count()).toBe(0);
-		expect(h.q(".sl-move").classList.contains("sl-move--played")).toBe(false);
 		// Without `at`: structural identity, cleared by a ply change.
 		h.store.emit(idleSnapshot({ lastExecution: executed(undefined) }));
-		expect(count()).toBe(1);
-		await dom.tick(UI_TIMINGS.toastShortMs + 1);
-		await dom.tick(0);
+		expect(flashing()).toBe(true);
+		await flashEnds();
 		h.store.emit(idleSnapshot({ lastExecution: executed(undefined) }));
-		expect(count()).toBe(0);
+		expect(flashing()).toBe(false);
 		const next = idleSnapshot({ lastExecution: executed(undefined) });
 		next.session.ply += 2;
 		h.store.emit(next);
-		expect(count()).toBe(1);
+		expect(flashing()).toBe(true);
 	});
 
 	it("Esc cancels the countdown; the play keybind plays now; port toasts surface", async () => {
@@ -425,11 +430,23 @@ describe("move card states (§5.6)", () => {
 		);
 		key(document, "keydown", { key: " ", code: "Space" });
 		expect(h.store.calls.at(-1)).toEqual({ type: MSG.PANEL_PLAY_NOW, tabId: h.tabId });
-		h.store.port({ kind: "toast", level: "warn", text: COPY.toast.playFailed });
+		// Port toasts name a `TOAST_KEYS` key; the copy (and the drag/click wording) is resolved here.
+		h.store.port({ kind: "toast", level: "warn", key: TOAST_KEYS.notVerified });
 		await dom.tick(0); // the skipped toast leaves
 		expect(h.toasts()).toHaveLength(1);
 		expect(h.toasts()[0]?.classList.contains("sl-toast--warn")).toBe(true);
-		expect(h.toasts()[0]?.querySelector(".sl-toast__text")?.textContent).toBe(COPY.toast.playFailed);
+		expect(h.toasts()[0]?.querySelector(".sl-toast__text")?.textContent).toBe(COPY.toast.notVerified);
+		h.store.port({
+			kind: "toast",
+			level: "info",
+			key: TOAST_KEYS.played,
+			args: { san: "Nf3", elapsedMs: 3900, tier: "click" },
+		});
+		await dom.tick(0);
+		expect(h.toasts()).toHaveLength(1);
+		expect(h.toasts()[0]?.querySelector(".sl-toast__text")?.textContent).toBe(
+			COPY.toast.played("Nf3", "3.9", COPY.execution.click)
+		);
 	});
 });
 
@@ -751,16 +768,18 @@ describe("session strip and detached banner (§4.4 item 9, §13.6, §9.7)", () =
 
 describe("hands-off exit", () => {
 	it("restores every control's previous aria-disabled / tabindex (mirrors the shell)", async () => {
-		h = await mountLive(dom.sim, idleSnapshot());
+		// Armed throughout: the play button carries its own `aria-disabled` while the hand is
+		// unarmed (§13.4), which the hands-off restore must not be blamed for.
+		h = await mountLive(dom.sim, idleSnapshot({ autoMove: { armed: true } }));
 		const count = h.q(".sl-live__count");
 		count.setAttribute("tabindex", "0"); // a control that had its own tabindex
 		const row = h.qa(".sl-pv")[0];
 		expect(row?.hasAttribute("tabindex")).toBe(false);
-		h.store.emit(liveSnapshot());
+		h.store.emit(liveSnapshot({ autoMove: { armed: true } }));
 		expect(count.getAttribute("tabindex")).toBe("-1");
 		expect(count.getAttribute("aria-disabled")).toBe("true");
 		expect(h.qa(".sl-pv")[0]?.getAttribute("tabindex")).toBe("-1");
-		h.store.emit(idleSnapshot());
+		h.store.emit(idleSnapshot({ autoMove: { armed: true } }));
 		expect(count.getAttribute("tabindex")).toBe("0");
 		expect(count.hasAttribute("aria-disabled")).toBe(false);
 		for (const el of h.qa(INTERACTIVE_SELECTOR)) {

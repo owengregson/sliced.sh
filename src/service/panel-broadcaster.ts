@@ -5,9 +5,12 @@
  * engine status, settings, session stats and the license — and pushes it on
  * connect and whenever `notify()` is called, throttled to
  * `TIMINGS.panelSnapshotMinIntervalMs` with one trailing push so a burst ends
- * with the newest state. Ports are grouped by window so each window's panel
- * gets the snapshot of its own game tab. Settings, license and stats live in
- * `chrome.storage.local`; a change to any of them triggers a push on its own.
+ * with the newest state. A side-panel port's `sender` carries no tab or window,
+ * so each panel names its own window in a `hello` (`PanelPortCommand`) on every
+ * (re)connect; ports are grouped by that window so each window's panel gets the
+ * snapshot of its own game tab, and a toast about one tab reaches only the
+ * panels showing it. Settings, license and stats live in `chrome.storage.local`;
+ * a change to any of them triggers a push on its own.
  *
  * `GameSessionRegistry` does not exist yet (Task 30 ruling): `SnapshotSources`
  * is the narrow read surface the broadcaster needs — Task 30's registry
@@ -16,25 +19,31 @@
  * service worker runs on `idleSnapshotSources()` (no game tab, no hand).
  *
  * `observeExecutor()` is how a tab's `MoveExecutor` reaches the panel: every
- * result is stamped with `at` (Task 24 keys the "played" toast on it), kept as
+ * result is stamped with `at` (Task 24 keys the played flash on it), kept as
  * `session.lastExecution`, and an executed move / unverified move becomes a
- * `toast` port message; hand-state changes push a snapshot.
+ * `toast` port message named by `TOAST_KEYS` (the copy is the panel's — the
+ * service worker never imports `@panel/copy`); hand-state changes push a snapshot.
  */
 
 import { chromeLocalGet, onStorageChanged } from "@core/chrome/storage";
 import { tabsQuery } from "@core/chrome/tabs";
 import { EXECUTOR } from "@core/constants/cdp";
 import { DEFAULT_ENGINE_STATUS } from "@core/constants/defaults";
-import type { PanelPortMessage, PanelSnapshot } from "@core/constants/messages";
+import type {
+	PanelPortCommand,
+	PanelPortMessage,
+	PanelSnapshot,
+	PanelToast,
+} from "@core/constants/messages";
 import { PORT_NAMES } from "@core/constants/ports";
 import { LOCAL_KEYS } from "@core/constants/storage-keys";
 import { TIMINGS } from "@core/constants/timings";
+import { TOAST_KEYS } from "@core/constants/toasts";
 import { log } from "@core/logger";
 import { type AcceptedPort, acceptPorts } from "@core/messaging/ports";
 import { getSettings } from "@core/storage/settings-storage";
 import { errorMessage } from "@core/util/errors";
 import { defaultNow, defaultScheduler, type Scheduler } from "@core/util/scheduler";
-import { COPY } from "@panel/copy";
 import type { DebuggerManager } from "@service/debugger-manager";
 import type { FocusGate } from "@service/focus-gate";
 import type { HandOwnership } from "@service/hand-ownership";
@@ -122,9 +131,13 @@ export interface PanelBroadcasterOptions {
 export type ToastLevel = Extract<PanelPortMessage, { kind: "toast" }>["level"];
 
 interface Connection {
-	port: AcceptedPort<PanelPortMessage, never>;
-	/** The panel's window when the sender carries one; `null` → the last-focused window. */
+	port: AcceptedPort<PanelPortMessage, PanelPortCommand>;
+	/** The window the panel named in its `hello`; `null` until then (the last-focused window). */
 	windowId: number | null;
+	/** Listener releases (disconnect, `hello`) — released when the connection is dropped. */
+	readonly offs: Array<() => void>;
+	/** The newest build posted here; a slower older build resolving after it is dropped. */
+	lastSeq: number;
 }
 
 /** Storage keys whose change alone warrants a fresh snapshot. */
@@ -133,8 +146,6 @@ const WATCHED_KEYS: readonly string[] = [
 	LOCAL_KEYS.licenseState,
 	LOCAL_KEYS.sessionStats,
 ];
-
-const MS_PER_SECOND = 1000;
 
 const IDLE_VIEW: Readonly<SessionGameView> = Object.freeze({
 	state: "idle",
@@ -148,11 +159,6 @@ const IDLE_VIEW: Readonly<SessionGameView> = Object.freeze({
 });
 
 const isLive = (state: GameSessionState): boolean => state.startsWith("live:");
-
-function windowIdOf(sender: chrome.runtime.MessageSender | undefined): number | null {
-	const id = sender?.tab?.windowId;
-	return typeof id === "number" ? id : null;
-}
 
 /** The active tab of `windowId` (or of the last-focused window) — the tab a panel shows. */
 async function activeTabId(windowId: number | null): Promise<number | null> {
@@ -176,13 +182,17 @@ async function readStats(): Promise<SessionStats> {
 function toastFor(
 	rec: Recommendation,
 	result: ExecutionResult
-): { level: ToastLevel; text: string } | null {
-	if (result.outcome === "executed") {
-		const seconds = (result.elapsedMs / MS_PER_SECOND).toFixed(1);
-		return { level: "info", text: COPY.toast.played(rec.chosen.san, seconds, result.tier) };
-	}
+): { level: ToastLevel; toast: PanelToast } | null {
+	if (result.outcome === "executed")
+		return {
+			level: "info",
+			toast: {
+				key: TOAST_KEYS.played,
+				args: { san: rec.chosen.san, elapsedMs: result.elapsedMs, tier: result.tier },
+			},
+		};
 	if (result.outcome === "failed" && result.reason === EXECUTOR.reasons.unverified)
-		return { level: "warn", text: COPY.toast.notVerified };
+		return { level: "warn", toast: { key: TOAST_KEYS.notVerified } };
 	return null;
 }
 
@@ -196,6 +206,8 @@ export class PanelBroadcaster {
 	private lastPushAt = Number.NEGATIVE_INFINITY;
 	private trailing: unknown = null;
 	private disposed = false;
+	/** Build counter: a connection never accepts a snapshot older than the last one posted. */
+	private seq = 0;
 
 	constructor(
 		private readonly sources: SnapshotSources,
@@ -205,7 +217,7 @@ export class PanelBroadcaster {
 		this.now = options.now ?? defaultNow;
 		this.minIntervalMs = options.minIntervalMs ?? TIMINGS.panelSnapshotMinIntervalMs;
 		this.offs.push(
-			acceptPorts<PanelPortMessage, never>(PORT_NAMES.panel, (port) => this.accept(port)),
+			acceptPorts<PanelPortMessage, PanelPortCommand>(PORT_NAMES.panel, (port) => this.accept(port)),
 			onStorageChanged("local", (changes) => {
 				if (WATCHED_KEYS.some((key) => key in changes)) this.notify();
 			})
@@ -217,9 +229,9 @@ export class PanelBroadcaster {
 		return this.conns.size;
 	}
 
-	/** The snapshot for the panel behind `sender` (`PANEL_GET_SNAPSHOT`). */
-	snapshotFor(sender?: chrome.runtime.MessageSender): Promise<PanelSnapshot> {
-		return this.build(windowIdOf(sender));
+	/** The snapshot for a panel's window (`PANEL_GET_SNAPSHOT`); `null` → the last-focused one. */
+	snapshotFor(windowId: number | null): Promise<PanelSnapshot> {
+		return this.build(windowId);
 	}
 
 	/**
@@ -239,8 +251,15 @@ export class PanelBroadcaster {
 		}, wait);
 	}
 
-	toast(level: ToastLevel, text: string): void {
-		for (const conn of [...this.conns]) conn.port.post({ kind: "toast", level, text });
+	/**
+	 * Post a toast named by `TOAST_KEYS` (the panel renders `COPY.toast[key]`): to every panel,
+	 * or — with `tabId` — only to the panels whose window shows that tab.
+	 */
+	async toast(level: ToastLevel, toast: PanelToast, tabId?: number): Promise<void> {
+		const conns = tabId === undefined ? [...this.conns] : await this.showing(tabId);
+		for (const conn of conns) {
+			if (this.conns.has(conn)) conn.port.post({ kind: "toast", level, ...toast });
+		}
 	}
 
 	/**
@@ -252,7 +271,7 @@ export class PanelBroadcaster {
 			const result: ExecutionResult = { ...report.result, at: this.now() };
 			this.lastExecutions.set(tabId, result);
 			const toast = toastFor(report.rec, result);
-			if (toast) this.toast(toast.level, toast.text);
+			if (toast) void this.toast(toast.level, toast.toast, tabId);
 			this.notify();
 		};
 		const offs = [
@@ -276,19 +295,45 @@ export class PanelBroadcaster {
 			this.scheduler.clearTimeout(this.trailing);
 			this.trailing = null;
 		}
-		this.conns.clear();
+		for (const conn of [...this.conns]) this.drop(conn);
 		this.lastExecutions.clear();
 	}
 
-	private accept(port: AcceptedPort<PanelPortMessage, never>): void {
-		const conn: Connection = { port, windowId: windowIdOf(port.sender) };
+	private accept(port: AcceptedPort<PanelPortMessage, PanelPortCommand>): void {
+		const conn: Connection = { port, windowId: null, offs: [], lastSeq: 0 };
 		this.conns.add(conn);
-		const off = port.onDisconnect(() => {
-			this.conns.delete(conn);
-			off();
-		});
-		log.debug("panel-broadcaster: panel connected", { windowId: conn.windowId });
+		conn.offs.push(
+			port.onDisconnect(() => this.drop(conn)),
+			port.onMessage((msg) => {
+				if (msg.kind !== "hello" || msg.windowId === conn.windowId) return;
+				conn.windowId = msg.windowId;
+				log.debug("panel-broadcaster: panel window", { windowId: msg.windowId });
+				void this.push([conn]); // its own window's game tab, not the last-focused one's
+			})
+		);
+		log.debug("panel-broadcaster: panel connected");
 		void this.push([conn]); // the first snapshot goes out within one tick of the connect
+	}
+
+	/** Forget a connection and release its listeners. */
+	private drop(conn: Connection): void {
+		if (!this.conns.delete(conn)) return;
+		for (const off of conn.offs.splice(0)) off();
+	}
+
+	/** The connections whose window shows `tabId` (one `tabs.query` per distinct window). */
+	private async showing(tabId: number): Promise<Connection[]> {
+		const active = new Map<number | null, number | null>();
+		const shown: Connection[] = [];
+		for (const conn of [...this.conns]) {
+			let resolved = active.get(conn.windowId);
+			if (resolved === undefined) {
+				resolved = await activeTabId(conn.windowId);
+				active.set(conn.windowId, resolved);
+			}
+			if (resolved === tabId) shown.push(conn);
+		}
+		return shown;
 	}
 
 	private async pushAll(): Promise<void> {
@@ -296,8 +341,10 @@ export class PanelBroadcaster {
 		await this.push([...this.conns]);
 	}
 
-	/** One build per window; posted only to the connections still open afterwards. */
+	/** One build per window; posted only to the connections still open, newest build wins. */
 	private async push(conns: readonly Connection[]): Promise<void> {
+		this.seq += 1;
+		const seq = this.seq;
 		const byWindow = new Map<number | null, Connection[]>();
 		for (const conn of conns) {
 			const group = byWindow.get(conn.windowId);
@@ -314,7 +361,9 @@ export class PanelBroadcaster {
 			}
 			if (this.disposed) return;
 			for (const conn of group) {
-				if (this.conns.has(conn)) conn.port.post({ kind: "snapshot", snapshot });
+				if (!this.conns.has(conn) || conn.lastSeq >= seq) continue;
+				conn.lastSeq = seq;
+				conn.port.post({ kind: "snapshot", snapshot });
 			}
 		}
 	}

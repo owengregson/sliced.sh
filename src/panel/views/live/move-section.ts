@@ -3,8 +3,9 @@
  * the snapshot (your-move / opponent-to-move with the expected reply / thinking / armed /
  * disabled / engine-stopped), the play button's label transitions (`Play move` →
  * `Auto-playing in 4.2s` → hover `Cancel this move` → `Playing…`), the countdown driven from
- * `autoMove.scheduledAt` (the absolute execution time) against `plan.thinkMs`, and the
- * "played" toast + flash when `session.lastExecution` reports an executed move.
+ * `autoMove.scheduledAt` (the absolute execution time) against `plan.thinkMs`, and the §6.3
+ * "played" flash + sound when `session.lastExecution` reports an executed move (the "Played …"
+ * toast itself is the service worker's, over the panel port).
  *
  * The countdown ticks on a `setInterval` at the ring's own transition cadence
  * (`motion.duration.1`, the linear real-time curve of §5.10); it is cleared on disarm,
@@ -17,7 +18,6 @@ import { TOKENS } from "@design/tokens.generated";
 import type { Color } from "@typedefs/game";
 import { formatKeybind } from "../../components/keybind";
 import { createMoveCard, type MoveCardData, type MoveCardHandle } from "../../components/move-card";
-import { showToast } from "../../components/toast";
 import { COPY } from "../../copy";
 import { playUiSound } from "../../sounds";
 
@@ -163,10 +163,10 @@ export function createMoveSection(options: MoveSectionOptions): MoveSectionHandl
 		exec: NonNullable<PanelSnapshot["session"]["lastExecution"]>,
 		snap: PanelSnapshot
 	): void {
+		// The "Played …" toast is the service worker's (a `toast` port message, Task 28); the card
+		// flash and the sound stay keyed on the result here.
 		if (exec.outcome !== "executed") return;
-		const method = exec.tier === "click" ? COPY.execution.click : COPY.execution.drag;
 		card.played();
-		showToast("success", COPY.toast.played(san ?? "", (exec.elapsedMs / MS).toFixed(1), method));
 		if (snap.settings.display.uiSounds) playUiSound("movePlayed");
 	}
 

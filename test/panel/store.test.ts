@@ -2,7 +2,13 @@
 // `sendTyped`, and the handshake re-sent after a service-worker restart (ruling: Task 4's port
 // drops a flushed batch to a dead receiver, so `PANEL_GET_SNAPSHOT` is re-requested per connection).
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { MSG, type PanelPortMessage, type PanelSnapshot, PORT_NAMES } from "@core/constants";
+import {
+	MSG,
+	type PanelPortMessage,
+	type PanelSnapshot,
+	PORT_NAMES,
+	TOAST_KEYS,
+} from "@core/constants";
 import { type AcceptedPort, acceptPorts } from "@core/messaging/ports";
 import { installMessageRouter, type MessageRouter } from "@core/messaging/router";
 import { createPanelStore, type PanelStore } from "@panel/store";
@@ -87,16 +93,16 @@ describe("PanelStore", () => {
 		unsub();
 		const toasts: string[] = [];
 		store.onPortMessage((m) => {
-			if (m.kind === "toast") toasts.push(m.text);
+			if (m.kind === "toast") toasts.push(m.key);
 		});
 		sw.push(makeSnapshot({ state: "game-over" }));
-		for (const p of sw.ports) p.post({ kind: "toast", level: "info", text: "Settings saved" });
+		for (const p of sw.ports) p.post({ kind: "toast", level: "info", key: TOAST_KEYS.reattached });
 		await sim.time.advance(0);
 		expect(seen).toHaveLength(1);
 		expect(late).toHaveLength(2);
 		expect(late[1]?.session.state).toBe("game-over");
 		expect(store.snapshot?.session.state).toBe("game-over");
-		expect(toasts).toEqual(["Settings saved"]);
+		expect(toasts).toEqual([TOAST_KEYS.reattached]);
 		await sw.ctx.teardown();
 	});
 

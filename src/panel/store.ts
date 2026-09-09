@@ -6,10 +6,14 @@
  * a message flushed over the port to a dead receiver is dropped (Task 4), so the handshake is a
  * request/response that is retried with the port's own backoff (`TIMINGS.portReconnect*`) until
  * the restarted service worker answers.
+ * A side-panel port's `sender` carries no window, so the store resolves its own
+ * (`chrome.windows.getCurrent`) and names it in a `hello` on every (re)connect and in every
+ * snapshot request: that is how the SW knows which window's game tab this panel shows.
  * `subscribe` replays the latest snapshot to late subscribers; `dispatch` is a typed send.
  */
 
-import type { PanelPortMessage, PanelSnapshot } from "@core/constants/messages";
+import { windowsGetCurrent } from "@core/chrome/windows";
+import type { PanelPortCommand, PanelPortMessage, PanelSnapshot } from "@core/constants/messages";
 import { type MessageType, MSG } from "@core/constants/messages";
 import { PORT_NAMES } from "@core/constants/ports";
 import { TIMINGS } from "@core/constants/timings";
@@ -48,6 +52,8 @@ export function createPanelStore(): PanelStore {
 	let snapshot: PanelSnapshot | null = null;
 	let connected = false;
 	let disposed = false;
+	/** This panel's window, once `chrome.windows.getCurrent` answered. */
+	let windowId: number | null = null;
 	const listeners = new Set<SnapshotListener>();
 	const portListeners = new Set<PortMessageListener>();
 
@@ -78,7 +84,9 @@ export function createPanelStore(): PanelStore {
 		if (disposed) return;
 		cancelRetry();
 		const gen = ++generation;
-		sendTyped({ type: MSG.PANEL_GET_SNAPSHOT }).then(
+		sendTyped(
+			windowId === null ? { type: MSG.PANEL_GET_SNAPSHOT } : { type: MSG.PANEL_GET_SNAPSHOT, windowId }
+		).then(
 			(result) => {
 				if (disposed || gen !== generation) return;
 				retryDelay = TIMINGS.portReconnectBaseMs;
@@ -99,29 +107,53 @@ export function createPanelStore(): PanelStore {
 	}
 
 	// ── port ────────────────────────────────────────────────────────────────
-	const port: ConnectedPort<never> = connectPort<never, PanelPortMessage>(PORT_NAMES.panel, {
-		onMessage(message) {
-			connected = true;
-			if (message.kind === "snapshot") {
-				cancelRetry();
-				generation += 1; // an in-flight request is superseded by the push
-				retryDelay = TIMINGS.portReconnectBaseMs;
-				set(message.snapshot);
-				return;
-			}
-			for (const cb of [...portListeners]) cb(message);
-		},
-		onDisconnect(reason) {
-			connected = false;
-			log.debug("panel store: port dropped", { reason: reason ?? null });
-			// The SW went away: ask again once it answers (the port reconnects on its own).
-			requestSnapshot();
-		},
-	});
+	// `onConnect` runs inside `connectPort` below, before `port` is bound: `sayHello` posts
+	// through `live`, which is that same port from the first reconnect on.
+	let live: ConnectedPort<PanelPortCommand> | null = null;
+
+	function sayHello(): void {
+		if (windowId !== null) live?.post({ kind: "hello", windowId });
+	}
+
+	const port: ConnectedPort<PanelPortCommand> = connectPort<PanelPortCommand, PanelPortMessage>(
+		PORT_NAMES.panel,
+		{
+			// Re-sent ahead of the queue on every reconnect (the SW forgets the port's window).
+			onConnect: sayHello,
+			onMessage(message) {
+				connected = true;
+				if (message.kind === "snapshot") {
+					cancelRetry();
+					generation += 1; // an in-flight request is superseded by the push
+					retryDelay = TIMINGS.portReconnectBaseMs;
+					set(message.snapshot);
+					return;
+				}
+				for (const cb of [...portListeners]) cb(message);
+			},
+			onDisconnect(reason) {
+				connected = false;
+				log.debug("panel store: port dropped", { reason: reason ?? null });
+				// The SW went away: ask again once it answers (the port reconnects on its own).
+				requestSnapshot();
+			},
+		}
+	);
+	live = port;
 	void port.ready.then(() => {
 		if (!disposed) connected = true;
 	});
 	requestSnapshot();
+	void windowsGetCurrent().then(
+		(win) => {
+			if (disposed || typeof win.id !== "number") return;
+			windowId = win.id;
+			// The SW answers the `hello` with a snapshot built for this window — the first
+			// request, sent before the window was known, was served by the last-focused one.
+			sayHello();
+		},
+		(error: unknown) => log.debug("panel store: windows.getCurrent failed", { error })
+	);
 
 	return {
 		get snapshot() {
@@ -149,6 +181,7 @@ export function createPanelStore(): PanelStore {
 			cancelRetry();
 			listeners.clear();
 			portListeners.clear();
+			live = null;
 			port.disconnect();
 			connected = false;
 		},

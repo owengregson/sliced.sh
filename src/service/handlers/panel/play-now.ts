@@ -21,7 +21,10 @@ export function registerPlayNowHandler(
 		if (!executor) throw new Error(PANEL_COMMAND_ERRORS.noExecutor);
 		if (!executor.isArmed()) throw new Error(PANEL_COMMAND_ERRORS.notArmed);
 		let run: Promise<unknown>;
-		if (executor.pendingMove()) run = executor.playNow();
+		// `pendingMove()` may be a replacement parked behind a cancelled run, which the no-arg
+		// `playNow()` ignores: play the reported move explicitly.
+		const pending = executor.pendingMove();
+		if (pending) run = executor.playNow(pending.rec, pending.rec.plan);
 		else {
 			const rec = deps.sources.session(msg.tabId)?.recommendation() ?? null;
 			if (!rec) throw new Error(PANEL_COMMAND_ERRORS.noRecommendation);

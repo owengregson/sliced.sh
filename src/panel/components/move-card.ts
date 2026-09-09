@@ -133,7 +133,8 @@ export function createMoveCard(
 		button.update({
 			armed,
 			kbd: data.kbd ?? null,
-			disabled: data.handsOff === true || data.state !== "your-move",
+			// §13.4: the hand plays only once armed (the debugger attaches at arm time, never mid-game).
+			disabled: data.handsOff === true || data.state !== "your-move" || data.armed !== true,
 			icon: counting && hovering ? "action.cancel" : "action.play",
 			// A running countdown owns the label and the spoken aria-label (§6.2).
 			...(counting

@@ -12,7 +12,11 @@ import { createPanelStore, type PanelStore } from "@panel/store";
 import { registerLicenseHandlers } from "@service/handlers/license";
 import { registerPanelHandlers } from "@service/handlers/panel";
 import { LicenseGate } from "@service/license-gate";
-import { PanelBroadcaster, type SnapshotSources } from "@service/panel-broadcaster";
+import {
+	type ExecutorHandle,
+	PanelBroadcaster,
+	type SnapshotSources,
+} from "@service/panel-broadcaster";
 import { createSimulator, type Simulator } from "@test/sim";
 import { bootPanelContext, type PanelContext } from "@test/sim/contexts/panel-context";
 import { bootSwContext, type SwContext } from "@test/sim/contexts/sw-context";
@@ -30,6 +34,7 @@ let shell: PanelShell | null = null;
 let tabId: number;
 let session: FakeSession;
 let sessions: Map<number, FakeSession>;
+let executors: Map<number, ExecutorHandle>;
 let sources: SnapshotSources;
 let broadcaster: PanelBroadcaster;
 let router: MessageRouter;
@@ -51,11 +56,12 @@ beforeEach(async () => {
 	tabId = sim.openTab("https://lichess.org/abcd1234", { active: true }).tabId;
 	session = new FakeSession("lichess");
 	sessions = new Map([[tabId, session]]);
+	executors = new Map();
 	sw = await bootSwContext(sim, {
 		entry: async () => {
 			router = installMessageRouter();
 			gate = new LicenseGate({ client, forceValid: false, now: sim.now });
-			sources = fakeSources({ sessions, license: () => gate.getState() });
+			sources = fakeSources({ sessions, executors, license: () => gate.getState() });
 			broadcaster = new PanelBroadcaster(sources, { scheduler: defaultScheduler, now: sim.now });
 			registerPanelHandlers(router, { broadcaster, sources, link: null });
 			registerLicenseHandlers(router, { license: gate });
@@ -226,6 +232,70 @@ describe("panel ↔ service worker: snapshot flow", () => {
 		expect(snap?.autoMove).toEqual({ armed: false });
 		expect(snap?.executor).toEqual({ debuggerAttached: false });
 		expect(snap?.recommendation).toBeUndefined();
+	});
+
+	it("playNow plays the move `pendingMove()` reports, including a replacement parked behind a cancelled run", async () => {
+		const plan = makePlan(sim.now());
+		const rec = makeRecommendation(plan, sim.now(), { from: "d2", to: "d4" });
+		const played: Array<{ uci: string | null; deadlineMs: number | null }> = [];
+		// A parked replacement is reported by `pendingMove()` but is *not* what the no-arg
+		// `playNow()` consumes (that one only takes `this.pending`) — the handler must name it.
+		const parked: ExecutorHandle = {
+			isArmed: () => true,
+			pendingMove: () => ({ rec, fireAt: sim.now() }),
+			handView: () => "resting",
+			on: () => () => {},
+			arm: async () => {},
+			disarm: () => {},
+			schedule: () => {},
+			cancel: () => {},
+			playNow: async (r, p) => {
+				played.push({ uci: r?.chosen.uci ?? null, deadlineMs: p?.deadlineMs ?? null });
+				return null;
+			},
+		};
+		executors.set(tabId, parked);
+		await connectPanel();
+		await sim.time.advance(0);
+		const reply = (await panel?.send({ type: MSG.PANEL_PLAY_NOW, tabId })) as { success: boolean };
+		expect(reply.success).toBe(true);
+		expect(played).toEqual([{ uci: "d2d4", deadlineMs: plan.deadlineMs }]);
+	});
+
+	it("a snapshot built earlier but resolved later never overwrites a newer one", async () => {
+		const seen = await connectPanel();
+		await sim.time.advance(TIMINGS.panelSnapshotMinIntervalMs);
+		await sw.run(() => setSettings({ engine: { multiPv: 3 } }));
+		await sim.time.advance(TIMINGS.panelSnapshotMinIntervalMs);
+		expect(seen.at(-1)?.settings.engine.multiPv).toBe(3);
+
+		// Storage and `tabs.query` have no ordering guarantee: make the next build's two reads
+		// answer with what they saw *now*, 5× the throttle interval late.
+		const local = sim.chrome.storage.local;
+		const real = local.get.bind(local);
+		const LATE_MS = TIMINGS.panelSnapshotMinIntervalMs * 5;
+		let late = 2;
+		local.get = ((keys: string, cb: (items: Record<string, unknown>) => void) => {
+			if (late <= 0) return real(keys, cb);
+			late -= 1;
+			return real(keys, (items: Record<string, unknown>) => void setTimeout(() => cb(items), LATE_MS));
+		}) as typeof local.get;
+		try {
+			await sw.run(() => broadcaster.notify()); // the slow build (multiPv 3)
+			await sim.time.advance(0);
+			expect(late).toBe(0); // both of its reads are in flight and deferred
+			await sw.run(() => setSettings({ engine: { multiPv: 8 } })); // a fast build follows
+			await sim.time.advance(TIMINGS.panelSnapshotMinIntervalMs);
+			expect(seen.at(-1)?.settings.engine.multiPv).toBe(8);
+			const beforeLate = seen.length;
+			await sim.time.advance(LATE_MS);
+			// The stale build resolved last and was dropped: the panel keeps the newer snapshot.
+			expect(seen.length).toBe(beforeLate);
+			expect(seen.at(-1)?.settings.engine.multiPv).toBe(8);
+			expect(currentStore()?.snapshot?.settings.engine.multiPv).toBe(8);
+		} finally {
+			local.get = real;
+		}
 	});
 
 	it("a panel that disconnects while a push is being built is dropped cleanly", async () => {

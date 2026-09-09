@@ -42,6 +42,7 @@ export function registerPreviewLineHandler(
 			link.post(msg.tabId, { kind: "clearHighlight" });
 			return;
 		}
+		// A storage read per hover; Task 30's session keeps the current settings and replaces this.
 		const settings = await getSettings();
 		link.post(msg.tabId, {
 			kind: "highlight",

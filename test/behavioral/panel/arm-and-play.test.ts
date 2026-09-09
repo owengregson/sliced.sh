@@ -12,12 +12,12 @@ import {
 	type PanelSnapshot,
 	PORT_NAMES,
 	TIMINGS,
+	TOAST_KEYS,
 } from "@core/constants";
 import { type ConnectedPort, connectPort } from "@core/messaging/ports";
 import { installMessageRouter, type MessageRouter } from "@core/messaging/router";
 import type { Occupancy, Rect } from "@core/motor/types";
 import { defaultScheduler } from "@core/util/scheduler";
-import { COPY } from "@panel/copy";
 import { createPanelStore, type PanelStore } from "@panel/store";
 import { ContentLink } from "@service/content-link";
 import { DebuggerManager } from "@service/debugger-manager";
@@ -284,9 +284,19 @@ describe("panel ↔ service worker: arm and play", () => {
 		expect(after.autoMove.scheduledAt).toBeUndefined();
 		expect(after.autoMove.armed).toBe(true);
 		expect(after.session.hand).toBe("resting");
-		const elapsed = ((after.session.lastExecution?.elapsedMs ?? 0) / MS).toFixed(1);
-		expect(toasts.map((t) => t.text)).toEqual([COPY.toast.played("e2e4", elapsed, "drag")]);
-		expect(toasts[0]?.level).toBe("info");
+		// The toast names a registry key and its arguments; the copy is the panel's (Task 28).
+		expect(toasts).toEqual([
+			{
+				kind: "toast",
+				level: "info",
+				key: TOAST_KEYS.played,
+				args: {
+					san: "e2e4",
+					elapsedMs: after.session.lastExecution?.elapsedMs ?? 0,
+					tier: "drag",
+				},
+			},
+		]);
 		expect(snapshots.some((s) => s.session.hand === "moving")).toBe(true);
 	});
 
@@ -309,7 +319,7 @@ describe("panel ↔ service worker: arm and play", () => {
 		expect((releases()[0]?.at ?? 0) - at).toBeLessThan(deadlineMs - at - 1000);
 		expect(latest().session.lastExecution).toMatchObject({ ok: true, outcome: "executed" });
 		expect(toasts).toHaveLength(1);
-		expect(toasts[0]?.text.startsWith("Played e2e4")).toBe(true);
+		expect(toasts[0]).toMatchObject({ key: TOAST_KEYS.played, args: { san: "e2e4" } });
 	});
 
 	it("playNow with nothing scheduled plays the current recommendation; without an armed hand it is refused", async () => {
@@ -426,8 +436,46 @@ describe("panel ↔ service worker: arm and play", () => {
 		expect(snap.executor.debuggerAttached).toBe(true);
 		expect(snap.session.hand).toBe("resting");
 		expect(snap.autoMove.armed).toBe(true);
-		expect(toasts.map((t) => t.text)).toEqual([COPY.toast.reattached]);
+		expect(toasts.map((t) => t.key)).toEqual([TOAST_KEYS.reattached]);
 		expect(sim.debugger.attachments.filter((a) => a.action === "attach")).toHaveLength(2);
+	});
+
+	it("a second window's panel is served its own tab and none of the first tab's toasts", async () => {
+		// A second browser window whose active tab has no session at all.
+		const otherTab = sim.openTab("https://lichess.org/zzzz9999", { active: true, windowId: 2 }).tabId;
+		const otherPanel = await bootPanelContext(sim);
+		sim.windows.setCurrent(otherPanel.id, 2); // what this panel's `windows.getCurrent()` reports
+		const otherSnapshots: PanelSnapshot[] = [];
+		const otherToasts: Array<Extract<PanelPortMessage, { kind: "toast" }>> = [];
+		const otherStore = await otherPanel.run(() => createPanelStore());
+		otherStore.subscribe((s) => otherSnapshots.push(s));
+		otherStore.onPortMessage((m) => {
+			if (m.kind === "toast") otherToasts.push(m);
+		});
+		try {
+			await recommend();
+			await settle();
+			// Each panel is built for the active tab of *its own* window.
+			expect(otherSnapshots.at(-1)?.session.state).toBe("idle");
+			expect(otherSnapshots.at(-1)?.session.hand).toBe("detached");
+			expect(otherSnapshots.at(-1)?.recommendation).toBeUndefined();
+			expect(latest().session.state).toBe("live:my-turn:recommended");
+			expect(latest().recommendation?.chosen.uci).toBe("e2e4");
+
+			// The hand plays in window 1: only the panel showing that tab hears about it.
+			await dispatch({ type: MSG.PANEL_SET_AUTO_MOVE, tabId, armed: true });
+			await sw.run(() => sim.time.advanceUntilIdle({ maxAdvanceMs: 30_000 }));
+			await settle();
+			expect(latest().session.lastExecution).toMatchObject({ outcome: "executed" });
+			expect(toasts.map((t) => t.key)).toEqual([TOAST_KEYS.played]);
+			expect(otherToasts).toEqual([]);
+			// … and the other window's snapshot never carries the first tab's execution.
+			expect(otherSnapshots.at(-1)?.session.lastExecution).toBeUndefined();
+			expect(otherTab).not.toBe(tabId);
+		} finally {
+			otherStore.dispose();
+			await otherPanel.teardown();
+		}
 	});
 
 	it("previewLine highlights the hovered line's first move on the board and restores the chosen move on null", async () => {

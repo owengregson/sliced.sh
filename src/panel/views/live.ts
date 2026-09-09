@@ -32,6 +32,7 @@ import { mountIcons } from "../icons-mount";
 import { isHandsOff } from "../router";
 import type { PanelCommandType } from "../store";
 import { instantiate, part } from "../template";
+import { portToastText } from "../toast-text";
 import type { View, ViewContext } from "../view";
 import {
 	type CollapseState,
@@ -382,7 +383,7 @@ function mountLive(ctx: ViewContext): () => void {
 		render();
 	});
 	const unsubscribePort = store.onPortMessage((message) => {
-		if (message.kind === "toast") showToast(TOAST_KIND[message.level], message.text);
+		if (message.kind === "toast") showToast(TOAST_KIND[message.level], portToastText(message));
 	});
 
 	tabsQuery({ active: true, currentWindow: true })
