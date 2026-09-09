@@ -10,8 +10,17 @@
  */
 export const LICENSE_ENDPOINT: string = __SL_LICENSE_URL__;
 
+/** Product site origin; every `sliced.sh` URL below is built from it (C1: one definition). */
+const WEBSITE = "https://sliced.sh";
+
 export const URLS = {
-	website: "https://sliced.sh",
+	website: WEBSITE,
+	/**
+	 * §12.2: the published manifest the service worker polls for "update available". v1 used a
+	 * self-hosted CRX `update_url`; Chrome no longer installs those outside enterprise policy,
+	 * so v2 compares versions itself on the licence alarm (`@service/update-check`).
+	 */
+	websiteManifest: `${WEBSITE}/manifest.json`,
 	lichessExplorer: "https://explorer.lichess.ovh/lichess",
 	nnueMirror: "https://tests.stockfishchess.org/api/nn/",
 	/**
@@ -25,7 +34,7 @@ export const URLS = {
 	 * Task 34: ChessMimic bands that are registered but not bundled download from here
 	 * (`<band>.onnx`, verified against `CHESSMIMIC_BAND_FILES`); the three shipped bands never do.
 	 */
-	chessmimicBandBase: "https://sliced.sh/models/chessmimic/",
+	chessmimicBandBase: `${WEBSITE}/models/chessmimic/`,
 	/** Task 34: onnxruntime sources; the MIT text is vendored from `<raw>/v<version>/LICENSE`. */
 	onnxruntimeRepo: "https://github.com/microsoft/onnxruntime",
 	onnxruntimeRaw: "https://raw.githubusercontent.com/microsoft/onnxruntime/",

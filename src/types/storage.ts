@@ -38,6 +38,8 @@ export interface LocalStorageSchema {
 	[LOCAL_KEYS.licenseState]: LicenseState;
 	[LOCAL_KEYS.licenseKey]: string;
 	[LOCAL_KEYS.updateAvailable]: boolean;
+	/** The version `update-check` saw on the site; read by the panel for the §4.8 copy. */
+	[LOCAL_KEYS.updateVersion]: string;
 	[LOCAL_KEYS.engineNnueMeta]: NnueMeta;
 	[LOCAL_KEYS.sessionStats]: SessionStats;
 	[LOCAL_KEYS.timingLog]: TimingLogEntry[];

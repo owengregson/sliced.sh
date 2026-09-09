@@ -19,6 +19,7 @@ import { setLicenseKey } from "@core/storage/license-storage";
 import { type SettingsPatch, setSettings } from "@core/storage/settings-storage";
 import { clamp } from "@core/util/clamp";
 import type { ServiceSystems } from "@service/bootstrap";
+import { checkForUpdate } from "@service/update-check";
 import type { Keybind, Settings } from "@typedefs/settings";
 
 // ---------------------------------------------------------------------------
@@ -188,6 +189,11 @@ export interface ServiceLifecycle {
 export interface LifecycleOptions {
 	systems: ServiceSystems;
 	now?: () => number;
+	/**
+	 * §12.2 site version poll, carried by the licence alarm. Injectable so a test can drive
+	 * that alarm without a network call; production uses `checkForUpdate`.
+	 */
+	updateCheck?: () => Promise<unknown>;
 }
 
 const isLegacyVersion = (version: string | undefined): boolean =>
@@ -196,11 +202,20 @@ const isLegacyVersion = (version: string | undefined): boolean =>
 export function wireServiceLifecycle(options: LifecycleOptions): ServiceLifecycle {
 	const { systems } = options;
 	const now = options.now ?? (() => Date.now());
+	const updateCheck = options.updateCheck ?? (() => checkForUpdate());
 	const alarmHandlers = new Map<AlarmName, AlarmHandler>([
 		[
 			ALARM_NAMES.licenseRevalidate,
 			async () => {
-				await systems.license.revalidate();
+				// §12.2: one 6 h alarm carries both network checks. They are independent, so
+				// neither may hide the other's failure — the update check is reported here and
+				// the licence rejection is re-thrown for the dispatcher, as before.
+				const [license, update] = await Promise.allSettled([
+					systems.license.revalidate(),
+					updateCheck(),
+				]);
+				if (update.status === "rejected") log.warn("lifecycle: update check failed", update.reason);
+				if (license.status === "rejected") throw license.reason;
 			},
 		],
 		[ALARM_NAMES.keepalive, () => systems.keepalive.onAlarm()],

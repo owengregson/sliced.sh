@@ -7,6 +7,7 @@ export const LOCAL_KEYS = {
 	licenseState: "sl::license-state", // LicenseState
 	licenseKey: "sl::license-key", // string
 	updateAvailable: "sl::update-available", // boolean
+	updateVersion: "sl::update-version", // string — the site's version when one is available
 	engineNnueMeta: "sl::engine-nnue-meta", // { name, sha256, bytes, storedAt }
 	sessionStats: "sl::session-stats", // SessionStats (games, moves, avgThinkMs)
 	timingLog: "sl::timing-log", // ring buffer of TimingLogEntry (max 200)

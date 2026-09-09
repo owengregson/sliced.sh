@@ -41,8 +41,9 @@ export const VIEWS: ViewRegistry = {
 	expired: expiredView,
 	unsupported: unsupportedView,
 	waiting: waitingView,
-	// TODO(Task 31 boot): inject `createUpdateView({ version, notes, onUpdate })` through
-	// `bootShell({ views: { update } })`; this default knows only the build version.
+	// The boot code (`panel/index.ts`) overrides this with `createUpdateView({ version,
+	// onUpdate })` once it has read `LOCAL_KEYS.updateVersion`; this default knows only the
+	// build version and has no updater, which is what a test mounting the registry wants.
 	update: updateView,
 };
 

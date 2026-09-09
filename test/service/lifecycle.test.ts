@@ -252,7 +252,9 @@ describe("wireServiceLifecycle", () => {
 	it("a rejected license revalidation from the alarm is caught by the dispatcher", async () => {
 		const client = validClient();
 		const systems = bootstrapServiceSystems({ licenseClient: client });
-		const lifecycle = wireServiceLifecycle({ systems });
+		// The licence alarm also carries the §12.2 site version poll; stub it so the alarm
+		// tests stay offline (`test/service/update-check.test.ts` owns that behaviour).
+		const lifecycle = wireServiceLifecycle({ systems, updateCheck: async () => {} });
 		await systems.license.ensure();
 		sim.chrome.alarms.create(ALARM_NAMES.licenseRevalidate, { when: sim.now() + 1 });
 		sim.storage.failNextWith("quota exceeded");
@@ -268,7 +270,7 @@ describe("wireServiceLifecycle", () => {
 	it("onStartup validates the license; the alarm dispatcher routes by name", async () => {
 		const client = validClient();
 		const systems = bootstrapServiceSystems({ licenseClient: client });
-		const lifecycle = wireServiceLifecycle({ systems });
+		const lifecycle = wireServiceLifecycle({ systems, updateCheck: async () => {} });
 		sim.runtime.fireOnStartup();
 		await settle();
 		expect(client.calls).toBe(1);

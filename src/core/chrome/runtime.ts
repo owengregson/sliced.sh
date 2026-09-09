@@ -33,6 +33,15 @@ export function runtimeConnect(name: string): chrome.runtime.Port {
 	return chrome.runtime.connect({ name });
 }
 
+/**
+ * Restart the extension (§12.2: the Update view's "Restart and update"). On an unpacked or
+ * zip install this re-reads the folder on disk, which is what applying an update means here;
+ * nothing after this call runs.
+ */
+export function runtimeReload(): void {
+	chrome.runtime.reload();
+}
+
 export function runtimeGetURL(path: string): string {
 	return chrome.runtime.getURL(path);
 }
