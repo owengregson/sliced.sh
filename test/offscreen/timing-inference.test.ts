@@ -319,6 +319,61 @@ describe("createTimingInference", () => {
 		expect(ok.band).toBe("1500_1600");
 		expect(ort.created).toHaveLength(1);
 	});
+	it("backs off exponentially between retries so a broken band is not re-read every 30 s", async () => {
+		const ort = fakeOrt(1);
+		let clock = 0;
+		const attempts: number[] = [];
+		const inf = createTimingInference({
+			runtime: async () => ort.runtime,
+			scalers: { "1500_1600": CHESSMIMIC_SCALERS["1500_1600"] },
+			store: {
+				async get() {
+					attempts.push(clock);
+					throw new Error("permanently broken band");
+				},
+			},
+			now: () => clock,
+			retryAfterMs: 1_000,
+			retryMaxMs: 4_000,
+		});
+		// Attempt 1 at t=0, then the waits double: 1 s, 2 s, 4 s, then the cap holds at 4 s.
+		for (const t of [0, 1_000, 3_000, 7_000, 11_000]) {
+			clock = t;
+			expect((await inf.handle(command({}, `q${t}`))).error).toContain(TIMING_NO_BAND);
+		}
+		expect(attempts).toEqual([0, 1_000, 3_000, 7_000, 11_000]);
+		// One tick short of each due time the band is still skipped, so no read happens.
+		clock = 14_999;
+		await inf.handle(command({}, "early"));
+		expect(attempts).toHaveLength(5);
+		clock = 15_000;
+		await inf.handle(command({}, "due"));
+		expect(attempts).toHaveLength(6);
+	});
+	it("releases a session exactly once when dispose lands mid-load", async () => {
+		const ort = fakeOrt(1);
+		let letGo: (() => void) | undefined;
+		const gate = new Promise<void>((r) => {
+			letGo = r;
+		});
+		const inf = createTimingInference({
+			runtime: async () => ort.runtime,
+			scalers: { "1500_1600": CHESSMIMIC_SCALERS["1500_1600"] },
+			store: {
+				async get(name: string) {
+					await gate;
+					return bandBytes(name.replace(/\.onnx$/, ""));
+				},
+			},
+		});
+		const pending = inf.warm("1500_1600");
+		inf.dispose(); // the load is still in flight
+		letGo?.();
+		await pending;
+		await until(() => ort.released.length > 0);
+		await new Promise((r) => setTimeout(r, 5));
+		expect(ort.released).toEqual([CHESSMIMIC_BANDS.indexOf("1500_1600")]);
+	});
 	it("retries session creation single-threaded when the threaded wasm cannot start", async () => {
 		const ort = fakeOrt(4);
 		ort.failWhileThreaded = true;

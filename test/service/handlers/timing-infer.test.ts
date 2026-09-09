@@ -167,6 +167,87 @@ describe("attachModelDownload", () => {
 		await new Promise((r) => setTimeout(r, 5));
 		expect(urls).toHaveLength(1);
 	});
+	it("posts each chunk while the body is still streaming, not after it has all arrived", async () => {
+		// The property the offscreen store's per-chunk stall budget depends on: if the relay
+		// buffered `arrayBuffer()` first, nothing would be posted until `done`, and that budget
+		// would silently bound the whole fetch instead of the gap between chunks.
+		const port = fakePort();
+		const pieces = [
+			new Uint8Array(1000).fill(1),
+			new Uint8Array(1000).fill(2),
+			new Uint8Array(1000).fill(3),
+		];
+		/** Chunks posted at the moment each `read()` was served. */
+		const postedAtRead: number[] = [];
+		let i = 0;
+		attachModelDownload(port, {
+			chunkBytes: 1000,
+			fetch: async () => ({
+				ok: true,
+				status: 200,
+				headers: { get: (h) => (h.toLowerCase() === "content-length" ? "3000" : null) },
+				body: {
+					getReader: () => ({
+						read: async () => {
+							postedAtRead.push(port.posted.length);
+							return i < pieces.length ? { done: false, value: pieces[i++] } : { done: true };
+						},
+					}),
+				},
+				arrayBuffer: async () => {
+					throw new Error("the relay must stream, not buffer");
+				},
+			}),
+		});
+		port.emit({ kind: "model-request", name: "1000_1100.onnx" });
+		await new Promise((r) => setTimeout(r, 5));
+		// Four reads (three pieces + the `done`); by the last one, chunks are already out.
+		expect(postedAtRead).toEqual([0, 0, 1, 2]);
+		const chunks = port.posted.filter(
+			(c): c is Extract<EnginePortCommand, { kind: "model-chunk" }> => c.kind === "model-chunk"
+		);
+		expect(chunks).toHaveLength(3);
+		const joined: number[] = [];
+		for (const c of chunks) {
+			if (!("bytes" in c)) throw new Error("expected data chunks");
+			joined.push(...base64ToBytes(c.bytes));
+			// Content-Length was present, so every chunk carries the exact total (real progress).
+			expect(c.total).toBe(3);
+		}
+		const all: number[] = [];
+		for (const piece of pieces) all.push(...piece);
+		expect(new Uint8Array(joined)).toEqual(new Uint8Array(all));
+	});
+	it("keeps the store from completing early when the server sends no Content-Length", async () => {
+		const port = fakePort();
+		const pieces = [new Uint8Array(1000).fill(7), new Uint8Array(500).fill(8)];
+		let i = 0;
+		attachModelDownload(port, {
+			chunkBytes: 1000,
+			fetch: async () => ({
+				ok: true,
+				status: 200,
+				headers: { get: () => null },
+				body: {
+					getReader: () => ({
+						read: async () => (i < pieces.length ? { done: false, value: pieces[i++] } : { done: true }),
+					}),
+				},
+				arrayBuffer: async () => {
+					throw new Error("the relay must stream, not buffer");
+				},
+			}),
+		});
+		port.emit({ kind: "model-request", name: "1000_1100.onnx" });
+		await new Promise((r) => setTimeout(r, 5));
+		const chunks = port.posted.filter(
+			(c): c is Extract<EnginePortCommand, { kind: "model-chunk" }> => c.kind === "model-chunk"
+		);
+		expect(chunks).toHaveLength(2);
+		// Non-final chunk advertises one more than has arrived, so `received < total` holds; the
+		// final chunk carries the true count and completes the download.
+		expect(chunks.map((c) => ("total" in c ? c.total : -1))).toEqual([2, 2]);
+	});
 	it("reports an HTTP failure as an error chunk", async () => {
 		const port = fakePort();
 		attachModelDownload(port, {

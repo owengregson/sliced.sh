@@ -263,8 +263,14 @@ export type EnginePortCommand =
 	| { kind: "uci"; line: string }
 	| { kind: "restart" }
 	| { kind: "loadNnue"; names: string[] }
-	/** Which build to run and how many threads the SW will ask for (first one boots the engine). */
-	| { kind: "configure"; variant: EngineVariant; threads: number }
+	/**
+	 * Which build to run and how many threads the SW will ask for (first one boots the engine).
+	 * `warmTiming` (Task 34) opts into pre-loading the ChessMimic default band: the offscreen
+	 * document cannot know whether the SW's `TimingModel` selected the ChessMimic head, and
+	 * warming costs ~200 ms of main-thread wasm work plus an 18 MB session, so it stays off
+	 * unless the SW asks. Absent/false → no pre-warm.
+	 */
+	| { kind: "configure"; variant: EngineVariant; threads: number; warmTiming?: boolean }
 	| NnueChunk
 	| ModelChunk
 	/** Timing-head inference request (Task 34); answered with `timing-result`. */

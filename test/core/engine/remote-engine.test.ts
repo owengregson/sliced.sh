@@ -325,9 +325,9 @@ describe("RemoteEngine over the simulator", () => {
 			},
 		});
 		await settle();
-		// The first accepted connection pre-warms the default band (Task 34 fix round 1) before
-		// anything the SW sends, so the first real move never pays the cold session load.
-		expect(calls).toEqual([`warm:${CHESSMIMIC_DEFAULT_BAND}`, "warm:1800_1900", "handle:t2"]);
+		// No `warmTiming` on this engine, so nothing is pre-warmed: a v1 user must not pay the
+		// ~200 ms of wasm work and the 18 MB session (fix round 2).
+		expect(calls).toEqual(["warm:1800_1900", "handle:t2"]);
 		expect(chunks).toEqual(["1000_1100.onnx"]);
 		expect(seen).toContainEqual({
 			kind: "timing-result",
@@ -336,6 +336,50 @@ describe("RemoteEngine over the simulator", () => {
 			band: "1500_1600",
 			ms: 12,
 		});
+		engine.dispose();
+	});
+
+	it("pre-warms the default band only when the SW opts in with configure.warmTiming (Task 34)", async () => {
+		await off?.teardown();
+		const calls: string[] = [];
+		const timing = {
+			handle: async (cmd: { id: string }) => ({
+				kind: "timing-result" as const,
+				id: cmd.id,
+				probs: new Array<number>(30).fill(1 / 30),
+			}),
+			warm: async (band: string) => {
+				calls.push(`warm:${band}`);
+			},
+			dispose: () => {},
+		};
+		off = await bootOffscreenContext(sim, {
+			entry: () => {
+				serveEnginePort({
+					createStore: () => ({ handleChunk: () => {}, abortAll: () => {} }),
+					createHost: (post) =>
+						new EngineHost({
+							boot: async () => new Promise<BootedEngine>(() => {}),
+							nnueStore: { get: async () => new Uint8Array(1) },
+							post,
+						}),
+					createModelStore: () => ({ handleChunk: () => {}, abortAll: () => {} }),
+					createTiming: () => timing,
+				});
+			},
+		});
+		const engine = await (sw as SwContext).run(async () => {
+			const e = new RemoteEngine({ variant: "smallnet", threads: 1, warmTiming: true });
+			await e.ready;
+			return e;
+		});
+		await settle();
+		expect(calls).toEqual([`warm:${CHESSMIMIC_DEFAULT_BAND}`]);
+		// Only once, however many `configure`s follow.
+		engine.configure("smallnet", 2);
+		engine.configure("full", 2);
+		await settle();
+		expect(calls).toEqual([`warm:${CHESSMIMIC_DEFAULT_BAND}`]);
 		engine.dispose();
 	});
 });

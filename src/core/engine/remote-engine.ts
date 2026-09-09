@@ -40,6 +40,12 @@ export interface RemoteEngineOptions {
 	readyTimeoutMs?: number;
 	variant?: EngineVariant;
 	threads?: number;
+	/**
+	 * Task 34: ask the offscreen document to pre-load the ChessMimic default band with the first
+	 * `configure`. Set it only when the SW's `TimingModel` runs the ChessMimic head — it costs
+	 * ~200 ms of wasm work and an 18 MB session in the offscreen document. Default off.
+	 */
+	warmTiming?: boolean;
 }
 
 interface RestartWaiter {
@@ -66,6 +72,8 @@ export class RemoteEngine implements EngineTransport {
 	private queue: EnginePortCommand[] = [];
 	private variant: EngineVariant | undefined;
 	private threads: number | undefined;
+	/** Task 34: pre-warm the timing head in the offscreen document (off unless the SW asks). */
+	private warmTiming = false;
 	private needsConfigure = true;
 	private synced = false;
 	private last: EngineStatus | undefined;
@@ -81,6 +89,7 @@ export class RemoteEngine implements EngineTransport {
 		this.readyTimeoutMs = opts.readyTimeoutMs ?? TIMINGS.engineReadyTimeoutMs;
 		if (opts.variant !== undefined) this.variant = opts.variant;
 		if (opts.threads !== undefined) this.threads = opts.threads;
+		if (opts.warmTiming !== undefined) this.warmTiming = opts.warmTiming;
 		this.ready = new Promise<void>((resolve) => {
 			this.resolveReady = resolve;
 		});
@@ -144,7 +153,18 @@ export class RemoteEngine implements EngineTransport {
 	configure(variant: EngineVariant, threads: number): void {
 		this.variant = variant;
 		this.threads = threads;
-		if (this.port) this.post({ kind: "configure", variant, threads }); // else sent on connect
+		if (this.port) this.post(this.configureCommand(variant, threads)); // else sent on connect
+	}
+
+	/** Task 34: opt the offscreen document into (or out of) pre-warming the timing head. */
+	setWarmTiming(on: boolean): void {
+		this.warmTiming = on;
+	}
+
+	private configureCommand(variant: EngineVariant, threads: number): EnginePortCommand {
+		return this.warmTiming
+			? { kind: "configure", variant, threads, warmTiming: true }
+			: { kind: "configure", variant, threads };
 	}
 
 	loadNnue(names: string[]): void {
@@ -215,7 +235,7 @@ export class RemoteEngine implements EngineTransport {
 	private postConfigure(): void {
 		this.needsConfigure = false;
 		if (this.variant === undefined) return;
-		this.post({ kind: "configure", variant: this.variant, threads: this.threads ?? 1 });
+		this.post(this.configureCommand(this.variant, this.threads ?? 1));
 	}
 
 	private onPortMessage(m: EnginePortMessage): void {

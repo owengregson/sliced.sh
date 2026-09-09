@@ -24,8 +24,9 @@
  * "connects / re-connects" prose is implemented as "accept the SW's connection
  * and re-send the current status on each new one", which is how the engine
  * state survives a service-worker restart. Only the newest accepted port is
- * routed; its disconnect aborts pending NNUE downloads. The first accepted
- * connection also pre-warms the timing head's default band (Task 34).
+ * routed; its disconnect aborts pending NNUE downloads. The first `configure`
+ * carrying `warmTiming` pre-warms the timing head's default band (Task 34);
+ * without it nothing is loaded, so a v1 user pays nothing.
  */
 
 import { DEFAULT_ENGINE_STATUS } from "@core/constants/defaults";
@@ -432,8 +433,21 @@ export function serveEnginePort<S extends NnueStoreLike, M extends ModelStoreLik
 	const host = deps.createHost(post, store);
 	const modelStore = deps.createModelStore?.(post);
 	const timing = modelStore && deps.createTiming ? deps.createTiming(modelStore) : undefined;
-	/** The default band is warmed once, on the first connection (see `CHESSMIMIC_DEFAULT_BAND`). */
+	/** The default band is warmed once, on the first `configure` that asks for it. */
 	let preWarmed = false;
+
+	/**
+	 * Load and warm `CHESSMIMIC_DEFAULT_BAND` before the first move needs it. A band's session is
+	 * created inside `handle()`, so without this the first query for a band waits out the whole
+	 * create + warm-up (~200 ms cold) — past the head's 100 ms budget, which means the first move
+	 * silently falls back to v1. Gated on the SW's `warmTiming` because it is ~200 ms of
+	 * main-thread wasm work and an 18 MB session that a v1 user must not pay for.
+	 */
+	const preWarm = (): void => {
+		if (!timing || preWarmed) return;
+		preWarmed = true;
+		void timing.warm(CHESSMIMIC_DEFAULT_BAND);
+	};
 
 	const route = (cmd: EnginePortCommand): void => {
 		if (!cmd || typeof cmd !== "object") return;
@@ -450,6 +464,10 @@ export function serveEnginePort<S extends NnueStoreLike, M extends ModelStoreLik
 				return;
 			case "timing-warm":
 				void timing?.warm(cmd.band);
+				return;
+			case "configure":
+				if (cmd.warmTiming) preWarm();
+				host.handle(cmd);
 				return;
 			default:
 				host.handle(cmd);
@@ -477,14 +495,6 @@ export function serveEnginePort<S extends NnueStoreLike, M extends ModelStoreLik
 			};
 			log.info("engine-host: service worker connected");
 			port.post({ kind: "status", status: host.status() });
-			// Pre-warm the timing head so the first move of the session does not pay the ~200 ms
-			// cold session load inside its 100 ms budget (and silently fall back to v1). Only on
-			// the first connection: a service-worker restart reconnects to a document whose
-			// sessions are already loaded.
-			if (timing && !preWarmed) {
-				preWarmed = true;
-				void timing.warm(CHESSMIMIC_DEFAULT_BAND);
-			}
 		}
 	);
 

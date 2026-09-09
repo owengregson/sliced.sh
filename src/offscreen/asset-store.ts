@@ -13,11 +13,15 @@
  *      spec's checksum error.
  *
  * Every relayed download carries a **stall** budget (`TIMINGS.assetDownloadStallMs`), rearmed by
- * each chunk: a service worker that never answers (no handler registered, the relay wedged, the
- * port silently dead) rejects the download instead of leaving a promise pending forever. That
- * matters beyond the wasted memory — `timing-inference.ts` awaits its band candidates serially,
- * so a download that never settles would wedge the head on that band and never reach the
- * substitute. The budget is a stall, not a total, so a slow 72 MB NNUE still finishes.
+ * each chunk that makes progress: a service worker that never answers (no handler registered,
+ * the relay wedged, the port silently dead) rejects the download instead of leaving a promise
+ * pending forever. That matters beyond the wasted memory — `timing-inference.ts` awaits its band
+ * candidates serially, so a download that never settles would wedge the head on that band and
+ * never reach the substitute. The budget is a stall, not a total, so a slow 72 MB NNUE still
+ * finishes; `download-relay.ts` posts chunks *while* the body streams, which is what makes the
+ * distinction real. Only a new, non-empty index rearms, so a repeated or empty chunk cannot
+ * extend a download indefinitely, and `TIMINGS.assetDownloadTotalMs` caps the whole transfer as
+ * a backstop.
  *
  * Chunks carry base64 because runtime ports JSON-serialise their payloads (see `NnueChunk`).
  */
@@ -91,10 +95,14 @@ export interface AssetStoreDeps {
 	scheduler?: TimerScheduler;
 	/** Chunk-to-chunk budget before a relayed download is abandoned; default `TIMINGS.assetDownloadStallMs`. */
 	stallMs?: number;
+	/** Whole-download backstop; default `TIMINGS.assetDownloadTotalMs`. */
+	totalMs?: number;
 }
 
 /** Rejection message when the relay went quiet; the caller may retry or substitute. */
 export const ASSET_DOWNLOAD_STALLED = "download stalled";
+/** Rejection message when a download ran past its whole-transfer backstop. */
+export const ASSET_DOWNLOAD_TOO_LONG = "download exceeded its total budget";
 
 interface Download {
 	chunks: Array<Uint8Array | undefined>;
@@ -104,6 +112,8 @@ interface Download {
 	reject: (error: Error) => void;
 	/** Stall-budget timer handle; cleared whenever the download leaves `downloads`. */
 	timer: unknown;
+	/** Whole-download backstop handle; cleared with `timer`. */
+	totalTimer: unknown;
 }
 
 const defaultDigest = (data: Uint8Array): Promise<ArrayBuffer> =>
@@ -179,6 +189,7 @@ export class AssetStore {
 	private readonly digest: (data: Uint8Array) => Promise<ArrayBuffer>;
 	private readonly sched: TimerScheduler;
 	private readonly stallMs: number;
+	private readonly totalMs: number;
 
 	constructor(
 		protected readonly spec: AssetSpec,
@@ -191,6 +202,7 @@ export class AssetStore {
 		this.digest = deps.digest ?? defaultDigest;
 		this.sched = deps.scheduler ?? DEFAULT_SCHEDULER;
 		this.stallMs = deps.stallMs ?? TIMINGS.assetDownloadStallMs;
+		this.totalMs = deps.totalMs ?? TIMINGS.assetDownloadTotalMs;
 	}
 
 	/** Drop `name`'s download and stop its stall timer; returns the entry if there was one. */
@@ -199,6 +211,7 @@ export class AssetStore {
 		if (!d) return undefined;
 		this.downloads.delete(name);
 		this.sched.clearTimeout(d.timer);
+		this.sched.clearTimeout(d.totalTimer);
 		return d;
 	}
 
@@ -233,10 +246,13 @@ export class AssetStore {
 			d.reject(new Error(`${this.spec.label} chunk ${msg.index} undecodable: ${errorMessage(error)}`));
 			return;
 		}
-		this.rearmStall(msg.name, d);
 		d.total = msg.total;
+		// Only a new, non-empty index counts as progress, so a repeated or empty chunk cannot
+		// keep rearming the stall budget forever.
+		const progressed = d.chunks[msg.index] === undefined && bytes.length > 0;
 		if (d.chunks[msg.index] === undefined) d.received++;
 		d.chunks[msg.index] = bytes;
+		if (progressed) this.rearmStall(msg.name, d);
 		this.deps.onProgress?.(msg.name, d.total > 0 ? d.received / d.total : 1);
 		if (d.received < d.total) return;
 		this.takeDownload(msg.name);
@@ -276,6 +292,7 @@ export class AssetStore {
 		this.downloads.clear();
 		for (const d of pending) {
 			this.sched.clearTimeout(d.timer);
+			this.sched.clearTimeout(d.totalTimer);
 			d.reject(new Error(reason));
 		}
 	}
@@ -373,27 +390,40 @@ export class AssetStore {
 		});
 	}
 
-	/** (Re)start `name`'s stall budget: no chunk within `stallMs` rejects the download. */
+	/** Drop `name`'s download, stop both of its timers and reject it. */
+	private abandon(name: string, d: Download, why: string, detail: Record<string, unknown>): void {
+		if (this.downloads.get(name) !== d) return;
+		this.downloads.delete(name);
+		this.sched.clearTimeout(d.timer);
+		this.sched.clearTimeout(d.totalTimer);
+		log.warn(`${this.spec.label}: ${why}`, { name, received: d.received, total: d.total, ...detail });
+		d.reject(new Error(`${why}: ${name}`));
+	}
+
+	/** (Re)start `name`'s stall budget: no progress within `stallMs` rejects the download. */
 	private rearmStall(name: string, d: Download): void {
 		this.sched.clearTimeout(d.timer);
 		d.timer = this.sched.setTimeout(() => {
-			if (this.downloads.get(name) !== d) return;
-			this.downloads.delete(name);
-			log.warn(`${this.spec.label}: no chunk within the stall budget; abandoning`, {
-				name,
-				stallMs: this.stallMs,
-				received: d.received,
-				total: d.total,
-			});
-			d.reject(new Error(`${ASSET_DOWNLOAD_STALLED}: ${name}`));
+			this.abandon(name, d, ASSET_DOWNLOAD_STALLED, { stallMs: this.stallMs });
 		}, this.stallMs);
 	}
 
 	private download(name: string): Promise<Uint8Array> {
 		return new Promise<Uint8Array>((resolve, reject) => {
-			const d: Download = { chunks: [], received: 0, total: 0, resolve, reject, timer: undefined };
+			const d: Download = {
+				chunks: [],
+				received: 0,
+				total: 0,
+				resolve,
+				reject,
+				timer: undefined,
+				totalTimer: undefined,
+			};
 			this.downloads.set(name, d);
 			this.rearmStall(name, d);
+			d.totalTimer = this.sched.setTimeout(() => {
+				this.abandon(name, d, ASSET_DOWNLOAD_TOO_LONG, { totalMs: this.totalMs });
+			}, this.totalMs);
 			this.deps.post(this.spec.request(name));
 		});
 	}

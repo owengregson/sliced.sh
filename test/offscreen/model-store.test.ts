@@ -2,7 +2,7 @@
 // store (bundled read, verified cache, corrupt copy evicted, relayed download, the stall budget
 // that stops a service worker which never answers from wedging a band, unknown names).
 import { describe, expect, it } from "bun:test";
-import type { EnginePortMessage } from "@core/constants/messages";
+import type { EnginePortCommand, EnginePortMessage } from "@core/constants/messages";
 import {
 	CHESSMIMIC_BAND_FILES,
 	type ChessMimicBandFile,
@@ -10,7 +10,7 @@ import {
 	MODELS_DIR,
 } from "@core/constants/models";
 import type { TimerScheduler } from "@core/util/scheduler";
-import { ASSET_DOWNLOAD_STALLED, sha256Hex } from "@offscreen/asset-store";
+import { ASSET_DOWNLOAD_STALLED, ASSET_DOWNLOAD_TOO_LONG, sha256Hex } from "@offscreen/asset-store";
 import {
 	MODEL_CHECKSUM_ERROR,
 	MODEL_NAME_ERROR,
@@ -18,7 +18,7 @@ import {
 	type ModelStoreDeps,
 } from "@offscreen/model-store";
 import type { OpfsDirectory, OpfsFileHandle } from "@offscreen/nnue-store";
-import { encodeModelChunks } from "@service/handlers/engine/model-download";
+import { attachModelDownload, encodeModelChunks } from "@service/handlers/engine/model-download";
 
 const ROOT = "chrome-extension://test/";
 
@@ -113,6 +113,7 @@ function setup(options: {
 	opfs?: FakeOpfs;
 	scheduler?: TimerScheduler;
 	stallMs?: number;
+	totalMs?: number;
 }) {
 	const requests: string[] = [];
 	const fetched: string[] = [];
@@ -137,6 +138,7 @@ function setup(options: {
 		files: options.files,
 		...(options.scheduler ? { scheduler: options.scheduler } : {}),
 		...(options.stallMs === undefined ? {} : { stallMs: options.stallMs }),
+		...(options.totalMs === undefined ? {} : { totalMs: options.totalMs }),
 	};
 	return { store: new ModelStore(deps), requests, fetched, opfs };
 }
@@ -220,31 +222,120 @@ describe("ModelStore", () => {
 		const h = setup({ files, scheduler: sched, stallMs: 5_000 });
 		const p = h.store.get("1000_1100.onnx");
 		await until(() => h.requests.length === 1);
-		expect(sched.count()).toBe(1);
+		expect(sched.count()).toBe(2); // the stall budget and the whole-download backstop
 		sched.advance(5_000);
 		await expect(p).rejects.toThrow(ASSET_DOWNLOAD_STALLED);
-		expect(sched.count()).toBe(0);
+		expect(sched.count()).toBe(0); // both are cleared when the download is abandoned
 		// It is only a stall, so the band can be asked for again.
 		const q = h.store.get("1000_1100.onnx");
 		await until(() => h.requests.length === 2);
 		for (const c of encodeModelChunks("1000_1100.onnx", data, 400)) h.store.handleChunk(c);
 		expect(await q).toEqual(data);
 	});
-	it("the stall budget is per chunk, so a slow but progressing download still finishes", async () => {
-		const data = bytes(12, 3000);
+	it("the stall budget is per chunk: the real relay's slow but progressing download finishes", async () => {
+		// End to end against the actual `attachModelDownload` relay, not a hand-fed chunk
+		// sequence: the source hands the relay 1 500 bytes every 4 s of (fake) clock, so the
+		// transfer takes 24 s against a 5 s budget. It only passes because the relay posts each
+		// slice while the body is still streaming — a relay that buffered `arrayBuffer()` first
+		// would post nothing for 24 s and trip the budget.
+		const data = bytes(12, 7500);
 		const files = await registryFor({ "1000_1100": { data, bundled: false } });
 		const sched = makeScheduler();
-		const h = setup({ files, scheduler: sched, stallMs: 5_000 });
+		const requests: string[] = [];
+		const relayListeners = new Set<(m: EnginePortMessage) => void>();
+		let store: ModelStore | undefined;
+		const relayPort = {
+			onMessage(cb: (m: EnginePortMessage) => void) {
+				relayListeners.add(cb);
+				return () => relayListeners.delete(cb);
+			},
+			post(cmd: EnginePortCommand) {
+				if (cmd.kind === "model-chunk") store?.handleChunk(cmd);
+			},
+		};
+		const PIECE = 1500;
+		const STEP_MS = 4_000;
+		let at = 0;
+		let buffered = 0;
+		attachModelDownload(relayPort, {
+			chunkBytes: 1000,
+			fetch: async () => ({
+				ok: true,
+				status: 200,
+				headers: { get: (h: string) => (h.toLowerCase() === "content-length" ? "7500" : null) },
+				body: {
+					getReader: () => ({
+						read: async () => {
+							sched.advance(STEP_MS); // time on the wire, before anything is delivered
+							if (at >= data.length) return { done: true };
+							const value = data.slice(at, at + PIECE);
+							at += PIECE;
+							return { done: false, value };
+						},
+					}),
+				},
+				// Same bytes, same wire time, delivered only at the end — what the relay used to
+				// do. Reaching this path makes the download exceed the 5 s budget and reject,
+				// which is exactly the production failure this test guards against.
+				arrayBuffer: async () => {
+					buffered++;
+					for (let sent = 0; sent < data.length; sent += PIECE) sched.advance(STEP_MS);
+					sched.advance(STEP_MS);
+					at = data.length;
+					return data.slice().buffer;
+				},
+			}),
+		});
+		store = new ModelStore({
+			post: (msg: EnginePortMessage) => {
+				if (msg.kind === "model-request") requests.push(msg.name);
+				for (const l of [...relayListeners]) l(msg);
+			},
+			fetch: async () => ({ ok: false, arrayBuffer: async () => new ArrayBuffer(0) }),
+			getUrl: (path) => ROOT + path,
+			opfs: null,
+			indexedDb: null,
+			files,
+			scheduler: sched,
+			stallMs: 5_000,
+		});
+		expect(await store.get("1000_1100.onnx")).toEqual(data);
+		expect(requests).toEqual(["1000_1100.onnx"]);
+		expect(sched.now()).toBeGreaterThan(20_000); // far past a 5 s *total* budget
+		expect(buffered).toBe(0); // the body was streamed, never buffered
+		expect(sched.count()).toBe(0); // the timer is cleared when the download completes
+	});
+	it("only a new, non-empty chunk rearms the stall budget, and the total budget is a backstop", async () => {
+		const data = bytes(13, 2000);
+		const files = await registryFor({ "1000_1100": { data, bundled: false } });
+		const sched = makeScheduler();
+		const h = setup({ files, scheduler: sched, stallMs: 5_000, totalMs: 1_000_000 });
+		const p = h.store.get("1000_1100.onnx");
+		await until(() => h.requests.length === 1);
+		const [first] = [...encodeModelChunks("1000_1100.onnx", data, 1000)];
+		if (!first || !("bytes" in first)) throw new Error("expected a data chunk");
+		sched.advance(4_000);
+		h.store.handleChunk(first); // real progress: rearms
+		sched.advance(4_000);
+		h.store.handleChunk(first); // the same index again: must NOT rearm
+		sched.advance(1_000);
+		await expect(p).rejects.toThrow(ASSET_DOWNLOAD_STALLED);
+	});
+	it("abandons a download that outruns the total budget even while chunks keep arriving", async () => {
+		const data = bytes(14, 4000);
+		const files = await registryFor({ "1000_1100": { data, bundled: false } });
+		const sched = makeScheduler();
+		const h = setup({ files, scheduler: sched, stallMs: 5_000, totalMs: 12_000 });
 		const p = h.store.get("1000_1100.onnx");
 		await until(() => h.requests.length === 1);
 		const chunks = [...encodeModelChunks("1000_1100.onnx", data, 1000)];
-		expect(chunks.length).toBeGreaterThan(2);
-		for (const c of chunks) {
-			sched.advance(4_000); // just inside the budget, every time
+		// Every chunk rearms the stall budget, so only the total backstop can stop this.
+		for (const c of chunks.slice(0, 3)) {
+			sched.advance(4_000);
 			h.store.handleChunk(c);
 		}
-		expect(await p).toEqual(data);
-		expect(sched.count()).toBe(0); // the timer is cleared when the download completes
+		await expect(p).rejects.toThrow(ASSET_DOWNLOAD_TOO_LONG);
+		expect(sched.count()).toBe(0);
 	});
 	it("rejects names that are not registered bands before touching any storage", async () => {
 		const files = await registryFor({ "1500_1600": { data: bytes(1), bundled: true } });

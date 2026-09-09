@@ -42,6 +42,19 @@ export const TIMINGS = {
 	 * asset (and, for a band, the timing head's substitute path).
 	 */
 	assetDownloadStallMs: 120_000,
-	/** Task 34: a ChessMimic band whose session failed to load is tried again after this. */
+	/**
+	 * Backstop on a whole relayed download, armed once when the request goes out. The stall
+	 * budget is the real bound; this only catches a pathological trickle (our own service worker
+	 * dripping one small chunk just inside every stall window). Sized so the largest asset —
+	 * a ~72 MB NNUE — still completes on a ~160 kbit/s link.
+	 */
+	assetDownloadTotalMs: 3_600_000,
+	/**
+	 * Task 34: a ChessMimic band whose session failed to load is tried again after this, doubling
+	 * per consecutive failure up to `timingBandRetryMaxMs`. A band is never disabled permanently
+	 * (a failure can be a dropped port or a stalled relay), but a genuinely broken one must not
+	 * re-read 18 MB every 30 s for the life of the document.
+	 */
 	timingBandRetryMs: 30_000,
+	timingBandRetryMaxMs: 900_000,
 } as const;

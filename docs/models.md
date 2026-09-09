@@ -218,13 +218,28 @@ first `timing` query for a band would otherwise wait for the whole create + warm
 answered — 206 ms for the first band, past the head's 100 ms budget, which means that move falls
 back to v1. Two things keep that off the board:
 
-- the offscreen document **pre-warms `CHESSMIMIC_DEFAULT_BAND` (1500–1600) on the first accepted
-  service-worker connection** (`serveEnginePort`), which also pays the one-off wasm instantiation,
-  so a later band costs only its own ~100 ms;
-- `timing-warm` warms any other band on request. Nothing in `src/` sends it today — the service
-  worker's `TimingModel` wiring is the integration task's — so **a first move whose target Elo
-  selects a band other than the default still pays ~100 ms and falls back to v1 for that one
-  move**. Wiring `TimingInferPort.warm(selectBand(targetElo))` at `startGame` closes that.
+- the offscreen document **pre-warms `CHESSMIMIC_DEFAULT_BAND` (1500–1600)** on the first
+  `configure` that carries `warmTiming: true`, which also pays the one-off wasm instantiation, so
+  a later band costs only its own ~100 ms;
+- `timing-warm` warms any other band on request.
+
+**The pre-warm is opt-in and off by default.** The offscreen document cannot tell whether the
+service worker's `TimingModel` selected the ChessMimic head, and today nothing in `src/` selects
+it, so warming unconditionally would charge every v1 user ~200 ms of wasm work and an 18 MB
+session for nothing. The signal rides on the existing `configure` command
+(`RemoteEngineOptions.warmTiming` / `RemoteEngine.setWarmTiming`), which the SW sends immediately
+after connecting.
+
+Two residual costs to know about:
+
+- **a first move whose target Elo selects a band other than the default still pays ~100 ms and
+  falls back to v1 for that one move.** Wiring `TimingInferPort.warm(selectBand(targetElo))` at
+  `startGame` closes it (§6);
+- the pre-warm is ~200 ms of **main-thread** wasm work in the offscreen document, started while
+  handling `configure`. The commands the SW sends next (`loadNnue`, the first `uci`) are routed on
+  that same thread, so they can be delayed by roughly that much on a cold start. It is off the
+  engine's critical path — the Stockfish boot is already asynchronous — but it is not free, and it
+  is the reason the pre-warm is gated rather than automatic.
 
 Once a band is warm, at most `LIMITS.timingSessionsMax` (2) sessions stay resident, evicted LRU;
 a band evicted and asked for again pays its load cost afresh.
@@ -238,10 +253,11 @@ live, and the relay (`src/service/handlers/engine/model-download.ts` over `downl
 exists, but `registerEngineHandlers` attaches only `attachNnueDownload` — nothing calls
 `attachModelDownload`, so a `model-request` would go unanswered today even with a host permission.
 
-The designed path, once wired: the service worker fetches `URLS.chessmimicBandBase + "<band>.onnx"`,
-relays it to the offscreen document in `LIMITS.nnueChunkBytes` chunks, and the store verifies the
-SHA-256 from `CHESSMIMIC_BAND_FILES` before the bytes reach a session, caching in OPFS (IndexedDB
-`MODEL_DB` fallback). Three things must change together to enable it:
+The designed path, once wired: the service worker fetches `URLS.chessmimicBandBase + "<band>.onnx"`
+and posts it to the offscreen document in `LIMITS.nnueChunkBytes` chunks **as the body streams**
+(`download-relay.ts` reads `response.body`, so bytes move during the transfer, not after it), and
+the store verifies the SHA-256 from `CHESSMIMIC_BAND_FILES` before the bytes reach a session,
+caching in OPFS (IndexedDB `MODEL_DB` fallback). Three things must change together to enable it:
 
 1. call `attachModelDownload` from `registerEngineHandlers`;
 2. add `<origin>/*` for `URLS.chessmimicBandBase` to `manifest.json`'s `host_permissions` —
@@ -250,12 +266,39 @@ SHA-256 from `CHESSMIMIC_BAND_FILES` before the bytes reach a session, caching i
 3. host the file and register its size and SHA-256 in `CHESSMIMIC_BAND_FILES`.
 
 Until then an unanswered `model-request` is bounded rather than fatal: `TIMINGS.assetDownloadStallMs`
-rejects the download, the band enters its `TIMINGS.timingBandRetryMs` cooldown, and the head
-answers from the nearest band that does load.
+rejects the download, the band enters its (doubling) `TIMINGS.timingBandRetryMs` cooldown, and the
+head answers from the nearest band that does load.
 
 Shipping the unwired machinery is still justified — it is the same `AssetStore` the NNUE nets use,
 so it is exercised in production by that path, and it is what makes adding a fourth band a data
 change rather than a code change.
+
+### Download budgets
+
+Both asset families share one policy, because both go through `AssetStore`:
+
+| Budget | Constant | Value | What it bounds |
+|---|---|---|---|
+| Stall | `TIMINGS.assetDownloadStallMs` | 120 s | Gap between chunks that make progress. The real bound. |
+| Total | `TIMINGS.assetDownloadTotalMs` | 60 min | The whole transfer. A backstop against a pathological trickle; sized so a ~72 MB NNUE still completes on ~160 kbit/s. |
+
+Only a **new, non-empty** chunk index rearms the stall budget, so a repeated or empty chunk cannot
+extend a download. The stall budget is only meaningful because the relay streams: a relay that
+buffered the response first would post nothing until the fetch finished, turning the per-chunk
+budget into a total budget for the fetch and abandoning a healthy 72 MB NNUE below ~5 Mbit/s.
+
+### Task 30 wiring checklist
+
+What the service-worker integration still has to do for the ChessMimic head:
+
+1. build the head — `new ChessMimicHead({ infer: createTimingInferPort(engine).infer, fallback })`
+   — and select it in `TimingModel`;
+2. **turn the pre-warm on** when that head is selected: `RemoteEngine`'s `warmTiming` option (or
+   `setWarmTiming(true)` before `configure`). Leave it off for v1, so a v1 user loads no model;
+3. call `TimingInferPort.warm(selectBand(targetElo))` at `startGame`, so the first move of a game
+   whose band is not the default does not fall back to v1;
+4. call `ChessMimicHead.prepare(ctx)` as soon as the opponent's move lands, and `reset()` at
+   `startGame`.
 
 ## 7. Reproducing
 

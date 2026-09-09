@@ -66,8 +66,10 @@ export interface TimingInferenceDeps {
 	scalers?: Readonly<Record<string, BandScalers>>;
 	maxSessions?: number;
 	now?: () => number;
-	/** How long a failed band stays skipped before it is tried again; default `TIMINGS.timingBandRetryMs`. */
+	/** First cooldown after a failed load; default `TIMINGS.timingBandRetryMs`. Doubles per failure. */
 	retryAfterMs?: number;
+	/** Ceiling for the doubling cooldown; default `TIMINGS.timingBandRetryMaxMs`. */
+	retryMaxMs?: number;
 }
 
 export interface TimingInference {
@@ -111,6 +113,7 @@ export function createTimingInference(deps: TimingInferenceDeps): TimingInferenc
 	const maxSessions = Math.max(1, deps.maxSessions ?? LIMITS.timingSessionsMax);
 	const now = deps.now ?? (() => performance.now());
 	const retryAfterMs = deps.retryAfterMs ?? TIMINGS.timingBandRetryMs;
+	const retryMaxMs = Math.max(retryAfterMs, deps.retryMaxMs ?? TIMINGS.timingBandRetryMaxMs);
 
 	let runtimePromise: Promise<OrtRuntime> | undefined;
 	const sessions = new Map<string, Promise<OrtSession>>();
@@ -119,21 +122,26 @@ export function createTimingInference(deps: TimingInferenceDeps): TimingInferenc
 	/** Most recently used last. */
 	const lru: string[] = [];
 	/**
-	 * Band → `now()` of its last load failure. A failure is treated as transient (a stalled
-	 * relay, a download the port dropped, a runtime that had not warmed up yet), so the band is
-	 * skipped for `retryAfterMs` and then tried again rather than disabled for the life of the
-	 * document.
+	 * Band → when it last failed to load and how many consecutive failures it has had. A failure
+	 * is treated as transient (a stalled relay, a download the port dropped, a runtime that had
+	 * not warmed up yet), so the band is skipped for a while and then tried again rather than
+	 * disabled for the life of the document. The cooldown doubles per consecutive failure up to
+	 * `retryMaxMs`, so a genuinely broken band settles at one 18 MB re-read every 15 minutes
+	 * instead of one every 30 seconds; a success clears the entry.
 	 */
-	const failedAt = new Map<string, number>();
+	const failures = new Map<string, { at: number; count: number }>();
 	let disposed = false;
 
-	/** True while `band`'s last failure is still inside the retry cooldown. */
+	function cooldownFor(count: number): number {
+		return Math.min(retryMaxMs, retryAfterMs * 2 ** Math.max(0, count - 1));
+	}
+
+	/** True while `band`'s last failure is still inside its (backing-off) retry cooldown. */
 	function inCooldown(band: string): boolean {
-		const at = failedAt.get(band);
-		if (at === undefined) return false;
-		if (now() - at < retryAfterMs) return true;
-		failedAt.delete(band);
-		return false;
+		const f = failures.get(band);
+		if (!f) return false;
+		if (now() - f.at < cooldownFor(f.count)) return true;
+		return false; // due for another attempt; the count stays, so the next wait is longer
 	}
 
 	function runtime(): Promise<OrtRuntime> {
@@ -147,13 +155,17 @@ export function createTimingInference(deps: TimingInferenceDeps): TimingInferenc
 		lru.push(band);
 	}
 
+	/**
+	 * Drop `band`'s session. A session that has finished loading is released here; one still
+	 * loading is left to `sessionFor`'s own settle handler, which sees that `sessions` no longer
+	 * holds its promise and releases it there. Exactly one of the two runs, so `release()` is
+	 * never called twice on the same session (the pre-warm widened that window).
+	 */
 	function release(band: string, why: string): void {
-		const p = sessions.get(band);
 		sessions.delete(band);
 		const s = ready.get(band);
 		ready.delete(band);
 		if (s) void s.release().catch(() => {});
-		else p?.then((session) => session.release()).catch(() => {});
 		log.debug("timing-inference: released band session", { band, why });
 	}
 
@@ -230,17 +242,21 @@ export function createTimingInference(deps: TimingInferenceDeps): TimingInferenc
 		evictBeyondLimit();
 		p.then(
 			(session) => {
-				if (sessions.get(band) === p) ready.set(band, session);
-				else void session.release().catch(() => {}); // evicted or disposed while loading
+				if (sessions.get(band) === p) {
+					ready.set(band, session);
+					failures.delete(band); // a good load clears the backoff
+				} else void session.release().catch(() => {}); // evicted or disposed while loading
 			},
 			(error: unknown) => {
 				if (sessions.get(band) === p) sessions.delete(band);
 				const at = lru.indexOf(band);
 				if (at >= 0) lru.splice(at, 1);
-				failedAt.set(band, now());
+				const count = (failures.get(band)?.count ?? 0) + 1;
+				failures.set(band, { at: now(), count });
 				log.warn("timing-inference: band unavailable; retrying after the cooldown", {
 					band,
-					retryAfterMs,
+					attempt: count,
+					cooldownMs: cooldownFor(count),
 					error: errorMessage(error),
 				});
 			}
