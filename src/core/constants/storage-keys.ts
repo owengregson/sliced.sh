@@ -32,3 +32,10 @@ export const NNUE_DB = {
 	store: "nets",
 	version: 1,
 } as const;
+
+/** IndexedDB fallback for on-demand ChessMimic bands (offscreen `ModelStore`, Task 34). */
+export const MODEL_DB = {
+	name: "sl-models",
+	store: "models",
+	version: 1,
+} as const;

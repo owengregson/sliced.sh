@@ -11,7 +11,6 @@ import { TIMINGS } from "@core/constants/timings";
 import { RemoteEngine } from "@core/engine/remote-engine";
 import { type BootHooks, EngineHost, serveEnginePort } from "@offscreen/engine-host";
 import type { BootedEngine } from "@offscreen/stockfish-loader";
-import { createTimingInference } from "@offscreen/timing-inference";
 import { createSimulator, type Simulator } from "@test/sim";
 import { bootOffscreenContext, type OffscreenContext } from "@test/sim/contexts/offscreen-context";
 import { bootSwContext, type SwContext } from "@test/sim/contexts/sw-context";
@@ -65,7 +64,6 @@ async function bootOffscreen(): Promise<OffscreenSide> {
 						nnueStore: { get: async () => new Uint8Array(1) },
 						post,
 					}),
-				timing: createTimingInference(),
 			});
 			side.stop = served.stop;
 		},
@@ -229,7 +227,7 @@ describe("RemoteEngine over the simulator", () => {
 		again.dispose();
 	});
 
-	it("answers timing requests with the not-available scaffold and forwards nnue-progress", async () => {
+	it("answers timing requests with not-available when no timing head is served, and forwards nnue-progress", async () => {
 		await bootOffscreen();
 		const engine = await (sw as SwContext).run(async () => {
 			const e = new RemoteEngine({ variant: "smallnet", threads: 1 });
@@ -238,13 +236,102 @@ describe("RemoteEngine over the simulator", () => {
 		});
 		const seen: unknown[] = [];
 		engine.onMessage((m) => seen.push(m));
-		engine.post({ kind: "timing", id: "t1", inputs: { phase: 1 } });
+		engine.post({
+			kind: "timing",
+			id: "t1",
+			inputs: {
+				band: "1500_1600",
+				moveTokens: [],
+				fenTokens: [],
+				rating: 1550,
+				playerClockS: 120,
+				opponentClockS: 120,
+				incrementS: 0,
+			},
+		});
 		await settle();
 		expect(seen).toContainEqual({
 			kind: "timing-result",
 			id: "t1",
 			probs: null,
 			error: "not-available",
+		});
+		engine.dispose();
+	});
+
+	it("routes timing / timing-warm to a served head and model-chunk to the model store (Task 34)", async () => {
+		await off?.teardown();
+		const calls: string[] = [];
+		const chunks: string[] = [];
+		off = await bootOffscreenContext(sim, {
+			entry: () => {
+				const served = serveEnginePort({
+					createStore: () => ({ handleChunk: () => {}, abortAll: () => {} }),
+					createHost: (post) =>
+						new EngineHost({
+							boot: async () => new Promise<BootedEngine>(() => {}),
+							nnueStore: { get: async () => new Uint8Array(1) },
+							post,
+						}),
+					createModelStore: () => ({
+						handleChunk: (m: { name: string }) => {
+							chunks.push(m.name);
+						},
+						abortAll: () => {},
+					}),
+					createTiming: () => ({
+						handle: async (cmd) => {
+							calls.push(`handle:${cmd.id}`);
+							return {
+								kind: "timing-result",
+								id: cmd.id,
+								probs: new Array<number>(30).fill(1 / 30),
+								band: cmd.inputs.band,
+								ms: 12,
+							};
+						},
+						warm: async (band) => {
+							calls.push(`warm:${band}`);
+						},
+						dispose: () => {
+							calls.push("dispose");
+						},
+					}),
+				});
+				return served;
+			},
+		});
+		const engine = await (sw as SwContext).run(async () => {
+			const e = new RemoteEngine({ variant: "smallnet", threads: 1 });
+			await e.ready;
+			return e;
+		});
+		const seen: unknown[] = [];
+		engine.onMessage((m) => seen.push(m));
+		engine.post({ kind: "timing-warm", band: "1800_1900" });
+		engine.post({ kind: "model-chunk", name: "1000_1100.onnx", error: "x" });
+		engine.post({
+			kind: "timing",
+			id: "t2",
+			inputs: {
+				band: "1500_1600",
+				moveTokens: [],
+				fenTokens: [],
+				rating: 1550,
+				playerClockS: 120,
+				opponentClockS: 120,
+				incrementS: 0,
+			},
+		});
+		await settle();
+		expect(calls).toEqual(["warm:1800_1900", "handle:t2"]);
+		expect(chunks).toEqual(["1000_1100.onnx"]);
+		expect(seen).toContainEqual({
+			kind: "timing-result",
+			id: "t2",
+			probs: new Array<number>(30).fill(1 / 30),
+			band: "1500_1600",
+			ms: 12,
 		});
 		engine.dispose();
 	});

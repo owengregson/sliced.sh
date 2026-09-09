@@ -6,12 +6,11 @@
 
 import { loadPosition } from "@core/chess/fen";
 import { fileOf, rankOf } from "@core/chess/squares";
+import { CHESS_START_FEN } from "@core/constants/chess";
 import type { Color, Square } from "@typedefs/game";
 import { SELECTORS } from "./selectors";
 
 type Grid = Array<Array<string | null>>;
-
-const START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
 function emptyGrid(): Grid {
 	return Array.from({ length: 8 }, () => Array<string | null>(8).fill(null));
@@ -148,7 +147,10 @@ export interface Replay {
 }
 
 /** Replay SAN through chess.js; `null` if any move is illegal or the start FEN invalid. */
-export function replayMoves(sans: readonly string[], startFen: string = START_FEN): Replay | null {
+export function replayMoves(
+	sans: readonly string[],
+	startFen: string = CHESS_START_FEN
+): Replay | null {
 	const chess = loadPosition(startFen);
 	if (!chess) return null;
 	let lastMove: Replay["lastMove"] = null;
@@ -163,7 +165,10 @@ export function replayMoves(sans: readonly string[], startFen: string = START_FE
 	return { fen: chess.fen(), lastMove };
 }
 
-export function replayFen(sans: readonly string[], startFen: string = START_FEN): string | null {
+export function replayFen(
+	sans: readonly string[],
+	startFen: string = CHESS_START_FEN
+): string | null {
 	return replayMoves(sans, startFen)?.fen ?? null;
 }
 

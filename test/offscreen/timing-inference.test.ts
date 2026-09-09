@@ -1,0 +1,288 @@
+// test/offscreen/timing-inference.test.ts — Task 34: the offscreen ChessMimic host over a fake
+// onnxruntime (session per band, warm-up, band substitution, failures, LRU, dispose).
+import { describe, expect, it } from "bun:test";
+import { CHESSMIMIC_BANDS, chessMimicBandFile } from "@core/constants/models";
+import { standardiseInputs } from "@core/timing/chessmimic-scalers";
+import { encodeRecentMoves, PAD_TOKEN, tokenizeFen } from "@core/timing/chessmimic-tokeniser";
+import { TIMING_CONSTANTS } from "@core/timing/constants";
+import type { OrtRuntime, OrtSession, OrtTensor } from "@offscreen/ort-loader";
+import {
+	createTimingInference,
+	TIMING_BAD_INPUTS,
+	TIMING_NO_BAND,
+	type TimingCommand,
+} from "@offscreen/timing-inference";
+
+const CM = TIMING_CONSTANTS.chessmimic;
+const START = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+interface FakeOrt {
+	runtime: OrtRuntime;
+	created: Uint8Array[];
+	released: number[];
+	runs: Array<{ band: number; feeds: Record<string, OrtTensor> }>;
+	/** Bytes[0] values whose session creation must fail. */
+	failCreate: Set<number>;
+	failWhileThreaded: boolean;
+}
+
+function fakeOrt(threads = 4): FakeOrt {
+	const state: FakeOrt = {
+		created: [],
+		released: [],
+		runs: [],
+		failCreate: new Set(),
+		failWhileThreaded: false,
+		runtime: {
+			threads,
+			setThreads(n) {
+				state.runtime.threads = n;
+			},
+			async createSession(bytes) {
+				const band = bytes[0] ?? -1;
+				if (state.failCreate.has(band)) throw new Error(`create failed for ${band}`);
+				if (state.failWhileThreaded && state.runtime.threads > 1)
+					throw new Error("pthreads unavailable");
+				state.created.push(bytes);
+				const session: OrtSession = {
+					async run(feeds) {
+						state.runs.push({ band, feeds });
+						const probs = new Float32Array(CM.nBuckets).fill(0.5 / (CM.nBuckets - 1));
+						probs[band] = 0.5;
+						return { probs: { type: "float32", data: probs, dims: [1, CM.nBuckets] } };
+					},
+					async release() {
+						state.released.push(band);
+					},
+				};
+				return session;
+			},
+			tensor(type, data, dims) {
+				return { type, data, dims };
+			},
+		},
+	};
+	return state;
+}
+
+/** `bytes[0]` = band index so the fake session can tell which band it is. */
+function bandBytes(band: string): Uint8Array {
+	const out = new Uint8Array(64);
+	out[0] = CHESSMIMIC_BANDS.indexOf(band as (typeof CHESSMIMIC_BANDS)[number]);
+	return out;
+}
+
+function fakeStore(available: readonly string[]) {
+	const gets: string[] = [];
+	return {
+		gets,
+		store: {
+			async get(name: string) {
+				gets.push(name);
+				const band = name.replace(/\.onnx$/, "");
+				if (!available.includes(band)) throw new Error(`no such model: ${name}`);
+				return bandBytes(band);
+			},
+		},
+	};
+}
+
+function command(over: Partial<TimingCommand["inputs"]> = {}, id = "q1"): TimingCommand {
+	return {
+		kind: "timing",
+		id,
+		inputs: {
+			band: "1500_1600",
+			moveTokens: encodeRecentMoves(["e2e4", "e7e5"]),
+			fenTokens: tokenizeFen(START),
+			rating: 1550,
+			playerClockS: 120,
+			opponentClockS: 110,
+			incrementS: 0,
+			...over,
+		},
+	};
+}
+
+describe("createTimingInference", () => {
+	it("loads the band's session once, warms it up, and answers with probabilities and the band", async () => {
+		const ort = fakeOrt();
+		const { store, gets } = fakeStore(CHESSMIMIC_BANDS);
+		const inf = createTimingInference({ runtime: async () => ort.runtime, store });
+		const a = await inf.handle(command());
+		expect(a.kind).toBe("timing-result");
+		expect(a.id).toBe("q1");
+		expect(a.band).toBe("1500_1600");
+		expect(a.error).toBeUndefined();
+		expect(a.probs).toHaveLength(CM.nBuckets);
+		expect(a.probs?.[1]).toBeCloseTo(0.5, 6);
+		expect(typeof a.ms).toBe("number");
+		// warm-up run + the real run
+		expect(ort.runs).toHaveLength(2);
+		const b = await inf.handle(command({}, "q2"));
+		expect(b.id).toBe("q2");
+		expect(ort.created).toHaveLength(1);
+		expect(gets).toEqual([chessMimicBandFile("1500_1600")]);
+		expect(ort.runs).toHaveLength(3);
+	});
+	it("feeds int32 ids (moves + FEN), the clamped standardised rating and the log clocks", async () => {
+		const ort = fakeOrt();
+		const inf = createTimingInference({
+			runtime: async () => ort.runtime,
+			store: fakeStore(CHESSMIMIC_BANDS).store,
+		});
+		const cmd = command({ rating: 2000, playerClockS: 33, opponentClockS: 7, incrementS: 2 });
+		await inf.handle(cmd);
+		const feeds = ort.runs[ort.runs.length - 1]?.feeds;
+		if (!feeds) throw new Error("no run");
+		const ids = feeds.input_ids;
+		expect(ids?.type).toBe("int32");
+		expect(ids?.dims).toEqual([1, CM.recentMoves + CM.fenTokens]);
+		expect(Array.from(ids?.data ?? [])).toEqual([...cmd.inputs.moveTokens, ...cmd.inputs.fenTokens]);
+		const expected = standardiseInputs(cmd.inputs);
+		expect(feeds.scaled_rating?.dims).toEqual([1]);
+		expect(feeds.scaled_rating?.data[0]).toBeCloseTo(expected.scaledRating, 5);
+		expect(feeds.clock_features?.dims).toEqual([1, 3]);
+		for (let i = 0; i < 3; i++)
+			expect(feeds.clock_features?.data[i]).toBeCloseTo(expected.clockFeatures[i] ?? Number.NaN, 5);
+		// warm-up used pad moves + the start position + the band centre
+		const warm = ort.runs[0]?.feeds.input_ids;
+		expect(Array.from(warm?.data ?? []).slice(0, CM.recentMoves)).toEqual(
+			new Array<number>(CM.recentMoves).fill(PAD_TOKEN)
+		);
+	});
+	it("substitutes the nearest available band when the requested one cannot be loaded", async () => {
+		const ort = fakeOrt();
+		const inf = createTimingInference({
+			runtime: async () => ort.runtime,
+			store: fakeStore(["1200_1300", "1800_1900"]).store,
+		});
+		const r = await inf.handle(command({ band: "1500_1600", rating: 1690 }));
+		expect(r.probs).not.toBeNull();
+		expect(r.band).toBe("1800_1900");
+		expect(r.probs?.[2]).toBeCloseTo(0.5, 6);
+		// standardised with the substituted band's scalers (rating clamped into 1800–1900)
+		const feeds = ort.runs[ort.runs.length - 1]?.feeds;
+		expect(feeds?.scaled_rating?.data[0]).toBeCloseTo(
+			standardiseInputs({
+				band: "1800_1900",
+				rating: 1690,
+				playerClockS: 120,
+				opponentClockS: 110,
+				incrementS: 0,
+			}).scaledRating,
+			5
+		);
+		// the failed band is not retried on every query
+		await inf.handle(command({ band: "1500_1600" }, "q2"));
+		expect(ort.created).toHaveLength(1);
+	});
+	it("reports an error when no band can be loaded, and when the runtime cannot initialise", async () => {
+		const ort = fakeOrt();
+		const none = createTimingInference({
+			runtime: async () => ort.runtime,
+			store: fakeStore([]).store,
+		});
+		const r = await none.handle(command());
+		expect(r.probs).toBeNull();
+		expect(r.error).toContain(TIMING_NO_BAND);
+		let inits = 0;
+		const broken = createTimingInference({
+			runtime: async () => {
+				inits++;
+				throw new Error("import failed");
+			},
+			store: fakeStore(CHESSMIMIC_BANDS).store,
+		});
+		const b1 = await broken.handle(command());
+		const b2 = await broken.handle(command({}, "q2"));
+		expect(b1.probs).toBeNull();
+		expect(b1.error).toContain("import failed");
+		expect(b2.probs).toBeNull();
+		expect(inits).toBe(1); // a failed runtime is not re-imported on every query
+	});
+	it("retries session creation single-threaded when the threaded wasm cannot start", async () => {
+		const ort = fakeOrt(4);
+		ort.failWhileThreaded = true;
+		const inf = createTimingInference({
+			runtime: async () => ort.runtime,
+			store: fakeStore(CHESSMIMIC_BANDS).store,
+		});
+		const r = await inf.handle(command());
+		expect(r.probs).not.toBeNull();
+		expect(ort.runtime.threads).toBe(1);
+		expect(ort.created).toHaveLength(1);
+	});
+	it("rejects malformed inputs without touching the runtime", async () => {
+		const ort = fakeOrt();
+		const inf = createTimingInference({
+			runtime: async () => ort.runtime,
+			store: fakeStore(CHESSMIMIC_BANDS).store,
+		});
+		const r = await inf.handle(command({ moveTokens: [1, 2, 3] }));
+		expect(r.probs).toBeNull();
+		expect(r.error).toContain(TIMING_BAD_INPUTS);
+		const s = await inf.handle(command({ fenTokens: [] }, "q2"));
+		expect(s.error).toContain(TIMING_BAD_INPUTS);
+		const t = await inf.handle(
+			command({ moveTokens: [...encodeRecentMoves([]).slice(0, 11), 5000] }, "q3")
+		);
+		expect(t.error).toContain(TIMING_BAD_INPUTS);
+		expect(ort.created).toHaveLength(0);
+	});
+	it("warm(band) loads and warms the session so the first query finds it", async () => {
+		const ort = fakeOrt();
+		const inf = createTimingInference({
+			runtime: async () => ort.runtime,
+			store: fakeStore(CHESSMIMIC_BANDS).store,
+		});
+		await inf.warm("1800_1900");
+		expect(ort.created).toHaveLength(1);
+		expect(ort.runs).toHaveLength(1);
+		await inf.handle(command({ band: "1800_1900" }));
+		expect(ort.created).toHaveLength(1);
+		expect(ort.runs).toHaveLength(2);
+		await inf.warm("not_a_band"); // ignored, no throw
+		expect(ort.created).toHaveLength(1);
+	});
+	it("keeps at most maxSessions bands loaded (LRU) and releases the rest", async () => {
+		const ort = fakeOrt();
+		const inf = createTimingInference({
+			runtime: async () => ort.runtime,
+			store: fakeStore(CHESSMIMIC_BANDS).store,
+			maxSessions: 2,
+		});
+		await inf.handle(command({ band: "1200_1300" }, "a"));
+		await inf.handle(command({ band: "1500_1600" }, "b"));
+		await inf.handle(command({ band: "1200_1300" }, "c")); // 1200 most recent
+		await inf.handle(command({ band: "1800_1900" }, "d")); // evicts 1500
+		expect(ort.released).toEqual([1]);
+		await inf.handle(command({ band: "1500_1600" }, "e")); // reloads 1500, evicts 1200
+		expect(ort.released).toEqual([1, 0]);
+		expect(ort.created).toHaveLength(4);
+	});
+	it("shares one session creation between concurrent queries for the same band", async () => {
+		const ort = fakeOrt();
+		const inf = createTimingInference({
+			runtime: async () => ort.runtime,
+			store: fakeStore(CHESSMIMIC_BANDS).store,
+		});
+		const [a, b] = await Promise.all([inf.handle(command({}, "a")), inf.handle(command({}, "b"))]);
+		expect(a.probs).not.toBeNull();
+		expect(b.probs).not.toBeNull();
+		expect(ort.created).toHaveLength(1);
+	});
+	it("dispose releases every session and later queries report not available", async () => {
+		const ort = fakeOrt();
+		const inf = createTimingInference({
+			runtime: async () => ort.runtime,
+			store: fakeStore(CHESSMIMIC_BANDS).store,
+		});
+		await inf.handle(command());
+		inf.dispose();
+		expect(ort.released).toEqual([1]);
+		const r = await inf.handle(command({}, "after"));
+		expect(r.probs).toBeNull();
+		expect(r.error).toBeDefined();
+	});
+});

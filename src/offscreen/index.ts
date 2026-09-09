@@ -1,6 +1,7 @@
 /**
- * Offscreen document entry (§6.3). Hosts the Stockfish engine, the NNUE store
- * and the (scaffolded) timing head, and serves them to the service worker on
+ * Offscreen document entry (§6.3). Hosts the Stockfish engine, the NNUE store,
+ * the ChessMimic band store and the timing head (onnxruntime-web, Task 34), and
+ * serves them to the service worker on
  * `PORT_NAMES.engine`: the SW connects (after `ensureOffscreen`), this
  * document accepts and immediately re-sends the current engine status, so a
  * service-worker restart re-syncs against the surviving engine.
@@ -10,7 +11,9 @@
  */
 
 import { EngineHost, serveEnginePort } from "./engine-host";
+import { ModelStore } from "./model-store";
 import { NnueStore } from "./nnue-store";
+import { createOrtRuntime } from "./ort-loader";
 import { bootEngineDetailed } from "./stockfish-loader";
 import { createTimingInference } from "./timing-inference";
 
@@ -26,7 +29,8 @@ const served = serveEnginePort({
 			nnueStore: store,
 			post,
 		}),
-	timing: createTimingInference(),
+	createModelStore: (post) => new ModelStore({ post }),
+	createTiming: (store) => createTimingInference({ runtime: () => createOrtRuntime(), store }),
 });
 
 // The document is closed by `chrome.offscreen.closeDocument()` (or an extension

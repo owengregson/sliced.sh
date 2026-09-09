@@ -55,6 +55,11 @@ export function beta(rng: Rng, a: number, b: number): number {
 	return clamp(r, Number.EPSILON, 1 - Number.EPSILON);
 }
 
+/** Exponential with the given mean (inverse CDF; `1 - u` keeps the log finite). */
+export function exponential(rng: Rng, mean: number): number {
+	return -mean * Math.log(1 - rng.next());
+}
+
 /** Uniform in `[lo, hi)`. */
 export function uniform(rng: Rng, lo: number, hi: number): number {
 	return lo + (hi - lo) * rng.next();

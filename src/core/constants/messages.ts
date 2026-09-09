@@ -209,8 +209,29 @@ export type NnueChunk =
 	| { kind: "nnue-chunk"; name: string; index: number; total: number; bytes: string }
 	| { kind: "nnue-chunk"; name: string; error: string };
 
-/** Inputs of one timing-head inference (Task 34 defines the feature vector). */
-export type TimingInferenceInputs = Record<string, number>;
+/**
+ * Inputs of one ChessMimic inference (Task 34): the token ids the service worker computed and
+ * the raw rating/clocks — the offscreen host clamps the rating to the band it actually runs and
+ * standardises with that band's scalers (`standardiseInputs`), so a substituted band never sees
+ * another band's z-scores.
+ */
+export interface TimingInferenceInputs {
+	/** Requested band (`CHESSMIMIC_BANDS`); the reply names the band that answered. */
+	band: string;
+	/** 12 UCI move tokens (left-padded). */
+	moveTokens: number[];
+	/** 78 FEN tokens. */
+	fenTokens: number[];
+	rating: number;
+	playerClockS: number;
+	opponentClockS: number;
+	incrementS: number;
+}
+
+/** An on-demand model file relayed by the SW (`model-request` → `model-chunk`s), base64 like `NnueChunk`. */
+export type ModelChunk =
+	| { kind: "model-chunk"; name: string; index: number; total: number; bytes: string }
+	| { kind: "model-chunk"; name: string; error: string };
 
 /** offscreen → SW */
 export type EnginePortMessage =
@@ -222,8 +243,20 @@ export type EnginePortMessage =
 	| { kind: "nnue-request"; name: string }
 	/** Download/reassembly progress in `[0, 1]` for `name`. */
 	| { kind: "nnue-progress"; name: string; progress: number }
-	/** Reply to a `timing` command (`probs: null` + `error` when unavailable). */
-	| { kind: "timing-result"; id: string; probs: Record<string, number> | null; error?: string };
+	/** Ask the SW to download a registered, non-bundled ChessMimic band (Task 34). */
+	| { kind: "model-request"; name: string }
+	/**
+	 * Reply to a `timing` command: the 30 bucket probabilities, the band that answered and the
+	 * inference wall time; `probs: null` + `error` when unavailable (the SW's head falls back to v1).
+	 */
+	| {
+			kind: "timing-result";
+			id: string;
+			probs: number[] | null;
+			band?: string;
+			ms?: number;
+			error?: string;
+	  };
 
 /** SW → offscreen */
 export type EnginePortCommand =
@@ -233,8 +266,11 @@ export type EnginePortCommand =
 	/** Which build to run and how many threads the SW will ask for (first one boots the engine). */
 	| { kind: "configure"; variant: EngineVariant; threads: number }
 	| NnueChunk
+	| ModelChunk
 	/** Timing-head inference request (Task 34); answered with `timing-result`. */
-	| { kind: "timing"; id: string; inputs: TimingInferenceInputs };
+	| { kind: "timing"; id: string; inputs: TimingInferenceInputs }
+	/** Load and warm the band's session ahead of the first move (Task 34); no reply. */
+	| { kind: "timing-warm"; band: string };
 
 // Task 26: log stream port (`PORT_NAMES.logStream`, Appendix H.2)
 

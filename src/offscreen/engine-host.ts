@@ -28,7 +28,12 @@
  */
 
 import { DEFAULT_ENGINE_STATUS } from "@core/constants/defaults";
-import type { EnginePortCommand, EnginePortMessage, NnueChunk } from "@core/constants/messages";
+import type {
+	EnginePortCommand,
+	EnginePortMessage,
+	ModelChunk,
+	NnueChunk,
+} from "@core/constants/messages";
 import { PORT_NAMES } from "@core/constants/ports";
 import { TIMINGS } from "@core/constants/timings";
 import { log } from "@core/logger";
@@ -387,10 +392,22 @@ export interface NnueStoreLike {
 	abortAll(reason: string): void;
 }
 
-export interface ServeEngineDeps<S extends NnueStoreLike> {
+/** The ChessMimic band store as the router sees it (Task 34). */
+export interface ModelStoreLike {
+	handleChunk(msg: ModelChunk): void;
+	abortAll(reason: string): void;
+}
+
+export interface ServeEngineDeps<
+	S extends NnueStoreLike,
+	M extends ModelStoreLike = ModelStoreLike,
+> {
 	createStore(post: (msg: EnginePortMessage) => void): S;
 	createHost(post: (msg: EnginePortMessage) => void, store: S): EngineHost;
-	timing?: TimingInference;
+	/** Task 34: the band store the timing head reads; `model-chunk`s route here. */
+	createModelStore?(post: (msg: EnginePortMessage) => void): M;
+	/** Task 34: the timing head, built over the model store; absent → `timing` answers not-available. */
+	createTiming?(store: M): TimingInference;
 }
 
 export interface ServedEngine {
@@ -401,7 +418,9 @@ export interface ServedEngine {
 
 const NO_PORT_DROP_REASON = "port disconnected";
 
-export function serveEnginePort<S extends NnueStoreLike>(deps: ServeEngineDeps<S>): ServedEngine {
+export function serveEnginePort<S extends NnueStoreLike, M extends ModelStoreLike = ModelStoreLike>(
+	deps: ServeEngineDeps<S, M>
+): ServedEngine {
 	let current: AcceptedPort<EnginePortMessage, EnginePortCommand> | null = null;
 	const post = (msg: EnginePortMessage): void => {
 		if (current) current.post(msg);
@@ -409,6 +428,8 @@ export function serveEnginePort<S extends NnueStoreLike>(deps: ServeEngineDeps<S
 	};
 	const store = deps.createStore(post);
 	const host = deps.createHost(post, store);
+	const modelStore = deps.createModelStore?.(post);
+	const timing = modelStore && deps.createTiming ? deps.createTiming(modelStore) : undefined;
 
 	const route = (cmd: EnginePortCommand): void => {
 		if (!cmd || typeof cmd !== "object") return;
@@ -416,9 +437,15 @@ export function serveEnginePort<S extends NnueStoreLike>(deps: ServeEngineDeps<S
 			case "nnue-chunk":
 				store.handleChunk(cmd);
 				return;
+			case "model-chunk":
+				modelStore?.handleChunk(cmd);
+				return;
 			case "timing":
-				if (deps.timing) post(deps.timing.handle(cmd));
+				if (timing) void timing.handle(cmd).then(post);
 				else post({ kind: "timing-result", id: cmd.id, probs: null, error: TIMING_NOT_AVAILABLE });
+				return;
+			case "timing-warm":
+				void timing?.warm(cmd.band);
 				return;
 			default:
 				host.handle(cmd);
@@ -438,6 +465,7 @@ export function serveEnginePort<S extends NnueStoreLike>(deps: ServeEngineDeps<S
 				if (current !== port) return;
 				current = null;
 				store.abortAll(NO_PORT_DROP_REASON);
+				modelStore?.abortAll(NO_PORT_DROP_REASON);
 			});
 			unsubscribeCurrent = () => {
 				offMessage();
@@ -455,7 +483,8 @@ export function serveEnginePort<S extends NnueStoreLike>(deps: ServeEngineDeps<S
 			unsubscribeCurrent(); // an `AcceptedPort` cannot be closed from this side; stop routing it
 			current = null;
 			store.abortAll(NO_PORT_DROP_REASON);
-			deps.timing?.dispose();
+			modelStore?.abortAll(NO_PORT_DROP_REASON);
+			timing?.dispose();
 			host.dispose();
 		},
 	};
