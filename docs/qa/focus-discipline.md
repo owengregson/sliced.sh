@@ -21,6 +21,9 @@ The simulator's own focus model is a deliberate stand-in: `SimulatedSite.panelCl
 that an interaction outside the page blurs the window. That is the §13.4 design assumption, not a
 measurement — which is exactly why the panel rows below are still open.
 
+The Task 31 QA rows below are also listed, with the rest of the real-Chrome work, as section C
+of `docs/qa-checklist.md`. Run them from there; record the results here.
+
 ---
 
 ## 1. Setup

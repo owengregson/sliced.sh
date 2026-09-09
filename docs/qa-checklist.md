@@ -1,11 +1,283 @@
 # QA checklist
 
-Manual checks that the automated suite cannot make. Run them against `bun run build --dev`
-loaded unpacked in Chrome (`chrome://extensions`), with the side panel open next to a lichess or
-chess.com tab. Tick every box before a release; note the Chrome version and OS in the release
-notes. Task 31 adds the real-site sections (adapter, executor, telemetry).
+Everything the automated suite structurally cannot answer, in the order you should do it. This
+is a script: you should be able to run it end to end without asking anybody a question.
 
-## Accessibility, keyboard and motion (Task 27)
+**Scope.** Sections A–L need a real Chrome and, for most of them, a real game on chess.com or
+lichess. Nothing here is covered by `bun run check`; several items exist precisely because a
+simulator, happy-dom or a hand-built fixture cannot establish them (each says which).
+
+**Play against bots only.** §12.1 item 5: the real-site QA is performed against computer
+opponents (chess.com "Play computer", lichess "Play with the computer"), never against a human.
+Export the timing log afterwards and run it through `tools/telemetry-conformance/`.
+
+---
+
+## 0. Setup (do this once)
+
+1. `bun install && bun run check` — must exit 0. (Needs `python3` on `PATH`.)
+2. `bun run build --dev`.
+3. `chrome://extensions` → Developer mode → **Load unpacked** → `dist/`.
+   - The card must read **sliced.gg (dev)**, version `2.0.0`, `version_name` `2.0.0-dev+…`.
+   - **Expect zero errors and zero warnings on the card.** Any "Unrecognized manifest key",
+     permission warning you did not expect, or CSP complaint is a finding — write it down.
+4. Open the service-worker console (`chrome://extensions` → "service worker"). Every context's
+   `log.*` output arrives here. Set Settings › Advanced › Log level to `debug` for the run.
+5. Open `file:///…/test/fixtures/focus-probe.html` in its own tab — section C uses it.
+6. Record, for the whole run: Chrome version, OS, machine (CPU cores, RAM), and whether the
+   machine is on battery. Several timing items are hardware-sensitive.
+
+Record results by filling in the **Observed** column / the blanks in each table. A row you did
+not run is `not run`, never a tick.
+
+---
+
+## A. Release smoke
+
+| # | Do | Expect | Observed |
+|---|---|---|---|
+| A1 | Load `dist/` unpacked | Card shows no errors/warnings; the toolbar icon appears | |
+| A2 | Click the toolbar icon on a chess.com tab | Side panel opens; Login or Waiting view, never a blank panel | |
+| A3 | Open the service-worker console | `service systems bootstrapped`, `license: validated`, no uncaught errors | |
+| A4 | Open a supported site and wait for the engine | `chrome://extensions` → "Inspect views: offscreen.html" exists | |
+| A5 | Navigate to a non-supported site (e.g. example.com) with the panel open | "Not on a supported site" view with working chess.com / lichess links | |
+| A6 | `bun run build` (release), load *that* `dist/` unpacked in a second profile | Card reads **sliced.gg** (no `(dev)`, no `version_name`); everything above still holds | |
+
+---
+
+## B. Real-site play
+
+### B1. chess.com — blitz vs a bot, with a promotion and a premove
+
+Set Settings › Strength to something clearly sub-engine (e.g. 1200, Balanced) so the play is
+plausible. Play a 3+0 or 5+0 game against a bot.
+
+| # | Do | Expect | Observed |
+|---|---|---|---|
+| B1.1 | Start the game with the panel open | Panel moves to Live within one move; opponent name and rating are read correctly; my colour is right (check with a black-side game too) | |
+| B1.2 | Watch three of your turns without arming | Move card shows a SAN, from→to, eval and a plan line; the highlight lands on the right two squares on the board | |
+| B1.3 | Watch the clocks through a move | Both clocks track the page's clocks; the running one is the side to move; tenths appear under 10 s | |
+| B1.4 | Arm auto-play (hold the toggle ~600 ms) | Debugger infobar appears; toggle reads "Auto-play on"; countdown ring drains on your turn | |
+| B1.5 | Let it play ~10 moves | Each move is a *drag*: press, a continuous path, release. No teleporting cursor, no instant click-click. Move times vary and look human | |
+| B1.6 | Reach a promotion (push a pawn to the 8th) | The promotion window opens and the correct piece is picked; the move is verified as played, not left dangling | |
+| B1.7 | Make a premove yourself while armed | The extension does not fight you: your premove is left alone or cleanly superseded; no double move, no illegal attempt | |
+| B1.8 | Let the extension premove (obvious recapture, low clock) | The premove is placed during the opponent's turn and resolves; the panel's plan line says `premove` | |
+| B1.9 | Switch tabs mid-move-window, come back | The move is **skipped** while hidden and played after the next fresh position. Nothing pulls the tab back | |
+| B1.10 | Let the game end | Game-over is detected; panel returns to Waiting; auto-queue (if on) starts a new game after a plausible delay | |
+
+### B2. lichess — bullet vs a bot, including a flag
+
+| # | Do | Expect | Observed |
+|---|---|---|---|
+| B2.1 | 1+0 vs "Play with the computer" (level 3–5) | Panel reaches Live; opponent shows as "Lichess AI level N" with the mapped Elo | |
+| B2.2 | Play both colours | Board orientation and my colour are correct in both; highlights land on the right squares when flipped | |
+| B2.3 | Armed, play into severe time trouble (< 10 s) | Move times compress but stay above the floor; the hand still drags; nothing hangs waiting on a plan | |
+| B2.4 | Let your own clock flag while armed | The extension stops cleanly at flag; no move is dispatched after the game ends; panel shows game over | |
+| B2.5 | Promotion on lichess (`#promotion-choice`) | Correct piece chosen; verified | |
+| B2.6 | Flip the board mid-game (lichess flip button) | Geometry follows within a move; no move is sent at stale coordinates | |
+| B2.7 | Resign / rematch from lichess's own controls | Session ends and restarts cleanly; no stale highlights from the previous game | |
+
+### B3. Executor and content-script edge cases (deferred from Tasks 18/20/21)
+
+| # | Do | Expect | Observed |
+|---|---|---|---|
+| B3.1 | Load a game page by typing the URL (so the content script boots at `document_start` **before** `<body>` exists) | The content script still attaches and reports a position; SW log shows no "waiting for body" loop that never ends | |
+| B3.2 | Navigate between games with SPA navigation (no reload) | A new game is detected exactly once — not on every re-render, and not missed | |
+| B3.3 | Watch the pieces during a capture on chess.com | Confirm removed pieces are moved into `div.element-pool` **outside** `wc-chess-board`, and that the adapter's piece read never picks up a pooled piece (stale piece in the panel's position = finding) | |
+| B3.4 | Armed: cancel a countdown with `Esc`, then let the next move run | Cancel is honoured; the following move executes normally | |
+| B3.5 | Armed: interrupt a drag by moving the real mouse over the board | The hand keeps a continuous trace; no jump. (§13.5 hand ownership) | |
+
+---
+
+## C. Focus discipline (`docs/qa/focus-discipline.md`)
+
+This is the highest-value section: §13.4 rests on a premise the simulator cannot establish, and
+six rows are still unrecorded. happy-dom has no window-focus model, so only a real browser can
+answer these.
+
+**Procedure** (full version in `docs/qa/focus-discipline.md` §1): open the focus probe in the
+game tab's window, open the side panel on it, **clear the probe log before every action**, then
+perform the action and copy the probe's log into the row. Record `document.hasFocus()` after the
+action and whether the counters moved.
+
+| # | Action | Expected | Blur? | Focus? | Observed (paste the probe log) |
+|---|---|---|---|---|---|
+| 1 | Click a side-panel button | blur on the page, `hasFocus()` false | | | |
+| 2 | Type in a side-panel input | blur once, on first focus of the field | | | |
+| 5r | CDP click via the executor on a live chess.com tab, page already focused | pointer events only, no focus/blur | | | |
+| 6r | Debugger **attach** (arm auto-play) | no blur; infobar appears; note the **layout shift in px** and whether the board moves | | | |
+| 6r′ | Debugger **detach** (disarm) | no blur; infobar disappears; layout shifts back | | | |
+| 8/9 | Switch tab / focus another window and return | blur then focus — the user's own toggle. Confirm the extension never causes one | | | |
+
+**Row 6r matters twice.** The event side is asserted by the simulator; what is unknown is
+whether the infobar's appearance disturbs page focus at all, and how much it shifts the layout.
+If the board itself moves, confirm the executor's geometry is re-read after attach — a stale
+board rect would put clicks on the wrong squares.
+
+**Then**: update the Results table in `docs/qa/focus-discipline.md` with what you saw. If rows 1
+and 2 show that a panel button click does *not* blur the page, §4's decision note explains the
+relaxation of hands-off that becomes available — propose it with the probe log as evidence
+rather than making it silently.
+
+| # | Do | Expect | Observed |
+|---|---|---|---|
+| C1 | Armed, click **Cancel** on the debugger infobar | Auto-play pauses; panel shows the detached state with a Reattach action; no move is attempted | |
+| C2 | Click Reattach | Debugger reattaches; infobar returns; auto-play resumes without a page reload | |
+| C3 | Open DevTools on the game tab while armed | Chrome steals the debugger: same detach path as C1, handled the same way | |
+| C4 | Close the game tab while armed | Detach is handled (`target_closed`); SW logs no unhandled rejection; the session is torn down | |
+
+---
+
+## D. Engine, offscreen and cross-origin isolation (deferred from Task 12)
+
+Everything in this section is unverifiable outside a real browser: the simulator has no
+`crossOriginIsolated`, no `SharedArrayBuffer` and no OPFS.
+
+Open the offscreen document's console (`chrome://extensions` → Inspect views: offscreen.html).
+
+| # | Do | Expect | Observed |
+|---|---|---|---|
+| D1 | In the offscreen console: `crossOriginIsolated` | `true`. If `false`, the COOP/COEP manifest keys are not taking effect and pthreads will not work | |
+| D2 | `typeof SharedArrayBuffer` | `"function"` | |
+| D3 | Watch the boot log for the shared memory allocation | The first attempt is `LIMITS.engineMemoryInitialPages[0]` = 2560 pages = **160 MiB**. Record which of `[2560, 1536, 1024]` actually succeeded, and on how much RAM | |
+| D4 | Force the fallback (open several heavy tabs first, or run on a low-RAM machine) | A failed 2560-page allocation degrades to 1536 then 1024 and the engine still boots, rather than throwing | |
+| D5 | Confirm the extension-URL `import()` of the Emscripten factory works under the extension CSP | Engine reaches `uciok`; no CSP violation in the offscreen console | |
+| D6 | Confirm pthreads actually spawn (`mainScriptUrlOrBlob`) | Worker threads appear; `Threads` option takes effect (nps rises with more threads in the Engine view) | |
+| D7 | Trigger a full-build NNUE download (Settings › Engine › Network = `big`, **see Known gaps L2 — this control is currently inert, so drive it from the SW console instead**) | The SW fetches, the offscreen store receives ~4 MiB base64 chunks; record the wall-clock latency per chunk and total. `nnue-progress` drives the panel's progress bar | |
+| D8 | With OPFS unavailable (or quota exhausted) | The IndexedDB fallback (`NNUE_DB`) is used; the engine still boots | |
+| D9 | Open two windows on supported sites | Exactly **one** offscreen document exists (`chrome.runtime.getContexts`), shared by both | |
+| D10 | Engine view → Restart | Engine restarts, reaches `ready`, and analysis resumes without a reload | |
+
+---
+
+## E. Timing head (ChessMimic; deferred from Task 34)
+
+| # | Do | Expect | Observed |
+|---|---|---|---|
+| E1 | Boot with the SW console open, first connect | The default band `1500_1600` pre-warms: record the wasm instantiation time and the first-band load time (~206 ms and ~18 MB were the export-time figures) | |
+| E2 | Same on the slowest machine you have | Record it. If the pre-warm collides with the Stockfish boot badly enough to delay the first recommendation, that is a finding | |
+| E3 | Play with `targetElo` in each of the three bands (1200–1300, 1500–1600, 1800–1900) | Each band's session loads on demand; with `LIMITS.timingSessionsMax = 2`, the third evicts by LRU — confirm the eviction does not stall a move | |
+| E4 | Measure per-move inference latency (Engine view timing log, or the offscreen console) | Under the **100 ms** head budget. Above it the v1 head substitutes — confirm the substitution is what actually happens, and how often | |
+| E5 | Exercise the **streaming** band download against a real `Response` | Point a band at a non-bundled URL (or flip `bundled: false` for one band in a scratch build). Confirm the relay streams: chunks arrive *during* the transfer, not after. The production preset has only ever been exercised through the buffering fallback in tests | |
+| E6 | Interrupt a band download half-way (offline, then back) | The stall budget (`TIMINGS.assetDownloadStallMs`) fires, the band is retried after ~30 s, and nothing wedges | |
+| E7 | Export the timing log after a full bot game | Run `tools/telemetry-conformance/report.py` over it; record the verdict | |
+
+---
+
+## F. Adapter selectors vs the live DOM (deferred from Task 20)
+
+The adapters were built against fixtures **hand-written from Appendix C's verified DOM
+descriptions, not live captures**. This section replaces that assumption with evidence. For each
+row, open DevTools on the live page and check the selector in `src/content/adapters/selectors.ts`
+against what is actually there.
+
+| # | Selector / concern | Where | Expect | Observed |
+|---|---|---|---|---|
+| F1 | `chesscom.rating` — `.cc-user-rating-white` / `.cc-user-rating-black` / `.user-tagline-rating` | live chess.com game | One candidate matches and yields the opponent's rating | |
+| F2 | `chesscom.botCard` / `botName` / `botRating` — `.bot-component*` | chess.com "Play computer" bot picker | The bot's name and rating are read; the §13.6 opponent-matched target gets a real number | |
+| F3 | `chesscom.username`, `playerTop`/`playerBottom` | live game | Correct top/bottom assignment in both orientations | |
+| F4 | `lichess.playerName` = `name`, `playerRating` = `rating` (element *children* of `.ruser-*`) | live lichess game | Both resolve; confirm they are really child elements and not attributes on the parent | |
+| F5 | `div.element-pool` pooled pieces | chess.com, after several captures | The pool exists, holds recycled `.piece` elements, and sits outside `wc-chess-board` | |
+| F6 | `chesscom.moveList` / `moveNode` / `moveSelected` ladders | live game | The first candidate in each ladder matches (if a later one matches, the ladder is stale — record which index) | |
+| F7 | `lichess.moves` / `move` tag ladders (`aPp`, `Z7yx`, `kwdb`, …) | live game | Record which index matched. lila rotates these tags; a fall-through to `.moves`/`.tview2` is expected but worth knowing | |
+| F8 | `chesscom.gameOver` ladder + `gameOverHeaderClassRe` | after a win, a loss and a draw | Result is classified correctly in all three | |
+| F9 | Run the content self-check (`self-check.ts` probe output in the SW log) | every selector concern reports a matched index; nothing reports "no candidate" | |
+
+Anything that only matches at a later ladder index, or not at all, should be captured as a real
+DOM snapshot into `test/fixtures/` so the regression is caught next time.
+
+---
+
+## G. Licence paths
+
+`build.config.json` ships `licenseEnforce: false`, so the gate is forced open and every key
+validates. Run G1–G3 on the shipped build; for G4–G7 rebuild with `licenseEnforce: true`.
+
+| # | Do | Expect | Observed |
+|---|---|---|---|
+| G1 | Fresh profile, first open | Login view; the version line reads the build version | |
+| G2 | Enter a well-formed key | Accepted; the panel proceeds to Waiting/Live | |
+| G3 | Engine view → licence block | Shows `status: valid` **and** the endpoint's real `rawStatus` — confirm `rawStatus` is not being masked | |
+| G4 | `licenseEnforce: true`, rebuild, enter a bad key | Login view shows the error copy; the extension does not assist | |
+| G5 | Same build, an expired key | Expired view with the date and the renew action | |
+| G6 | Same build, a key already active on 2 devices | The IP-limit copy, with "Manage devices" | |
+| G7 | Same build, go offline and reopen the panel | The last valid verdict is kept — a network error must never lock the user out (H.12) | |
+
+---
+
+## H. Update flow (§12.2)
+
+| # | Do | Expect | Observed |
+|---|---|---|---|
+| H1 | In the SW console: `chrome.storage.local.set({ "sl::update-version": "2.1.0", "sl::update-available": true })` | With no game live, the panel raises the Update view reading "sliced 2.1.0 is ready" | |
+| H2 | Click **Later** | Returns to the previous view, leaves the info banner, and never re-interrupts | |
+| H3 | Set the flag while a game is live | The interrupt is deferred; only the banner shows; it appears after the game ends | |
+| H4 | Click **Restart and update** | The extension reloads (`chrome.runtime.reload()`); the panel reconnects. Confirm a live game is not disrupted beyond the reload | |
+| H5 | Set `sl::update-available` to `false` | Interrupt and banner both disappear | |
+| H6 | Let the licence alarm fire with the site reachable (or call `checkForUpdate()` from the SW console) | Version compared against the site's `manifest.json`; the flag matches reality; the value is written **only** when it changes | |
+
+---
+
+## I. Panel layout — visual QA against Appendix F (Task 29)
+
+Drag the side panel's edge to each width and resize the window to each height, and compare every
+view against the wireframes in Appendix F §4 and the breakpoint rules in §8.1/§8.2. **No CSS was
+adjusted for this pass** — the layout has never been seen in a browser, so treat this as
+discovery. Screenshot each cell into `docs/qa/2026-09-panel/<view>-<width>x<height>.png`.
+
+### I1. Width breakpoints (Appendix F §8.1)
+
+At each width, check every view: Login, Not-supported, Waiting, Live (idle / armed+counting),
+Settings, Engine, Update, Expired.
+
+| Width | Rules to verify | Observed |
+|---|---|---|
+| **320** (compact) | Wordmark hidden, mark only. View switch icons only. Eval numeral inline in the opponent row at `numeral-md`; WDL in a tooltip. Ratings hidden. Move card `move-sm`, padding `space.3`, ring in the plan line. Play button `control.md`, label "Play". PV max 2, depth column hidden. Toggles icon-only. Session strip hidden. Settings rows wrap the label above the control past 16ch. | |
+| **360** (standard) | Wordmark shown. View switch icons only. Eval numeral `numeral-lg` on its own row with WDL. Move card `move-lg`. PV up to the setting (max 5), depth column hidden. Toggles icon + label. Session strip shown. | |
+| **420** (comfortable) | View switch shows labels. Ratings shown. PV depth column shown. Move card SAN and from→to on one baseline with `space.6` gap. Settings rows keep label and control on one line. Popovers ≤ 400px. | |
+| **480** (capped) | Content column capped at 480px and centred; extra space goes to margins; nothing scales further. | |
+
+At **every** width: no horizontal scrolling anywhere; hit targets ≥ 44 px in Live; ≥ 8 px between
+adjacent targets; nothing clipped or overlapping; the focus ring is never cut by an overflow
+container (check the PV list and the engine log).
+
+### I2. Height rules (Appendix F §8.2)
+
+Live view, armed and counting, at 360 wide:
+
+| Height | Expect | Observed |
+|---|---|---|
+| **720** | The whole Live view fits with **no scrolling** (the §8.2 budget totals 656 px) | |
+| **600** | Collapses in order until it fits: (1) session strip hidden, (2) PV rows 3 → 2 → 1, (3) WDL folds into the eval tooltip and the numeral drops to `numeral-md` inline. Record which collapses fired | |
+| **480** | Further collapses: (4) strength card becomes a one-line chip in the toggles row, (5) move card `move-sm` with the plan merged into the button label. Below 480 available height the view scrolls with the move card scroll-pinned at the top | |
+
+Each collapse must be a discrete state — drag the edge slowly and confirm the layout does not
+scale fluidly or flicker between two states at one size.
+
+### I3. Web Interface Guidelines review
+
+Run the `web-design-guidelines` review over `pages/panel.html` + `css/` and record the findings
+here. Fix only what is genuinely wrong; do not restyle against Appendix F.
+
+### I4. Deviations found
+
+List every place the rendering differs from the wireframe, with the screenshot name. Fixes are
+**CSS only** — a layout deviation is not licence to change behaviour.
+
+---
+
+## J. Multi-window and multi-tab
+
+| # | Do | Expect | Observed |
+|---|---|---|---|
+| J1 | Two Chrome windows, a game in each, panel open in both | Each panel shows *its own* window's game. A background window's panel may briefly show the last-focused window's game until its hello round trip lands (a few ms) — anything longer or sticky is a finding | |
+| J2 | Two tabs in one window, a game in each; switch between them | The panel follows the active tab; sessions do not cross-talk; auto-play stays armed only on the tab it was armed on | |
+| J3 | Arm on tab A, switch to tab B, come back | Still armed on A, not on B; the debugger is attached only to A | |
+| J4 | Close the window holding the panel while a game runs | The session tears down; the SW logs no unhandled rejection | |
+
+---
+
+## K. Accessibility, keyboard and motion (Task 27)
 
 Automated coverage (`test/panel/a11y.test.ts`): SAN → speech, accessible names on every
 interactive element, tab order per Appendix F §8.3, `Esc` priority, live-region debounce, theme
@@ -93,4 +365,41 @@ DevTools › Rendering › Emulate CSS media feature `forced-colors: active`. Sc
       Geist Mono for PV lines and the log — no fallback flash after first paint (`font-display:
       swap` on a packaged font is instant); tabular numerals in clocks and evals do not jitter.
 - [ ] Panel widths 320 / 360 / 420 / 480 px: no horizontal scroll, hit targets stay ≥ 44 px in
-      Live, ≥ 8 px between adjacent targets.
+      Live, ≥ 8 px between adjacent targets. (Section I covers this in detail.)
+
+---
+
+## L. Known gaps — record, do not report as new bugs
+
+These are real, known, and deliberately not fixed in this pass. Confirm the symptom matches the
+description; if it differs, *that* is the finding.
+
+**L1 — the master toggle does nothing.** `Settings.enabled` is written by
+`src/service/handlers/settings/set-enabled.ts` and carried in the panel snapshot, but the only
+consumer is `moveCardState()` in `src/panel/views/live/move-section.ts`, which greys the move
+card. Nothing in `src/service/**` reads it, so with the toggle **off** the extension still
+analyses, still recommends, still highlights and — if armed — still plays. The gate belongs in
+the SW session (`src/service/game-session/**`).
+
+**L2 — the Network control is inert.** `Settings.engine.nnue` (`small` | `big` | `auto`, default
+`auto`) is read only by the Settings view to render its control. `EngineController` never passes
+it on, so the running variant is always the bundled smallnet and the full build's on-demand nets
+are never requested. The wiring belongs in `src/service/engine-controller.ts`'s configure path.
+
+**L3 — `bun run dev` does not watch.** `--watch` is parsed but there is no watch loop; it is one
+build. Re-run `bun run build --dev` and reload the extension.
+
+**L4 — the release zip is ~63 MB.** Three 18 MB ChessMimic bands plus a 16 MB engine. Fine for
+zip + unpacked distribution; it would not fit the Chrome Web Store, which §12.2 does not use.
+
+**L5 — a data: URL export.** The Engine view's timing-log export opens a
+`data:application/json` URL in a new tab. Confirm Chrome actually renders it rather than blocking
+the navigation — if it is blocked, the export needs a different delivery.
+
+---
+
+## Results log
+
+| Date | Chrome | OS | Machine | Build (`version_name`) | Sections run | Findings |
+|---|---|---|---|---|---|---|
+| | | | | | | |
