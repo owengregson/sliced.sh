@@ -143,12 +143,50 @@ describe("within-bucket decoding (empirical integer second + U(0,1))", () => {
 		expect(sum / tail).toBeLessThan(CM.openBucketTailMeanS * 1.15);
 		expect(max).toBeGreaterThan(90);
 	});
-	it("bucketExpectedSec is the midpoint for finite buckets and the empirical mean for the open one", () => {
-		expect(bucketExpectedSec("1500_1600", 0)).toBe(0.5);
-		expect(bucketExpectedSec("1500_1600", 27)).toBeCloseTo(29.5, 6);
-		const open = bucketExpectedSec("1500_1600", 29);
-		expect(open).toBeGreaterThan(45);
-		expect(open).toBeLessThan(70);
+	it("bucketExpectedSec is the sampler's mean, not the edge midpoint, in every band", () => {
+		// Independent recomputation from buckets.json: sum (second + 0.5) * weight / sum weight.
+		const tableMean = (band: (typeof CHESSMIMIC_BANDS)[number], bucket: number): number => {
+			const dist: Record<string, number> =
+				buckets[band].bucket_empirical_distributions[bucket]?.distribution ?? {};
+			let total = 0;
+			let acc = 0;
+			for (const [k, w] of Object.entries(dist)) {
+				total += w;
+				acc += (Math.floor(Number(k)) + 0.5) * w;
+			}
+			return acc / total;
+		};
+		for (const band of CHESSMIMIC_BANDS) {
+			// The 1-second buckets hold only their own second, so table mean === midpoint there.
+			for (let b = 0; b < 27; b++) {
+				expect(bucketExpectedSec(band, b)).toBeCloseTo(b + 0.5, 9);
+				expect(tableMean(band, b)).toBeCloseTo(b + 0.5, 9);
+			}
+			// The wide finite buckets are left-skewed: the mean is below the midpoint.
+			for (const [b, lo, hi] of [
+				[27, 27, 32],
+				[28, 32, 40],
+			] as const) {
+				const got = bucketExpectedSec(band, b);
+				expect(got).toBeCloseTo(tableMean(band, b), 9);
+				expect(got).toBeGreaterThan(lo);
+				expect(got).toBeLessThan((lo + hi) / 2);
+			}
+			// The open bucket blends its table with the exponential tail, so it sits above both.
+			const open = bucketExpectedSec(band, 29);
+			expect(open).toBeGreaterThan(tableMean(band, 29));
+			expect(open).toBeGreaterThan(45);
+			expect(open).toBeLessThan(70);
+		}
+	});
+	it("bucketExpectedSec matches the mean sampleWithinBucket actually draws (N = 20 000)", () => {
+		const rng = createRng(4242);
+		for (const bucket of [3, 27, 28]) {
+			let sum = 0;
+			const N = 20_000;
+			for (let i = 0; i < N; i++) sum += sampleWithinBucket("1500_1600", bucket, rng);
+			expect(sum / N).toBeCloseTo(bucketExpectedSec("1500_1600", bucket), 1);
+		}
 	});
 	it("distributionMedianSec finds the 50 % bucket", () => {
 		expect(distributionMedianSec("1500_1600", probsAt([4, 5, 6], [0.3, 0.4, 0.3]))).toBe(5.5);

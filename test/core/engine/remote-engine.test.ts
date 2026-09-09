@@ -7,6 +7,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { CHESSMIMIC_DEFAULT_BAND } from "@core/constants/models";
 import { TIMINGS } from "@core/constants/timings";
 import { RemoteEngine } from "@core/engine/remote-engine";
 import { type BootHooks, EngineHost, serveEnginePort } from "@offscreen/engine-host";
@@ -324,7 +325,9 @@ describe("RemoteEngine over the simulator", () => {
 			},
 		});
 		await settle();
-		expect(calls).toEqual(["warm:1800_1900", "handle:t2"]);
+		// The first accepted connection pre-warms the default band (Task 34 fix round 1) before
+		// anything the SW sends, so the first real move never pays the cold session load.
+		expect(calls).toEqual([`warm:${CHESSMIMIC_DEFAULT_BAND}`, "warm:1800_1900", "handle:t2"]);
 		expect(chunks).toEqual(["1000_1100.onnx"]);
 		expect(seen).toContainEqual({
 			kind: "timing-result",

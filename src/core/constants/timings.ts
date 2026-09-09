@@ -34,4 +34,14 @@ export const TIMINGS = {
 	/** `connectPort` reconnect backoff: base, doubling up to the cap (Task 4). */
 	portReconnectBaseMs: 250,
 	portReconnectMaxMs: 4_000,
+	/**
+	 * Task 12/34: a relayed asset download (`AssetStore`) that goes this long without a chunk is
+	 * abandoned. It is a *stall* budget, rearmed by every chunk, not a total: a 72 MB NNUE on a
+	 * slow link must still finish. Without it a service worker that never answers a
+	 * `nnue-request` / `model-request` leaves the pending promise forever, which wedges the
+	 * asset (and, for a band, the timing head's substitute path).
+	 */
+	assetDownloadStallMs: 120_000,
+	/** Task 34: a ChessMimic band whose session failed to load is tried again after this. */
+	timingBandRetryMs: 30_000,
 } as const;

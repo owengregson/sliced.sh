@@ -22,6 +22,16 @@ export const CHESSMIMIC_FILES = {
 export const CHESSMIMIC_BANDS = ["1200_1300", "1500_1600", "1800_1900"] as const;
 export type ChessMimicBand = (typeof CHESSMIMIC_BANDS)[number];
 
+/**
+ * The band the offscreen document warms as soon as the service worker connects, before it knows
+ * the user's target Elo (that lives in the SW's settings). Loading a band's session costs
+ * ~200 ms cold and blocks the first query for it, which is well past the head's 100 ms budget —
+ * so without this the first move of a session always falls back to v1. The middle band is the
+ * best single guess and, more importantly, it pays the one-off wasm instantiation, so a
+ * different band later costs only its own ~100 ms.
+ */
+export const CHESSMIMIC_DEFAULT_BAND: ChessMimicBand = "1500_1600";
+
 export interface ChessMimicBandFile {
 	bytes: number;
 	sha256: string;

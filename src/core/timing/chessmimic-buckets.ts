@@ -5,13 +5,15 @@
  * empirical distribution of integer think-time seconds inside it (`bucket_empirical_distributions`,
  * `seconds` for the finite buckets, `frequent_values` + `coverage` for the open one).
  *
- * Decoding a sampled bucket to seconds mirrors `sample_from_bucket_empirical` with one change:
- * a Lichess `%clk` reading of `s` seconds means the true think time was in `[s, s+1)`, so the
- * integer second drawn from the table gets U(0, 1) added — the 1-second buckets are therefore
- * uniform inside their edges, the wide buckets follow their tables, and nothing lands on an exact
- * second (no mass points, §13). The open bucket's table covers ≈ 75 % of its mass (40–59 s);
- * the remaining mass is drawn as (max table second + 1) + Exp(`openBucketTailMeanS`), upstream's
- * blitz tail mean.
+ * Decoding a sampled bucket to seconds mirrors `sample_from_bucket_empirical` with two changes:
+ *
+ *   1. a Lichess `%clk` reading of `s` seconds means the true think time was in `[s, s+1)`, so
+ *      the integer second drawn from the table gets U(0, 1) added — the 1-second buckets are
+ *      therefore uniform inside their edges, the wide buckets follow their tables, and nothing
+ *      lands on an exact second (no mass points, §13);
+ *   2. the open bucket's table covers only ≈ 75 % of its mass (40–59 s), so the rest is drawn as
+ *      (max table second + 1) + Exp(`openBucketTailMeanS`) with upstream's blitz tail mean,
+ *      rather than being clipped to the table.
  */
 
 import type { ChessMimicBand } from "@core/constants/models";
@@ -141,11 +143,21 @@ export function sampleWithinBucket(band: ChessMimicBand, bucket: number, rng: Rn
 	return second + uniform(rng, 0, 1);
 }
 
-/** Expected seconds of a bucket draw: the midpoint for finite buckets, the sampler's mean for the open one. */
+/**
+ * Mean seconds of what `sampleWithinBucket` actually draws — the band's empirical table mean
+ * (each second + the U(0, 1) jitter), blended with the exponential tail for the open bucket.
+ *
+ * Not the midpoint of the edges: for the 1-second buckets the two coincide exactly (the table
+ * holds only that second), but the wide buckets are left-skewed — 1500–1600 bucket 27 `[27, 32)`
+ * has a table mean of 29.25 s against a midpoint of 29.5, and bucket 28 `[32, 40)` 35.47 against
+ * 36.0. `distributionMedianSec` feeds the head's `median()`, which sets the `long` label and the
+ * allocation, so it must describe the sampler rather than the edges. The midpoint is used only if
+ * a table is somehow empty.
+ */
 export function bucketExpectedSec(band: ChessMimicBand, bucket: number): number {
 	const lo = CLOCK_BUCKET_BOUNDARIES[bucket] ?? 0;
 	const hi = CLOCK_BUCKET_BOUNDARIES[bucket + 1] ?? Number.POSITIVE_INFINITY;
-	if (Number.isFinite(hi)) return (lo + hi) / 2;
+	const midpoint = Number.isFinite(hi) ? (lo + hi) / 2 : lo;
 	const t = tableFor(band, bucket);
 	let total = 0;
 	let acc = 0;
@@ -153,7 +165,9 @@ export function bucketExpectedSec(band: ChessMimicBand, bucket: number): number 
 		total += t.weights[i] ?? 0;
 		acc += ((t.seconds[i] ?? 0) + 0.5) * (t.weights[i] ?? 0);
 	}
-	const tableMean = total > 0 ? acc / total : lo;
+	if (!(total > 0)) return midpoint;
+	const tableMean = acc / total;
+	if (t.coverage >= 1) return tableMean;
 	return t.coverage * tableMean + (1 - t.coverage) * (t.tailStartS + CM.openBucketTailMeanS);
 }
 

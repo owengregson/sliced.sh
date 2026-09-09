@@ -12,13 +12,22 @@
  *      (OPFS, IndexedDB fallback). A checksum mismatch re-requests once, then fails with the
  *      spec's checksum error.
  *
+ * Every relayed download carries a **stall** budget (`TIMINGS.assetDownloadStallMs`), rearmed by
+ * each chunk: a service worker that never answers (no handler registered, the relay wedged, the
+ * port silently dead) rejects the download instead of leaving a promise pending forever. That
+ * matters beyond the wasted memory — `timing-inference.ts` awaits its band candidates serially,
+ * so a download that never settles would wedge the head on that band and never reach the
+ * substitute. The budget is a stall, not a total, so a slow 72 MB NNUE still finishes.
+ *
  * Chunks carry base64 because runtime ports JSON-serialise their payloads (see `NnueChunk`).
  */
 
 import { runtimeGetURL } from "@core/chrome/runtime";
 import type { EnginePortMessage } from "@core/constants/messages";
+import { TIMINGS } from "@core/constants/timings";
 import { log } from "@core/logger";
 import { base64ToBytes } from "@core/util/base64";
+import { DEFAULT_SCHEDULER, type TimerScheduler } from "@core/util/scheduler";
 
 /** Downloads tried before giving up on a checksum mismatch (initial + one re-request). */
 const DOWNLOAD_ATTEMPTS = 2;
@@ -78,7 +87,14 @@ export interface AssetStoreDeps {
 	indexedDb?: IDBFactory | null;
 	digest?: (data: Uint8Array) => Promise<ArrayBuffer>;
 	onProgress?: (name: string, progress: number) => void;
+	/** Timers for the download stall budget; tests pass a fake. */
+	scheduler?: TimerScheduler;
+	/** Chunk-to-chunk budget before a relayed download is abandoned; default `TIMINGS.assetDownloadStallMs`. */
+	stallMs?: number;
 }
+
+/** Rejection message when the relay went quiet; the caller may retry or substitute. */
+export const ASSET_DOWNLOAD_STALLED = "download stalled";
 
 interface Download {
 	chunks: Array<Uint8Array | undefined>;
@@ -86,6 +102,8 @@ interface Download {
 	total: number;
 	resolve: (data: Uint8Array) => void;
 	reject: (error: Error) => void;
+	/** Stall-budget timer handle; cleared whenever the download leaves `downloads`. */
+	timer: unknown;
 }
 
 const defaultDigest = (data: Uint8Array): Promise<ArrayBuffer> =>
@@ -159,6 +177,8 @@ export class AssetStore {
 	private readonly opfs: (() => Promise<OpfsDirectory>) | null;
 	private readonly indexedDb: IDBFactory | null;
 	private readonly digest: (data: Uint8Array) => Promise<ArrayBuffer>;
+	private readonly sched: TimerScheduler;
+	private readonly stallMs: number;
 
 	constructor(
 		protected readonly spec: AssetSpec,
@@ -169,6 +189,17 @@ export class AssetStore {
 		this.opfs = deps.opfs === undefined ? defaultOpfs() : deps.opfs;
 		this.indexedDb = deps.indexedDb === undefined ? (globalThis.indexedDB ?? null) : deps.indexedDb;
 		this.digest = deps.digest ?? defaultDigest;
+		this.sched = deps.scheduler ?? DEFAULT_SCHEDULER;
+		this.stallMs = deps.stallMs ?? TIMINGS.assetDownloadStallMs;
+	}
+
+	/** Drop `name`'s download and stop its stall timer; returns the entry if there was one. */
+	private takeDownload(name: string): Download | undefined {
+		const d = this.downloads.get(name);
+		if (!d) return undefined;
+		this.downloads.delete(name);
+		this.sched.clearTimeout(d.timer);
+		return d;
 	}
 
 	/** Bytes of `name`, verified; concurrent calls for one name share the work. */
@@ -190,7 +221,7 @@ export class AssetStore {
 			return;
 		}
 		if ("error" in msg) {
-			this.downloads.delete(msg.name);
+			this.takeDownload(msg.name);
 			d.reject(new Error(msg.error));
 			return;
 		}
@@ -198,16 +229,17 @@ export class AssetStore {
 		try {
 			bytes = base64ToBytes(msg.bytes);
 		} catch (error) {
-			this.downloads.delete(msg.name);
+			this.takeDownload(msg.name);
 			d.reject(new Error(`${this.spec.label} chunk ${msg.index} undecodable: ${errorMessage(error)}`));
 			return;
 		}
+		this.rearmStall(msg.name, d);
 		d.total = msg.total;
 		if (d.chunks[msg.index] === undefined) d.received++;
 		d.chunks[msg.index] = bytes;
 		this.deps.onProgress?.(msg.name, d.total > 0 ? d.received / d.total : 1);
 		if (d.received < d.total) return;
-		this.downloads.delete(msg.name);
+		this.takeDownload(msg.name);
 		let length = 0;
 		for (const c of d.chunks) length += c?.length ?? 0;
 		const out = new Uint8Array(length);
@@ -242,7 +274,10 @@ export class AssetStore {
 	abortAll(reason: string): void {
 		const pending = [...this.downloads.values()];
 		this.downloads.clear();
-		for (const d of pending) d.reject(new Error(reason));
+		for (const d of pending) {
+			this.sched.clearTimeout(d.timer);
+			d.reject(new Error(reason));
+		}
 	}
 
 	private async load(name: string): Promise<Uint8Array> {
@@ -338,9 +373,27 @@ export class AssetStore {
 		});
 	}
 
+	/** (Re)start `name`'s stall budget: no chunk within `stallMs` rejects the download. */
+	private rearmStall(name: string, d: Download): void {
+		this.sched.clearTimeout(d.timer);
+		d.timer = this.sched.setTimeout(() => {
+			if (this.downloads.get(name) !== d) return;
+			this.downloads.delete(name);
+			log.warn(`${this.spec.label}: no chunk within the stall budget; abandoning`, {
+				name,
+				stallMs: this.stallMs,
+				received: d.received,
+				total: d.total,
+			});
+			d.reject(new Error(`${ASSET_DOWNLOAD_STALLED}: ${name}`));
+		}, this.stallMs);
+	}
+
 	private download(name: string): Promise<Uint8Array> {
 		return new Promise<Uint8Array>((resolve, reject) => {
-			this.downloads.set(name, { chunks: [], received: 0, total: 0, resolve, reject });
+			const d: Download = { chunks: [], received: 0, total: 0, resolve, reject, timer: undefined };
+			this.downloads.set(name, d);
+			this.rearmStall(name, d);
 			this.deps.post(this.spec.request(name));
 		});
 	}

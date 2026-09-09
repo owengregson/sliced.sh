@@ -1,5 +1,6 @@
 // test/offscreen/model-store.test.ts — Task 34: ChessMimic bands through the generalised OPFS
-// store (bundled read, verified cache, corrupt copy evicted, relayed download, unknown names).
+// store (bundled read, verified cache, corrupt copy evicted, relayed download, the stall budget
+// that stops a service worker which never answers from wedging a band, unknown names).
 import { describe, expect, it } from "bun:test";
 import type { EnginePortMessage } from "@core/constants/messages";
 import {
@@ -8,7 +9,8 @@ import {
 	chessMimicBandFile,
 	MODELS_DIR,
 } from "@core/constants/models";
-import { sha256Hex } from "@offscreen/asset-store";
+import type { TimerScheduler } from "@core/util/scheduler";
+import { ASSET_DOWNLOAD_STALLED, sha256Hex } from "@offscreen/asset-store";
 import {
 	MODEL_CHECKSUM_ERROR,
 	MODEL_NAME_ERROR,
@@ -75,10 +77,42 @@ async function registryFor(
 	return out;
 }
 
+interface FakeScheduler extends TimerScheduler {
+	/** Move the clock forward and run every timer that comes due. */
+	advance(ms: number): void;
+	count(): number;
+}
+
+function makeScheduler(): FakeScheduler {
+	let nextId = 1;
+	let clock = 0;
+	let timers = new Map<number, { fn: () => void; at: number }>();
+	return {
+		setTimeout(fn, ms) {
+			const id = nextId++;
+			timers.set(id, { fn, at: clock + ms });
+			return id;
+		},
+		clearTimeout(handle) {
+			timers.delete(handle as number);
+		},
+		now: () => clock,
+		advance(ms) {
+			clock += ms;
+			const due = [...timers].filter(([, t]) => t.at <= clock);
+			timers = new Map([...timers].filter(([, t]) => t.at > clock));
+			for (const [, t] of due) t.fn();
+		},
+		count: () => timers.size,
+	};
+}
+
 function setup(options: {
 	files: Record<string, ChessMimicBandFile>;
 	bundledData?: Record<string, Uint8Array>;
 	opfs?: FakeOpfs;
+	scheduler?: TimerScheduler;
+	stallMs?: number;
 }) {
 	const requests: string[] = [];
 	const fetched: string[] = [];
@@ -101,6 +135,8 @@ function setup(options: {
 		opfs: async () => opfs.dir,
 		indexedDb: null,
 		files: options.files,
+		...(options.scheduler ? { scheduler: options.scheduler } : {}),
+		...(options.stallMs === undefined ? {} : { stallMs: options.stallMs }),
 	};
 	return { store: new ModelStore(deps), requests, fetched, opfs };
 }
@@ -172,6 +208,43 @@ describe("ModelStore", () => {
 		await until(() => h.requests.length === 2);
 		h.store.abortAll("port disconnected");
 		await expect(q).rejects.toThrow("port disconnected");
+	});
+	it("abandons a download the service worker never answers, so the band is not wedged", async () => {
+		// The failure this guards: `post` goes out, nothing ever comes back (no relay registered,
+		// the SW died mid-download, the port is silently dead). Before the stall budget the
+		// promise stayed pending forever and `timing-inference`'s serial `resolve()` never
+		// reached the substitute band.
+		const data = bytes(11, 900);
+		const files = await registryFor({ "1000_1100": { data, bundled: false } });
+		const sched = makeScheduler();
+		const h = setup({ files, scheduler: sched, stallMs: 5_000 });
+		const p = h.store.get("1000_1100.onnx");
+		await until(() => h.requests.length === 1);
+		expect(sched.count()).toBe(1);
+		sched.advance(5_000);
+		await expect(p).rejects.toThrow(ASSET_DOWNLOAD_STALLED);
+		expect(sched.count()).toBe(0);
+		// It is only a stall, so the band can be asked for again.
+		const q = h.store.get("1000_1100.onnx");
+		await until(() => h.requests.length === 2);
+		for (const c of encodeModelChunks("1000_1100.onnx", data, 400)) h.store.handleChunk(c);
+		expect(await q).toEqual(data);
+	});
+	it("the stall budget is per chunk, so a slow but progressing download still finishes", async () => {
+		const data = bytes(12, 3000);
+		const files = await registryFor({ "1000_1100": { data, bundled: false } });
+		const sched = makeScheduler();
+		const h = setup({ files, scheduler: sched, stallMs: 5_000 });
+		const p = h.store.get("1000_1100.onnx");
+		await until(() => h.requests.length === 1);
+		const chunks = [...encodeModelChunks("1000_1100.onnx", data, 1000)];
+		expect(chunks.length).toBeGreaterThan(2);
+		for (const c of chunks) {
+			sched.advance(4_000); // just inside the budget, every time
+			h.store.handleChunk(c);
+		}
+		expect(await p).toEqual(data);
+		expect(sched.count()).toBe(0); // the timer is cleared when the download completes
 	});
 	it("rejects names that are not registered bands before touching any storage", async () => {
 		const files = await registryFor({ "1500_1600": { data: bytes(1), bundled: true } });

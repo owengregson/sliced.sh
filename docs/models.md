@@ -187,9 +187,9 @@ measured p95 is 29.3 ms (§5). `08_export_chessmimic.py --precision int8` remain
 Measured with the **vendored wasm build under Bun 1.3.11**, single-threaded, on Apple M5 / macOS
 26.3 — the same code path (`createOrtRuntime` → `createTimingInference`) the offscreen document
 takes. This environment has no browser, so the offscreen document itself could not be driven here;
-**the in-browser figure is a Task 31 QA item**. Expect the browser to be no faster: it runs the
-same wasm, and the offscreen document is cross-origin-isolated so it may use up to
-`LIMITS.timingInferenceThreadsMax` (4) threads rather than 1.
+**the in-browser figure is a Task 31 QA item**. Expect the browser to be no slower: it runs the
+same wasm, and the offscreen document is cross-origin-isolated, so it may use up to
+`LIMITS.timingInferenceThreadsMax` (4) threads where this measurement used 1.
 
 Per-query wall time (`timing-result.ms`, one query per reference position, all 1 000):
 
@@ -213,20 +213,49 @@ One-off costs (single-threaded, cold):
 | Each further band: session create + warm-up query | ~100 ms |
 | First real query after warm-up | 29.9 ms |
 
-The first session pays the wasm instantiation; `timing-inference.ts` warms each band with a dummy
-start-position query when it loads it (and on `timing-warm`), so no real move ever pays that cost.
-At most `LIMITS.timingSessionsMax` (2) sessions stay resident, evicted LRU.
+A band's session is created lazily, **inside** `handle()` (`sessionFor` → `loadSession`), so the
+first `timing` query for a band would otherwise wait for the whole create + warm-up before being
+answered — 206 ms for the first band, past the head's 100 ms budget, which means that move falls
+back to v1. Two things keep that off the board:
+
+- the offscreen document **pre-warms `CHESSMIMIC_DEFAULT_BAND` (1500–1600) on the first accepted
+  service-worker connection** (`serveEnginePort`), which also pays the one-off wasm instantiation,
+  so a later band costs only its own ~100 ms;
+- `timing-warm` warms any other band on request. Nothing in `src/` sends it today — the service
+  worker's `TimingModel` wiring is the integration task's — so **a first move whose target Elo
+  selects a band other than the default still pays ~100 ms and falls back to v1 for that one
+  move**. Wiring `TimingInferPort.warm(selectBand(targetElo))` at `startGame` closes that.
+
+Once a band is warm, at most `LIMITS.timingSessionsMax` (2) sessions stay resident, evicted LRU;
+a band evicted and asked for again pays its load cost afresh.
 
 ## 6. On-demand bands
 
-Only the three bands above are registered and bundled. The machinery for bands that are registered
-but *not* bundled is in place and tested (`src/offscreen/model-store.ts`,
-`src/service/handlers/engine/model-download.ts`, `download-relay.ts`): the service worker fetches
-`URLS.chessmimicBandBase + "<band>.onnx"`, relays it to the offscreen document in
-`LIMITS.nnueChunkBytes` chunks, and the store verifies the SHA-256 from `CHESSMIMIC_BAND_FILES`
-before the bytes reach a session, caching in OPFS (IndexedDB `MODEL_DB` fallback). No band
-currently takes that path, and `manifest.json` carries no host permission for it — adding a
-non-bundled band means adding the host there too.
+Only the three bands above are registered, and all three are bundled. The machinery for bands that
+are registered but *not* bundled is **implemented and unit-tested, but not yet wired into the
+service worker**: the offscreen side (`src/offscreen/model-store.ts` over `asset-store.ts`) is
+live, and the relay (`src/service/handlers/engine/model-download.ts` over `download-relay.ts`)
+exists, but `registerEngineHandlers` attaches only `attachNnueDownload` — nothing calls
+`attachModelDownload`, so a `model-request` would go unanswered today even with a host permission.
+
+The designed path, once wired: the service worker fetches `URLS.chessmimicBandBase + "<band>.onnx"`,
+relays it to the offscreen document in `LIMITS.nnueChunkBytes` chunks, and the store verifies the
+SHA-256 from `CHESSMIMIC_BAND_FILES` before the bytes reach a session, caching in OPFS (IndexedDB
+`MODEL_DB` fallback). Three things must change together to enable it:
+
+1. call `attachModelDownload` from `registerEngineHandlers`;
+2. add `<origin>/*` for `URLS.chessmimicBandBase` to `manifest.json`'s `host_permissions` —
+   `test/scripts/manifest-hosts.test.ts` fails the moment a registered band is marked
+   `bundled: false` without it;
+3. host the file and register its size and SHA-256 in `CHESSMIMIC_BAND_FILES`.
+
+Until then an unanswered `model-request` is bounded rather than fatal: `TIMINGS.assetDownloadStallMs`
+rejects the download, the band enters its `TIMINGS.timingBandRetryMs` cooldown, and the head
+answers from the nearest band that does load.
+
+Shipping the unwired machinery is still justified — it is the same `AssetStore` the NNUE nets use,
+so it is exercised in production by that path, and it is what makes adding a fourth band a data
+change rather than a code change.
 
 ## 7. Reproducing
 

@@ -7,6 +7,7 @@ import path from "node:path";
 import {
 	CHESSMIMIC_BAND_FILES,
 	CHESSMIMIC_BANDS,
+	CHESSMIMIC_DEFAULT_BAND,
 	CHESSMIMIC_FILES,
 	CHESSMIMIC_UPSTREAM,
 	chessMimicBandFile,
@@ -64,6 +65,10 @@ describe("ChessMimic assets", () => {
 				TIMING_CONSTANTS.chessmimic.fixtureProbTolerance
 			);
 		}
+	});
+	it("the pre-warmed default band is registered and bundled, so warming needs no download", () => {
+		expect([...CHESSMIMIC_BANDS]).toContain(CHESSMIMIC_DEFAULT_BAND);
+		expect(CHESSMIMIC_BAND_FILES[CHESSMIMIC_DEFAULT_BAND].bundled).toBe(true);
 	});
 	it("the side files and the reference fixture exist", () => {
 		for (const f of [CHESSMIMIC_FILES.scalers, CHESSMIMIC_FILES.buckets, CHESSMIMIC_FILES.vocab])

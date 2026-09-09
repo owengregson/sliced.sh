@@ -1,11 +1,13 @@
 // test/service/handlers/timing-infer.test.ts — Task 34: the service-worker side of the timing
-// port (`createTimingInferPort` correlates `timing` → `timing-result`) and the on-demand band
+// port (`createTimingInferPort` correlates `timing` → `timing-result`, and expires a query the
+// host never answers so the pending map cannot grow one closure per move) and the on-demand band
 // relay (`attachModelDownload`).
 import { describe, expect, it } from "bun:test";
 import type { EnginePortCommand, EnginePortMessage } from "@core/constants/messages";
 import { URLS } from "@core/constants/urls";
 import type { ChessMimicInputs } from "@core/timing/chessmimic-head";
 import { base64ToBytes } from "@core/util/base64";
+import type { TimerScheduler } from "@core/util/scheduler";
 import { attachModelDownload, encodeModelChunks } from "@service/handlers/engine/model-download";
 import { createTimingInferPort } from "@service/handlers/engine/timing-infer";
 
@@ -25,6 +27,35 @@ function fakePort() {
 			for (const l of [...listeners]) l(m);
 		},
 		listeners,
+	};
+}
+
+interface FakeScheduler extends TimerScheduler {
+	advance(ms: number): void;
+	count(): number;
+}
+
+function makeScheduler(): FakeScheduler {
+	let nextId = 1;
+	let clock = 0;
+	let timers = new Map<number, { fn: () => void; at: number }>();
+	return {
+		setTimeout(fn, ms) {
+			const id = nextId++;
+			timers.set(id, { fn, at: clock + ms });
+			return id;
+		},
+		clearTimeout(handle) {
+			timers.delete(handle as number);
+		},
+		now: () => clock,
+		advance(ms) {
+			clock += ms;
+			const due = [...timers].filter(([, t]) => t.at <= clock);
+			timers = new Map([...timers].filter(([, t]) => t.at > clock));
+			for (const [, t] of due) t.fn();
+		},
+		count: () => timers.size,
 	};
 }
 
@@ -65,6 +96,36 @@ describe("createTimingInferPort", () => {
 		port.emit({ kind: "timing-result", id: c.id, probs: null, error: "not-available" });
 		expect(await p).toBeNull();
 	});
+	it("expires a query the host never answers, so pending never grows past the queries in flight", async () => {
+		const port = fakePort();
+		const sched = makeScheduler();
+		const client = createTimingInferPort(port, { scheduler: sched, budgetMs: 100 });
+		// Ten moves' worth of queries the offscreen document never answers (a wedged band, a
+		// disposed document). Before the expiry each one left a closure behind for good.
+		const answers = Array.from({ length: 10 }, () => client.infer(inputs));
+		expect(client.pendingCount()).toBe(10);
+		sched.advance(100);
+		expect(await Promise.all(answers)).toEqual(new Array<null>(10).fill(null));
+		expect(client.pendingCount()).toBe(0);
+		expect(sched.count()).toBe(0);
+	});
+	it("a query answered inside the budget clears its expiry and keeps its result", async () => {
+		const port = fakePort();
+		const sched = makeScheduler();
+		const client = createTimingInferPort(port, { scheduler: sched, budgetMs: 100 });
+		const p = client.infer(inputs);
+		const c = port.posted[0];
+		if (c?.kind !== "timing") throw new Error("expected timing command");
+		const probs = new Array<number>(30).fill(1 / 30);
+		port.emit({ kind: "timing-result", id: c.id, probs, band: "1500_1600", ms: 30 });
+		expect(await p).toEqual({ probs, band: "1500_1600", ms: 30 });
+		expect(client.pendingCount()).toBe(0);
+		expect(sched.count()).toBe(0);
+		// A late duplicate for an id nobody waits on is ignored rather than throwing.
+		port.emit({ kind: "timing-result", id: c.id, probs, band: "1500_1600" });
+		sched.advance(1_000);
+		expect(client.pendingCount()).toBe(0);
+	});
 	it("warm posts timing-warm and dispose settles pending queries with null and stops listening", async () => {
 		const port = fakePort();
 		const client = createTimingInferPort(port);
@@ -74,6 +135,7 @@ describe("createTimingInferPort", () => {
 		client.dispose();
 		expect(await p).toBeNull();
 		expect(port.listeners.size).toBe(0);
+		expect(client.pendingCount()).toBe(0);
 	});
 });
 

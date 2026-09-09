@@ -24,7 +24,8 @@
  * "connects / re-connects" prose is implemented as "accept the SW's connection
  * and re-send the current status on each new one", which is how the engine
  * state survives a service-worker restart. Only the newest accepted port is
- * routed; its disconnect aborts pending NNUE downloads.
+ * routed; its disconnect aborts pending NNUE downloads. The first accepted
+ * connection also pre-warms the timing head's default band (Task 34).
  */
 
 import { DEFAULT_ENGINE_STATUS } from "@core/constants/defaults";
@@ -34,6 +35,7 @@ import type {
 	ModelChunk,
 	NnueChunk,
 } from "@core/constants/messages";
+import { CHESSMIMIC_DEFAULT_BAND } from "@core/constants/models";
 import { PORT_NAMES } from "@core/constants/ports";
 import { TIMINGS } from "@core/constants/timings";
 import { log } from "@core/logger";
@@ -430,6 +432,8 @@ export function serveEnginePort<S extends NnueStoreLike, M extends ModelStoreLik
 	const host = deps.createHost(post, store);
 	const modelStore = deps.createModelStore?.(post);
 	const timing = modelStore && deps.createTiming ? deps.createTiming(modelStore) : undefined;
+	/** The default band is warmed once, on the first connection (see `CHESSMIMIC_DEFAULT_BAND`). */
+	let preWarmed = false;
 
 	const route = (cmd: EnginePortCommand): void => {
 		if (!cmd || typeof cmd !== "object") return;
@@ -473,6 +477,14 @@ export function serveEnginePort<S extends NnueStoreLike, M extends ModelStoreLik
 			};
 			log.info("engine-host: service worker connected");
 			port.post({ kind: "status", status: host.status() });
+			// Pre-warm the timing head so the first move of the session does not pay the ~200 ms
+			// cold session load inside its 100 ms budget (and silently fall back to v1). Only on
+			// the first connection: a service-worker restart reconnects to a document whose
+			// sessions are already loaded.
+			if (timing && !preWarmed) {
+				preWarmed = true;
+				void timing.warm(CHESSMIMIC_DEFAULT_BAND);
+			}
 		}
 	);
 

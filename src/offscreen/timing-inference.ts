@@ -19,6 +19,7 @@ import { CHESS_START_FEN } from "@core/constants/chess";
 import { LIMITS } from "@core/constants/limits";
 import type { EnginePortCommand, EnginePortMessage } from "@core/constants/messages";
 import { chessMimicBandFile } from "@core/constants/models";
+import { TIMINGS } from "@core/constants/timings";
 import { log } from "@core/logger";
 import {
 	type BandScalers,
@@ -65,6 +66,8 @@ export interface TimingInferenceDeps {
 	scalers?: Readonly<Record<string, BandScalers>>;
 	maxSessions?: number;
 	now?: () => number;
+	/** How long a failed band stays skipped before it is tried again; default `TIMINGS.timingBandRetryMs`. */
+	retryAfterMs?: number;
 }
 
 export interface TimingInference {
@@ -107,6 +110,7 @@ export function createTimingInference(deps: TimingInferenceDeps): TimingInferenc
 	const bands = Object.keys(scalers);
 	const maxSessions = Math.max(1, deps.maxSessions ?? LIMITS.timingSessionsMax);
 	const now = deps.now ?? (() => performance.now());
+	const retryAfterMs = deps.retryAfterMs ?? TIMINGS.timingBandRetryMs;
 
 	let runtimePromise: Promise<OrtRuntime> | undefined;
 	const sessions = new Map<string, Promise<OrtSession>>();
@@ -114,8 +118,23 @@ export function createTimingInference(deps: TimingInferenceDeps): TimingInferenc
 	const ready = new Map<string, OrtSession>();
 	/** Most recently used last. */
 	const lru: string[] = [];
-	const unavailable = new Set<string>();
+	/**
+	 * Band → `now()` of its last load failure. A failure is treated as transient (a stalled
+	 * relay, a download the port dropped, a runtime that had not warmed up yet), so the band is
+	 * skipped for `retryAfterMs` and then tried again rather than disabled for the life of the
+	 * document.
+	 */
+	const failedAt = new Map<string, number>();
 	let disposed = false;
+
+	/** True while `band`'s last failure is still inside the retry cooldown. */
+	function inCooldown(band: string): boolean {
+		const at = failedAt.get(band);
+		if (at === undefined) return false;
+		if (now() - at < retryAfterMs) return true;
+		failedAt.delete(band);
+		return false;
+	}
 
 	function runtime(): Promise<OrtRuntime> {
 		if (!runtimePromise) runtimePromise = deps.runtime();
@@ -198,7 +217,7 @@ export function createTimingInference(deps: TimingInferenceDeps): TimingInferenc
 		return session;
 	}
 
-	/** The session for `band`, shared while loading; a failure marks the band unavailable. */
+	/** The session for `band`, shared while loading; a failure starts the retry cooldown. */
 	function sessionFor(band: string): Promise<OrtSession> {
 		const existing = sessions.get(band);
 		if (existing) {
@@ -218,8 +237,12 @@ export function createTimingInference(deps: TimingInferenceDeps): TimingInferenc
 				if (sessions.get(band) === p) sessions.delete(band);
 				const at = lru.indexOf(band);
 				if (at >= 0) lru.splice(at, 1);
-				unavailable.add(band);
-				log.warn("timing-inference: band unavailable", { band, error: errorMessage(error) });
+				failedAt.set(band, now());
+				log.warn("timing-inference: band unavailable; retrying after the cooldown", {
+					band,
+					retryAfterMs,
+					error: errorMessage(error),
+				});
 			}
 		);
 		return p;
@@ -227,12 +250,14 @@ export function createTimingInference(deps: TimingInferenceDeps): TimingInferenc
 
 	/**
 	 * `requested` first, then the registered bands nearest to `rating` (an already loaded band
-	 * wins a tie, so a substitute never costs a second session); unavailable bands skipped.
+	 * wins a tie, so a substitute never costs a second session); bands still inside their retry
+	 * cooldown are skipped. If every band is in cooldown the list is empty and `resolve` reports
+	 * `TIMING_NO_BAND` rather than hammering a runtime that is failing.
 	 */
 	function candidates(requested: string, rating: number): string[] {
 		const loaded = (b: string): number => (sessions.has(b) ? 0 : 1);
 		return bands
-			.filter((b) => !unavailable.has(b))
+			.filter((b) => !inCooldown(b))
 			.sort((a, b) => {
 				if (a === requested) return -1;
 				if (b === requested) return 1;

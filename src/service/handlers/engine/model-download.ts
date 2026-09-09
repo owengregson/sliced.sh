@@ -2,6 +2,13 @@
  * ChessMimic band download relay (Task 34): answers the offscreen store's `model-request` for a
  * registered, non-bundled band by fetching `URLS.chessmimicBandBase + <band>.onnx` and streaming
  * it back as `model-chunk`s (`download-relay.ts`); the store verifies the SHA-256.
+ *
+ * **Not wired yet.** `registerEngineHandlers` attaches only `attachNnueDownload`, because every
+ * registered band currently ships in the package (`CHESSMIMIC_BAND_FILES[...].bundled`). Enabling
+ * an on-demand band means calling this from `registerEngineHandlers`, adding the band host to
+ * `manifest.json`'s `host_permissions` (`test/scripts/manifest-hosts.test.ts` enforces the pair)
+ * and hosting the file — see `docs/models.md` §6. Until then an unanswered `model-request` is
+ * bounded by the store's stall budget rather than fatal.
  */
 
 import { LIMITS } from "@core/constants/limits";

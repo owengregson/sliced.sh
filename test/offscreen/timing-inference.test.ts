@@ -1,10 +1,16 @@
 // test/offscreen/timing-inference.test.ts — Task 34: the offscreen ChessMimic host over a fake
-// onnxruntime (session per band, warm-up, band substitution, failures, LRU, dispose).
+// onnxruntime (session per band, warm-up, band substitution, failures, LRU, dispose), plus the
+// two fix-round-1 guards: a band whose download *hangs* must not wedge the head, and a band that
+// failed once must be retried after its cooldown rather than disabled for good.
 import { describe, expect, it } from "bun:test";
+import type { EnginePortMessage } from "@core/constants/messages";
 import { CHESSMIMIC_BANDS, chessMimicBandFile } from "@core/constants/models";
-import { standardiseInputs } from "@core/timing/chessmimic-scalers";
+import { CHESSMIMIC_SCALERS, standardiseInputs } from "@core/timing/chessmimic-scalers";
 import { encodeRecentMoves, PAD_TOKEN, tokenizeFen } from "@core/timing/chessmimic-tokeniser";
 import { TIMING_CONSTANTS } from "@core/timing/constants";
+import type { TimerScheduler } from "@core/util/scheduler";
+import { sha256Hex } from "@offscreen/asset-store";
+import { ModelStore } from "@offscreen/model-store";
 import type { OrtRuntime, OrtSession, OrtTensor } from "@offscreen/ort-loader";
 import {
 	createTimingInference,
@@ -85,6 +91,43 @@ function fakeStore(available: readonly string[]) {
 			},
 		},
 	};
+}
+
+interface FakeScheduler extends TimerScheduler {
+	advance(ms: number): void;
+	count(): number;
+}
+
+function makeScheduler(): FakeScheduler {
+	let nextId = 1;
+	let clock = 0;
+	let timers = new Map<number, { fn: () => void; at: number }>();
+	return {
+		setTimeout(fn, ms) {
+			const id = nextId++;
+			timers.set(id, { fn, at: clock + ms });
+			return id;
+		},
+		clearTimeout(handle) {
+			timers.delete(handle as number);
+		},
+		now: () => clock,
+		advance(ms) {
+			clock += ms;
+			const due = [...timers].filter(([, t]) => t.at <= clock);
+			timers = new Map([...timers].filter(([, t]) => t.at > clock));
+			for (const [, t] of due) t.fn();
+		},
+		count: () => timers.size,
+	};
+}
+
+async function until(cond: () => boolean, tries = 500): Promise<void> {
+	for (let i = 0; i < tries; i++) {
+		if (cond()) return;
+		await new Promise((r) => setTimeout(r, 1));
+	}
+	throw new Error("until: condition never held");
 }
 
 function command(over: Partial<TimingCommand["inputs"]> = {}, id = "q1"): TimingCommand {
@@ -200,6 +243,81 @@ describe("createTimingInference", () => {
 		expect(b1.error).toContain("import failed");
 		expect(b2.probs).toBeNull();
 		expect(inits).toBe(1); // a failed runtime is not re-imported on every query
+	});
+	it("does not wedge on a band whose download the service worker never answers", async () => {
+		// The real `ModelStore`, not a store that conveniently rejects: 1800_1900 is registered
+		// but not bundled and nothing ever answers its `model-request`. The store's stall budget
+		// turns the hang into a rejection, so `resolve()` falls through to the substitute instead
+		// of awaiting a promise that never settles.
+		const ort = fakeOrt(1);
+		const sched = makeScheduler();
+		const bundled = bandBytes("1500_1600");
+		const onDemand = bandBytes("1800_1900");
+		const requests: string[] = [];
+		const store = new ModelStore({
+			post: (m: EnginePortMessage) => {
+				if (m.kind === "model-request") requests.push(m.name);
+			},
+			fetch: async (url: string) => ({
+				ok: url.endsWith(chessMimicBandFile("1500_1600")),
+				arrayBuffer: async () => bundled.slice().buffer,
+			}),
+			getUrl: (path: string) => `chrome-extension://test/${path}`,
+			opfs: null,
+			indexedDb: null,
+			files: {
+				"1500_1600": { bytes: bundled.length, sha256: await sha256Hex(bundled), bundled: true },
+				"1800_1900": { bytes: onDemand.length, sha256: await sha256Hex(onDemand), bundled: false },
+			},
+			scheduler: sched,
+			stallMs: 5_000,
+		});
+		const inf = createTimingInference({
+			runtime: async () => ort.runtime,
+			store,
+			scalers: {
+				"1500_1600": CHESSMIMIC_SCALERS["1500_1600"],
+				"1800_1900": CHESSMIMIC_SCALERS["1800_1900"],
+			},
+		});
+		const answer = inf.handle(command({ band: "1800_1900", rating: 1850 }));
+		await until(() => requests.length === 1);
+		expect(requests).toEqual([chessMimicBandFile("1800_1900")]);
+		sched.advance(5_000);
+		const r = await answer;
+		expect(r.error).toBeUndefined();
+		expect(r.probs).not.toBeNull();
+		expect(r.band).toBe("1500_1600");
+	});
+	it("retries a band after its cooldown instead of disabling it for the document's life", async () => {
+		const ort = fakeOrt(1);
+		let clock = 0;
+		let failing = true;
+		const inf = createTimingInference({
+			runtime: async () => ort.runtime,
+			// Only one band is registered here, so there is no substitute to hide the retry.
+			scalers: { "1500_1600": CHESSMIMIC_SCALERS["1500_1600"] },
+			store: {
+				async get(name: string) {
+					if (failing) throw new Error("transient store failure");
+					return bandBytes(name.replace(/\.onnx$/, ""));
+				},
+			},
+			now: () => clock,
+			retryAfterMs: 30_000,
+		});
+		expect((await inf.handle(command({}, "q1"))).error).toContain(TIMING_NO_BAND);
+		failing = false;
+		// Still inside the cooldown: the band is skipped, so there is nothing left to try.
+		clock = 29_999;
+		expect((await inf.handle(command({}, "q2"))).error).toContain(TIMING_NO_BAND);
+		expect(ort.created).toHaveLength(0);
+		// Past it: the band is tried again and now works.
+		clock = 30_001;
+		const ok = await inf.handle(command({}, "q3"));
+		expect(ok.error).toBeUndefined();
+		expect(ok.band).toBe("1500_1600");
+		expect(ort.created).toHaveLength(1);
 	});
 	it("retries session creation single-threaded when the threaded wasm cannot start", async () => {
 		const ort = fakeOrt(4);
