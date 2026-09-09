@@ -4,13 +4,24 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { debuggerAttach, debuggerSend } from "@core/chrome/debugger";
 import { type BoardGeometryReply, CDP, EXECUTOR } from "@core/constants";
 import { CLICK, MOTOR_DEFAULTS, PATH, PROMOTION_LOOK_DELAY_MS } from "@core/motor/constants";
-import type { ExecutionPlan, HandState, MotorProfile, Pt, Rect } from "@core/motor/types";
+import type {
+	ExecutionPlan,
+	HandState,
+	MotorProfile,
+	PathPoint,
+	Pt,
+	Rect,
+} from "@core/motor/types";
 import { createRng } from "@core/rng";
 import { defaultScheduler } from "@core/util/scheduler";
 import type { FocusVerdict } from "@service/focus-gate";
 import { HandOwnership } from "@service/hand-ownership";
 import { CdpInputBackend } from "@service/move-executor/cdp-input-backend";
-import { type GeometryProvider, HandController } from "@service/move-executor/hand-controller";
+import {
+	type GeometryProvider,
+	HandController,
+	rescalePath,
+} from "@service/move-executor/hand-controller";
 import { createSimulator, type Simulator } from "@test/sim";
 import type { PromoPiece, Square } from "@typedefs/game";
 import type { TimingPlan } from "@typedefs/timing";
@@ -595,5 +606,45 @@ describe("HandController abort", () => {
 		expect(commands().filter((c) => c.type !== "mouseMoved")).toHaveLength(0);
 		expect(result.elapsedMs).toBeLessThanOrEqual(520);
 		expect(result.pressed).toBe(false);
+	});
+});
+
+describe("rescalePath speed floor", () => {
+	const profile = (): MotorProfile => ({ ...MOTOR_DEFAULTS });
+
+	/**
+	 * The approach leg is re-timed to its window budget, so the only thing stopping a short
+	 * budget from teleporting the cursor is the per-step floor at the profile's peak speed.
+	 * Deleting that floor leaves the executor's own suites green (the budgets they use are
+	 * never tight enough to bind), so it is asserted directly here.
+	 */
+	it("never re-times a step faster than the profile's peak speed, however small the budget", () => {
+		const m = profile();
+		// 10 points, 100 px apart: 1000 px of travel the profile cannot cross faster than
+		// 1000 / peakSpeedCapPxPerS seconds, no matter what target duration is asked for.
+		const path: PathPoint[] = [];
+		for (let i = 1; i <= 10; i += 1) path.push({ x: i * 100, y: 0, dtMs: 20 });
+		const from: Pt = { x: 0, y: 0 };
+
+		const scaled = rescalePath(path, 1, m, from);
+
+		let prev = from;
+		for (const p of scaled) {
+			const step = Math.hypot(p.x - prev.x, p.y - prev.y);
+			prev = p;
+			const fastestLegalMs = (step / m.peakSpeedCapPxPerS) * 1000;
+			expect(p.dtMs).toBeGreaterThanOrEqual(fastestLegalMs);
+			expect(step / (p.dtMs / 1000)).toBeLessThanOrEqual(m.peakSpeedCapPxPerS + 1e-6);
+		}
+		// The floor is what makes the result longer than the 1 ms that was asked for.
+		const total = scaled.reduce((a, p) => a + p.dtMs, 0);
+		expect(total).toBeGreaterThan((1000 / m.peakSpeedCapPxPerS) * 1000 - 1e-6);
+	});
+
+	it("still honours a generous budget without inflating it to the floor", () => {
+		const m = profile();
+		const path: PathPoint[] = [{ x: 10, y: 0, dtMs: 10 }];
+		const scaled = rescalePath(path, 10 * EXECUTOR.travelScaleClamp[1], m, { x: 0, y: 0 });
+		expect(scaled[0]?.dtMs).toBeCloseTo(10 * EXECUTOR.travelScaleClamp[1], 6);
 	});
 });

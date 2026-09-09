@@ -111,7 +111,14 @@ export function createSessionDriver(options: SessionDriverOptions = {}): Session
 			});
 			return {
 				rec: { ...current.rec, chosen },
-				nReasonable: current.ctx.nReasonable ?? Math.max(1, current.rec.lines.length),
+				// The production pipeline reads `plan.features.n_reasonable` (Appendix D): the count
+				// of lines within `nReasonableCp` of the best, NOT the MultiPV count, which is a
+				// function of the time budget alone. Read the same source here so the exported
+				// telemetry column cannot silently drift back to a budget proxy.
+				nReasonable:
+					current.rec.plan.features.n_reasonable ??
+					current.ctx.nReasonable ??
+					Math.max(1, current.rec.lines.length),
 				fromBook: false,
 				budget: { movetimeMs: 0, depthCap: 0, multiPv: current.rec.lines.length },
 				analysis: null,
