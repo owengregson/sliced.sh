@@ -63,7 +63,8 @@ import type { MoveWindowBudget, TimingPlan } from "@typedefs/timing";
 export interface GeometryProvider {
 	read(
 		tabId: number,
-		promotion?: PromoPiece,
+		/** Ask the adapter to wait for the promotion picker on `to` and report its rect. */
+		promotion?: { piece: PromoPiece; to: Square },
 		signal?: AbortSignal
 	): Promise<BoardGeometryReply | null>;
 }
@@ -275,15 +276,18 @@ export class HandController {
 		this.signal = signal;
 		this.pressedCommitted = false;
 		this.dropAt = null;
+		const startedPx = this.backend.travelledPx?.() ?? 0;
 		const base = (): Pick<
 			ExecutionResult,
-			"tier" | "endPoint" | "elapsedMs" | "timeline" | "pressed"
+			"tier" | "endPoint" | "elapsedMs" | "timeline" | "pressed" | "san" | "pointerOffsetPx"
 		> => ({
 			tier: plan.style,
 			endPoint: this.backend.position(),
 			elapsedMs: (this.dropAt ?? this.now()) - t0,
 			timeline: tl.entries,
 			pressed: this.pressedCommitted,
+			san: plan.expected.san ?? plan.expected.uci,
+			pointerOffsetPx: (this.backend.travelledPx?.() ?? 0) - startedPx,
 		});
 		const verdict = this.focus.canExecute(plan.tabId);
 		if (!verdict.ok) {
@@ -473,6 +477,46 @@ export class HandController {
 		await this.sleepUntil(untilAt);
 	}
 
+	/**
+	 * Fit the approach into what is left of `window.approachMs` after the touch
+	 * itself (§8.4b item 3), exactly the way the drag leg is fitted to
+	 * `dragDurationMs`: `rescalePath` re-times the path uniformly, clamped to
+	 * `EXECUTOR.travelScaleClamp` and never faster than the profile's peak-speed
+	 * cap. Where the cap makes the budget unreachable the move still overruns —
+	 * the hand is never made to teleport — and that is logged.
+	 */
+	private fitApproach(
+		approach: PathPoint[],
+		touchMs: number,
+		timing: TimingPlan,
+		m: MotorProfile,
+		cursor: Pt
+	): { path: PathPoint[]; ms: number } {
+		const natural = pathMs(approach);
+		const budget = timing.window.approachMs - touchMs;
+		if (!(budget > 0)) {
+			// No room at all: run the approach as fast as the profile allows and accept the overrun.
+			const path = rescalePath(approach, 0, m, cursor);
+			const ms = pathMs(path);
+			log.debug("hand: approach budget exhausted by the touch", {
+				approachMs: timing.window.approachMs,
+				touchMs,
+				naturalMs: natural,
+				fittedMs: ms,
+			});
+			return { path, ms };
+		}
+		const path = rescalePath(approach, budget, m, cursor);
+		const ms = pathMs(path);
+		if (ms > budget + EXECUTOR.approachFitToleranceMs)
+			log.debug("hand: approach cannot be compressed to its budget (speed cap)", {
+				budgetMs: budget,
+				naturalMs: natural,
+				fittedMs: ms,
+			});
+		return { path, ms };
+	}
+
 	private planTouch(plan: ExecutionPlan, timing: TimingPlan, rects: Rects, cursor: Pt): Touch {
 		const m = plan.motor;
 		const rng = this.rng;
@@ -482,9 +526,8 @@ export class HandController {
 			SAMPLING.press.innerFrac,
 			rng
 		);
-		const approach = generatePath(cursor, press, rects.from, m, rng);
-		const pressAt = lastPoint(approach, press);
-		const approachMs = pathMs(approach);
+		const approachRaw = generatePath(cursor, press, rects.from, m, rng);
+		const pressAt = lastPoint(approachRaw, press);
 		if (plan.style === "drag") {
 			const preGrabMs = sampleRange(CLICK.preGrabPauseMs, rng);
 			const grabDelayMs = sampleRange(m.grabDelayMs, rng);
@@ -513,9 +556,10 @@ export class HandController {
 			const settleMs = sampleRange(m.releaseSettleMs, rng);
 			const touchMs =
 				preGrabMs + grabDelayMs + pathMs(wobble) + pathMs(travel) + pathMs(hesitate) + settleMs;
+			const fitted = this.fitApproach(approachRaw, touchMs, timing, m, cursor);
 			return {
 				kind: "drag",
-				approach,
+				approach: fitted.path,
 				pressAt,
 				preGrabMs,
 				grabDelayMs,
@@ -524,7 +568,7 @@ export class HandController {
 				drop,
 				hesitate,
 				settleMs,
-				approachMs,
+				approachMs: fitted.ms,
 				touchMs,
 			};
 		}
@@ -544,9 +588,10 @@ export class HandController {
 		const hold2Ms = sampleRange(m.pressHoldMs, rng);
 		const release2At = clickReleasePoint(press2At, rng);
 		const touchMs = prePressMs + holdMs + gapMs + pathMs(approach2) + prePress2Ms + hold2Ms;
+		const fitted = this.fitApproach(approachRaw, touchMs, timing, m, cursor);
 		return {
 			kind: "click",
-			approach,
+			approach: fitted.path,
 			pressAt,
 			prePressMs,
 			holdMs,
@@ -557,7 +602,7 @@ export class HandController {
 			prePress2Ms,
 			hold2Ms,
 			release2At,
-			approachMs,
+			approachMs: fitted.ms,
 			touchMs,
 		};
 	}
@@ -627,7 +672,7 @@ export class HandController {
 				? timing.promotionDelayMs
 				: sampleRange(m.lookDelayMs[1] > 0 ? m.lookDelayMs : PROMOTION_LOOK_DELAY_MS, this.rng);
 		await this.pause(lookMs);
-		const reply = await this.readGeometry(plan.tabId, piece);
+		const reply = await this.readGeometry(plan.tabId, { piece, to: plan.to.square });
 		if (reply === null) tl.note(EXECUTOR.timelineNotes.promotionGeometryUnavailable);
 		const rect = reply?.promotion ?? null;
 		if (!rect) {
@@ -684,7 +729,7 @@ export class HandController {
 
 	private async readGeometry(
 		tabId: number,
-		promotion?: PromoPiece
+		promotion?: { piece: PromoPiece; to: Square }
 	): Promise<BoardGeometryReply | null> {
 		if (!this.geometry) return null;
 		try {
@@ -692,7 +737,7 @@ export class HandController {
 		} catch (error) {
 			log.debug("hand: geometry read failed", {
 				tabId,
-				promotion: promotion ?? null,
+				promotion: promotion?.piece ?? null,
 				error: errorMessage(error),
 			});
 			return null;

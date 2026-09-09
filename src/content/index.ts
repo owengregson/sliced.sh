@@ -13,7 +13,10 @@
  *     `TIMINGS.adapterSelfCheckIntervalMs`, `pushState` / `replaceState`
  *     agnostic) and re-sends `hello` when it changes;
  *   - answers `observeMove` (highlights cleared and acknowledged first),
- *     `geometry` and `cursorProbe` (bridge closure, else the tracker);
+ *     `geometry` (square/board rects plus colour-aware occupancy; with
+ *     `promotion` it waits for the picker on `to` and reports its rect),
+ *     `boardCheck` (the executor's colour-aware position guard) and
+ *     `cursorProbe` (bridge closure, else the tracker);
  *   - applies `highlight` / `arrow` / `clearHighlight` only while the
  *     `settings` command has turned `highlightMoves` on (default off);
  *   - installs the in-page keybinds (`keybinds` command updates them; the
@@ -43,6 +46,7 @@ import {
 import { createChesscomAdapter } from "@content/adapters/chesscom";
 import { createLichessAdapter } from "@content/adapters/lichess";
 import { detectChesscomPageKind, detectLichessPageKind } from "@content/adapters/page-kind";
+import { occupancyOf, waitForPromotionRect } from "@content/board-state";
 import { createCursorTracker } from "@content/cursor-tracker";
 import { createFeedPort, type FeedPort } from "@content/feed-port";
 import { createHighlights } from "@content/highlights";
@@ -50,7 +54,8 @@ import { installKeybinds } from "@content/keybinds";
 import { type BridgeCursor, createPageBridgeClient } from "@content/page-bridge-client";
 import { detectSite } from "@content/site-detect";
 import { relaySpeak } from "@content/tts-relay";
-import { squareOf } from "@core/chess/squares";
+import { ALL_SQUARES, squareOf } from "@core/chess/squares";
+import { EXECUTOR } from "@core/constants/cdp";
 import type { GamePortCommand, GamePortMessage } from "@core/constants/messages";
 import { MSG } from "@core/constants/messages";
 import { TIMINGS } from "@core/constants/timings";
@@ -78,6 +83,8 @@ export interface ContentHandle {
 }
 
 type ObserveMoveCommand = Extract<GamePortCommand, { kind: "observeMove" }>;
+type GeometryCommand = Extract<GamePortCommand, { kind: "geometry" }>;
+type BoardCheckCommand = Extract<GamePortCommand, { kind: "boardCheck" }>;
 
 const LIVE_KINDS: ReadonlySet<PageKind> = new Set(["live-game", "vs-computer"]);
 
@@ -278,13 +285,46 @@ function bootContent(
 				if (sq && r) squares[sq] = r;
 			}
 		}
-		return {
+		const reply: GamePortMessage = {
 			kind: "geometryResult",
 			id,
 			boardRect,
 			squares: squares as Record<Square, Rect>,
 			flipped,
 		};
+		// The preview planner's deselect choice needs to know what stands where (§9.3a), and the
+		// executor's position guard answers from the same read instead of a second round trip.
+		const occupancy = occupancyOf(adapter, ALL_SQUARES);
+		if (Object.keys(occupancy).length > 0) reply.occupancy = occupancy;
+		return reply;
+	};
+
+	/** Task 30: `geometry { promotion, to }` — wait for the picker, then answer with its rect. */
+	const promotionGeometry = (cmd: GeometryCommand): void => {
+		const piece = cmd.promotion;
+		const dest = cmd.to;
+		const base = geometry(cmd.id);
+		if (piece === undefined || dest === undefined || base.kind !== "geometryResult") {
+			post({ ...base, promotion: null } as GamePortMessage);
+			return;
+		}
+		void waitForPromotionRect(adapter, dest, piece, {
+			timeoutMs: cmd.timeoutMs ?? EXECUTOR.promotionPickerTimeoutMs,
+		}).then((rect) => {
+			if (disposed) return;
+			// The board may have moved while the picker was opening: re-read the rects.
+			const fresh = geometry(cmd.id);
+			post(fresh.kind === "geometryResult" ? { ...fresh, promotion: rect } : fresh);
+		});
+	};
+
+	/**
+	 * Task 30: the executor's colour-aware pre-dispatch guard (§9.3). Answers at once with
+	 * `own` / `enemy` / `empty` for exactly the squares asked, relative to the side the hand
+	 * plays; a square the adapter cannot classify is omitted and the executor dispatches nothing.
+	 */
+	const boardCheck = (cmd: BoardCheckCommand): void => {
+		post({ kind: "boardCheckResult", id: cmd.id, occupancy: occupancyOf(adapter, cmd.squares) });
 	};
 
 	/** §5.5 `cursor-probe`: the bridge closure's last trusted position, else the tracker's. */
@@ -323,7 +363,11 @@ function bootContent(
 				observeMove(cmd);
 				return;
 			case "geometry":
-				post(geometry(cmd.id));
+				if (cmd.promotion !== undefined) promotionGeometry(cmd);
+				else post(geometry(cmd.id));
+				return;
+			case "boardCheck":
+				boardCheck(cmd);
 				return;
 			case "cursorProbe":
 				cursorProbe(cmd.id);

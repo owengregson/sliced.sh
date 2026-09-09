@@ -51,6 +51,10 @@ export class CdpInputBackend implements InputBackend {
 		return this.mouse.position;
 	}
 
+	travelledPx(): number {
+		return this.mouse.travelledPx;
+	}
+
 	pressed(): boolean {
 		return this.mouse.pressed;
 	}

@@ -61,6 +61,8 @@ const MAX_TOUCH_MS = Math.ceil(
 
 export const SIM_TELEMETRY = {
 	board: BOARD,
+	/** Furthest two points inside one square can be — the bound on a snapped-back drag's drift. */
+	squareDiagonalPx: SQUARE_PX * Math.SQRT2,
 	restPoint: REST_POINT,
 	/** Virtual-clock start of every harness run (ms epoch). */
 	startAt: 1_000_000,
@@ -102,9 +104,16 @@ export const SIM_TELEMETRY = {
 	/**
 	 * The pooled preview-rate population (Step 2a band): enough seeded games that the
 	 * non-trivial moves clear `TELEMETRY_BANDS.multiSelect.minMovesForBand` — ~23 of the
-	 * 30 moves of a rapid game are preview-eligible, so 12 games give ≈ 276.
+	 * 30 moves of a rapid game are preview-eligible, so 30 games give ≈ 680.
+	 *
+	 * It was 12 games (N ≈ 275) until Task 30. At the measured population rate (8.65 % over
+	 * N = 682) a ±2σ envelope on N = 275 is 5.3–12.0 %, i.e. the band's own upper edge — so a
+	 * pool that small could miss the band on ordinary binomial noise without the preview model
+	 * changing at all, which is what happened when Task 30's motor fix shifted the think-time
+	 * mix (10.2 % → 12.0 % on the same seeds). N = 682 narrows the envelope to 6.5–10.8 %.
+	 * This is Task 33's own "cheap insurance" concern; the band constant is unchanged.
 	 */
-	previewPool: { games: 12, movesPerGame: 30 },
+	previewPool: { games: 30, movesPerGame: 30 },
 	/**
 	 * The `chrome.commands` / keybind rows (Step 1) fire the shortcut on the first `normal`
 	 * move whose planned think is at least `minThinkMs` — long enough that the control run

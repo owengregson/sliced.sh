@@ -77,8 +77,12 @@ export interface ExecutionResult {
 	elapsedMs: number;
 	timeline: Array<{ phase: string; startMs: number; endMs: number }>;
 	error?: string;
-	/** Task 24: epoch ms the execution finished — identifies one result across snapshots (set by Task 18's controller at integration). */
+	/** Task 24: epoch ms the execution finished — identifies one result across snapshots (stamped by the executor). */
 	at?: number;
+	/** SAN of the move this result belongs to (Task 26's Last-action row). */
+	san?: string;
+	/** §13.2 `PointerOffset`: pointer path length the hand dispatched during this execution, px. */
+	pointerOffsetPx?: number;
 	/** The committed press was dispatched — even a skipped/aborted attempt may have landed the move. */
 	pressed?: boolean;
 }

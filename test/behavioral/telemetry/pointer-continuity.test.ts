@@ -63,8 +63,14 @@ describe("telemetry: pointer continuity (Step 2e)", () => {
 		// every press/release pair of a click (same square) is within 2 px; drags release in the target
 		for (const obs of game.observations) {
 			for (const press of obs.diag.presses) {
-				if (press.square !== null && press.releaseSquare === press.square)
-					expect(press.driftPx).toBeLessThanOrEqual(TELEMETRY_BANDS.pointer.clickDriftMaxPx);
+				// §13.5's 2 px is the drift of a *click* — a press and release with no pointer
+				// motion between them. A preview drag that snaps back releases on its own square
+				// too, and its release is a whole path away from the press by design.
+				if (press.square !== null && press.releaseSquare === press.square) {
+					if (press.movesDuring === 0)
+						expect(press.driftPx).toBeLessThanOrEqual(TELEMETRY_BANDS.pointer.clickDriftMaxPx);
+					else expect(press.driftPx).toBeLessThanOrEqual(SIM_TELEMETRY.squareDiagonalPx);
+				}
 			}
 			const commit = obs.diag.presses[obs.diag.presses.length - 1];
 			expect(commit?.releaseSquare === obs.diag.to || commit?.square === obs.diag.to).toBe(true);

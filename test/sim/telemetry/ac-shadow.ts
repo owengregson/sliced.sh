@@ -56,6 +56,12 @@ export interface PressRecord {
 	releaseSquare: Square | null;
 	/** Distance between press and release positions (a click's drift). */
 	driftPx: number;
+	/**
+	 * Pointer moves dispatched between this press and its release. `0` means the gesture was a
+	 * click; anything else is a drag (including a preview drag that snaps back to its own
+	 * square, whose release is nowhere near the press even though the square is the same).
+	 */
+	movesDuring: number;
 	trusted: boolean;
 	/** What the press did in the site model at press time (`move` for a click-click's second press). */
 	action: PressAction;
@@ -240,6 +246,7 @@ export function createAcShadow(dom: TabDom, model: SiteModel, options: AcShadowO
 			square: sq,
 			releaseSquare: null,
 			driftPx: 0,
+			movesDuring: 0,
 			trusted: e.isTrusted,
 			action: "none",
 			at,
@@ -274,6 +281,7 @@ export function createAcShadow(dom: TabDom, model: SiteModel, options: AcShadowO
 		const sq = model.squareOf(e.target);
 		if (press) {
 			press.releaseSquare = sq;
+			press.movesDuring = period.moves - press.movesBefore;
 			if (pressPoint) press.driftPx = Math.hypot(e.clientX - pressPoint.x, e.clientY - pressPoint.y);
 		}
 		gestureTrusted = gestureTrusted && e.isTrusted;

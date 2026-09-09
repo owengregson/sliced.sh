@@ -89,6 +89,12 @@ export const EXECUTOR = {
 	defaultApproachMs: 300,
 	/** Travel is rescaled to the plan's `dragDurationMs` but never below this. */
 	minTravelMs: 120,
+	/**
+	 * Slack allowed when the approach is fitted to `window.approachMs` before the log fires
+	 * (Task 30's overrun fix): a path is a whole number of sampled points, so the fitted
+	 * duration lands within one sample of the budget.
+	 */
+	approachFitToleranceMs: 10,
 	/** The rescale factor applied to a natural travel path is clamped to this band. */
 	travelScaleClamp: [0.5, 2.5],
 	/** Per-game dominant click style share (drag vs click-click), never a per-move coin flip. */

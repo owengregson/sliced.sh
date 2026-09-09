@@ -32,6 +32,17 @@ export function squareOf(file: number, rank: number): Square | null {
 	return isSquare(sq) ? sq : null;
 }
 
+/** Every square, `a1` … `h8` (file-major). */
+export const ALL_SQUARES: readonly Square[] = (() => {
+	const out: Square[] = [];
+	for (let file = 0; file < FILES.length; file += 1)
+		for (let rank = 0; rank < RANKS.length; rank += 1) {
+			const sq = squareOf(file, rank);
+			if (sq) out.push(sq);
+		}
+	return out;
+})();
+
 export interface SquareDistance {
 	/** King-move distance: max(|Δfile|, |Δrank|). */
 	chebyshev: number;

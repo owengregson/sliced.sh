@@ -188,8 +188,12 @@ export type GamePortCommand =
 	| { kind: "settings"; highlightMoves: boolean }
 	/** Task 18: MutationObserver on board + move list; `ok` early, `false` if the piece snapped back. */
 	| { kind: "observeMove"; id: string; expected: ExpectedMove; timeoutMs: number }
-	/** Task 18: square/board/promotion rects on demand (`promotion` = wait for that picker). */
-	| { kind: "geometry"; id: string; promotion?: PromoPiece; timeoutMs?: number }
+	/**
+	 * Task 18: square/board/promotion rects on demand. `promotion` asks the adapter to wait
+	 * for that picker (up to `timeoutMs`) and answer with its rect; `to` is the destination
+	 * square the picker belongs to, which both adapters need to place it.
+	 */
+	| { kind: "geometry"; id: string; promotion?: PromoPiece; to?: Square; timeoutMs?: number }
 	/** Ask for the last known trusted pointer position; answered by `cursorProbeResult`. */
 	| { kind: "cursorProbe"; id: string }
 	/**

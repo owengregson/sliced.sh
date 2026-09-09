@@ -26,6 +26,8 @@ export interface InputBackend {
 	travel(path: readonly PathPoint[], signal?: AbortSignal, beforePoint?: () => void): Promise<void>;
 	/** Where the backend last put the cursor. */
 	position(): Pt;
+	/** §13.2 `PointerOffset`: path length dispatched so far (px), when the backend tracks it. */
+	travelledPx?(): number;
 	/** `true` while the left button is held. */
 	pressed(): boolean;
 	dispose(): void;

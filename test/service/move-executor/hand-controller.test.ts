@@ -26,6 +26,8 @@ let tabsUpdateCalls = 0;
 let windowsUpdateCalls = 0;
 let promotionRect: Rect | null;
 let geometryReads: Array<PromoPiece | undefined>;
+/** Destination squares the promotion reads carried (Task 30: the picker needs the square). */
+let promotionTargets: Array<string | undefined>;
 const prevChrome = (globalThis as Record<string, unknown>).chrome;
 
 let promotionReadFails = false;
@@ -35,7 +37,8 @@ let boardReads = 0;
 let signalsSeen: Array<AbortSignal | undefined> = [];
 const provider: GeometryProvider = {
 	async read(_tabId, promotion, signal) {
-		geometryReads.push(promotion);
+		geometryReads.push(promotion?.piece);
+		promotionTargets.push(promotion?.to);
 		signalsSeen.push(signal);
 		if (promotion !== undefined && promotionReadFails) throw new Error("timeout");
 		const reply: BoardGeometryReply = { boardRect: BOARD, flipped: false };
@@ -66,6 +69,7 @@ beforeEach(async () => {
 	boardReads = 0;
 	signalsSeen = [];
 	geometryReads = [];
+	promotionTargets = [];
 	const realUpdate = sim.chrome.tabs.update;
 	sim.chrome.tabs.update = ((...args: unknown[]) => {
 		tabsUpdateCalls += 1;
@@ -396,6 +400,7 @@ describe("HandController promotion", () => {
 			.find((c) => c.type === "mouseMoved") as Cmd;
 		expect(firstMoveAfterDrop.at - drop.at).toBeGreaterThanOrEqual(PROMOTION_LOOK_DELAY_MS[0]);
 		expect(geometryReads).toContain("q");
+		expect(promotionTargets).toContain("e4");
 		expect(result.timeline.map((t) => t.phase)).toContain("promote");
 	});
 

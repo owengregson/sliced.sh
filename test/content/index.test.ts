@@ -513,3 +513,60 @@ describe("content sources (§13.3 rule 2, §9)", () => {
 });
 
 type _Handle = ContentHandle;
+
+describe("content entry — executor responders (Task 30)", () => {
+	it("geometry carries colour-aware occupancy for the whole board", () => {
+		const { feed, dom } = boot("chesscom-live");
+		dom.layout("wc-chess-board", BOARD_RECT);
+		feed.command({ kind: "geometry", id: "occ" });
+		const g = feed.of("geometryResult").at(-1);
+		const occ = g?.occupancy;
+		expect(occ).toBeDefined();
+		// The fixture is a live chess.com game played as White after 1.e4 e5 2.Nf3 Nc6 3.Bb5 a6.
+		expect(occ?.e1).toBe("own");
+		expect(occ?.e8).toBe("enemy");
+		expect(occ?.d5).toBe("empty");
+	});
+
+	it("boardCheck answers exactly the squares asked, own/enemy relative to my colour", () => {
+		const { feed } = boot("chesscom-live");
+		feed.command({ kind: "boardCheck", id: "b1", squares: ["e1", "e8", "d4"] });
+		const reply = feed.of("boardCheckResult")[0];
+		expect(reply?.id).toBe("b1");
+		expect(Object.keys(reply?.occupancy ?? {}).sort()).toEqual(["d4", "e1", "e8"]);
+		expect(reply?.occupancy.e1).toBe("own");
+		expect(reply?.occupancy.e8).toBe("enemy");
+		expect(reply?.occupancy.d4).toBe("empty");
+	});
+
+	it("geometry { promotion, to } waits for the picker and reports null when it never appears", async () => {
+		const { feed, dom } = boot("chesscom-live");
+		dom.layout("wc-chess-board", BOARD_RECT);
+		const before = feed.of("geometryResult").length;
+		feed.command({ kind: "geometry", id: "p1", promotion: "q", to: "e8", timeoutMs: 30 });
+		await waitFor(() => feed.of("geometryResult").length > before, 500);
+		const reply = feed.of("geometryResult").at(-1);
+		expect(reply?.id).toBe("p1");
+		expect(reply?.promotion).toBeNull();
+	});
+
+	it("geometry { promotion, to } answers with the picker rect once it is up", async () => {
+		const { feed, dom } = boot("chesscom-live");
+		dom.layout("wc-chess-board", BOARD_RECT);
+		const before = feed.of("geometryResult").length;
+		feed.command({ kind: "geometry", id: "p2", promotion: "q", to: "e8", timeoutMs: 400 });
+		dom
+			.query("wc-chess-board")
+			.insertAdjacentHTML(
+				"afterbegin",
+				'<div class="promotion-window"><div class="promotion-piece wq"></div>' +
+					'<div class="promotion-piece wr"></div><div class="promotion-piece wb"></div>' +
+					'<div class="promotion-piece wn"></div></div>'
+			);
+		dom.layout(".promotion-piece.wq", { x: 300, y: 100, width: 66, height: 66 });
+		await waitFor(() => (feed.of("geometryResult").at(-1)?.promotion ?? null) !== null, 800);
+		const reply = feed.of("geometryResult").at(-1);
+		expect(reply?.id).toBe("p2");
+		expect(reply?.promotion).toMatchObject({ x: 300, y: 100, width: 66, height: 66 });
+	});
+});

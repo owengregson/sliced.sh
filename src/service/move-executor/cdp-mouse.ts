@@ -32,6 +32,8 @@ type MouseEventType = "mousePressed" | "mouseReleased" | "mouseMoved";
 export class CdpMouse {
 	private pos: Pt;
 	private buttons: number = CDP.mouse.noButtons;
+	/** §13.2 `PointerOffset`: summed straight-line distance between dispatched points. */
+	private travelled = 0;
 	private readonly now: () => number;
 	private readonly scheduler: Scheduler;
 
@@ -51,6 +53,11 @@ export class CdpMouse {
 
 	get pressed(): boolean {
 		return (this.buttons & CDP.mouse.leftButtons) !== 0;
+	}
+
+	/** Path length dispatched so far (px) — the `ac` blob's `PointerOffset`. */
+	get travelledPx(): number {
+		return this.travelled;
 	}
 
 	/** Resolve once the clock reaches `atMs` (early on abort). */
@@ -126,6 +133,7 @@ export class CdpMouse {
 			modifiers: CDP.mouse.modifiers,
 			...extra,
 		});
+		this.travelled += Math.hypot(x - this.pos.x, y - this.pos.y);
 		this.pos = { x, y };
 	}
 }

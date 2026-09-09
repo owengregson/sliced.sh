@@ -442,7 +442,7 @@ export class MoveExecutor {
 			armed: this.isArmed(),
 			disposed: this.disposed,
 		});
-		const result: ExecutionResult = {
+		const result = this.stamp(rec, {
 			ok: false,
 			outcome: "aborted",
 			reason: EXECUTOR.reasons.dropped,
@@ -451,7 +451,7 @@ export class MoveExecutor {
 			endPoint: this.ownership.position(this.tabId) ?? { x: 0, y: 0 },
 			elapsedMs: 0,
 			timeline: [],
-		};
+		});
 		if (!this.disposed) this.emit("aborted", { rec, result });
 		return result;
 	}
@@ -462,9 +462,17 @@ export class MoveExecutor {
 			tabId: this.tabId,
 			uci: rec.chosen.uci,
 		});
-		const result = this.skipped(EXECUTOR.reasons.positionChanged, 0);
+		const result = this.stamp(rec, this.skipped(EXECUTOR.reasons.positionChanged, 0));
 		this.emit("skipped", { rec, result });
 		return result;
+	}
+
+	/**
+	 * Every result the executor emits carries the move it belongs to (`san`, Task 26's
+	 * Last-action row) and the moment it finished (`at`, which Task 24 keys the played flash on).
+	 */
+	private stamp(rec: Recommendation, result: ExecutionResult): ExecutionResult {
+		return { ...result, at: this.now(), san: rec.chosen.san };
 	}
 
 	private skipped(reason: string, elapsedMs: number): ExecutionResult {
@@ -523,6 +531,7 @@ export class MoveExecutor {
 		}
 		this.setHand("rest");
 		this.lastSkipReason = result.outcome === "skipped" ? (result.reason ?? null) : null;
+		result = this.stamp(rec, result);
 		this.emit(
 			result.outcome === "executed"
 				? "executed"
@@ -705,12 +714,17 @@ export class MoveExecutor {
 
 	private async readGeometry(
 		tabId: number,
-		promotion?: PromoPiece,
+		promotion?: { piece: PromoPiece; to: Square },
 		signal?: AbortSignal
 	): Promise<BoardGeometryReply | null> {
 		try {
 			const cmd: RequestInput<"geometry"> = promotion
-				? { kind: "geometry", promotion, timeoutMs: EXECUTOR.promotionPickerTimeoutMs }
+				? {
+						kind: "geometry",
+						promotion: promotion.piece,
+						to: promotion.to,
+						timeoutMs: EXECUTOR.promotionPickerTimeoutMs,
+					}
 				: { kind: "geometry" };
 			const budget = promotion
 				? EXECUTOR.promotionPickerTimeoutMs + EXECUTOR.geometryTimeoutMs
