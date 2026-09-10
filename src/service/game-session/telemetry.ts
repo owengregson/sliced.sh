@@ -77,6 +77,22 @@ export class MoveWindow {
 		return this.startedAt !== null;
 	}
 
+	/**
+	 * A second window over the same period, for input the session dispatches inside it that is *not*
+	 * the move this position will be judged on — Fix F's queued premove, whose drag happens during
+	 * the opponent's turn. The fork copies the period and the edges seen so far and then lives its
+	 * own life: closing it leaves this window open, which is the whole point. Sharing one window
+	 * meant a premove report arriving after the next position had already opened its window closed
+	 * *that* one, so the premove's row carried `TotalFocusTime 0` (an `assertHumanShapedAc`
+	 * violation) and the real move that followed lost its §13.2 record entirely.
+	 */
+	fork(): MoveWindow {
+		const copy = new MoveWindow();
+		if (this.startedAt !== null) copy.open(this.startedAt, this.ownTurn);
+		for (const e of this.edges) copy.edge(e.hasFocus, e.at);
+		return copy;
+	}
+
 	/** Every window `focus` / `blur` edge the content script reported. */
 	edge(hasFocus: boolean, at: number): void {
 		if (this.startedAt === null) return;

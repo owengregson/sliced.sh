@@ -210,6 +210,14 @@ export async function createGameHarness(options: GameHarnessOptions = {}): Promi
 				seed: options.seed ?? "harness",
 			});
 			broadcaster = new PanelBroadcaster(registry, { scheduler: defaultScheduler, now: sim.now });
+			// Task 28's port toasts, recorded for `h.toasts`. The harness connects no panel port, so
+			// wrapping the broadcaster's own method is the only place they are observable — and a
+			// "Played …" toast for a move that was not played is exactly what Fix F must not produce.
+			const postToast = broadcaster.toast.bind(broadcaster);
+			broadcaster.toast = (level, toast, tabId) => {
+				toasts.push({ kind: "toast", level, ...toast });
+				return postToast(level, toast, tabId);
+			};
 			registerPanelHandlers(router, {
 				broadcaster,
 				sources: registry,

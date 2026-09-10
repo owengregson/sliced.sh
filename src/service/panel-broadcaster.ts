@@ -278,10 +278,10 @@ export class PanelBroadcaster {
 		};
 		const offs = [
 			executor.on("executed", surface),
-			// Fix F: a premove entered on the site is an execution result like any other for the
-			// panel's Last-action row — and `toastFor` gives it no "Played …" toast, because nothing
-			// has been played.
-			executor.on("queued", surface),
+			// Fix F: a premove gesture is an execution result like any other for the panel's
+			// Last-action row — and `toastFor` gives it no "Played …" toast, because nothing has been
+			// played and nothing can tell whether the site even kept it.
+			executor.on("dispatched", surface),
 			executor.on("failed", surface),
 			executor.on("aborted", surface),
 			executor.on("skipped", surface),

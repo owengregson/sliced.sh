@@ -105,12 +105,13 @@ export interface MoveContext {
 	legalDestinations?: (sq: Square) => Square[];
 	moveKind?: MotorMoveKind;
 	/**
-	 * Fix F: this move is being **entered as a premove**, during the opponent's turn. Three things
+	 * Fix F: this move is being **sent as a premove**, during the opponent's turn. Three things
 	 * change. The position guard stops asking whether the destination is free of our own pieces —
 	 * a recapture premove is aimed at the very piece the opponent is about to take. Verification is
-	 * not attempted at all: a queued premove does not land until the opponent moves, so
-	 * `observeMove` would time out and the retry policy would enter the move a second time. And the
-	 * outcome is `queued`, never `executed`: nothing has been played yet.
+	 * not attempted at all: a premove does not land until the opponent moves, so `observeMove` would
+	 * time out and the retry policy would send the move a second time. And the outcome is
+	 * `dispatched`, never `executed`: nothing has been played, and nothing here can even tell
+	 * whether the site kept the gesture.
 	 */
 	queuedPremove?: boolean;
 }
@@ -122,8 +123,8 @@ export interface ExecutionReport {
 
 export interface ExecutorEvents {
 	executed: ExecutionReport;
-	/** Fix F: a premove the site has been handed, awaiting the opponent's move (`MoveContext`). */
-	queued: ExecutionReport;
+	/** Fix F: a premove gesture the hand completed during the opponent's turn (`MoveContext`). */
+	dispatched: ExecutionReport;
 	failed: ExecutionReport;
 	aborted: ExecutionReport;
 	skipped: ExecutionReport;
@@ -622,8 +623,8 @@ export class MoveExecutor {
 		this.emit(
 			result.outcome === "executed"
 				? "executed"
-				: result.outcome === "queued"
-					? "queued"
+				: result.outcome === "dispatched"
+					? "dispatched"
 					: result.outcome === "aborted"
 						? "aborted"
 						: result.outcome === "skipped"
@@ -645,7 +646,7 @@ export class MoveExecutor {
 		const readAt = this.now();
 		const expected: ExpectedMove = { from: rec.chosen.from, to: rec.chosen.to };
 		if (rec.chosen.promotion) expected.promotion = rec.chosen.promotion;
-		// Fix F: a premove entered during the opponent's turn (`MoveContext.queuedPremove`).
+		// Fix F: a premove sent during the opponent's turn (`MoveContext.queuedPremove`).
 		const queued = ctx.queuedPremove === true;
 		// Position guard: never dispatch on a position that already changed (a replacement after a
 		// cancelled run, or any reply whose occupancy says the piece left the from-square).
@@ -755,13 +756,17 @@ export class MoveExecutor {
 
 	/**
 	 * Fix F: enter a premove and stop. One attempt, because a retry would hand the site the move a
-	 * second time, and **no verification**, because a queued premove is not on the board yet —
+	 * second time, and **no verification**, because a premove is not on the board yet —
 	 * `observeMove` would watch the destination until its budget ran out and the retry policy would
-	 * read that timeout as "not submitted". The honest report is therefore `queued`: the drag went
-	 * out and the page accepted it. Whether the site kept it is answered by the next position, not
-	 * here (`GameSession.reconcilePremove`), which is why a silently dropped premove can never be
-	 * reported as played. Anything but a completed drag passes through as its own outcome: a
-	 * premove the hand did not finish is not a premove the site was handed.
+	 * read that timeout as "not submitted".
+	 *
+	 * The report is therefore `dispatched`, and that is the strongest thing that can honestly be
+	 * said here: the drag went out. Whether chess.com kept it, snapped the piece back, or read the
+	 * drop as a selection is **not observable** — the site exposes no premove state this extension
+	 * can read (see the lane report) — so nothing in this file may claim acceptance. The next
+	 * position decides (`GameSession.reconcilePremove`), which is what keeps a silently dropped
+	 * premove from ever being reported as played. Anything but a completed drag passes through as
+	 * its own outcome: a drag the hand did not finish is not a gesture the site saw.
 	 */
 	private async enterPremove(
 		controller: HandController,
@@ -771,11 +776,11 @@ export class MoveExecutor {
 	): Promise<ExecutionResult> {
 		const result = await controller.execute(plan, timing, signal);
 		if (!result.ok) return result;
-		log.info("executor: premove entered on the site; nothing is played until the opponent moves", {
+		log.info("executor: premove gesture dispatched; acceptance by the site is unconfirmed", {
 			tabId: this.tabId,
 			uci: plan.expected.uci,
 		});
-		return { ...result, outcome: "queued" };
+		return { ...result, outcome: "dispatched" };
 	}
 
 	/**

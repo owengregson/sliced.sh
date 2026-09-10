@@ -3,8 +3,10 @@ import { describe, expect, it } from "bun:test";
 import { PREMOVE } from "@core/constants/books";
 import { createRng, type Rng } from "@core/rng";
 import {
+	isQueueableReason,
 	type PremoveContext,
 	type PremoveDeps,
+	type PremoveReason,
 	premoveCandidate,
 	premoveProbability,
 	replyProbability,
@@ -190,5 +192,26 @@ describe("premoveCandidate", () => {
 		const b = analysis([line("d7d6", 0, 1), line("c6e5", -2, 2)], []);
 		expect(await premoveCandidate(ctx({ ponder: "c6e5" }), b.deps)).toBeNull();
 		expect(b.calls.length).toBe(1);
+	});
+});
+
+describe("isQueueableReason (Fix F)", () => {
+	// The central safety decision of the queued-premove path: only a reason an unexpected reply
+	// makes *illegal* may be entered on the site before that reply is known.
+	it("queues a recapture — the opponent not capturing there leaves our own piece on the square", () => {
+		expect(isQueueableReason("recapture")).toBe(true);
+	});
+
+	it("queues the only legal move", () => {
+		expect(isQueueableReason("only-move")).toBe(true);
+	});
+
+	it("never queues a clear-only quiet move: `loss2nd` stays legal after any reply", () => {
+		expect(isQueueableReason("loss2nd")).toBe(false);
+	});
+
+	it("is exactly `PREMOVE.queueReasons` — every reason the policy can produce is classified", () => {
+		const all: PremoveReason[] = ["recapture", "only-move", "loss2nd"];
+		expect(all.filter(isQueueableReason)).toEqual([...PREMOVE.queueReasons]);
 	});
 });

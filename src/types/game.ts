@@ -71,13 +71,14 @@ export type GameSessionState =
 export interface ExecutionResult {
 	ok: boolean;
 	/**
-	 * `queued` (Fix F) is a **premove entered on the site during the opponent's turn**: the drag
-	 * was dispatched and the page accepted the gesture, but nothing has been played — the site
-	 * fires it, or silently drops it, when the opponent moves. `ok` is true (the hand did its
-	 * work) and it is deliberately *not* `executed`: a queued premove must never be reported as a
-	 * move that landed. The next position is what decides which it was.
+	 * `dispatched` (Fix F) is a **premove gesture the hand completed during the opponent's turn**.
+	 * That is *all* it claims: the drag went out. Whether chess.com kept it as a premove, snapped
+	 * the piece back or read it as a selection is not observable from here — nothing in the
+	 * executor can see it — so the word is `dispatched` rather than `queued` or `executed`, and the
+	 * next position is the only thing that decides which it was. `ok` is true because the hand did
+	 * its work; a premove must never be reported as a move that landed.
 	 */
-	outcome: "executed" | "queued" | "skipped" | "paused" | "aborted" | "failed";
+	outcome: "executed" | "dispatched" | "skipped" | "paused" | "aborted" | "failed";
 	reason?: string;
 	tier: "drag" | "click";
 	attempts: number;

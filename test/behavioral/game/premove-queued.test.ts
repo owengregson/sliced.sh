@@ -11,8 +11,13 @@ import { applyMoves } from "@core/chess/san";
 import { chromeLocalGet } from "@core/chrome/storage";
 import { DEFAULT_KEYBINDS } from "@core/constants/defaults";
 import { LOCAL_KEYS } from "@core/constants/storage-keys";
+import { TOAST_KEYS } from "@core/constants/toasts";
 import type { SessionStats, Square } from "@typedefs/game";
 import type { TimingLogEntry } from "@typedefs/timing";
+import {
+	type AcMoveMeta,
+	assertHumanShapedAc,
+} from "../../../tools/telemetry-conformance/ac-model";
 import { createGameHarness, type GameHarness } from "./harness";
 import { positionKey } from "./scripted-engine";
 
@@ -29,6 +34,8 @@ interface Scenario {
 	reply: string;
 	/** Our premove. */
 	premove: string;
+	/** …and its SAN, which only exists in the position *after* the predicted reply. */
+	san: string;
 	from: Square;
 	to: Square;
 }
@@ -39,6 +46,7 @@ const ONE_CAPTURER: Scenario = {
 	move: "e1f1",
 	reply: "b4c3",
 	premove: "b2c3",
+	san: "bxc3",
 	from: "b2",
 	to: "c3",
 };
@@ -73,6 +81,14 @@ const SEEDS = 12;
 const OPPONENT_THINK_MS = 4_000;
 /** Long enough to cover the whole `PREMOVE.queueDelay…` range and the drag after it (ms). */
 const PAST_THE_DELAY_MS = 10_000;
+/**
+ * The `playNow` row needs a seed whose scheduled moment is at least this far off, so that "no press
+ * yet" is a statement about the guard and not about the hand's motor path (measured in review: an
+ * ungated `playNow` presses ~300 ms later).
+ */
+const MEASURABLE_SLACK_MS = 700;
+/** How far short of the scheduled moment that row stops and checks (ms). */
+const EARLY_PRESS_MARGIN_MS = 150;
 
 interface Dispatched {
 	type: string;
@@ -107,15 +123,57 @@ function pressCount(from = 0): number {
  * keeps its pair, so the mode alone would not discriminate).
  */
 function unscoredRows(): TimingLogEntry[] {
-	return h.timingLog
-		.entries()
-		.filter((e) => e.actualMs !== null && e.telemetry?.top1 === undefined)
-		.map((e) => e);
+	return h.timingLog.entries().filter((e) => e.actualMs !== null && e.telemetry?.top1 === undefined);
+}
+
+/**
+ * The invariant that catches a stolen §13.2 window outright: a move that was **played** carries the
+ * record of the window it was played in. Before the premove got a window of its own, a premove
+ * report arriving after the next position had opened its window closed *that* one, and the real move
+ * that followed kept its `actualMs` and lost its `telemetry` — invisible to everything `report.py`
+ * computes.
+ */
+function playedRowsWithoutTelemetry(): TimingLogEntry[] {
+	return h.timingLog.entries().filter((e) => e.actualMs !== null && e.telemetry === undefined);
+}
+
+/**
+ * Run the project's own §13.2 model (`assertHumanShapedAc`) over every row that carries a blob,
+ * which is what no test in the repository did before this one — and is what would have caught the
+ * premove's stolen window (`TotalFocusTime 0` against a `MoveHoldTime` of hundreds of ms).
+ *
+ * Only called on runs with no blur and no *dropped* premove. A blur is the owner's own action and
+ * legitimately puts `BlurCount`/`TotalBlurTime` into the row it lands in, and a dropped premove
+ * legitimately charges its press to the next move — over a two-row population that reads as a
+ * 100 % preview rate, which the model's sample-size-free `hardMax` rejects. Both are asserted
+ * field by field in their own cases instead.
+ */
+function assertRowsHumanShaped(): void {
+	const rows = h.timingLog.entries().filter((e) => e.telemetry !== undefined);
+	expect(rows.length).toBeGreaterThan(0);
+	const acs = rows.map((e) => {
+		const t = e.telemetry;
+		if (!t) throw new Error("unreachable: filtered above");
+		return t.ac;
+	});
+	const moves: AcMoveMeta[] = rows.map((e) => {
+		const meta: AcMoveMeta = {
+			mode: e.mode,
+			thinkMs: e.actualMs ?? e.plannedMs,
+			clockMs: e.clockMs,
+		};
+		const n = e.telemetry?.nReasonable;
+		if (n !== undefined) meta.nReasonable = n;
+		return meta;
+	});
+	assertHumanShapedAc(acs, { moves });
 }
 
 interface Armed {
 	/** Index into the CDP command log, taken when the opponent-turn position was published. */
 	mark: number;
+	/** Index into `h.toasts` at the same moment (our own move's "Played …" is already in it). */
+	toastMark: number;
 	scenario: Scenario;
 	/** `stopAtPending` only: this seed's draw did produce a premove, scheduled and not yet entered. */
 	pending: boolean;
@@ -128,6 +186,26 @@ interface ArmOptions {
 	scenario?: Scenario;
 	/** Stop once the premove is scheduled, before the drag goes out (the cancellation rows). */
 	stopAtPending?: boolean;
+	/**
+	 * Stop the moment the *site* holds the premove, while the hand is still winding down and the
+	 * executor has not reported. This is the ordering `reconcilePremove` defers for, and it is the
+	 * common one at bullet.
+	 */
+	stopAtRelease?: boolean;
+	/** Stop between the press and the release — the gesture is half-made. */
+	stopAtPress?: boolean;
+	/**
+	 * Stop while the hand still holds the piece and the pointer is already over the destination. A
+	 * cancel here releases *there* (`HandController.recover` releases at the current position), so
+	 * the site receives the gesture from a drag the executor reports as `aborted`.
+	 */
+	stopOverDestination?: boolean;
+	/**
+	 * Runs after our own move has been played and **before** the opponent-turn position is
+	 * published — the only place from which a stop can reach the session before a premove is armed
+	 * for that turn.
+	 */
+	afterOurMove?: () => Promise<void>;
 }
 
 /**
@@ -164,15 +242,46 @@ async function armPremove(o: ArmOptions): Promise<Armed> {
 		true
 	);
 	expect(h.site.board.lastMove()?.uci).toBe(scenario.move);
+	await o.afterOurMove?.();
 	// The opponent is to move: this is the window a premove is entered in.
 	await h.arrive();
 	const mark = h.sim.debugger.commandsFor("Input.dispatchMouseEvent").length;
+	const toastMark = h.toasts.length;
 	if (o.stopAtPending === true) {
 		// The drag is scheduled for its human moment but has not gone out yet. §7.4's draw decides
 		// whether there is one at all, so the caller tries the next seed when there is not.
 		const pending = await h.until(() => h.executor()?.pendingMove() !== null, OPPONENT_THINK_MS);
 		if (pending) expect(pressCount(mark)).toBe(0);
-		return { mark, scenario, pending };
+		return { mark, toastMark, scenario, pending };
+	}
+	if (o.stopOverDestination === true) {
+		const held = await h.until(
+			() => {
+				const input = dispatched(mark);
+				return (
+					input.some((d) => d.type === "mousePressed") &&
+					!input.some((d) => d.type === "mouseReleased") &&
+					input.at(-1)?.square === scenario.to
+				);
+			},
+			OPPONENT_THINK_MS,
+			1
+		);
+		return { mark, toastMark, scenario, pending: held };
+	}
+	if (o.stopAtPress === true) {
+		const pressed = await h.until(
+			() => pressCount(mark) > 0 && !dispatched(mark).some((d) => d.type === "mouseReleased"),
+			OPPONENT_THINK_MS,
+			1
+		);
+		return { mark, toastMark, scenario, pending: pressed };
+	}
+	if (o.stopAtRelease === true) {
+		// The release has gone out (the site has the gesture) but the hand is still in its post-drop
+		// rest, so the executor has not reported yet.
+		const released = await h.until(() => h.site.premoveQueued() !== null, OPPONENT_THINK_MS, 1);
+		return { mark, toastMark, scenario, pending: released };
 	}
 	// The ponder, the §7.4 gate searches and the premove's own drag all run here; the drag is
 	// finished once the hand has released, which is when the site has been handed the move.
@@ -180,7 +289,7 @@ async function armPremove(o: ArmOptions): Promise<Armed> {
 		await h.until(() => h.executor()?.isRunning() === false, OPPONENT_THINK_MS);
 	await h.advance(50); // let the executor's own report reach the session
 	expect(h.site.board.chess.turn()).toBe("b"); // still the opponent's turn throughout
-	return { mark, scenario, pending: false };
+	return { mark, toastMark, scenario, pending: false };
 }
 
 /** `true` when this seed's draw produced a premove the site is now holding. */
@@ -267,6 +376,15 @@ describe("game session: a queued premove (Fix F)", () => {
 			);
 			expect(stats?.moves).toBe(2); // our searched move, then the premove
 			expect(stats?.scoredMoves).toBe(1);
+			// Every played move kept the record of the window it was played in, and the whole export
+			// satisfies the project's own §13.2 model.
+			expect(playedRowsWithoutTelemetry()).toHaveLength(0);
+			assertRowsHumanShaped();
+			// And every row's realised think is its *own*. `TimingModel.observe` writes `actualMs`
+			// under the model's last-planned ply, so calling it for a hand-built premove plan lands
+			// the drag's elapsed on the previous searched move's row (found in review).
+			for (const r of h.timingLog.entries().filter((e) => e.actualMs !== null))
+				expect(r.actualMs).toBe(r.telemetry?.ac.MoveHoldTime ?? r.actualMs);
 		}
 		expect(fired).toBe(true);
 	}, 180_000);
@@ -302,6 +420,7 @@ describe("game session: a queued premove (Fix F)", () => {
 			expect(theirs?.ac.DidSelectMultiplePieces).toBe(true);
 			expect(await h.until(() => unscoredRows().length + playedRows().length === 2, 5_000)).toBe(true);
 			expect(playedRows().at(-1)?.telemetry?.ac.DidSelectMultiplePieces).toBe(true);
+			expect(playedRowsWithoutTelemetry()).toHaveLength(0);
 		}
 		expect(dropped).toBe(true);
 	}, 180_000);
@@ -330,6 +449,8 @@ describe("game session: a queued premove (Fix F)", () => {
 			);
 			expect(stats?.moves).toBe(2);
 			expect(stats?.scoredMoves).toBe(1);
+			expect(playedRowsWithoutTelemetry()).toHaveLength(0);
+			assertRowsHumanShaped();
 		}
 		expect(fired).toBe(true);
 	}, 180_000);
@@ -350,6 +471,7 @@ describe("game session: a queued premove (Fix F)", () => {
 					move: TWO_CYCLES.first.move,
 					reply: TWO_CYCLES.first.reply,
 					premove: TWO_CYCLES.first.premove,
+					san: "bxc3",
 					from: "b2",
 					to: "c3",
 				},
@@ -399,6 +521,342 @@ describe("game session: a queued premove (Fix F)", () => {
 	}, 180_000);
 });
 
+/**
+ * The orderings where the opponent's reply lands inside the drag's own lifetime. At bullet this is
+ * the common case, not a corner: the entry delay is `U(350, 1200) ms` and the drag takes a few
+ * hundred more, so an opponent think of a second or two overlaps it. Every §13.2 defect this lane
+ * shipped lived here.
+ */
+describe("game session: the opponent replies while the premove drag is still in flight (Fix F)", () => {
+	it("the premove fires: its row describes the window its input was really in", async () => {
+		let fired = false;
+		for (let seed = 0; seed < SEEDS && !fired; seed++) {
+			await h?.dispose();
+			const { scenario, pending } = await armPremove({ seed, premoves: true, stopAtRelease: true });
+			if (!pending) continue;
+			// The site has the gesture and the hand has not reported yet: this is the ordering
+			// `reconcilePremove` defers for.
+			expect(h.executor()?.isRunning()).toBe(true);
+			fired = true;
+			await h.arrive(scenario.reply);
+			expect(await h.until(() => unscoredRows().length === 1, 10_000)).toBe(true);
+			expect(h.site.board.lastMove()?.uci).toBe(scenario.premove);
+			const row = unscoredRows()[0];
+			expect(row?.mode).toBe("premove");
+			expect(row?.ply).toBe(PREMOVE_PLY);
+			// The premove's window is a fork of the opponent-turn window, so it contains the drag.
+			// Sharing the session's single window meant this row got `TotalFocusTime 0` against a
+			// `MoveHoldTime` of hundreds of ms — which `assertHumanShapedAc` rejects outright.
+			const ac = row?.telemetry?.ac;
+			expect(ac?.MoveHoldTime).toBeGreaterThan(0);
+			expect(ac?.TotalFocusTime).toBeGreaterThanOrEqual(ac?.MoveHoldTime ?? 0);
+			expect(playedRowsWithoutTelemetry()).toHaveLength(0);
+			assertRowsHumanShaped();
+		}
+		expect(fired).toBe(true);
+	}, 180_000);
+
+	it("the premove does not fire: the real move that follows keeps its own §13.2 record", async () => {
+		let reached = false;
+		for (let seed = 0; seed < SEEDS && !reached; seed++) {
+			await h?.dispose();
+			const { pending } = await armPremove({ seed, premoves: true, stopAtRelease: true });
+			if (!pending) continue;
+			reached = true;
+			expect(h.executor()?.isRunning()).toBe(true);
+			await h.arrive(DROPPING_REPLY);
+			// Our own move for this position is searched, planned and played as normal …
+			expect(await h.until(() => playedRows().length === 2, 60_000)).toBe(true);
+			// … and it still carries the record of its own window. A premove report that closed the
+			// session's window took this record with it, leaving a played row with `actualMs` and no
+			// `telemetry` — a real move missing from everything `report.py` computes.
+			expect(playedRowsWithoutTelemetry()).toHaveLength(0);
+			expect(unscoredRows()).toHaveLength(0);
+		}
+		expect(reached).toBe(true);
+	}, 180_000);
+
+	it("a fired premove leaves the history a second premove can be armed from", async () => {
+		const after = (...moves: string[]): string =>
+			applyMoves(TWO_CYCLES.fen, moves) as unknown as string;
+		let reached = false;
+		for (let seed = 0; seed < SEEDS && !reached; seed++) {
+			await h?.dispose();
+			const { mark } = await armPremove({
+				seed,
+				premoves: true,
+				scenario: {
+					fen: TWO_CYCLES.fen,
+					move: TWO_CYCLES.first.move,
+					reply: TWO_CYCLES.first.reply,
+					premove: TWO_CYCLES.first.premove,
+					san: "bxc3",
+					from: "b2",
+					to: "c3",
+				},
+			});
+			if (pressCount(mark) === 0 || !queued()) continue;
+			const cycle2 = after(TWO_CYCLES.first.move, TWO_CYCLES.first.reply, TWO_CYCLES.first.premove);
+			h.transport.prefer.set(positionKey(cycle2), [TWO_CYCLES.second.reply]);
+			h.transport.prefer.set(
+				positionKey(
+					after(
+						TWO_CYCLES.first.move,
+						TWO_CYCLES.first.reply,
+						TWO_CYCLES.first.premove,
+						TWO_CYCLES.second.reply
+					)
+				),
+				[TWO_CYCLES.second.premove]
+			);
+			// Two plies land in one position, so the history has to be written by hand: without it
+			// `priorFen` still points two plies back and the move list never saw either ply, and the
+			// *next* premove cannot be replayed from our own move at all.
+			await h.arrive(TWO_CYCLES.first.reply);
+			expect(h.site.board.lastMove()?.uci).toBe(TWO_CYCLES.first.premove);
+			reached = true;
+			// The position the premove landed in is the opponent's turn again, so the second cycle arms
+			// and sends from it with no further position needed.
+			const mark2 = h.sim.debugger.commandsFor("Input.dispatchMouseEvent").length;
+			expect(await h.until(() => pressCount(mark2) > 0, PAST_THE_DELAY_MS)).toBe(true);
+			expect(await h.until(() => h.executor()?.isRunning() === false, OPPONENT_THINK_MS)).toBe(true);
+			expect(h.site.premoveQueued()).toEqual({ from: "g2", to: "f3" });
+		}
+		expect(reached).toBe(true);
+	}, 180_000);
+
+	it("a drag that never finished teaches nothing about the site: the next turn still tries", async () => {
+		const after = (...moves: string[]): string =>
+			applyMoves(TWO_CYCLES.fen, moves) as unknown as string;
+		let reached = false;
+		for (let seed = 0; seed < SEEDS && !reached; seed++) {
+			await h?.dispose();
+			// `premoves: false` keeps the site out of it, so the only thing under test is what the
+			// session concludes from an *interrupted* gesture.
+			const { pending } = await armPremove({
+				seed,
+				premoves: false,
+				stopAtPress: true,
+				scenario: {
+					fen: TWO_CYCLES.fen,
+					move: TWO_CYCLES.first.move,
+					reply: TWO_CYCLES.first.reply,
+					premove: TWO_CYCLES.first.premove,
+					san: "bxc3",
+					from: "b2",
+					to: "c3",
+				},
+			});
+			if (!pending) continue;
+			// A blur aborts the drag mid-gesture (§13.4), which is the one interruption that leaves the
+			// press dispatched and the board untouched — it is still the opponent's turn, so the
+			// hand's recovery release cannot land anything.
+			await h.drive(() => h.site.panelClick());
+			expect(await h.until(() => h.executor()?.isRunning() === false, OPPONENT_THINK_MS)).toBe(true);
+			expect(h.site.premoveQueued()).toBeNull();
+			expect(h.site.board.lastMove()?.uci).toBe(TWO_CYCLES.first.move);
+			await h.drive(() => h.site.clickIntoBoard());
+			reached = true;
+
+			const cycle2 = after(TWO_CYCLES.first.move, TWO_CYCLES.first.reply, TWO_CYCLES.first.premove);
+			h.transport.prefer.set(positionKey(cycle2), [TWO_CYCLES.second.reply]);
+			h.transport.prefer.set(
+				positionKey(
+					after(
+						TWO_CYCLES.first.move,
+						TWO_CYCLES.first.reply,
+						TWO_CYCLES.first.premove,
+						TWO_CYCLES.second.reply
+					)
+				),
+				[TWO_CYCLES.second.premove]
+			);
+			// The predicted reply lands and the premove is nowhere — but an unfinished gesture is no
+			// evidence about chess.com, so nothing may be concluded from it. Treating it as proof that
+			// the site drops premoves switched the feature off for the rest of the game, on the
+			// commonest path at bullet.
+			await h.arrive(TWO_CYCLES.first.reply);
+			expect(
+				await h.until(() => h.site.board.lastMove()?.uci === TWO_CYCLES.first.premove, 30_000)
+			).toBe(true);
+
+			// Second opponent turn: the session must try again.
+			await h.arrive();
+			const mark2 = h.sim.debugger.commandsFor("Input.dispatchMouseEvent").length;
+			expect(await h.until(() => pressCount(mark2) > 0, PAST_THE_DELAY_MS)).toBe(true);
+		}
+		expect(reached).toBe(true);
+	}, 180_000);
+
+	it("a half-made gesture the reply interrupts is accounted exactly once, or not at all", async () => {
+		let reached = false;
+		for (let seed = 0; seed < SEEDS && !reached; seed++) {
+			await h?.dispose();
+			const { scenario, pending } = await armPremove({ seed, premoves: true, stopAtPress: true });
+			if (!pending) continue;
+			reached = true;
+			// Pressed, not released: the reply arrives mid-drag and `cancelInFlight` aborts it. The
+			// hand's recovery release may still land the move (it is legal now) or not; either way the
+			// session must account for it exactly once and never twice.
+			await h.arrive(scenario.reply);
+			expect(await h.until(() => h.executor()?.isRunning() === false, 10_000)).toBe(true);
+			await h.advance(200);
+			const landed = h.site.board.lastMove()?.uci === scenario.premove;
+			// An interrupted-after-press drag is kept, not forgotten: forgetting it would lose the
+			// accounting for a move our own input put on the board.
+			expect(unscoredRows()).toHaveLength(landed ? 1 : 0);
+			const stats = await h.sw.run(
+				() => chromeLocalGet(LOCAL_KEYS.sessionStats) as Promise<SessionStats | undefined>
+			);
+			expect(stats?.moves).toBe(landed ? 2 : 1);
+			expect(playedRowsWithoutTelemetry()).toHaveLength(0);
+		}
+		expect(reached).toBe(true);
+	}, 180_000);
+});
+
+describe("game session: what a premove may and may not claim (Fix F)", () => {
+	it("reports `dispatched`, never `executed`, and never toasts a move as played", async () => {
+		let entered = false;
+		for (let seed = 0; seed < SEEDS && !entered; seed++) {
+			await h?.dispose();
+			const { mark, toastMark, scenario } = await armPremove({ seed, premoves: true });
+			if (pressCount(mark) === 0) continue;
+			entered = true;
+			// The hand completed the gesture; that is all that is known. Calling it `executed` would
+			// fire the "Played …" toast (`panel-broadcaster.toastFor`) for a move the site may never
+			// play — exactly what a premove must never be reported as. (Our own searched move's
+			// "Played …" is already in the list, which is why the assertion is from the mark on.)
+			const snap = await h.snapshot();
+			expect(snap.session.lastExecution?.outcome).toBe("dispatched");
+			// The SAN is the one from the position the premove will be played in — it is not a legal
+			// move in the position it was sent from, which is the whole point of a premove.
+			expect(snap.session.lastExecution?.san).toBe(scenario.san);
+			expect(h.toasts.slice(toastMark)).toHaveLength(0);
+			expect(h.toasts.slice(0, toastMark).map((t) => t.key)).toContain(TOAST_KEYS.played);
+		}
+		expect(entered).toBe(true);
+	}, 180_000);
+
+	it("a premove reason that an unexpected reply leaves legal is never sent to the site", async () => {
+		// The default harness position with a flat 900 cp script is the `loss2nd` fixture — a
+		// clear-best *quiet* move, which stays legal after any reply and so must never be queued
+		// (`PREMOVE.queueReasons`). The proof that one was nevertheless *armed* is that the reactive
+		// path plays it the moment the predicted reply lands.
+		let fired = false;
+		for (let seed = 0; seed < SEEDS && !fired; seed++) {
+			await h?.dispose();
+			h = await createGameHarness({
+				settings: {
+					automation: { autoMove: true },
+					strength: { matchOpponentRating: false, targetElo: 3000, persona: "blitz" },
+				},
+				timeControl: { baseMs: 180_000, incMs: 0 },
+				script: { bestCp: 900, stepCp: 900 },
+				gameId: `premove-loss2nd-${seed}`,
+				seed: `loss2nd-${seed}`,
+				premoves: true,
+			});
+			await h.arrive();
+			expect(await h.until(() => h.session().currentState() === "live:opponent-turn", 60_000)).toBe(
+				true
+			);
+			await h.arrive();
+			const mark = h.sim.debugger.commandsFor("Input.dispatchMouseEvent").length;
+			const expected = h.transport.movesFor(h.site.board.fen())[0] as string;
+			// Past the whole entry-delay range: nothing is sent to the site, and the site holds nothing.
+			await h.advance(PAST_THE_DELAY_MS);
+			expect(pressCount(mark)).toBe(0);
+			expect(h.site.premoveQueued()).toBeNull();
+			await h.arrive(expected);
+			const rec = h.session().recommendation();
+			if (rec?.chosen.source !== "premove") continue; // this seed drew no premove at all
+			fired = true;
+			expect(rec.plan.mode).toBe("premove");
+		}
+		expect(fired).toBe(true);
+	}, 180_000);
+
+	it("an unarmed hand never sends one, even with a premove armed for that turn", async () => {
+		let reached = false;
+		for (let seed = 0; seed < SEEDS && !reached; seed++) {
+			await h?.dispose();
+			// The hand is disarmed between our own move and the opponent-turn position, so §7.4 still
+			// arms a premove for that turn — `armPremove` does not look at the hand — and
+			// `enterPremove` is the only thing between an unarmed session and CDP input on the board.
+			const { mark, scenario } = await armPremove({
+				seed,
+				premoves: true,
+				afterOurMove: async () => {
+					await h.drive(() => void h.session().command("disarm"));
+					expect(h.executor()?.isArmed()).toBe(false);
+				},
+			});
+			await h.advance(PAST_THE_DELAY_MS);
+			expect(pressCount(mark)).toBe(0);
+			expect(h.site.premoveQueued()).toBeNull();
+			expect(h.site.board.lastMove()?.uci).toBe(scenario.move);
+
+			// The positive control, and the thing that makes the silence above mean something: arm the
+			// hand again and the *same* arm plays the move reactively the moment the reply lands. A seed
+			// that drew no premove at all cannot do that, and is skipped.
+			await h.drive(() => void h.session().command("armAutoMove"));
+			expect(h.executor()?.isArmed()).toBe(true);
+			await h.arrive(scenario.reply);
+			const rec = h.session().recommendation();
+			if (rec?.chosen.source !== "premove") continue;
+			reached = true;
+			expect(rec.chosen.uci).toBe(scenario.premove);
+		}
+		expect(reached).toBe(true);
+	}, 180_000);
+
+	it("an interrupted gesture the site still received is accounted, and carries the blur", async () => {
+		let reached = false;
+		for (let seed = 0; seed < SEEDS && !reached; seed++) {
+			await h?.dispose();
+			// Stopped while the hand holds the piece over the destination. A blur there (§13.4) aborts
+			// the drag and the hand's recovery releases *on that square*, so the site receives the
+			// gesture from a drag the executor reports as `aborted`, not `dispatched`. Forgetting an
+			// interrupted-after-press drag would lose the accounting for a move our own input landed.
+			const { scenario, pending } = await armPremove({
+				seed,
+				premoves: true,
+				stopOverDestination: true,
+			});
+			if (!pending) continue;
+			await h.drive(() => h.site.panelClick());
+			expect(await h.until(() => h.executor()?.isRunning() === false, OPPONENT_THINK_MS)).toBe(true);
+			if (h.site.premoveQueued() === null) continue; // the release did not land on the square
+			reached = true;
+			const snap = await h.snapshot();
+			expect(snap.session.lastExecution?.outcome).toBe("aborted");
+			expect(snap.session.lastExecution?.pressed).toBe(true);
+			await h.drive(() => h.site.clickIntoBoard());
+
+			await h.arrive(scenario.reply);
+			expect(h.site.board.lastMove()?.uci).toBe(scenario.premove);
+			expect(await h.until(() => unscoredRows().length === 1, 10_000)).toBe(true);
+			const row = unscoredRows()[0];
+			expect(row?.mode).toBe("premove");
+			expect(playedRowsWithoutTelemetry()).toHaveLength(0);
+			const stats = await h.sw.run(
+				() => chromeLocalGet(LOCAL_KEYS.sessionStats) as Promise<SessionStats | undefined>
+			);
+			expect(stats?.moves).toBe(2);
+			// §13.2, honestly: the owner's own blur fell inside the window the input was in, so the
+			// exported row says so. This is the one row shape the premove path can produce that
+			// `assertHumanShapedAc` rejects — and it rejects it correctly, because the blur happened.
+			expect(row?.telemetry?.ac.BlurCount).toBe(1);
+			expect(row?.telemetry?.ac.DidBlurOnOpponentTurn).toBe(true);
+			expect(row?.telemetry?.ac.TotalFocusTime).toBeGreaterThanOrEqual(
+				row?.telemetry?.ac.MoveHoldTime ?? 0
+			);
+		}
+		expect(reached).toBe(true);
+	}, 180_000);
+});
+
 /** Every way the owner can stop the assistant must stop a premove that has not gone out yet. */
 const CANCELLATIONS: ReadonlyArray<{ name: string; act: () => Promise<void> }> = [
 	{
@@ -438,16 +896,22 @@ describe("game session: a queued premove is cancelled by every stop (Fix F)", ()
 		}, 180_000);
 	}
 
-	it("the premove is not entered early by `playNow` during the opponent's turn", async () => {
+	it("`playNow` during the opponent's turn does not send the premove early", async () => {
 		let reached = false;
 		for (let seed = 0; seed < SEEDS && !reached; seed++) {
 			await h?.dispose();
 			const { mark, pending } = await armPremove({ seed, premoves: true, stopAtPending: true });
 			if (!pending) continue;
+			// The guard is only observable in the gap between "now" and the moment the premove was
+			// scheduled for, so the test needs a seed whose gap is wider than the hand's own motor
+			// path. Without the guard, `playNow` collapses the plan to `instantTiming` and the press
+			// lands ~300 ms later; with it, nothing happens until the scheduled moment.
+			const fireAt = h.executor()?.pendingMove()?.fireAt ?? 0;
+			const slack = fireAt - h.sim.now();
+			if (slack < MEASURABLE_SLACK_MS) continue;
 			reached = true;
 			await h.drive(() => void h.session().command("playNow"));
-			await h.advance(1);
-			// `playNow` is about *our* move; the premove keeps its own human moment.
+			await h.advance(slack - EARLY_PRESS_MARGIN_MS);
 			expect(pressCount(mark)).toBe(0);
 			expect(h.site.premoveQueued()).toBeNull();
 			// …and it still goes out at its own moment.
