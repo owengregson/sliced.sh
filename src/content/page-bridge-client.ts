@@ -25,6 +25,8 @@ import { deriveToken } from "@core/spoof";
 import type { PromoPiece, Square } from "@typedefs/game";
 
 export interface PageBridgeClient extends PageBridge {
+	/** Fire-and-forget command: no id, no pending entry, no reply (Fix D's pointer mirror). */
+	notify(kind: string, payload?: unknown): void;
 	/** Remove the message listener and reject every pending call. */
 	dispose(): void;
 }
@@ -173,6 +175,16 @@ export function encodePayload(kind: string, payload: unknown): unknown {
 			const keys = isDict(payload) && Array.isArray(payload.keys) ? payload.keys : undefined;
 			return keys === undefined ? undefined : { [W.keys]: keys };
 		}
+		case BRIDGE_KINDS.cursorTo: {
+			// Viewport CSS px straight from the executor; `x` / `y` are the cursor probe's own
+			// wire letters (`BRIDGE_WIRE`), reused rather than given synonyms.
+			const p = isDict(payload) ? payload : {};
+			return {
+				[W.x]: typeof p.x === "number" ? p.x : 0,
+				[W.y]: typeof p.y === "number" ? p.y : 0,
+				[W.down]: p.down === true,
+			};
+		}
 		default:
 			return payload === undefined ? undefined : payload;
 	}
@@ -233,8 +245,9 @@ export function createPageBridgeClient(options: PageBridgeClientOptions = {}): P
 	};
 	win.addEventListener("message", onMessage);
 
-	const send = (kind: string, id: string, payload: unknown): void => {
-		const envelope: Dict = { [key]: own, [W.kind]: kind, [W.id]: id };
+	const send = (kind: string, id: string | undefined, payload: unknown): void => {
+		const envelope: Dict = { [key]: own, [W.kind]: kind };
+		if (id !== undefined) envelope[W.id] = id;
 		const encoded = encodePayload(kind, payload);
 		if (encoded !== undefined) envelope[W.payload] = encoded;
 		win.postMessage(envelope, win.location.origin);
@@ -259,6 +272,11 @@ export function createPageBridgeClient(options: PageBridgeClientOptions = {}): P
 					reject(error instanceof Error ? error : new Error(String(error)));
 				}
 			});
+		},
+		notify(kind, payload) {
+			if (disposed) return;
+			// No id, so the page side has nothing to correlate a reply to and posts none.
+			send(kind, undefined, payload);
 		},
 		on(kind, cb) {
 			let set = listeners.get(kind);

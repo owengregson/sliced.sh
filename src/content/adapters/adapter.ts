@@ -200,6 +200,14 @@ export interface PageBridge {
 	call<T = unknown>(kind: string, payload?: unknown, timeoutMs?: number): Promise<T>;
 	on(kind: string, cb: (payload: unknown) => void): () => void;
 	isAvailable(): boolean;
+	/**
+	 * Fire-and-forget: send a command with no id and wait for nothing. Used by the pointer mirror
+	 * (Fix D), whose stream is one command per dispatched point — a correlated `call` would
+	 * allocate a pending entry and a timer per point for a reply nobody reads. Optional so a
+	 * test bridge that only answers requests still satisfies the interface; `PageBridgeClient`
+	 * always provides it.
+	 */
+	notify?(kind: string, payload?: unknown): void;
 }
 
 /** Bridge message kinds the adapter uses (Task 21 maps them onto the spoofed wire format). */

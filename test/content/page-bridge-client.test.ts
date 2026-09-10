@@ -235,3 +235,52 @@ describe("PageBridgeClient — against the real chesscom-bridge program", () => 
 		await waitFor(() => late.isAvailable());
 	});
 });
+
+describe("PageBridgeClient — the pointer mirror's fire-and-forget channel (Fix D)", () => {
+	it("notify posts an id-less envelope with the wire letters and no pending call", async () => {
+		const { win, client } = makeClient({ timeoutMs: 30 });
+		const rec = recordPosts(win);
+		cleanups.push(rec.restore);
+		client.notify(BRIDGE_KINDS.cursorTo, { x: 410, y: 320, down: true });
+		const sent = rec.posts.filter((p: Posted) => p.data[key] === content);
+		expect(sent).toHaveLength(1);
+		const env = sent[0]?.data ?? {};
+		expect(env.k).toBe(BRIDGE_KINDS.cursorTo);
+		expect("i" in env).toBe(false); // no id ⇒ the page has nothing to reply to
+		expect(env.p).toEqual({ x: 410, y: 320, d: true });
+		// the encoder is the single source of that shape
+		expect(encodePayload(BRIDGE_KINDS.cursorTo, { x: 1, y: 2, down: false })).toEqual({
+			x: 1,
+			y: 2,
+			d: false,
+		});
+	});
+
+	it("drives the real bridge program end to end: the element appears, moves and goes", async () => {
+		const { win, client } = makeClient({ withBridge: true });
+		await waitFor(() => client.isAvailable());
+		const cls = TOKENS_FOR_SEED.cursorClass;
+		expect(win.document.querySelector(`.${cls}`)).toBeNull();
+		// `window.postMessage` delivers on a later task, so each step is awaited.
+		client.notify(BRIDGE_KINDS.cursorTo, { x: 410, y: 320, down: false });
+		await waitFor(() => win.document.querySelector(`.${cls}`) !== null);
+		const node = win.document.querySelector(`.${cls}`);
+		const first = node?.getAttribute("style") ?? "";
+		expect(first).toContain("pointer-events:none");
+		client.notify(BRIDGE_KINDS.cursorTo, { x: 500, y: 360, down: true });
+		await waitFor(() => (node?.getAttribute("style") ?? "") !== first);
+		expect(win.document.querySelectorAll(`.${cls}`)).toHaveLength(1);
+		expect(node?.getAttribute("style")).toContain("scale(");
+		client.notify(BRIDGE_KINDS.cursorHide);
+		await waitFor(() => win.document.querySelector(`.${cls}`) === null);
+	});
+
+	it("a notify after dispose posts nothing", () => {
+		const { win, client } = makeClient();
+		const rec = recordPosts(win);
+		cleanups.push(rec.restore);
+		client.dispose();
+		client.notify(BRIDGE_KINDS.cursorHide);
+		expect(rec.posts).toHaveLength(0);
+	});
+});

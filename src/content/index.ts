@@ -56,6 +56,7 @@ import { installKeybinds } from "@content/keybinds";
 import { type BridgeCursor, createPageBridgeClient } from "@content/page-bridge-client";
 import { detectSite } from "@content/site-detect";
 import { relaySpeak } from "@content/tts-relay";
+import { createVirtualCursor } from "@content/virtual-cursor";
 import { ALL_SQUARES, squareOf } from "@core/chess/squares";
 import { EXECUTOR } from "@core/constants/cdp";
 import type { GamePortCommand, GamePortMessage } from "@core/constants/messages";
@@ -153,6 +154,9 @@ function bootContent(
 	const bridge = options.bridge ?? createPageBridgeClient({ window: win });
 	const adapter = createChesscomAdapter({ document: doc, window: win, bridge });
 	const highlights = createHighlights(adapter, false);
+	// Fix D: the mirror of the hand's own pointer. Drawn by the MAIN-world bridge (§13.3), driven
+	// only by what the service worker dispatched — never by a pointer event read here.
+	const virtualCursor = createVirtualCursor(bridge);
 	let keybinds: Keybinds = { ...DEFAULT_KEYBINDS, global: false };
 	let pageKind = adapter.detectPageKind();
 	let sessionGameId: string | null = null;
@@ -339,6 +343,7 @@ function bootContent(
 	const handleCommand = (cmd: GamePortCommand): void => {
 		if (disposed) return;
 		if (highlights.apply(cmd)) return;
+		if (virtualCursor.apply(cmd)) return;
 		switch (cmd.kind) {
 			case "keybinds":
 				keybinds = cmd.keybinds;
@@ -436,6 +441,8 @@ function bootContent(
 			disposed = true;
 			stopReadyPoll();
 			for (const d of disposers.splice(0).reverse()) d();
+			// Before the bridge goes: the mirror is page DOM and must not be left behind (§13.3).
+			virtualCursor.dispose();
 			cursor.dispose();
 			adapter.destroy();
 			if (ownPort) port?.dispose();

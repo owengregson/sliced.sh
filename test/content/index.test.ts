@@ -653,3 +653,33 @@ describe("content entry — executor responders (Task 30)", () => {
 		expect(reply?.promotion).toMatchObject({ x: 300, y: 100, width: 66, height: 66 });
 	});
 });
+
+describe("content entry — the pointer mirror (Fix D)", () => {
+	it("relays `cursorTo` / `cursorHide` to the bridge without a round trip, and erases it on dispose", () => {
+		const { feed, bridge, handle } = boot("chesscom-live");
+		expect(bridge.notified).toHaveLength(0);
+		feed.command({ kind: "cursorTo", x: 410, y: 320, down: false });
+		feed.command({ kind: "cursorTo", x: 412, y: 318, down: true });
+		expect(bridge.notified).toEqual([
+			{ kind: "cursorTo", payload: { x: 410, y: 320, down: false } },
+			{ kind: "cursorTo", payload: { x: 412, y: 318, down: true } },
+		]);
+		// never a correlated call: the stream is one command per dispatched point
+		expect(bridge.callsOf("cursorTo")).toHaveLength(0);
+		// and the mirror is not a position report back to the service worker
+		expect(feed.of("cursor")).toHaveLength(0);
+
+		feed.command({ kind: "cursorHide" });
+		expect(bridge.notified.at(-1)).toEqual({ kind: "cursorHide", payload: undefined });
+		handle.dispose();
+		// already hidden: dispose adds nothing
+		expect(bridge.notified.filter((n) => n.kind === "cursorHide")).toHaveLength(1);
+	});
+
+	it("erases a drawn mirror when the content script is disposed", () => {
+		const { feed, bridge, handle } = boot("chesscom-live");
+		feed.command({ kind: "cursorTo", x: 1, y: 2, down: false });
+		handle.dispose();
+		expect(bridge.notified.at(-1)).toEqual({ kind: "cursorHide", payload: undefined });
+	});
+});

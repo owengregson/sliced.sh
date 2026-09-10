@@ -232,12 +232,18 @@ export interface BridgeCall {
 /** In-memory `PageBridge`: records calls, answers from `responses`, and can emit page events. */
 export class FakeBridge implements PageBridge {
 	readonly calls: BridgeCall[] = [];
+	/** Fire-and-forget sends (`notify`): Fix D's pointer mirror never uses `call`. */
+	readonly notified: BridgeCall[] = [];
 	readonly responses = new Map<string, (payload: unknown) => unknown>();
 	private readonly listeners = new Map<string, Set<(payload: unknown) => void>>();
 	available = true;
 
 	isAvailable(): boolean {
 		return this.available;
+	}
+
+	notify(kind: string, payload?: unknown): void {
+		this.notified.push({ kind, payload });
 	}
 
 	call<T = unknown>(kind: string, payload?: unknown): Promise<T> {
