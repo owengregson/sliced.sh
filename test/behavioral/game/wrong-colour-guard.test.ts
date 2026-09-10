@@ -10,6 +10,7 @@
 // `sideToMove` claims. A recommendation for the wrong colour makes the assistant visibly play the
 // opponent's side, which is strictly worse than no recommendation at all.
 import { afterEach, describe, expect, it } from "bun:test";
+import { sideToMove, turnFieldOf } from "@core/chess/fen";
 import { legalMoves } from "@core/chess/san";
 import type { GamePortCommand } from "@core/constants/messages";
 import type { Color, PositionSnapshot } from "@typedefs/game";
@@ -213,5 +214,31 @@ describe("game session: the contradiction hold is symmetric", () => {
 		// the engine cannot use a FEN like this, so what matters is that the session did not hold: it
 		// ran the pipeline for the side the snapshot says is to move
 		expect(h.transport.goLines.length).toBeGreaterThan(0);
+	});
+});
+
+describe("game session: the contradiction is read from the FEN's turn field, not from a full parse", () => {
+	it("holds a five-field FEN whose stated turn contradicts sideToMove", async () => {
+		// The case that separates `turnFieldOf` from `sideToMove`. chess.js rejects a FEN with five
+		// fields, so a strict parse answers `null` — "no turn stated" — and the contradiction passes
+		// through vacuously. The turn *is* stated; whose move it is does not depend on the rest of the
+		// position validating. So the lenient read catches contradictions the strict one cannot, which
+		// is the direction that matters here (the round-1 report had this backwards).
+		await boot("b");
+		const fiveFields = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3";
+		expect(sideToMove(fiveFields)).toBeNull(); // the strict parse: no opinion
+		expect(turnFieldOf(fiveFields)).toBe("b"); // the field itself: black
+		await h.drive(() =>
+			h.site.post({
+				kind: "position",
+				// `sideToMove: "w"` === `myColor`… except the FEN it is published beside says black, so
+				// the engine would answer for black while the session calls it our move.
+				snapshot: position({ fen: fiveFields, ply: 1, sideToMove: "w", myColor: "w" }),
+			})
+		);
+		await h.advance(10_000);
+		expect(h.session().recommendation()).toBeNull();
+		expect(h.transport.goLines).toEqual([]);
+		expect(highlights()).toEqual([]);
 	});
 });

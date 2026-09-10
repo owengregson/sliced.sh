@@ -26,6 +26,10 @@ import { installWindowGlobals, type LayoutRect, type TabDom } from "@test/sim/do
 import { FakeBridge, loadFixture, pageDocument, pageWindow, sleep, waitFor } from "./helpers";
 
 const START = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+/** The capture's own position at ply 6 — what the fixture's move list replays to. */
+const WEBGL_FEN = "rnbqkbnr/pp2pppp/2p5/8/4p3/3P1P2/PPP3PP/RNBQKBNR w KQkq - 0 4";
+/** The capture's own position, after white's 4.dxe4 — a move landing on the mid-game fixture. */
+const AFTER_DXE4 = "rnbqkbnr/pp2pppp/2p5/8/4P3/5P2/PPP3PP/RNBQKBNR b KQkq - 0 4";
 const WEBGL_RECT: LayoutRect = { x: 120, y: 80, width: 704, height: 704 };
 const LOBBY_URL = "https://www.chess.com/play/online";
 const SETTLE = 160;
@@ -73,9 +77,18 @@ function boot(state: () => Record<string, unknown> | null, options: BootOptions 
 
 describe("ChessComAdapter — a corrected colour reaches the session", () => {
 	it("republishes the unmoved ply-0 position when the colour changes from white to black", async () => {
-		// The owner's situation. The bridge answers a FEN but neither `getMode()` nor
-		// `getPlayingAs()` (three independent `safe(...)` reads), so the colour comes from the DOM —
-		// and the page still shows white at the bottom. Measured reading: `myColor: "w"`.
+		// The mechanism, at the ply the owner reported it. The bridge state carries a FEN and no `mode`
+		// key at all, so the colour comes from the DOM — and the page still shows white at the bottom.
+		//
+		// This exact shape is SYNTHETIC, and the review is right about why: `safe()` answers `null`
+		// rather than throwing the key away, and `getState` sends one object with every key present, so
+		// a failing `getMode()` arrives as `mode: null` — which counts as "the bridge has spoken" and
+		// ends the ladder at `playingAs`. A bridge state with no `mode` key is therefore only the window
+		// before the *first* payload, and on a canvas board there is no FEN then either. The state is
+		// reachable on `/play/computer` (a DOM placement is its own FEN source) and, one ply later, on a
+		// live board (the move-list replay supplies a FEN before the bridge replies) — which the next
+		// test drives end to end. Kept at ply 0 because that is where the dedupe key is a single string
+		// for every reading of the game, which is the property under test.
 		let state: Record<string, unknown> | null = { fen: START };
 		const { dom, adapter } = boot(() => state, { ply0: true, bottom: "w", active: "w" });
 		await waitFor(() => adapter.readSnapshot() !== null);
@@ -95,6 +108,28 @@ describe("ChessComAdapter — a corrected colour reaches the session", () => {
 		expect(seen.at(-1)?.myColor).toBe("b");
 		expect(seen.at(-1)?.fen).toBe(START);
 		expect(seen.at(-1)?.ply).toBe(0);
+	});
+
+	it("the reachable route: a replay FEN, a render colour, then the bridge's first answer", async () => {
+		// The same correction on a state the live page really reaches: ply ≥ 1 on the canvas board with
+		// the bridge not yet answering, where the move list's replay is the FEN source and the bottom
+		// clock is the only colour evidence. The owner is black; the board has not been turned round
+		// yet, so the first reading says white.
+		let state: Record<string, unknown> | null = null;
+		const { dom, adapter, bridge } = boot(() => state, { bottom: "w", active: "w" });
+		await waitFor(() => adapter.readSnapshot() !== null);
+		expect(adapter.getPositionInfo()?.source).toBe("replay");
+		expect(adapter.readSnapshot()?.myColor).toBe("w");
+		const seen: AdapterPositionSnapshot[] = [];
+		adapter.onPositionChange((s) => seen.push(s));
+
+		// the bridge answers for the first time: we are black, and the board turns round with it
+		state = { fen: WEBGL_FEN, mode: "playing", playingAs: 2, flipped: true };
+		setClocks(dom, "b", "w");
+		bridge.emit("state", state);
+		await waitFor(() => seen.length > 0, 2_000);
+		expect(seen.at(-1)?.myColor).toBe("b");
+		expect(seen.at(-1)?.fen).toBe(WEBGL_FEN);
 	});
 
 	it("delivers the corrected colour on the reading that starts a new game, key unchanged", async () => {
@@ -263,10 +298,66 @@ describe("ChessComAdapter — only the site may correct a colour we already know
 		expect(seen).toEqual([]);
 	});
 
-	it("the site's own getPlayingAs() does correct it, and a bounded number of times", async () => {
+	it("a refused flip does not ride in on the next real move either", async () => {
+		// The flip above delivered nothing — and then the position moved, the dedupe key changed, and
+		// the reading was published for its own sake carrying the render's flipped colour. That is the
+		// same outcome one move later, and worse: with the bridge silent there is no authoritative
+		// answer left to undo it, so the session recommends and marks for the opponent for the rest of
+		// the game (review R-2). A position advancing does not make the rendering authoritative.
+		let fen: string | undefined;
+		const { dom, adapter, bridge } = boot(() => (fen === undefined ? {} : { fen }), {
+			bottom: "w",
+			active: "w",
+		});
+		await waitFor(() => adapter.readSnapshot() !== null);
+		expect(adapter.readSnapshot()?.myColor).toBe("w");
+		const seen: AdapterPositionSnapshot[] = [];
+		adapter.onPositionChange((s) => seen.push(s));
+
+		// the owner turns the board round by hand: the clocks swap, the position has not moved
+		setClocks(dom, "b", "w");
+		await waitFor(() => adapter.getMyColor() === "b");
+		await sleep(SETTLE);
+		expect(seen).toEqual([]);
+
+		// …and now a move lands. The position is new, so it is published — with the colour the session
+		// already has, not the one the board is drawn in.
+		fen = AFTER_DXE4;
+		bridge.emit("move", { fen });
+		await waitFor(() => seen.length > 0, 2_000);
+		expect(seen.at(-1)?.fen).toBe(AFTER_DXE4);
+		expect(seen.at(-1)?.myColor).toBe("w");
+	});
+
+	it("the site's own getPlayingAs() does correct it, a bounded number of times", async () => {
 		// Each alternation is an authoritative answer, so each is a legitimate correction — until the
 		// per-game cap, which exists because this is the only republish trigger that is not
 		// structurally one-shot.
+		let as: 1 | 2 = 1;
+		const { adapter, bridge } = boot(() => ({ fen: START, mode: "playing", playingAs: as }), {
+			ply0: true,
+			bottom: "w",
+			active: "w",
+		});
+		await waitFor(() => adapter.getMyColor() === "w");
+		const seen: AdapterPositionSnapshot[] = [];
+		adapter.onPositionChange((s) => seen.push(s));
+		for (let i = 0; i < LIMITS.colourCorrectionsPerGame; i++) {
+			as = as === 1 ? 2 : 1;
+			bridge.emit("state", {});
+			await sleep(SETTLE);
+		}
+		// every correction inside the budget is delivered, and each one is the site's current answer
+		expect(seen.map((x) => x.myColor)).toEqual(
+			Array.from({ length: LIMITS.colourCorrectionsPerGame }, (_, i) => (i % 2 === 0 ? "b" : "w"))
+		);
+	});
+
+	it("past the cap the colour is withheld, not left wrong: no colour at all, and never silently", async () => {
+		// The cap may bound the republishing; it may not end on a colour the site has just told us is
+		// wrong. Keeping the stale one would leave the session recommending, marking and scheduling for
+		// the opponent for the rest of the game, from an internally consistent snapshot that passes
+		// every guard — this lane's own defect, reached through this lane's own cap (review R-1).
 		let as: 1 | 2 = 1;
 		const { adapter, bridge } = boot(() => ({ fen: START, mode: "playing", playingAs: as }), {
 			ply0: true,
@@ -281,8 +372,13 @@ describe("ChessComAdapter — only the site may correct a colour we already know
 			bridge.emit("state", {});
 			await sleep(SETTLE);
 		}
-		expect(seen.length).toBeGreaterThan(0);
-		expect(seen.length).toBe(LIMITS.colourCorrectionsPerGame);
+		// …corrections up to the cap, then one delivery of `null` — the hold — and nothing after it
+		expect(seen.map((x) => x.myColor)).toEqual([
+			...Array.from({ length: LIMITS.colourCorrectionsPerGame }, (_, i) => (i % 2 === 0 ? "b" : "w")),
+			null,
+		]);
+		// and the withhold is what the adapter states from then on, `readSnapshot()` included
+		expect(adapter.readSnapshot()?.myColor).toBeNull();
 	});
 });
 

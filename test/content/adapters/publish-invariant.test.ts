@@ -14,6 +14,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import type { AdapterPositionSnapshot, AdapterReading } from "@content/adapters/adapter";
 import { ChessComAdapter } from "@content/adapters/chesscom";
+import { placementOf } from "@content/adapters/dom-fen";
 import { turnFieldOf } from "@core/chess/fen";
 import { installWindowGlobals, type LayoutRect } from "@test/sim/dom/tab-dom";
 import type { Color } from "@typedefs/game";
@@ -93,5 +94,59 @@ describe("AdapterBase — no adapter can publish a sideToMove that contradicts i
 		expect(seen.at(-1)?.fen).toBe(WEBGL_FEN);
 		expect(seen.at(-1)?.sideToMove).toBe("w");
 		await sleep(120);
+	});
+});
+
+/**
+ * An adapter whose dedupe key names the placement only — the realistic "future adapter" the base's key
+ * append exists for. With the turn corrected but the key left alone, two positions that share a
+ * placement and differ only in whose move it is would share a key, and the second would be deduped
+ * away as a no-op.
+ */
+class PlacementKeyAdapter extends ChessComAdapter {
+	protected override read(): AdapterReading | null {
+		const reading = super.read();
+		if (reading === null) return null;
+		const sideToMove: Color = reading.snapshot.sideToMove === "w" ? "b" : "w";
+		return {
+			...reading,
+			key: placementOf(reading.snapshot.fen),
+			snapshot: { ...reading.snapshot, sideToMove },
+		};
+	}
+}
+
+describe("AdapterBase — a corrected turn is part of the dedupe key", () => {
+	it("publishes both of two positions that share a placement and differ only in the turn", async () => {
+		// A null-move pair: same pieces, opposite side to move. Valid FENs, and the only difference the
+		// session would act on.
+		const WHITE_TO_MOVE = WEBGL_FEN;
+		const BLACK_TO_MOVE = WEBGL_FEN.replace(" w ", " b ");
+		let fen = WHITE_TO_MOVE;
+		const dom = loadFixture("chesscom-webgl");
+		cleanups.push(installWindowGlobals(dom.window));
+		const bridge = new FakeBridge();
+		bridge.responses.set("getState", () => ({ fen, mode: "playing", playingAs: 1 }));
+		const adapter = new PlacementKeyAdapter({
+			document: pageDocument(dom),
+			window: pageWindow(dom),
+			bridge,
+		});
+		cleanups.push(() => adapter.destroy());
+		dom.layout("wc-chess-board", WEBGL_RECT);
+		await waitFor(() => adapter.readSnapshot() !== null);
+		const seen: AdapterPositionSnapshot[] = [];
+		adapter.onPositionChange((s) => seen.push(s));
+
+		fen = BLACK_TO_MOVE;
+		bridge.emit("state", { fen });
+		await waitFor(() => seen.length > 0, 2_000);
+		expect(seen.at(-1)?.sideToMove).toBe("b");
+		fen = WHITE_TO_MOVE;
+		bridge.emit("state", { fen });
+		await waitFor(() => seen.length > 1, 2_000);
+		expect(seen.at(-1)?.sideToMove).toBe("w");
+		// the placement never changed, so without the corrected turn in the key neither would have landed
+		expect(seen.map((x) => x.sideToMove)).toEqual(["b", "w"]);
 	});
 });

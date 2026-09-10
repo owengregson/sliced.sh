@@ -969,15 +969,19 @@ export class GameSession implements SessionSource {
 	/**
 	 * §3.2 steps 1–5 for the current position.
 	 *
-	 * **Precondition — the side to move in `snapshot.fen` is `snapshot.myColor`.** The pipeline
-	 * searches, selects, plans, marks and (armed) plays for whoever the FEN says is to move, so
-	 * running it on the opponent's turn is the defect this lane exists to close (owner's live game,
-	 * 2026-09-10). Both call sites establish it by composition rather than by a fourth test here that
-	 * nothing could reach: `selfConsistent(snapshot)` gives `turnFieldOf(fen) === sideToMove`, and
-	 * `myTurn` gives `sideToMove === myColor`, so together they give `turnFieldOf(fen) === myColor`.
-	 * A new caller owes the same two. `test/behavioral/game/wrong-colour-guard.test.ts` pins the
-	 * consequence — every move this produces is a legal move for `myColor` — and pins each of the two
-	 * conjuncts with its own failing case.
+	 * **Precondition — `turnFieldOf(snapshot.fen)` is `snapshot.myColor`, or the FEN states no turn
+	 * and `snapshot.sideToMove` is `snapshot.myColor`.** The pipeline searches, selects, plans, marks
+	 * and (armed) plays for whoever the FEN says is to move, so running it on the opponent's turn is
+	 * the defect this lane exists to close (owner's live game, 2026-09-10).
+	 *
+	 * Both call sites establish exactly that by composition, rather than by a fourth test here that
+	 * nothing could reach: `selfConsistent(snapshot)` gives `turnFieldOf(fen) === sideToMove` *or* a
+	 * turn-less FEN, and `myTurn` gives `sideToMove === myColor`. The second disjunct is not an
+	 * oversight — it is the bounded answer to a site that states no turn at all, which would otherwise
+	 * stop the assistant for a whole game (`selfConsistent`'s own note), and
+	 * `wrong-colour-guard.test.ts:199` asserts it on purpose. A new caller owes the same two.
+	 * `test/behavioral/game/wrong-colour-guard.test.ts` pins the consequence — every move this produces
+	 * is a legal move for `myColor` — and pins each conjunct with its own failing case.
 	 */
 	private async runPipeline(snapshot: PositionSnapshot): Promise<void> {
 		const pipeline = this.pipeline;
