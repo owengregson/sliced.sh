@@ -56,12 +56,15 @@ Ports: `sl-panel` (SW ↔ panel), `sl-engine` (SW ↔ offscreen), `sl-game` (SW 
 ## Conventions
 
 These are the plan's §1.3 global constraints, numbered so briefs and reviews can cite them.
-Most are machine-enforced, and the entries that are name what enforces them. Four rest on review
-rather than on a lint, and are worth knowing as such: "templates live in `*.html`, imported
-`?raw`" (C3); "every module that owns listeners or timers exposes a dispose" (C6); the brand
-assets being byte-unchanged and "all user-facing strings live once in `src/panel/copy.ts`" (C5,
-which has no `*Enforced by:*` line at all); and C4's animation-timing mirror. Treat an entry
-without an `*Enforced by:*` line as review-only.
+Most are machine-enforced, and the entries that are name what enforces them. Do not assume an
+entry is enforced because it is written here: treat any entry without an `*Enforced by:*` line,
+and any individual claim inside an entry that names no checker, as resting on review. The ones
+verified to have no checker today are "templates live in `*.html`, imported `?raw`" (C3); "every
+module that owns listeners or timers exposes a dispose" (C6); and both halves of C5 — the brand
+assets being byte-unchanged (the v1 `cmp` was a one-off manual step) and "all user-facing strings
+live once in `src/panel/copy.ts` — never a literal in a view" (`scripts/check-css.ts` polices CSS
+values, not view literals). C4 *is* enforced, animation mirror included
+(`test/panel/animation-manager.test.ts:41`).
 
 **C1 — one definition per constant.** Every storage key, alarm name, port name, message type,
 URL, limit, timing and selector lives in a registry: `src/core/constants/*.ts`,

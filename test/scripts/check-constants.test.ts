@@ -171,9 +171,22 @@ describe("findUrlLiterals (C1: every absolute URL lives in the registry)", () =>
 		).toEqual([]);
 	});
 
-	it("does not flag a bare URL in a doc comment, which is not a shipped literal", () => {
+	it("catches a URL inside a multi-line template, where no quote sits on its line", () => {
+		const hits = findUrlLiterals({
+			"src/content/tpl.ts": "const t = `\n  https://sliced.sh/in-a-template\n`;\n",
+		});
+		expect(hits).toHaveLength(1);
+		expect(hits[0]?.url).toBe("https://sliced.sh/in-a-template");
+		expect(hits[0]?.line).toBe(2);
+	});
+
+	it("does not flag a URL in a comment, whole-line or trailing, which is prose not code", () => {
 		expect(
-			findUrlLiterals({ "src/content/a.ts": "// see https://example.com/spec for the rule\n" })
+			findUrlLiterals({
+				"src/content/a.ts": "// see https://example.com/spec for the rule\n",
+				"src/content/b.ts": " * https://example.com/doc\n",
+				"src/content/c.ts": "const n = 1; // https://example.com/why\n",
+			})
 		).toEqual([]);
 	});
 });
