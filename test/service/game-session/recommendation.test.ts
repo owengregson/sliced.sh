@@ -148,28 +148,74 @@ function model(): TimingModel {
 	return m;
 }
 
-describe("§7.5 search budget", () => {
-	it("tEngine = clamp(0.6 · plannedThinkMs, 150, 4000)", () => {
-		expect(searchBudget(1000, "blitz", settings()).movetimeMs).toBe(600);
-		expect(searchBudget(10, "blitz", settings()).movetimeMs).toBe(SEARCH_BUDGET.minMovetimeMs);
-		expect(searchBudget(100_000, "blitz", settings()).movetimeMs).toBe(SEARCH_BUDGET.maxMovetimeMs);
+describe("§6.4 / §7.5 search budget", () => {
+	/** A comfortable position: 20 legal moves, a full clock, a long planned wait. */
+	const comfortable = (tc: "bullet" | "blitz" | "rapid" | "classical" | "untimed") => ({
+		tc,
+		myClockMs: 600_000,
+		legalMoves: 20,
+		plannedThinkMs: 7_500,
+	});
+
+	// The old contract was `clamp(0.6 · plannedThinkMs, 150, 4000)`, which made the search as long
+	// as the wait: a 7.5 s planned think — what every game planned while the time control never
+	// reached the worker — searched the full 4 s cap before any recommendation existed. The budget
+	// is now derived from the time control and the position instead; §7.5's own requirement (finish
+	// before we act) survives as an upper bound, below.
+	it("is plan-independent: the class base, not a fraction of the wait", () => {
+		expect(searchBudget(comfortable("bullet"), settings()).movetimeMs).toBe(400);
+		expect(searchBudget(comfortable("blitz"), settings()).movetimeMs).toBe(600);
+		expect(searchBudget(comfortable("rapid"), settings()).movetimeMs).toBe(1_000);
+		expect(searchBudget(comfortable("classical"), settings()).movetimeMs).toBe(1_500);
+		expect(searchBudget(comfortable("untimed"), settings()).movetimeMs).toBe(1_500);
+		// ten times the wait changes nothing
+		const long = { ...comfortable("blitz"), plannedThinkMs: 75_000 };
+		expect(searchBudget(long, settings()).movetimeMs).toBe(600);
+		// and it is nowhere near the old 4 s
+		expect(searchBudget(comfortable("untimed"), settings()).movetimeMs).toBeLessThan(
+			SEARCH_BUDGET.maxMovetimeMs
+		);
+	});
+
+	it("§7.5 still binds when the wait is short: the search finishes before the hand acts", () => {
+		// a 400 ms planned wait in a rapid game: 0.6 × 400 = 240 ms, not the class's 1000 ms
+		const hurried = { ...comfortable("rapid"), plannedThinkMs: 400 };
+		expect(searchBudget(hurried, settings()).movetimeMs).toBeCloseTo(240, 6);
+		// and never below the floor
+		const instant = { ...comfortable("rapid"), plannedThinkMs: 10 };
+		expect(searchBudget(instant, settings()).movetimeMs).toBe(SEARCH_BUDGET.minMovetimeMs);
+	});
+
+	it("never spends more than a twentieth of the clock that is left", () => {
+		// 4 s left in a blitz game: 200 ms, not the class's 600 ms
+		const trouble = { tc: "blitz" as const, myClockMs: 4_000, legalMoves: 20, plannedThinkMs: 7_500 };
+		expect(searchBudget(trouble, settings()).movetimeMs).toBeCloseTo(200, 6);
+		// an untimed game reports no clock and is not starved by it
+		const noClock = { ...comfortable("untimed"), myClockMs: 0 };
+		expect(searchBudget(noClock, settings()).movetimeMs).toBe(1_500);
+	});
+
+	it("a position with one legal move takes the floor — no search can change the answer", () => {
+		const forced = { ...comfortable("classical"), legalMoves: 1 };
+		expect(searchBudget(forced, settings()).movetimeMs).toBe(SEARCH_BUDGET.minMovetimeMs);
 	});
 
 	it("depthCap follows the speed class and is capped by Settings.engine.depthCap", () => {
-		expect(searchBudget(1000, "bullet", settings()).depthCap).toBe(14);
-		expect(searchBudget(1000, "blitz", settings()).depthCap).toBe(18);
-		expect(searchBudget(1000, "rapid", settings()).depthCap).toBe(22);
-		expect(searchBudget(1000, "classical", settings()).depthCap).toBe(22); // settings cap 22
-		expect(searchBudget(1000, "classical", settings({ depthCap: 30 })).depthCap).toBe(24);
-		expect(searchBudget(1000, "rapid", settings({ depthCap: 10 })).depthCap).toBe(10);
+		expect(searchBudget(comfortable("bullet"), settings()).depthCap).toBe(14);
+		expect(searchBudget(comfortable("blitz"), settings()).depthCap).toBe(18);
+		expect(searchBudget(comfortable("rapid"), settings()).depthCap).toBe(22);
+		expect(searchBudget(comfortable("classical"), settings()).depthCap).toBe(22); // settings cap 22
+		expect(searchBudget(comfortable("classical"), settings({ depthCap: 30 })).depthCap).toBe(24);
+		expect(searchBudget(comfortable("rapid"), settings({ depthCap: 10 })).depthCap).toBe(10);
 	});
 
 	it("K = 3 / 6 / 8 by budget, never below the user's MultiPV nor above 8", () => {
-		expect(searchBudget(100, "bullet", settings({ multiPv: 1 })).multiPv).toBe(3);
-		expect(searchBudget(1000, "blitz", settings({ multiPv: 1 })).multiPv).toBe(6);
-		expect(searchBudget(9000, "rapid", settings({ multiPv: 1 })).multiPv).toBe(8);
-		expect(searchBudget(100, "bullet", settings({ multiPv: 4 })).multiPv).toBe(4);
-		expect(searchBudget(9000, "rapid", settings({ multiPv: 8 })).multiPv).toBe(8);
+		const tiny = { ...comfortable("bullet"), plannedThinkMs: 400 }; // 240 ms → K = 3
+		expect(searchBudget(tiny, settings({ multiPv: 1 })).multiPv).toBe(3);
+		expect(searchBudget(comfortable("blitz"), settings({ multiPv: 1 })).multiPv).toBe(6);
+		expect(searchBudget(comfortable("classical"), settings({ multiPv: 1 })).multiPv).toBe(8);
+		expect(searchBudget(tiny, settings({ multiPv: 4 })).multiPv).toBe(4);
+		expect(searchBudget(comfortable("classical"), settings({ multiPv: 8 })).multiPv).toBe(8);
 	});
 
 	it("the estimate scales with the clock and the speed knob", () => {

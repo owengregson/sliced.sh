@@ -10,16 +10,26 @@
  * book never has to wait for the search. Everything but the engine call is a
  * pure function of its inputs.
  *
- * Budget (§7.5): `tEngine = clamp(0.6 · plannedThinkMs, 150, 4000)` — but the
- * plan is downstream of the search, so `plannedThinkMs` is estimated *before*
- * it from the same allocation the timing model would use
- * (`budgetController` / `scheduleAlloc`, which read only the clock, the ply and
- * the material), scaled by `Settings.timing.speedScale`. `depthCap` follows the
- * speed class, `K` the budget, and the shallow-device guard retries once at
- * `+300 ms` and then falls back to the top two lines with τ halved.
+ * Budget (§6.4 / §7.5): **plan-independent**, derived from the time control and
+ * the position — `SEARCH_BUDGET.moveMs[tc]` (§6.4's "plan-independent
+ * 400–1500 ms"), bounded by §7.5's `0.6 · plannedThinkMs` so the search still
+ * finishes before the hand acts, bounded again by a fraction of the clock we
+ * have left, and collapsed to the floor in a position with one legal move.
+ * `depthCap` follows the speed class, `K` the budget, and the shallow-device
+ * guard retries once at `+300 ms` and then falls back to the top two lines with
+ * τ halved.
+ *
+ * The old budget was `0.6 · plannedThinkMs` alone, which tied the search to the
+ * wait: every `untimed` game (i.e. every game, before the time control was
+ * wired through) planned ≈ 7.5 s and therefore searched the full 4 s cap before
+ * a recommendation existed. Two harms, not one: the panel was blind for 4 s,
+ * and because the executor fits the plan into what is left of its deadline, the
+ * search became a **floor** on the realised `MoveHoldTime` — the §13.2 left
+ * tail (premove / instant) could not be produced at all.
  */
 
 import { phase as phaseOf } from "@core/chess/phase";
+import { legalMoves } from "@core/chess/san";
 import { SEARCH_BUDGET } from "@core/constants/search";
 import type { AnalysisHandle, AnalysisRequest, AnalysisResult } from "@core/engine/types";
 import { log } from "@core/logger";
@@ -104,17 +114,39 @@ export function estimatedThinkMs(p: BudgetPosition, settings: Settings): number 
 	return allocSec * MS_PER_S * Math.max(0, settings.timing.speedScale);
 }
 
-/** §7.5: the movetime, depth cap and MultiPV of one own-move search. */
-export function searchBudget(
-	plannedThinkMs: number,
-	tc: TcClass,
-	settings: Settings
-): SearchBudget {
-	const movetimeMs = clamp(
+/** What sizes one own-move search: the time control, the position and §7.5's own upper bound. */
+export interface SearchBudgetInput {
+	tc: TcClass;
+	/** Our remaining clock in ms; `0` when the page reports none (an untimed game). */
+	myClockMs: number;
+	/** Legal moves in the position — one means there is nothing to search. */
+	legalMoves: number;
+	/** §7.5's bound: the think time the model is expected to plan (`estimatedThinkMs`). */
+	plannedThinkMs: number;
+}
+
+/**
+ * §6.4 / §7.5: the movetime, depth cap and MultiPV of one own-move search.
+ *
+ * `movetimeMs` is the smallest of three bounds, floored at `minMovetimeMs`:
+ * the class base (§6.4's plan-independent 400–1500 ms), §7.5's
+ * `0.6 · plannedThinkMs` (the search must finish before we act) and
+ * `clockFraction` of the clock we have left (never burn the clock searching).
+ * A position with one legal move takes the floor: no search can change the
+ * answer.
+ */
+export function searchBudget(input: SearchBudgetInput, settings: Settings): SearchBudget {
+	const { tc, myClockMs, legalMoves, plannedThinkMs } = input;
+	const bounds = [
+		SEARCH_BUDGET.moveMs[tc],
 		SEARCH_BUDGET.thinkFraction * plannedThinkMs,
-		SEARCH_BUDGET.minMovetimeMs,
-		SEARCH_BUDGET.maxMovetimeMs
-	);
+		// An untimed game has no clock to protect; a timed one in trouble has nothing else to give.
+		myClockMs > 0 ? SEARCH_BUDGET.clockFraction * myClockMs : Number.POSITIVE_INFINITY,
+	];
+	const movetimeMs =
+		legalMoves <= 1
+			? SEARCH_BUDGET.minMovetimeMs
+			: clamp(Math.min(...bounds), SEARCH_BUDGET.minMovetimeMs, SEARCH_BUDGET.maxMovetimeMs);
 	const depthCap = Math.min(SEARCH_BUDGET.depthCap[tc], settings.engine.depthCap);
 	const adaptive =
 		movetimeMs < SEARCH_BUDGET.multiPvSmallMs
@@ -219,7 +251,15 @@ export class RecommendationPipeline {
 			},
 			settings
 		);
-		const budget = searchBudget(plannedThinkMs, tc, settings);
+		const budget = searchBudget(
+			{
+				tc,
+				myClockMs,
+				legalMoves: legalMoves(snapshot.fen).length,
+				plannedThinkMs,
+			},
+			settings
+		);
 
 		// §7.3 item 3 + §3.2 step 1: the book and the engine run at the same time.
 		const bookPending = this.bookMove(input);
@@ -317,7 +357,13 @@ export class RecommendationPipeline {
 		});
 		const retry = await this.runSearch(
 			snapshot,
-			{ ...budget, movetimeMs: budget.movetimeMs + SEARCH_BUDGET.retryExtraMs },
+			{
+				...budget,
+				movetimeMs: Math.min(
+					SEARCH_BUDGET.maxMovetimeMs,
+					budget.movetimeMs + SEARCH_BUDGET.retryExtraMs
+				),
+			},
 			signal
 		);
 		return retry && retry.final.depth > first.final.depth ? retry : first;

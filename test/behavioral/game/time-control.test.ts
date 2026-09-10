@@ -7,6 +7,7 @@
 // Every assertion here is on what the site supplied. `site.setTimeControl(...)` is the page
 // learning its own clock, not the harness telling the session what class to be.
 import { afterEach, describe, expect, it } from "bun:test";
+import { SEARCH_BUDGET } from "@core/constants/search";
 import { TIMING_CONSTANTS } from "@core/timing/constants";
 import { createGameHarness, type GameHarness } from "./harness";
 
@@ -95,6 +96,38 @@ describe("game session: the time control arrives after the game started (§4.3)"
 		expect(played.length).toBeGreaterThanOrEqual(1);
 		expect(h.session().recommendation()?.plan.features.eps).toBeDefined();
 	}, 120_000);
+
+	it("the engine's own `go` line carries the class budget the clock selects", async () => {
+		// §6.4 / §7.5 end to end through the real `EngineController` + `UciEngine`: the search the
+		// engine is actually asked for follows the time control, not the planned wait. Before this
+		// lane every game asked for `movetime 4000` — the cap — because the budget was
+		// `0.6 × plannedThinkMs` and every game planned ≈ 7.5 s.
+		const movetimeOf = (harness: GameHarness): string =>
+			harness.transport.goLines.filter((l) => l.includes("movetime")).at(-1) ?? "";
+
+		h = await createGameHarness({
+			timeControl: null, // the page reports no clock: the clockless class
+			gameId: "budget-untimed",
+			settings: { automation: { autoMove: false } },
+		});
+		await h.arrive(null, { w: BULLET.baseMs, b: BULLET.baseMs });
+		expect(await recommended(h)).toBe(true);
+		expect(features(h).tc_untimed).toBe(1);
+		expect(movetimeOf(h)).toContain(`movetime ${SEARCH_BUDGET.moveMs.untimed}`);
+		expect(movetimeOf(h)).not.toContain(`movetime ${SEARCH_BUDGET.maxMovetimeMs}`);
+
+		await h.dispose();
+		h = await createGameHarness({
+			timeControl: BULLET, // the page reports a 1+0 bullet clock
+			gameId: "budget-bullet",
+			settings: { automation: { autoMove: false } },
+		});
+		await h.arrive(null, { w: BULLET.baseMs, b: BULLET.baseMs });
+		expect(await recommended(h)).toBe(true);
+		expect(features(h).tc_bullet).toBe(1);
+		expect(movetimeOf(h)).toContain(`movetime ${SEARCH_BUDGET.moveMs.bullet}`);
+		expect(movetimeOf(h)).toContain(`depth ${SEARCH_BUDGET.depthCap.bullet}`);
+	}, 60_000);
 
 	it("the page's own clock is what opens the §7.4 premove gate (bullet/blitz only)", async () => {
 		// `isPremoveSpeed(undefined)` is false, so with no time control on the snapshot §7.4 can
