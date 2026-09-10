@@ -340,6 +340,17 @@ export abstract class AdapterBase implements SiteAdapter {
 	private readonly observerDisposers: Array<() => void> = [];
 	private readonly pending: { trigger(): void; cancel(): void };
 	private lastKey: string | null = null;
+	/**
+	 * `myColor` of the last reading delivered. The colour of a live game arrives *after* its first
+	 * reading — the MAIN-world bridge answers `getPlayingAs()` a moment after the board appears, and
+	 * before that the live page carries no colour evidence at all — while the position itself has
+	 * not moved, so the dedupe key is identical and the session would hold a colourless ply for
+	 * ever (owner's live test, 2026-09-09). Learning the colour is therefore a change worth
+	 * delivering in its own right. Only `null → known` on the game already being followed counts:
+	 * losing it (the page became an analysis board) is not a new position, and regaining it on a
+	 * different board is that board's own game start.
+	 */
+	private lastColor: Color | null = null;
 	private lastGameKey: string | null = null;
 	private lastGameOver = false;
 	private lastProbeSignature: string | null = null;
@@ -765,6 +776,7 @@ export abstract class AdapterBase implements SiteAdapter {
 		if (!reading) return;
 		this.primed = true;
 		this.lastKey = reading.key;
+		this.lastColor = reading.snapshot.myColor;
 		this.lastGameKey = reading.gameKey;
 		this.lastGameOver = reading.gameOver !== null;
 	}
@@ -784,13 +796,20 @@ export abstract class AdapterBase implements SiteAdapter {
 			this.prime();
 			return;
 		}
-		if (this.lastGameKey !== null && reading.gameKey !== this.lastGameKey) {
+		const gameChanged = this.lastGameKey !== null && reading.gameKey !== this.lastGameKey;
+		if (gameChanged) {
 			this.lastGameKey = reading.gameKey;
 			this.lastGameOver = false;
 			for (const cb of this.startCbs) cb();
 			this.probe();
 		}
-		if (reading.key !== this.lastKey) {
+		// Only for the game already being followed: a *different* board (an SPA hop to another page)
+		// changes the colour along with everything else, and republishing its position would start a
+		// second session on the same board.
+		const colourLearned =
+			!gameChanged && this.lastColor === null && reading.snapshot.myColor !== null;
+		this.lastColor = reading.snapshot.myColor;
+		if (reading.key !== this.lastKey || colourLearned) {
 			this.lastKey = reading.key;
 			for (const cb of this.positionCbs) cb(reading.snapshot);
 		}

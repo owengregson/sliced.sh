@@ -9,6 +9,15 @@
  * resolves only once the page side has acknowledged the clear (bounded by
  * the bridge call timeout, `TIMINGS.adapterBridgeTimeoutMs`), so no mark is
  * present at move-submission time.
+ *
+ * A mark never stacks on a mark: a `highlight` / `arrow` while something of ours
+ * is already drawn clears it first. The generic SVG overlay happens to redraw
+ * from scratch, but native `game.markings` does not — it only ever *adds*, and
+ * the keys of the previous draw are forgotten — so without this a new
+ * recommendation (or every hover of the panel's line list) left the old squares
+ * on the board for good (owner's live test, 2026-09-09). The clear and the draw
+ * are two bridge calls in that order on one channel, so the page applies them in
+ * that order.
  */
 
 import type { ArrowLine, SiteAdapter } from "@content/adapters/adapter";
@@ -46,11 +55,13 @@ export function createHighlights(adapter: SiteAdapter, initiallyEnabled = false)
 		},
 		highlight(from, to, style) {
 			if (!enabled) return;
+			void clear();
 			drawn = true;
 			adapter.highlight(from, to, style);
 		},
 		arrows(lines) {
 			if (!enabled || lines.length === 0) return;
+			void clear();
 			drawn = true;
 			adapter.arrows(lines);
 		},

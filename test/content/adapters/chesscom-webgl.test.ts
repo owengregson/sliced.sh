@@ -252,3 +252,70 @@ describe("ChessComAdapter — orientation on a canvas board", () => {
 		expect(adapter.getMyColor()).toBe("b");
 	});
 });
+
+/**
+ * The window the owner's first live game opened in: the MAIN-world bridge has
+ * not answered yet AND the clock components are not in the DOM yet, so there is
+ * no colour evidence at all. The live player panel carries no colour class
+ * (asserted above), the WebGL board carries no `flipped` class, and the clocks
+ * are the only DOM source there is — so the honest answer is `null`.
+ *
+ * Guessing white here is what made the extension predict for the opponent on a
+ * real account (owner's live test, 2026-09-09): predicting for the wrong side is
+ * strictly worse than predicting nothing.
+ */
+describe("ChessComAdapter — the colour is never guessed", () => {
+	/** The live page before the clock components render: no colour evidence anywhere. */
+	function bootWithoutColourEvidence(state: () => Record<string, unknown> | null = () => null): {
+		dom: TabDom;
+		adapter: SiteAdapter;
+		bridge: FakeBridge;
+	} {
+		const dom = loadFixture("chesscom-webgl");
+		for (const clock of dom.document.querySelectorAll(".clock-component")) clock.remove();
+		cleanups.push(installWindowGlobals(dom.window));
+		const bridge = new FakeBridge();
+		bridge.responses.set("getState", () => state() ?? {});
+		const adapter = createChesscomAdapter({
+			document: pageDocument(dom),
+			window: pageWindow(dom),
+			bridge,
+		});
+		cleanups.push(() => adapter.destroy());
+		dom.layout("wc-chess-board", WEBGL_RECT);
+		return { dom, adapter, bridge };
+	}
+
+	it("no bridge answer and no clocks: getMyColor() is null, not white", async () => {
+		const { dom, adapter } = bootWithoutColourEvidence();
+		// exactly the live page's evidence: no panel colour class, no board class, no clocks
+		expect(dom.document.querySelectorAll(".cc-user-block-white, .cc-user-block-black").length).toBe(
+			0
+		);
+		expect(dom.query("wc-chess-board").classList.contains("flipped")).toBe(false);
+		expect(dom.document.querySelectorAll(".clock-component").length).toBe(0);
+
+		expect(adapter.getMyColor()).toBeNull();
+		// and the snapshot it publishes says so too — the session must hold, not predict
+		await waitFor(() => adapter.readSnapshot() !== null);
+		expect(adapter.readSnapshot()?.myColor).toBeNull();
+	});
+
+	it("republishes the same position once the bridge says black (playingAs 2)", async () => {
+		let state: Record<string, unknown> | null = null;
+		const { adapter, bridge } = bootWithoutColourEvidence(() => state);
+		const seen: AdapterPositionSnapshot[] = [];
+		adapter.onPositionChange((s) => seen.push(s));
+		await waitFor(() => adapter.readSnapshot() !== null);
+		expect(adapter.readSnapshot()?.myColor).toBeNull();
+
+		// The bridge answers: the owner is black. The position itself has not moved, so the colour
+		// must be part of what the feed is keyed on or the session never learns it.
+		state = { fen: WEBGL_FEN, mode: "playing", playingAs: 2, flipped: true };
+		bridge.emit("state", state);
+		await waitFor(() => seen.length > 0, 2_000);
+		expect(seen.at(-1)?.myColor).toBe("b");
+		expect(adapter.getMyColor()).toBe("b");
+		expect(adapter.isFlipped()).toBe(true);
+	});
+});

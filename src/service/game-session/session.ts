@@ -75,7 +75,6 @@ import { candidatesFromLines } from "@service/move-executor";
 import type { OpponentView, SessionGameView, SessionSource } from "@service/panel-broadcaster";
 import type {
 	ChosenMove,
-	Color,
 	GameMeta,
 	GameResult,
 	GameSessionState,
@@ -435,6 +434,23 @@ export class GameSession implements SessionSource {
 	}
 
 	/**
+	 * May this session act on `snapshot`? The master switch, plus the second three-valued reading
+	 * the page gives us: **which side the owner is playing**. It is mine, theirs, or *not known
+	 * yet* — the MAIN-world bridge answers `getPlayingAs()` a moment after the board appears, and
+	 * until then a live game carries no colour evidence at all (owner's live test, 2026-09-09:
+	 * the adapter guessed white, the owner was black, and every recommendation, highlight and
+	 * scheduled move was for the *opponent*).
+	 *
+	 * So unknown holds, exactly as an unknown switch does: the position is still followed — ply,
+	 * clocks, move list, state machine, panel — and nothing is analysed, pondered, recommended,
+	 * highlighted, scheduled or played. The adapter republishes the same position the moment it
+	 * learns the colour (`AdapterBase.apply`), and that reading is the resume.
+	 */
+	private mayActOn(snapshot: PositionSnapshot): boolean {
+		return this.mayAct() && snapshot.myColor !== null;
+	}
+
+	/**
 	 * `Settings.enabled` went off mid-session (§4.4): the search in flight is aborted, the ponder
 	 * stopped, the scheduled (or running) move cancelled, the auto-queue dropped, the board
 	 * cleared, and the hand disarmed — with the debugger released, because §13.4 forbids the
@@ -450,7 +466,7 @@ export class GameSession implements SessionSource {
 		const executor = this.executorHandle;
 		executor?.disarm();
 		void this.releaseDebugger(executor);
-		this.deps.link.post(this.deps.tabId, { kind: "clearHighlight" });
+		this.clearBoardMarks();
 		log.info("game-session: the assistant was turned off — nothing is analysed or played", {
 			tabId: this.deps.tabId,
 			state: this.state,
@@ -494,7 +510,10 @@ export class GameSession implements SessionSource {
 		// resume: the worker's first settings read can land after the session was built, so "on"
 		// is not always a transition from a stopped session.
 		if (this.pipelineAc !== null || this.rec !== null) return;
-		const myTurn = snapshot.myColor !== null && snapshot.sideToMove === snapshot.myColor;
+		// The colour is its own hold (`mayActOn`): releasing the switch does not release a position
+		// whose side we still do not know. The adapter republishes it once the bridge answers.
+		if (!this.mayActOn(snapshot)) return;
+		const myTurn = snapshot.sideToMove === snapshot.myColor;
 		if (myTurn) await this.runPipeline(snapshot);
 		else await this.onOpponentTurn(snapshot);
 	}
@@ -585,6 +604,7 @@ export class GameSession implements SessionSource {
 		this.cancelInFlight();
 		this.deps.autoQueue.cancel(this.deps.tabId);
 		this.rec = null;
+		this.clearBoardMarks();
 		if (event === "navigated") this.game = null;
 		this.apply(event);
 		this.deps.notify();
@@ -593,6 +613,8 @@ export class GameSession implements SessionSource {
 	onGameStarted(meta: GameMeta): void {
 		if (this.game?.gameId === meta.gameId) return;
 		this.startGame(meta);
+		// Nothing of the previous game belongs on this board.
+		this.clearBoardMarks();
 		this.apply("gameStarted");
 		this.deps.notify();
 	}
@@ -602,6 +624,7 @@ export class GameSession implements SessionSource {
 		this.cancelInFlight();
 		this.rec = null;
 		this.premove = null;
+		this.clearBoardMarks();
 		void this.finishGame(result);
 		this.deps.notify();
 	}
@@ -637,12 +660,19 @@ export class GameSession implements SessionSource {
 			this.apply("gameStarted");
 		}
 		this.site = snapshot.site;
+		// The colour can arrive after `gameStarted` did (the bridge answers `getPlayingAs()` a moment
+		// after the board appears), and the panel reads the game's copy when the snapshot has none.
+		if (this.game && this.game.myColor === null && snapshot.myColor !== null)
+			this.game = { ...this.game, myColor: snapshot.myColor };
 		this.cancelInFlight();
 		const previous = this.snapshot;
 		this.priorFen = previous?.fen ?? null;
 		this.snapshot = snapshot;
 		this.reprofile(snapshot);
+		// Whatever was marked belonged to the position that has just been superseded: erase it
+		// before anything new is drawn, so the board never carries two recommendations at once.
 		this.rec = null;
+		this.clearBoardMarks();
 		const myTurn = snapshot.myColor !== null && snapshot.sideToMove === snapshot.myColor;
 		const at = this.now();
 		this.deps.focus.positionArrived(this.deps.tabId, at);
@@ -650,13 +680,16 @@ export class GameSession implements SessionSource {
 		this.trackMove(previous, snapshot);
 		if (!this.apply("positionChanged", { myTurn })) return;
 		this.deps.notify();
-		if (!this.mayAct()) {
+		if (!this.mayActOn(snapshot)) {
 			// §4.4: everything above is bookkeeping the panel reads and a resume needs (the ply, the
 			// clocks, the move list, the focus gate's window). Nothing below it runs while the
-			// switch is off: no `go`, no ponder, no premove, no recommendation, no schedule.
-			log.debug("game-session: position ignored — the assistant is off", {
+			// switch is off — or while the *colour* is unknown: no `go`, no ponder, no premove, no
+			// recommendation, no schedule. A colourless position cannot even say whose turn it is,
+			// so "not my turn ⇒ ponder" would be a guess too.
+			log.debug("game-session: position held", {
 				tabId: this.deps.tabId,
 				ply: snapshot.ply,
+				reason: this.mayAct() ? "colour not known yet" : "the assistant is off",
 			});
 			return;
 		}
@@ -1011,7 +1044,7 @@ export class GameSession implements SessionSource {
 		this.cancelInFlight();
 		this.executorHandle?.disarm();
 		this.deps.autoQueue.cancel(this.deps.tabId);
-		this.deps.link.post(this.deps.tabId, { kind: "clearHighlight" });
+		this.clearBoardMarks();
 		this.rec = null;
 		this.premove = null;
 		this.apply("disable");
@@ -1047,9 +1080,8 @@ export class GameSession implements SessionSource {
 			return;
 		}
 		const timing = this.timing;
-		const plan = timing
-			? timing.replan(rec.plan, this.timingContextFor(rec), "manual-now")
-			: rec.plan;
+		const ctx = timing ? this.timingContextFor(rec) : null;
+		const plan = timing && ctx ? timing.replan(rec.plan, ctx, "manual-now") : rec.plan;
 		this.apply("playNow");
 		this.deps.notify();
 		await executor.playNow(rec, plan, this.moveContext(rec));
@@ -1190,6 +1222,9 @@ export class GameSession implements SessionSource {
 
 	private onExecuted(report: ExecutionReport): void {
 		this.apply("executed");
+		// The move is on the board: the prediction has been spent, and the site's own last-move
+		// marking is what belongs there now.
+		this.clearBoardMarks();
 		this.recordMove(report);
 		this.deps.notify();
 	}
@@ -1291,7 +1326,8 @@ export class GameSession implements SessionSource {
 		executor.cancel();
 		const rec = this.rec;
 		const timing = this.timing;
-		if (rec && timing) timing.replan(rec.plan, this.timingContextFor(rec), "blur");
+		const ctx = rec && timing ? this.timingContextFor(rec) : null;
+		if (rec && timing && ctx) timing.replan(rec.plan, ctx, "blur");
 		this.deps.notify();
 	}
 
@@ -1337,6 +1373,21 @@ export class GameSession implements SessionSource {
 			to: rec.chosen.to,
 			style: settings.automation.highlightStyle,
 		});
+	}
+
+	/**
+	 * Erase whatever is marked on the board. The invariant is that a mark belongs to the
+	 * recommendation that is current *now*, so this runs at every point one stops being current:
+	 * the move was played (by the hand or by the owner), the position moved on, the colour is not
+	 * known yet, the game started or ended, the tab navigated, the switch went off, `Shift+X`.
+	 *
+	 * Before this existed the only two callers were the switch and `Shift+X`, so the mark for the
+	 * move just played sat on the board for the whole of the opponent's turn — and on a board that
+	 * draws through native markings a second `highlight` *stacked* on top of it rather than
+	 * replacing it (owner's live test, 2026-09-09: "old move highlights are not erased").
+	 */
+	private clearBoardMarks(): void {
+		this.deps.link.post(this.deps.tabId, { kind: "clearHighlight" });
 	}
 
 	/** Record the move that produced `snapshot` and the pace it was played at. */
@@ -1389,10 +1440,18 @@ export class GameSession implements SessionSource {
 		return this.game?.timeControl ?? this.snapshot?.timeControl;
 	}
 
-	private timingContextFor(rec: Recommendation): TimingContext {
+	/**
+	 * The timing model's view of the current move, or `null` when there is no position to build it
+	 * from — including the one that matters: a position whose colour is not known. There is no
+	 * default side here. Defaulting to white is what made the model plan, and the hand play, for
+	 * the opponent (owner's live test, 2026-09-09); a caller that cannot build a context does not
+	 * replan, which leaves the standing plan exactly as it was.
+	 */
+	private timingContextFor(rec: Recommendation): TimingContext | null {
 		const snapshot = this.snapshot;
 		const settings = this.deps.getSettings();
-		const myColor: Color = snapshot?.myColor ?? "w";
+		const myColor = snapshot?.myColor ?? null;
+		if (myColor === null) return null;
 		const [baseSec, incSec] = this.game ? this.timeControlSeconds(this.game) : [0, 0];
 		return {
 			fen: rec.fen,

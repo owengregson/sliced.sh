@@ -159,7 +159,15 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 		if (playing) return playing;
 		// The page shows my colour at the bottom unless the user turned the board round by hand,
 		// which it does not report separately: the bottom colour is the best DOM answer there is.
-		return this.bottomColor() ?? (this.isFlipped() ? "b" : "w");
+		//
+		// And when there is none — the bridge has not answered AND the clocks have not rendered,
+		// which is the live page's first second (owner's live test, 2026-09-09) — the answer is
+		// `null`, never a guess. `isFlipped()` would have said "white at the bottom" by default and
+		// the session would have predicted, highlighted and played the *opponent's* moves; a
+		// session that holds until the colour is known predicts nothing instead, which is strictly
+		// better. The bridge fills this in a moment later (`getPlayingAs()`), and the reading is
+		// republished then because `myColor` is part of the feed key below.
+		return this.bottomColor();
 	}
 
 	// ---- position -----------------------------------------------------------------

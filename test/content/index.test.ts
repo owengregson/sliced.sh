@@ -249,9 +249,12 @@ describe("content entry — commands", () => {
 			],
 			arrows: [{ from: "d2", to: "d4", color: expect.any(String) }],
 		});
+		// a second mark replaces the first rather than stacking on it: native `game.markings` only
+		// ever *adds*, so a redraw without this clear left the old squares on the board for good
 		feed.command({ kind: "arrow", lines: [{ from: "g1", to: "f3", weight: 1 }] });
 		expect(bridge.callsOf("draw")).toHaveLength(2);
-		expect(bridge.callsOf("clear")).toHaveLength(0);
+		expect(bridge.callsOf("clear")).toHaveLength(1);
+		expect(bridge.calls.at(-2)?.kind).toBe("clear");
 
 		feed.command({
 			kind: "observeMove",
@@ -260,6 +263,7 @@ describe("content entry — commands", () => {
 			timeoutMs: 300,
 		});
 		expect(bridge.calls.at(-1)?.kind).toBe("clear"); // cleared before the hand moves
+		expect(bridge.callsOf("clear")).toHaveLength(2);
 		await sleep(10); // the clear is acknowledged, the watch is armed
 		playD4(dom);
 		await waitFor(() => feed.of("observeMoveResult").length === 1, 2_000);
@@ -273,7 +277,7 @@ describe("content entry — commands", () => {
 		feed.command({ kind: "highlight", from: "e2", to: "e4", style: "squares" });
 		expect(bridge.callsOf("draw")).toHaveLength(2);
 		feed.command({ kind: "clearHighlight" }); // nothing drawn: no extra bridge call
-		expect(bridge.callsOf("clear")).toHaveLength(1);
+		expect(bridge.callsOf("clear")).toHaveLength(2);
 	});
 	it("observeMove waits for the page side to acknowledge the clear before watching the board", async () => {
 		const { feed, bridge, dom } = boot("chesscom-live");
