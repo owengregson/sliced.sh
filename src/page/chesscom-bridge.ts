@@ -34,6 +34,7 @@ import {
 	setTimeout_,
 } from "./bridge-common";
 import { overlay, overlayStatements } from "./highlight-overlay";
+import { cursor, cursorStatements } from "./virtual-cursor";
 
 const doc = js.id("document");
 const game = js.id("game");
@@ -58,6 +59,8 @@ export const chesscomBridge = defineProgram({
 		colors: "json",
 		retryMs: "number",
 		retryMaxMs: "number",
+		cursorClass: "string",
+		cursorFadeMs: "number",
 	},
 	entry: true,
 	build: (p) =>
@@ -70,6 +73,7 @@ export const chesscomBridge = defineProgram({
 			js.let_("keys", js.arr()),
 			js.let_("wait", p.retryMs),
 			...overlayStatements({ hosts: p.boardSelectors, cls: p.overlayClass, colors: p.colors }),
+			...cursorStatements({ cls: p.cursorClass, fadeMs: p.cursorFadeMs }),
 			// first board element (in ladder order) that carries the `game` API
 			js.const_(
 				"find",
@@ -275,6 +279,10 @@ export const chesscomBridge = defineProgram({
 						],
 					},
 					{ kind: KINDS.cursor, body: [post(KINDS.cursor, i, js.id(NAMES.cursor))] },
+					// Fix D, fire-and-forget (no reply): the mirror of the hand's own pointer. One
+					// command per dispatched point, so a reply each would double the traffic.
+					{ kind: KINDS.cursorTo, body: [cursor.to(q)] },
+					{ kind: KINDS.cursorHide, body: [cursor.hide()] },
 				],
 				[
 					// the SPA may have replaced the board since we attached

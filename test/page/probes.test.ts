@@ -22,10 +22,12 @@ function win(url = "https://www.chess.com/game/live/1") {
 const boardSelectors = [...SELECTORS.board];
 
 describe("registry", () => {
-	it("lists the five §5.5 programs, the bridge as an entry with seed-derived entry args, and every program is clean", () => {
+	it("lists the six §5.5 programs, the bridge as an entry with seed-derived entry args, and every program is clean", () => {
 		expect(programs.map((p) => [p.name, p.entry])).toEqual([
 			["chesscom-bridge", true],
 			["highlight-overlay", false],
+			// Fix D: the pointer mirror, embedded in the bridge and generated standalone like the overlay
+			["virtual-cursor", false],
 			["cursor-probe", false],
 			["focus-probe", false],
 			["verify-move-probe", false],

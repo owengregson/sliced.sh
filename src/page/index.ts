@@ -34,6 +34,7 @@ import { cursorProbe } from "./cursor-probe";
 import { focusProbe } from "./focus-probe";
 import { highlightOverlay } from "./highlight-overlay";
 import { verifyMoveProbe } from "./verify-move-probe";
+import { virtualCursor } from "./virtual-cursor";
 
 /** Overlay fallback colours (the adapter sends the themed ones in every `draw`). */
 export const OVERLAY_COLORS = {
@@ -42,16 +43,18 @@ export const OVERLAY_COLORS = {
 	arrow: TOKENS.color.dark.hlArrow,
 } as const;
 
-/** The two seed-derived direction tokens plus the overlay class (§13.3 rules 3, 5). */
+/** The two seed-derived direction tokens plus the inserted elements' classes (§13.3 rules 3, 5). */
 export function bridgeTokens(env: EntryEnv): {
 	token: string;
 	peer: string;
 	overlayClass: string;
+	cursorClass: string;
 } {
 	return {
 		token: deriveToken(env.seed, SPOOF_PURPOSES.pageToken),
 		peer: deriveToken(env.seed, SPOOF_PURPOSES.contentToken),
 		overlayClass: deriveToken(env.seed, SPOOF_PURPOSES.overlayClass),
+		cursorClass: deriveToken(env.seed, SPOOF_PURPOSES.cursorClass),
 	};
 }
 
@@ -62,11 +65,13 @@ export const chesscomEntryArgs = (env: EntryEnv) => ({
 	colors: OVERLAY_COLORS,
 	retryMs: TIMINGS.bridgeRetryMs,
 	retryMaxMs: TIMINGS.bridgeRetryMaxMs,
+	cursorFadeMs: TIMINGS.virtualCursorFadeMs,
 });
 
 export const programs: readonly AnyPageProgram[] = [
 	{ ...chesscomBridge, entryArgs: chesscomEntryArgs },
 	highlightOverlay,
+	virtualCursor,
 	cursorProbe,
 	focusProbe,
 	verifyMoveProbe,

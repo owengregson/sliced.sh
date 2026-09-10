@@ -236,6 +236,26 @@ describe("chesscom-bridge — behaviour", () => {
 		);
 		expect(posts.length).toBe(before);
 	});
+	// Fix D: the pointer mirror is embedded in the bridge, so the bridge is the channel the
+	// service worker actually drives. Its own presence rules are covered in
+	// `test/page/virtual-cursor.test.ts`; what matters here is that the bridge routes the two
+	// commands and stays silent (the stream is fire-and-forget — a reply per point would double it).
+	it("routes the pointer mirror's commands and answers neither", async () => {
+		const { win, posts } = await boot();
+		const cls = TOKENS_FOR_SEED.cursorClass;
+		expect(win.document.querySelector(`.${cls}`)).toBeNull();
+		const before = posts.length;
+		const env = command("cursorTo", "0", { x: 120, y: 240, d: true });
+		delete env.i;
+		sendToPage(win, env);
+		expect(win.document.querySelectorAll(`.${cls}`)).toHaveLength(1);
+		expect(posts.length).toBe(before);
+		const hide = command("cursorHide", "0");
+		delete hide.i;
+		sendToPage(win, hide);
+		expect(win.document.querySelector(`.${cls}`)).toBeNull();
+		expect(posts.length).toBe(before);
+	});
 	it("re-attaches when the SPA replaces the board element and posts load", async () => {
 		const { win, posts, game } = await boot();
 		const fresh = fakeGame("8/8/8/8/8/8/8/K6k w - - 0 1");

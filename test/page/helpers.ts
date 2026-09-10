@@ -19,6 +19,7 @@ export const TOKENS_FOR_SEED = {
 	page: deriveToken(SEED, SPOOF_PURPOSES.pageToken),
 	content: deriveToken(SEED, SPOOF_PURPOSES.contentToken),
 	overlayClass: deriveToken(SEED, SPOOF_PURPOSES.overlayClass),
+	cursorClass: deriveToken(SEED, SPOOF_PURPOSES.cursorClass),
 } as const;
 
 /** The seven §13.3 rule 5 words, from the build lint (`scripts/check-constants.ts`), once. */
