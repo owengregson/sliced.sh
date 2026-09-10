@@ -46,7 +46,7 @@ import { LIMITS } from "@core/constants/limits";
 import type { GamePortCommand, GamePortMessage } from "@core/constants/messages";
 import { LOCAL_KEYS } from "@core/constants/storage-keys";
 import { TELEMETRY_BANDS } from "@core/constants/telemetry";
-import type { TimingProfile } from "@core/constants/timings";
+import { TIMINGS, type TimingProfile } from "@core/constants/timings";
 import type { AnalysisHandle, AnalysisRequest } from "@core/engine/types";
 import { log } from "@core/logger";
 import type { TimeControlClass } from "@core/motor/types";
@@ -281,6 +281,9 @@ export class GameSession implements SessionSource {
 	private startClockMs = 0;
 	/** A `playNow` issued while the pipeline was still running. */
 	private playWhenReady = false;
+	/** The one pending re-delivery of a withheld position (`reconsider`), and its attempt count. */
+	private retryTimer: unknown = null;
+	private retryAttempts = 0;
 	private disposed = false;
 	/** `mayAct()` as of the last settings write this session saw (§4.4 flip detection). */
 	private acting: boolean;
@@ -542,6 +545,7 @@ export class GameSession implements SessionSource {
 		this.ponderer?.dispose();
 		this.deps.autoQueue.cancel(this.deps.tabId);
 		this.window.discard();
+		this.clearRetry();
 		this.deps.onLivenessChanged?.();
 	}
 
@@ -926,6 +930,12 @@ export class GameSession implements SessionSource {
 	private async runPipeline(snapshot: PositionSnapshot): Promise<void> {
 		const pipeline = this.pipeline;
 		const timing = this.timing;
+		// Fix G looked at this return first — "the engine is not ready yet" — and it is *not* the
+		// silent hold that loses the first move. Both halves are decided once, for good, before any
+		// position arrives: `SessionRegistry` always hands the session its `EngineController`
+		// (non-null from worker boot), and `this.pipeline` / `this.timing` are written only by
+		// `startGame` and `reprofile`. Nothing here becomes true a moment later, so there is nothing
+		// to re-deliver. The engine being slow reaches us further down, at `!outcome`.
 		if (!pipeline || !timing) return;
 		const ac = new AbortController();
 		this.pipelineAc = ac;
@@ -963,6 +973,11 @@ export class GameSession implements SessionSource {
 		this.pipelineAc = null;
 		if (!outcome) {
 			log.info("game-session: no recommendation for this position", { fen: snapshot.fen });
+			// Fix G: the engine produced no usable line and the book had nothing — a search that
+			// failed, crashed or answered `bestmove (none)` while Stockfish was still coming up. A
+			// moment later it would have. Every move but the first gets that moment from the
+			// opponent's reply; the first move as white has to ask again itself.
+			this.retryWhenReady("the engine produced no line for this position");
 			return;
 		}
 		this.rec = outcome.rec;
@@ -1023,6 +1038,99 @@ export class GameSession implements SessionSource {
 			if (isSquare(to)) out.push(to);
 		}
 		return out;
+	}
+
+	/**
+	 * One re-delivery of the position the session is still sitting on.
+	 *
+	 * The invariant: **a recommendation withheld because something was not ready yet is acted on
+	 * when that thing becomes ready.** For every move but the first, the opponent's reply is what
+	 * supplies that second chance — a fresh position runs the whole §3.2 pipeline again, so a
+	 * momentary "not ready" costs one move. Playing white at ply 0 there is no reply and the
+	 * position cannot change until the owner moves by hand, so the session has to carry its own
+	 * second chance; without it the game sits there until the clock runs out (owner's report,
+	 * 2026-09-10: "it sometimes doesnt make the first move (if youre on white)").
+	 *
+	 * One mechanism, because "not ready yet" is one condition. Its triggers are the moments a hold
+	 * is released: the automatic `executor.arm()` resolving (`attachExecutor` — the manual `arm()`
+	 * has always re-checked, this is the same re-check for the path that did not), and the
+	 * `retryWhenReady` timer armed where `runPipeline` gives up on a search that answered nothing.
+	 * It re-runs the *same* tail `onPosition` would: the standing recommendation if there is one, a
+	 * fresh pipeline run if there is not.
+	 *
+	 * The failure mode of all of this is playing twice, so every re-delivery goes through one gate:
+	 *
+	 *   - a move already pending (or on its way to the board) **is** this position's move — the
+	 *     check `arm()` makes, widened by the hand's own run because a timer can fire mid-move and
+	 *     a second request behind a cancelled run is parked, i.e. a second piece;
+	 *   - and the §3.3 state — not the snapshot — is what says whether a move is still owed at all.
+	 *     `live:opponent-turn` reaches here holding a *stale* my-turn snapshot and its
+	 *     recommendation whenever the owner played by hand (or our move landed and the page has not
+	 *     published the next position yet); running the pipeline on that would recommend, and an
+	 *     armed hand would play, a move for the **opponent**.
+	 *
+	 * Nothing is replanned: `rec.plan` is handed over as it stands, and how late a re-delivered
+	 * plan should be paced is the timing model's question, not this one's.
+	 */
+	private async reconsider(reason: string): Promise<void> {
+		if (this.disposed) return;
+		const snapshot = this.snapshot;
+		// §4.4: the switch and the colour hold here exactly as they do on the position path.
+		if (!snapshot || !this.mayActOn(snapshot)) return;
+		const executor = this.executorHandle;
+		if (executor && (executor.pendingMove() !== null || executor.isRunning())) return;
+		if (this.state !== "live:my-turn:analysing" && this.state !== "live:my-turn:recommended") return;
+		const rec = this.rec;
+		if (rec) {
+			log.info("game-session: acting on the recommendation that was held back", {
+				tabId: this.deps.tabId,
+				ply: snapshot.ply,
+				uci: rec.chosen.uci,
+				reason,
+			});
+			await this.actOnRecommendation(rec, this.deps.getSettings());
+			return;
+		}
+		// A search already running for this position is itself the second chance.
+		if (this.pipelineAc !== null) return;
+		log.info("game-session: running the pipeline again for the held position", {
+			tabId: this.deps.tabId,
+			ply: snapshot.ply,
+			reason,
+		});
+		await this.runPipeline(snapshot);
+	}
+
+	/**
+	 * Arm the one re-delivery above, `TIMINGS.sessionRetryMs` from now. The budget
+	 * (`TIMINGS.sessionRetryMax`) is per position — `cancelInFlight` resets it — and when it is
+	 * spent the session says so at `warn` rather than sitting silently: the service worker's own
+	 * `log.*` calls reach the panel's log stream, where `warn` is already a rendered kind
+	 * (`COPY.engine.logKinds.warn`).
+	 */
+	private retryWhenReady(reason: string): void {
+		if (this.disposed || this.retryTimer !== null) return;
+		if (this.retryAttempts >= TIMINGS.sessionRetryMax) {
+			log.warn("game-session: nothing became ready — this position cannot be played", {
+				tabId: this.deps.tabId,
+				ply: this.snapshot?.ply ?? null,
+				attempts: this.retryAttempts,
+				reason,
+			});
+			return;
+		}
+		this.retryAttempts += 1;
+		this.retryTimer = this.scheduler.setTimeout(() => {
+			this.retryTimer = null;
+			void this.reconsider(reason);
+		}, TIMINGS.sessionRetryMs);
+	}
+
+	/** Drop the pending re-delivery and its budget (the position it belonged to is over). */
+	private clearRetry(): void {
+		if (this.retryTimer !== null) this.scheduler.clearTimeout(this.retryTimer);
+		this.retryTimer = null;
+		this.retryAttempts = 0;
 	}
 
 	// ── premove (§7.4) ─────────────────────────────────────────────────────
@@ -1374,8 +1482,22 @@ export class GameSession implements SessionSource {
 		// happens here — before the first position of the game, i.e. outside every move window
 		// (§13.4) — never once a move is due.
 		// §4.4: neither default arms anything while the assistant is off.
+		// Fix G: and the arm is awaited for its *result*, not fired and forgotten. `arm()` attaches
+		// the debugger, which is slow enough to lose the race with the first position — and the
+		// manual arm (Shift+A) has always re-checked the recommendation it may have raced, while
+		// this path did not. At ply 0 as white that re-check is the only one there will ever be.
 		if (this.mayAct() && (wasArmed || this.deps.getSettings().automation.autoMove))
-			void executor.arm().catch((error: unknown) => log.warn("game-session: re-arm failed", error));
+			void executor
+				.arm()
+				.then(
+					() => this.reconsider("the hand finished arming"),
+					(error: unknown) => log.warn("game-session: re-arm failed", error)
+				)
+				.catch((error: unknown) =>
+					log.debug("game-session: the re-check after arming failed", {
+						error: errorMessage(error),
+					})
+				);
 	}
 
 	private detachExecutor(): void {
@@ -1518,6 +1640,9 @@ export class GameSession implements SessionSource {
 		const pre = this.preAnalysis;
 		this.preAnalysis = null;
 		if (pre) void pre.stop();
+		// Fix G: whatever the held position was waiting for, it is not this session's business any
+		// more — and the per-position retry budget starts fresh with the next one.
+		this.clearRetry();
 	}
 
 	/** Content-script settings that gate what it may draw (§13.3 rule 4). */
