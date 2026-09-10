@@ -14,6 +14,7 @@ import {
 	type GamePortCommand,
 	type GamePortMessage,
 	PORT_NAMES,
+	TIMINGS,
 } from "@core/constants";
 import { type ConnectedPort, connectPort } from "@core/messaging/ports";
 import type { Occupancy, Pt, Rect } from "@core/motor/types";
@@ -69,6 +70,11 @@ let adapter: {
 	occupancy: Partial<Record<Square, Occupancy>>;
 	/** Hook run when a `boardCheck` arrives (before the reply); return false to swallow it. */
 	onBoardCheck: () => boolean;
+	/**
+	 * Scripted `observeMove` verdicts, consumed in order: `false` rejects that observation outright
+	 * (the adapter looked and the move was not there). An empty list means the normal settle path.
+	 */
+	observeVerdicts: boolean[];
 	/** Hook run when the board `geometry` request arrives (before the reply); return false to swallow it. */
 	onGeometry: () => boolean;
 	lastDown: string | null;
@@ -150,6 +156,10 @@ function bootFakeAdapter(): void {
 				port.post({ kind: "boardCheckResult", id: cmd.id, occupancy });
 			} else if (cmd.kind === "observeMove") {
 				adapter.observeRequests.push({ from: cmd.expected.from, to: cmd.expected.to });
+				if (adapter.observeVerdicts.shift() === false) {
+					port.post({ kind: "observeMoveResult", id: cmd.id, ok: false, reason: "not observed" });
+					return;
+				}
 				const timer = setTimeout(() => {
 					const idx = pending.findIndex((p) => p.id === cmd.id);
 					if (idx < 0) return;
@@ -176,6 +186,7 @@ beforeEach(async () => {
 		boardChecks: [],
 		occupancy: startOccupancy(),
 		onBoardCheck: () => true,
+		observeVerdicts: [],
 		onGeometry: () => true,
 		lastDown: null,
 		lastUp: null,
@@ -232,7 +243,6 @@ beforeEach(async () => {
 				scheduler: defaultScheduler,
 				persona: "balanced",
 				tcClass: "blitz",
-				style: "drag",
 				previewScale: 0,
 				gameSeed: "game-1",
 			});
@@ -422,6 +432,59 @@ describe("executor: a scheduled drag move end to end", () => {
 		expect(blob?.PointerOffset).toBeGreaterThan(0);
 		expect(shadow.observations[0]?.lichessBlur).toBe(0);
 		expect(shadow.pendingSelection()).toBeNull();
+	});
+
+	it("an unverified first drag is retried as a SECOND DRAG — never a click-click", async () => {
+		// Click-to-move was removed end to end, so the retry policy has no "other tier" to fall back
+		// to. Driven through the real hand: the first drag lands, the adapter says it does not see the
+		// move, the pre-retry re-check says the same, and the hand dispatches a second *drag*. What
+		// distinguishes the two forms at the page is the held leg — a click-click would show a
+		// press/release pair on the from-square with nothing held, then a second pair on the
+		// to-square — so both pairs are checked for a held travel from e2 to e4.
+		const reports: ExecutionReport[] = [];
+		// the move's own verification and the pre-retry re-check both reject; the retry's verifies
+		adapter.observeVerdicts = [false, false];
+		await sw.run(async () => {
+			for (const ev of ["executed", "failed"] as const) executor.on(ev, (r) => reports.push(r));
+			await executor.arm();
+			focus.positionArrived(tabId, sim.now());
+			const plan = plan1200();
+			executor.schedule(recommendation(plan), plan);
+		});
+		await sw.run(() => sim.time.advanceUntilIdle({ maxAdvanceMs: 30_000 }));
+
+		expect(reports).toHaveLength(1);
+		const result = (reports[0] as ExecutionReport).result;
+		expect(result).toMatchObject({ ok: true, outcome: "executed", tier: "drag", attempts: 2 });
+		// three board reads: the first verification, the pre-retry re-check, the retry's verification
+		expect(adapter.observeRequests).toEqual([
+			{ from: "e2", to: "e4" },
+			{ from: "e2", to: "e4" },
+			{ from: "e2", to: "e4" },
+		]);
+		const cmds = commands();
+		const presses = cmds.filter((c) => c.type === "mousePressed");
+		const releases = cmds.filter((c) => c.type === "mouseReleased");
+		expect(presses).toHaveLength(2);
+		expect(releases).toHaveLength(2);
+		for (let i = 0; i < 2; i++) {
+			const press = presses[i] as Cmd;
+			const release = releases[i] as Cmd;
+			expect(inside(press, squareRect("e2"))).toBe(true);
+			expect(inside(release, squareRect("e4"))).toBe(true);
+			const held = cmds.slice(cmds.indexOf(press) + 1, cmds.indexOf(release));
+			expect(held.length).toBeGreaterThan(0);
+			for (const c of held) expect(c).toMatchObject({ type: "mouseMoved", buttons: 1 });
+		}
+		// the retry really is a second dispatch, after the registry delay
+		expect((presses[1] as Cmd).at - (releases[0] as Cmd).at).toBeGreaterThanOrEqual(
+			TIMINGS.executorRetryDelayMs[0]
+		);
+		// and the page saw two drags from e2 to e4, nothing else
+		expect(submitted).toEqual([
+			["e2", "e4"],
+			["e2", "e4"],
+		]);
 	});
 
 	it("a blur inside the move window skips the move (no press, nothing after the edge) and reports `skipped`", async () => {

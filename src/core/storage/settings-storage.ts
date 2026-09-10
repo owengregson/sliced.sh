@@ -43,11 +43,6 @@ const TIMING_PROFILES: EnumSet<Settings["timing"]["profile"]> = {
 	slow: true,
 	custom: true,
 };
-const EXEC_STYLES: EnumSet<Settings["execution"]["style"]> = {
-	drag: true,
-	click: true,
-	auto: true,
-};
 const BACKENDS: EnumSet<Settings["execution"]["backend"]> = { cdp: true, native: true };
 const PREVIEW_SELECTS: EnumSet<Settings["execution"]["previewSelects"]> = { auto: true, off: true };
 const HIGHLIGHT_STYLES: EnumSet<Settings["automation"]["highlightStyle"]> = {
@@ -147,7 +142,6 @@ export function normalizeSettings(raw: unknown): Settings {
 			respectBudget: bool(timing.respectBudget, D.timing.respectBudget),
 		},
 		execution: {
-			style: oneOf(execution.style, D.execution.style, EXEC_STYLES),
 			motorSpeed: num(execution.motorSpeed, D.execution.motorSpeed),
 			keepDebuggerAttached: bool(execution.keepDebuggerAttached, D.execution.keepDebuggerAttached),
 			verifyMoves: bool(execution.verifyMoves, D.execution.verifyMoves),

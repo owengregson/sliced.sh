@@ -168,7 +168,7 @@ describe("game session: the assistant switch (Settings.enabled, §4.4)", () => {
 		// that the hand lets go — of the button and then of the debugger — and that nothing further
 		// is searched, recommended or played.
 		h = await createGameHarness({
-			settings: { automation: { autoMove: true }, execution: { style: "drag" } },
+			settings: { automation: { autoMove: true } },
 		});
 		await h.sw.run(() => h.session().command("armAutoMove"));
 		await h.arrive();

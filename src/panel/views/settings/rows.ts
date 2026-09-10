@@ -284,12 +284,6 @@ export const ROWS: readonly RowSpec[] = [
 	toggle("automation.autoMove"),
 	toggle("automation.autoQueue"),
 	{
-		kind: "segment",
-		path: "execution.style",
-		...rowCopy("execution.style"),
-		items: items(SETTINGS_COPY.options.style),
-	},
-	{
 		kind: "slider",
 		path: "execution.motorSpeed",
 		...rowCopy("execution.motorSpeed"),

@@ -37,7 +37,6 @@ export interface Settings {
 		respectBudget: boolean;
 	};
 	execution: {
-		style: "drag" | "click" | "auto";
 		motorSpeed: number;
 		keepDebuggerAttached: boolean;
 		verifyMoves: boolean;
@@ -143,7 +142,6 @@ export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze<Settings>({
 		respectBudget: true,
 	},
 	execution: {
-		style: "auto",
 		motorSpeed: 1,
 		keepDebuggerAttached: true,
 		verifyMoves: true,

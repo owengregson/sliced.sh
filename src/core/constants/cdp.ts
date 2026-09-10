@@ -115,9 +115,13 @@ export const EXECUTOR = {
 	approachFitToleranceMs: 10,
 	/** The rescale factor applied to a natural travel path is clamped to this band. */
 	travelScaleClamp: [0.5, 2.5],
-	/** Per-game dominant click style share (drag vs click-click), never a per-move coin flip. */
-	dominantStyleShare: 0.7,
-	/** Retry attempts including the first (drag → click-click once, no third attempt). */
+	/**
+	 * The one way a move is committed (`ExecutionResult.tier`): a drag. Click-to-move was removed
+	 * end to end after the owner's live game; preview selections (§9.3a) still click, but a
+	 * preview is not a move.
+	 */
+	committedTier: "drag",
+	/** Dispatch attempts including the first (a drag, then one more drag; no third attempt). */
 	maxAttempts: 2,
 	/** Free-move dispatch cadence for the post-drop rest tremor (ms). */
 	postDropRestMs: [120, 320] as [number, number],

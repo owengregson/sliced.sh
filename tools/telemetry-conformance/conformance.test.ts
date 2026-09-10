@@ -22,8 +22,19 @@ import {
 	summarizeAc,
 } from "./ac-model";
 
-/** Games in the offline batch, and the target the §7.2 band is read at. */
-const BATCH = { games: 4, movesPerGame: 30, targetElo: SIM_TELEMETRY.game.targetElo };
+/**
+ * Games in the offline batch, and the target the §7.2 band is read at.
+ *
+ * `games` is 12, not 4, so the batch's non-trivial moves clear
+ * `TELEMETRY_BANDS.multiSelect.minMovesForBand` (N ≈ 254) and the §13.2 preview rate is checked
+ * against the real 4–12 % **population** band rather than only the weak never-0 % invariant. At 4
+ * games the batch carried N ≈ 83 — below the band's own declared minimum — so its verdict was a
+ * coin-flip on the seeds: any change that reshuffles the per-move RNG stream (the drag-only change
+ * removed a per-move style draw) re-rolls the count, and four 20-eligible-move games drawing zero
+ * previews at p ≈ 0.08 is a 1-in-800 streak that duly happened. Same reasoning, and the same
+ * remedy, as `SIM_TELEMETRY.previewPool`'s own comment. The band constants are unchanged.
+ */
+const BATCH = { games: 12, movesPerGame: 30, targetElo: SIM_TELEMETRY.game.targetElo };
 const REPORT_PY = path.resolve(import.meta.dir, "report.py");
 const BATCH_TIMEOUT_MS = 60_000;
 

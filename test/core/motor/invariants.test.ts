@@ -2,11 +2,11 @@
 // site-faithful selection model (chessground / chess.com: a press on a legal destination of
 // the selected piece plays that move; a press on an own piece selects it; anything else clears).
 import { describe, expect, it } from "bun:test";
-import { CLICK, MOTOR_DEFAULTS, PROFILE_NOISE, SAMPLING } from "@core/motor/constants";
+import { MOTOR_DEFAULTS, PROFILE_NOISE, SAMPLING } from "@core/motor/constants";
 import { ExplorationPlanner } from "@core/motor/exploration";
-import { perGameProfile, perMoveProfile, sampleRange } from "@core/motor/motor-profile";
+import { perGameProfile, perMoveProfile } from "@core/motor/motor-profile";
 import { generatePath, grabWobble } from "@core/motor/path-generator";
-import { clickReleasePoint, plausibleStart, samplePointInRect } from "@core/motor/sampling";
+import { plausibleStart, samplePointInRect } from "@core/motor/sampling";
 import type { MotorProfile, Occupancy, PathPoint, Pt } from "@core/motor/types";
 import { createRng, type Rng } from "@core/rng";
 import type { Square } from "@typedefs/game";
@@ -109,7 +109,6 @@ describe("motor invariants (500 random moves)", () => {
 			}
 			const fromRect = squareRect(pos.committed.from);
 			const toRect = squareRect(pos.committed.to);
-			const style = rng.chance(0.6) ? "drag" : "click";
 			const sel = { selected: null as Square | null };
 			let pressCount = 0;
 
@@ -197,49 +196,26 @@ describe("motor invariants (500 random moves)", () => {
 			pressCount++;
 			expect(press(sel, pos.committed.from, pos)).toBe(false);
 			expect(sel.selected).toBe(pos.committed.from);
-			if (style === "drag") {
-				const wobble = grabWobble(cursor, m, rng);
-				checkPath(cursor, wobble, m);
-				cursor = { x: wobble[wobble.length - 1]!.x, y: wobble[wobble.length - 1]!.y };
-				const drop = samplePointInRect(
-					toRect,
-					SAMPLING.release.sigmaFrac,
-					SAMPLING.release.innerFrac,
-					rng
-				);
-				const travel = generatePath(cursor, drop, toRect, m, rng);
-				checkPath(cursor, travel, m);
-				const last = travel[travel.length - 1]!;
-				expect(seenPaths.has(JSON.stringify(travel))).toBe(false);
-				seenPaths.add(JSON.stringify(travel));
-				cursor = { x: last.x, y: last.y };
-				expect(inside(cursor, toRect)).toBe(true); // mouseReleased inside its target
-			} else {
-				const release = clickReleasePoint(cursor, rng);
-				expect(dist(cursor, release)).toBeLessThanOrEqual(2);
-				cursor = release;
-				const second = samplePointInRect(
-					toRect,
-					SAMPLING.press.sigmaFrac,
-					SAMPLING.press.innerFrac,
-					rng
-				);
-				const travel = generatePath(cursor, second, toRect, m, rng);
-				checkPath(cursor, travel, m);
-				const last = travel[travel.length - 1]!;
-				cursor = { x: last.x, y: last.y };
-				expect(inside(cursor, toRect)).toBe(true);
-				pressCount++;
-				// The second click of the committed move is the only press that plays a move.
-				expect(press(sel, pos.committed.to, pos)).toBe(true);
-				const rel = clickReleasePoint(cursor, rng);
-				expect(dist(cursor, rel)).toBeLessThanOrEqual(2);
-				cursor = rel;
-				expect(sampleRange(CLICK.interClickGapMs, rng)).toBeGreaterThanOrEqual(
-					CLICK.interClickGapMs[0]
-				);
-			}
-			expect(pressCount).toBeLessThanOrEqual(2 + 2 * 2);
+			// The committed move is a drag, always: grab, travel, release inside the destination.
+			// There is no click-click form to simulate — it was removed end to end.
+			const wobble = grabWobble(cursor, m, rng);
+			checkPath(cursor, wobble, m);
+			cursor = { x: wobble[wobble.length - 1]!.x, y: wobble[wobble.length - 1]!.y };
+			const drop = samplePointInRect(
+				toRect,
+				SAMPLING.release.sigmaFrac,
+				SAMPLING.release.innerFrac,
+				rng
+			);
+			const travel = generatePath(cursor, drop, toRect, m, rng);
+			checkPath(cursor, travel, m);
+			const last = travel[travel.length - 1]!;
+			expect(seenPaths.has(JSON.stringify(travel))).toBe(false);
+			seenPaths.add(JSON.stringify(travel));
+			cursor = { x: last.x, y: last.y };
+			expect(inside(cursor, toRect)).toBe(true); // mouseReleased inside its target
+			// one committed press plus at most two previews, each with at most one deselect click
+			expect(pressCount).toBeLessThanOrEqual(1 + 2 * 2);
 		}
 		expect(moves).toBe(500);
 		expect(previews).toBeGreaterThan(0);

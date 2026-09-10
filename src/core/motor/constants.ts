@@ -110,9 +110,12 @@ export const SAMPLING = {
 	offBoardPx: [6, 40] as MsRange,
 } as const;
 
-/** Click mechanics (§9.3, §13.5). */
+/**
+ * Click mechanics (§9.3, §13.5). A *committed* move is always a drag, so there is no inter-click
+ * gap here any more; what is left serves the preview selections (§9.3a) and the drag's own
+ * pre-press pause.
+ */
 export const CLICK = {
-	interClickGapMs: [90, 220] as MsRange,
 	/** Real click drift: press and release within 2 px (integer ±1). */
 	releaseDriftPx: 1,
 	prePressPauseMs: [15, 60] as MsRange,

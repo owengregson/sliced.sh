@@ -72,7 +72,13 @@ export interface ExecutionResult {
 	ok: boolean;
 	outcome: "executed" | "skipped" | "paused" | "aborted" | "failed";
 	reason?: string;
-	tier: "drag" | "click";
+	/**
+	 * How the move was committed. Every committed move is a drag — click-to-move was removed
+	 * (the owner's live-game report): the field stays because the panel's Last-action row and
+	 * the timing log name the input method, and a second inhabitant would have to be added back
+	 * deliberately rather than by accident.
+	 */
+	tier: "drag";
 	attempts: number;
 	endPoint: { x: number; y: number };
 	elapsedMs: number;

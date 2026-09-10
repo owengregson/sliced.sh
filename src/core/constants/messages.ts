@@ -11,7 +11,6 @@ import type { Occupancy, Rect } from "@core/motor/types";
 import type { EngineStatus, EngineVariant, EvalLine } from "@typedefs/engine";
 import type {
 	ChosenMove,
-	ExecutionResult,
 	GameMeta,
 	GameResult,
 	GameSessionView,
@@ -127,7 +126,7 @@ export type ToastLevel = "info" | "warn" | "error";
 export type PanelToast =
 	| {
 			key: typeof TOAST_KEYS.played;
-			args: { san: string; elapsedMs: number; tier: ExecutionResult["tier"] };
+			args: { san: string; elapsedMs: number };
 	  }
 	| { key: typeof TOAST_KEYS.notVerified }
 	| { key: typeof TOAST_KEYS.reattached };

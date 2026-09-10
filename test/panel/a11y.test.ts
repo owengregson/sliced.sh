@@ -147,8 +147,8 @@ function kitchenSinkView(): View {
 				createToggle(section, { label: COPY.toggle.highlight, checked: true, onChange() {} }),
 				createChipGroup(section, {
 					items: [
-						{ id: "a", label: COPY.execution.drag },
-						{ id: "b", label: COPY.execution.click },
+						{ id: "a", label: COPY.common.on },
+						{ id: "b", label: COPY.common.off },
 					],
 					value: "a",
 					onChange() {},

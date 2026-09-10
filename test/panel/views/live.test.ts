@@ -456,12 +456,12 @@ describe("move card states (§5.6)", () => {
 			kind: "toast",
 			level: "info",
 			key: TOAST_KEYS.played,
-			args: { san: "Nf3", elapsedMs: 3900, tier: "click" },
+			args: { san: "Nf3", elapsedMs: 3900 },
 		});
 		await dom.tick(0);
 		expect(h.toasts()).toHaveLength(1);
 		expect(h.toasts()[0]?.querySelector(".sl-toast__text")?.textContent).toBe(
-			COPY.toast.played("Nf3", "3.9", COPY.execution.click)
+			COPY.toast.played("Nf3", "3.9", COPY.execution.drag)
 		);
 	});
 });

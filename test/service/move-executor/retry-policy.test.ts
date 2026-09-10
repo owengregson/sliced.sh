@@ -1,19 +1,16 @@
-// test/service/move-executor/retry-policy.test.ts — Step 4: drag → click-click once, never double-move, no third attempt.
+// test/service/move-executor/retry-policy.test.ts — Step 4: a drag, then one more drag, never a
+// double-move, no third attempt. Click-to-move was removed end to end, so there is no "other
+// tier": `runWithRetry` dispatches `EXECUTOR.maxAttempts` drags and nothing else.
 import { describe, expect, it } from "bun:test";
 import { EXECUTOR, TIMINGS } from "@core/constants";
-import type { ClickStyle, ExecutionResult } from "@core/motor/types";
-import {
-	otherTier,
-	retryDelayMs,
-	runWithRetry,
-	tiersFor,
-} from "@service/move-executor/retry-policy";
+import type { ExecutionResult } from "@core/motor/types";
+import { retryDelayMs, runWithRetry } from "@service/move-executor/retry-policy";
 import type { VerifyResult } from "@service/move-executor/verifier";
 
-const dispatched = (tier: ClickStyle): ExecutionResult => ({
+const dispatched = (): ExecutionResult => ({
 	ok: true,
 	outcome: "executed",
-	tier,
+	tier: EXECUTOR.committedTier,
 	attempts: 1,
 	endPoint: { x: 1, y: 1 },
 	elapsedMs: 100,
@@ -21,7 +18,8 @@ const dispatched = (tier: ClickStyle): ExecutionResult => ({
 });
 
 interface Harness {
-	attempts: ClickStyle[];
+	/** The index of every attempt `runWithRetry` dispatched, in order. */
+	attempts: number[];
 	verifies: number[];
 	rechecks: number;
 	delays: number[];
@@ -29,7 +27,7 @@ interface Harness {
 	checks: AbortController[];
 	/** Called when a check starts (lets a test abort that very check = a further cancel). */
 	onCheck: (ac: AbortController) => void;
-	run(style?: ClickStyle): Promise<ExecutionResult>;
+	run(): Promise<ExecutionResult>;
 }
 
 const ABORTED_CHECK: VerifyResult = { outcome: "unavailable", reason: "aborted" };
@@ -37,7 +35,7 @@ const ABORTED_CHECK: VerifyResult = { outcome: "unavailable", reason: "aborted" 
 function harness(
 	verify: VerifyResult[],
 	recheck: VerifyResult[] = [],
-	attempt: (tier: ClickStyle, i: number) => ExecutionResult = dispatched,
+	attempt: (i: number) => ExecutionResult = dispatched,
 	signal?: AbortSignal
 ): Harness {
 	const h: Harness = {
@@ -47,12 +45,11 @@ function harness(
 		delays: [],
 		checks: [],
 		onCheck: () => {},
-		run: (style = "drag") =>
+		run: () =>
 			runWithRetry({
-				style,
-				attempt: async (tier, i) => {
-					h.attempts.push(tier);
-					return attempt(tier, i);
+				attempt: async (i) => {
+					h.attempts.push(i);
+					return attempt(i);
 				},
 				// both checks honour their signal: an aborted check never looks at the board
 				verify: async (timeoutMs, sig) => {
@@ -83,12 +80,9 @@ function harness(
 }
 
 describe("retry policy tables", () => {
-	it("drag retries as click-click and vice versa; at most maxAttempts tiers; delays from the registry", () => {
-		expect(otherTier("drag")).toBe("click");
-		expect(otherTier("click")).toBe("drag");
-		expect(tiersFor("drag")).toEqual(["drag", "click"]);
-		expect(tiersFor("click")).toEqual(["click", "drag"]);
-		expect(tiersFor("drag")).toHaveLength(EXECUTOR.maxAttempts);
+	it("the registry allows exactly two dispatches and the delay table's last entry repeats", () => {
+		expect(EXECUTOR.maxAttempts).toBe(2);
+		expect(EXECUTOR.committedTier).toBe("drag");
 		expect(retryDelayMs(1)).toBe(TIMINGS.executorRetryDelayMs[0]);
 		expect(retryDelayMs(99)).toBe(TIMINGS.executorRetryDelayMs.at(-1) as number);
 	});
@@ -99,23 +93,24 @@ describe("runWithRetry", () => {
 		const h = harness([{ outcome: "ok" }]);
 		const r = await h.run();
 		expect(r).toMatchObject({ ok: true, outcome: "executed", tier: "drag", attempts: 1 });
-		expect(h.attempts).toEqual(["drag"]);
+		expect(h.attempts).toEqual([0]);
 		expect(h.verifies).toEqual([TIMINGS.executorVerifyTimeoutMs]);
 		expect(h.rechecks).toBe(0);
 		expect(h.delays).toEqual([]);
 	});
 
-	it("an unverified drag retries once as click-click after the registry delay, then fails — never a third attempt", async () => {
+	it("an unverified drag retries once as another drag after the registry delay, then fails — never a third attempt", async () => {
 		const h = harness([{ outcome: "rejected", reason: "snapped back" }, { outcome: "timeout" }]);
 		const r = await h.run();
 		expect(r).toMatchObject({
 			ok: false,
 			outcome: "failed",
 			reason: EXECUTOR.reasons.unverified,
-			tier: "click",
+			tier: "drag",
 			attempts: 2,
 		});
-		expect(h.attempts).toEqual(["drag", "click"]);
+		// both dispatches, and both of them drags: there is no click-click tier to fall back to
+		expect(h.attempts).toEqual([0, 1]);
 		expect(h.delays).toEqual([TIMINGS.executorRetryDelayMs[0]]);
 		expect(h.rechecks).toBe(1);
 		expect(h.verifies).toHaveLength(2);
@@ -125,28 +120,28 @@ describe("runWithRetry", () => {
 		const h = harness([{ outcome: "timeout" }], [{ outcome: "ok" }]);
 		const r = await h.run();
 		expect(r).toMatchObject({ ok: true, outcome: "executed", tier: "drag", attempts: 1 });
-		expect(h.attempts).toEqual(["drag"]);
+		expect(h.attempts).toEqual([0]);
 		expect(h.rechecks).toBe(1);
 	});
 
-	it("a click-first style retries as a drag", async () => {
+	it("the second attempt is a drag whose verification can still succeed", async () => {
 		const h = harness([{ outcome: "rejected" }, { outcome: "ok" }]);
-		const r = await h.run("click");
+		const r = await h.run();
 		expect(r).toMatchObject({ ok: true, outcome: "executed", tier: "drag", attempts: 2 });
-		expect(h.attempts).toEqual(["click", "drag"]);
+		expect(h.attempts).toEqual([0, 1]);
 	});
 
 	it("skipped / aborted / failed attempts are returned as-is without verification or retry", async () => {
 		for (const outcome of ["skipped", "aborted", "failed"] as const) {
-			const h = harness([{ outcome: "ok" }], [], (tier) => ({
-				...dispatched(tier),
+			const h = harness([{ outcome: "ok" }], [], () => ({
+				...dispatched(),
 				ok: false,
 				outcome,
 				reason: outcome,
 			}));
 			const r = await h.run();
 			expect(r).toMatchObject({ ok: false, outcome, attempts: outcome === "skipped" ? 0 : 1 });
-			expect(h.attempts).toEqual(["drag"]);
+			expect(h.attempts).toEqual([0]);
 			expect(h.verifies).toEqual([]);
 		}
 	});
@@ -161,7 +156,7 @@ describe("runWithRetry", () => {
 			error: "no content port",
 			attempts: 1,
 		});
-		expect(h.attempts).toEqual(["drag"]);
+		expect(h.attempts).toEqual([0]);
 		expect(h.rechecks).toBe(0);
 	});
 
@@ -178,15 +173,15 @@ describe("runWithRetry", () => {
 			tier: "drag",
 			attempts: 1,
 		});
-		expect(h.attempts).toEqual(["drag"]);
+		expect(h.attempts).toEqual([0]);
 		expect(h.rechecks).toBe(1);
 		expect(h.delays).toEqual([TIMINGS.executorRetryDelayMs[0]]);
 	});
 
 	it("an aborted or skipped attempt whose committed press went out gets one short re-check (attempts 1) and is upgraded — reason dropped — when the move landed", async () => {
 		for (const outcome of ["aborted", "skipped"] as const) {
-			const interrupted = (tier: ClickStyle): ExecutionResult => ({
-				...dispatched(tier),
+			const interrupted = (): ExecutionResult => ({
+				...dispatched(),
 				ok: false,
 				outcome,
 				reason: outcome,
@@ -198,10 +193,10 @@ describe("runWithRetry", () => {
 			expect(up.reason).toBeUndefined();
 			expect(landed.rechecks).toBe(1);
 			expect(landed.verifies).toEqual([]); // the short budget, never the full one
-			expect(landed.attempts).toEqual(["drag"]);
+			expect(landed.attempts).toEqual([0]);
 			const missed = harness([], [{ outcome: "rejected" }], interrupted);
 			expect(await missed.run()).toMatchObject({ ok: false, outcome, reason: outcome, attempts: 1 });
-			expect(missed.attempts).toEqual(["drag"]);
+			expect(missed.attempts).toEqual([0]);
 			// unavailable: its own outcome/reason stand, `verification-unavailable` in error, no dispatch
 			const dark = harness([], [{ outcome: "unavailable", reason: "no content port" }], interrupted);
 			expect(await dark.run()).toMatchObject({
@@ -212,7 +207,7 @@ describe("runWithRetry", () => {
 				error: EXECUTOR.reasons.verificationUnavailable,
 				attempts: 1,
 			});
-			expect(dark.attempts).toEqual(["drag"]);
+			expect(dark.attempts).toEqual([0]);
 		}
 	});
 
@@ -221,8 +216,8 @@ describe("runWithRetry", () => {
 		// square and never sets it, so the board used to be reported on without ever being looked at
 		// — and in the reflow ordering the escape release can land on a different square, i.e. submit
 		// a move, which is exactly what the re-check exists to notice.
-		const previewed = (tier: ClickStyle): ExecutionResult => ({
-			...dispatched(tier),
+		const previewed = (): ExecutionResult => ({
+			...dispatched(),
 			ok: false,
 			outcome: "aborted",
 			reason: EXECUTOR.reasons.boardMoved,
@@ -242,8 +237,8 @@ describe("runWithRetry", () => {
 		expect(missed.rechecks).toBe(1);
 
 		// …and an attempt that dispatched nothing at all still returns without a board read.
-		const nothing = (tier: ClickStyle): ExecutionResult => ({
-			...dispatched(tier),
+		const nothing = (): ExecutionResult => ({
+			...dispatched(),
 			ok: false,
 			outcome: "aborted",
 			reason: EXECUTOR.reasons.boardMoved,
@@ -257,9 +252,9 @@ describe("runWithRetry", () => {
 
 	it("the cancel that interrupted the attempt never poisons the re-check: it runs on a fresh signal and the board is looked at", async () => {
 		const ac = new AbortController();
-		const interrupted = (tier: ClickStyle): ExecutionResult => {
+		const interrupted = (): ExecutionResult => {
 			ac.abort();
-			return { ...dispatched(tier), ok: false, outcome: "aborted", reason: "aborted", pressed: true };
+			return { ...dispatched(), ok: false, outcome: "aborted", reason: "aborted", pressed: true };
 		};
 		const landed = harness([], [{ outcome: "ok" }], interrupted, ac.signal);
 		const up = await landed.run();
@@ -268,7 +263,7 @@ describe("runWithRetry", () => {
 		expect(landed.rechecks).toBe(1);
 		expect(landed.checks).toHaveLength(1);
 		expect(landed.checks[0]?.signal.aborted).toBe(false);
-		expect(landed.attempts).toEqual(["drag"]);
+		expect(landed.attempts).toEqual([0]);
 		const missed = harness([], [{ outcome: "rejected" }], interrupted, new AbortController().signal);
 		expect(await missed.run()).toMatchObject({
 			ok: false,
@@ -285,9 +280,9 @@ describe("runWithRetry", () => {
 		const h = harness(
 			[],
 			[{ outcome: "ok" }],
-			(tier) => {
+			() => {
 				ac.abort();
-				return { ...dispatched(tier), ok: false, outcome: "aborted", reason: "aborted", pressed: true };
+				return { ...dispatched(), ok: false, outcome: "aborted", reason: "aborted", pressed: true };
 			},
 			ac.signal
 		);
@@ -302,14 +297,14 @@ describe("runWithRetry", () => {
 			attempts: 1,
 		});
 		expect(h.rechecks).toBe(1);
-		expect(h.attempts).toEqual(["drag"]);
+		expect(h.attempts).toEqual([0]);
 	});
 
 	it("a cancel during the post-drop rest bounds the verification (short budget, fresh signal) and never retries", async () => {
 		const ac = new AbortController();
-		const dropped = (tier: ClickStyle): ExecutionResult => {
+		const dropped = (): ExecutionResult => {
 			ac.abort(); // cancel arrives after the drop; the controller still reports the attempt ok
-			return { ...dispatched(tier), pressed: true };
+			return { ...dispatched(), pressed: true };
 		};
 		const ok = harness([{ outcome: "ok" }], [], dropped, ac.signal);
 		expect(await ok.run()).toMatchObject({ ok: true, outcome: "executed", attempts: 1 });
@@ -319,9 +314,9 @@ describe("runWithRetry", () => {
 		const missed = harness(
 			[{ outcome: "rejected" }],
 			[],
-			(tier) => {
+			() => {
 				ac2.abort();
-				return { ...dispatched(tier), pressed: true };
+				return { ...dispatched(), pressed: true };
 			},
 			ac2.signal
 		);
@@ -331,7 +326,7 @@ describe("runWithRetry", () => {
 			reason: "aborted",
 			attempts: 1,
 		});
-		expect(missed.attempts).toEqual(["drag"]); // no click-click retry after a cancel
+		expect(missed.attempts).toEqual([0]); // no second dispatch after a cancel
 		expect(missed.rechecks).toBe(0);
 		expect(missed.verifies).toEqual([EXECUTOR.recheckTimeoutMs]);
 	});
@@ -339,7 +334,7 @@ describe("runWithRetry", () => {
 	it("without a cancel the full verification budget is used and every check gets its own fresh signal", async () => {
 		const h = harness([{ outcome: "rejected" }, { outcome: "ok" }]);
 		const r = await h.run();
-		expect(r).toMatchObject({ ok: true, outcome: "executed", tier: "click", attempts: 2 });
+		expect(r).toMatchObject({ ok: true, outcome: "executed", tier: "drag", attempts: 2 });
 		expect(h.verifies).toEqual([TIMINGS.executorVerifyTimeoutMs, TIMINGS.executorVerifyTimeoutMs]);
 		expect(h.checks).toHaveLength(3); // verify, pre-retry recheck, verify
 		expect(h.checks.every((c) => !c.signal.aborted)).toBe(true);
@@ -355,6 +350,6 @@ describe("runWithRetry", () => {
 		};
 		const r = await h.run();
 		expect(r).toMatchObject({ ok: false, outcome: "aborted", attempts: 1 });
-		expect(h.attempts).toEqual(["drag"]);
+		expect(h.attempts).toEqual([0]);
 	});
 });

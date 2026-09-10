@@ -213,7 +213,6 @@ export const COPY = {
 			'Chrome shows a "sliced is debugging this browser" bar while auto-play is on. Don\'t click Cancel — that closes the session and pauses auto-play. You can hide the bar by keeping the debugger attached between games.',
 		verify: "After each move, checks the board matches the expected position.",
 		drag: "drag",
-		click: "click",
 	},
 	account: {
 		license: "License",
@@ -286,7 +285,6 @@ export const COPY = {
 		},
 		site: SITE,
 		target: (gameId: string): string => `${SITE} · game ${gameId}`,
-		styleAuto: "auto",
 		profiles: {
 			manual: "Manual",
 			fast: "Fast",
@@ -450,7 +448,6 @@ export const SETTINGS_COPY = {
 			label: "Respect clock budget",
 			help: "Plays faster as the clock runs low.",
 		},
-		"execution.style": { label: "Move input" },
 		"execution.motorSpeed": { label: "Motor speed" },
 		"execution.calibrateFromMyMouse": {
 			label: "Calibrate from my mouse",
@@ -508,7 +505,6 @@ export const SETTINGS_COPY = {
 			"persona-sampling": "Persona sampling",
 			hybrid: "Hybrid",
 		},
-		style: { drag: "Drag", click: "Click", auto: "Auto" },
 		backend: { cdp: "Chrome debugger", native: "Native" },
 		previewSelects: { auto: "Auto", off: "Off" },
 		highlightStyle: { squares: "Squares", arrows: "Arrows", both: "Both" },

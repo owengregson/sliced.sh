@@ -69,9 +69,11 @@ export function expectedReply(snapshot: PanelSnapshot): string | null {
 export function planText(snapshot: PanelSnapshot): string | null {
 	const plan = snapshot.autoMove.plan ?? snapshot.recommendation?.plan;
 	if (!plan) return null;
-	const style = snapshot.settings.execution.style;
-	const method = style === "click" ? COPY.execution.click : COPY.execution.drag;
-	return COPY.move.plan((plan.thinkMs / MS).toFixed(1), method, plan.mode === "premove");
+	return COPY.move.plan(
+		(plan.thinkMs / MS).toFixed(1),
+		COPY.execution.drag,
+		plan.mode === "premove"
+	);
 }
 
 export function createMoveSection(options: MoveSectionOptions): MoveSectionHandle {
