@@ -461,6 +461,34 @@ export class GameSession implements SessionSource {
 	}
 
 	/**
+	 * Is this reading our own hand, caught mid-move, rather than a position that moved on?
+	 *
+	 * chess.com's DOM renderer mutates the `.piece` elements while a piece is off its square. When
+	 * the markup marks that with `.piece.dragging` the adapter reads nothing (`ChessComAdapter.read`);
+	 * when it does not, the placement no longer corroborates the bridge FEN, so the hybrid reading
+	 * falls through to an **approximate** FEN with the mover missing and the adapter publishes it —
+	 * measured against `test/fixtures/chesscom-computer.html`: one extra position, same ply, the
+	 * rook gone from the placement. Treating that as a real change cancelled the execution mid-drag
+	 * (`cancelInFlight`) and erased the mark for the move being played (`clearBoardMarks`), which is
+	 * the mark disappearing "when the mouse starts its action" on the DOM renderer.
+	 *
+	 * A position that genuinely moved on advances the ply — the move list is what `ply` is read from
+	 * — so *same game, same ply, same side to move, while the hand is running the move the board is
+	 * marked for* is our own hand and nothing else. The reading is dropped whole: no cancel, no
+	 * clear, no re-analysis, and `lastPositionKey` is deliberately left alone so a later reading
+	 * that happens to carry this key is still considered. Everything that means the recommendation
+	 * is genuinely dead — the switch, `Shift+X`, game end, the tab navigating, a ply that actually
+	 * advanced — runs exactly as before.
+	 */
+	private ownHandsDoing(snapshot: PositionSnapshot): boolean {
+		const current = this.snapshot;
+		const rec = this.rec;
+		if (!current || !rec || this.game?.gameId !== snapshot.gameId) return false;
+		if (snapshot.ply !== current.ply || snapshot.sideToMove !== current.sideToMove) return false;
+		return this.executorHandle?.runningMove()?.rec === rec;
+	}
+
+	/**
 	 * `Settings.enabled` went off mid-session (§4.4): the search in flight is aborted, the ponder
 	 * stopped, the scheduled (or running) move cancelled, the auto-queue dropped, the board
 	 * cleared, and the hand disarmed — with the debugger released, because §13.4 forbids the
@@ -677,6 +705,14 @@ export class GameSession implements SessionSource {
 				tabId: this.deps.tabId,
 				ply: snapshot.ply,
 				have: this.snapshot.ply,
+			});
+			return;
+		}
+		if (this.ownHandsDoing(snapshot)) {
+			log.debug("game-session: position ignored — our own hand is mid-move on this ply", {
+				tabId: this.deps.tabId,
+				ply: snapshot.ply,
+				uci: this.rec?.chosen.uci ?? null,
 			});
 			return;
 		}
