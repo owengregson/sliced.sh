@@ -100,6 +100,23 @@ exercised down here. Play 1+0 against a bot.
 | B2.4 | Let your own clock flag while armed | The extension stops cleanly at flag; no move is dispatched after the game ends; panel shows game over | |
 | B2.5 | Resign / rematch from chess.com's own controls | Session ends and restarts cleanly; no stale highlights from the previous game | |
 
+### B2a. The time control reaching the service worker (§4.3) — **answerable only in a browser**
+
+The simulator cannot produce chess.com's own `board.game.timeControl.get()`, and everything the
+clock drives hangs off it: the timing class, the compression factor, the hard caps, the §8.5
+emergency regime, the §4.6 preset, the §7.4 premove gate and the hand's motor class. It is `null`
+until the game actually starts, so the reading arrives *after* the session exists and
+`GameSession.reprofile()` is what consumes it. These rows prove the whole chain on a real game.
+
+| # | Do | Expect | Observed |
+|---|---|---|---|
+| B2a.1 | Open a live 3+0 game and watch the service-worker console from before the first move | One `game-session: time control learned from a position` line with `baseMs: 180000`, `incMs: 0`, `tc: "blitz"`. **No line at all is a finding**: the game is running untimed, with a classical hand and no premoves | |
+| B2a.2 | Settings view, during that game | The detected preset chip matches the class (bullet → fast, blitz/rapid → natural, classical → slow). A game showing the stored preset instead means the time control never arrived | |
+| B2a.3 | A game **with an increment** (3+2) | The log line shows `incMs: 2000`. If it shows `incMs: 2` — or a warning `adapter: implausible time-control field, reading it as seconds` — chess.com reports the increment in **seconds**, which is the one unit this lane could not confirm (the capture's increment was 0). Record which | |
+| B2a.4 | 1+0 vs a bot, play down to under a second on your own clock | `emergency regime: no floors, minimal motor` appears in the plan's rationale (panel plan line / timing log). The move still lands; note how long it actually takes — the hand's motor floor is ~400–900 ms whatever the plan says, which is the real lower bound on a flag scramble | |
+| B2a.5 | A game that is **not yet started** (waiting for an opponent), then let it start | The first positions carry no time control (expected), and the line in B2a.1 appears within a second or so of the clocks starting. A gap of many seconds means the 1 Hz re-ask is the only thing delivering it and the page's own event never fires | |
+| B2a.6 | Under a minute on your own clock, read the panel's clock | It keeps counting (tenths shown). A clock that freezes or jumps to 0:00 means chess.com renders bare seconds in a shape `parseClockText` still rejects — record the exact string from the DOM | |
+
 ### B3. Executor and content-script edge cases (deferred from Tasks 18/20/21)
 
 | # | Do | Expect | Observed |
