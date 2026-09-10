@@ -15,6 +15,7 @@
 import { DEFAULT_SETTINGS } from "@core/constants/defaults";
 import { TELEMETRY_BANDS } from "@core/constants/telemetry";
 import { createRng, type Rng } from "@core/rng";
+import { tcClass } from "@core/timing/features";
 import { TimingModel } from "@core/timing/timing-model";
 import type { TimingContext } from "@core/timing/types";
 import { V1ParametricHead } from "@core/timing/v1-head";
@@ -90,7 +91,6 @@ export interface SimulatedGameOptions {
 	seed: string;
 	moves: number;
 	persona?: PersonaId;
-	tcClass?: ExecutorGameConfig["tcClass"];
 	style?: ExecutorGameConfig["style"];
 	previewScale?: number;
 	targetElo?: number;
@@ -255,10 +255,15 @@ export function fakeLines(legal: string[], nReasonable: number, rng: Rng): EvalL
 export async function runSimulatedGame(options: SimulatedGameOptions): Promise<SimulatedGame> {
 	const site: Site = "chesscom";
 	const persona = options.persona ?? SIM_TELEMETRY.game.persona;
-	const tcClass = options.tcClass ?? SIM_TELEMETRY.game.tcClass;
 	const targetElo = options.targetElo ?? SIM_TELEMETRY.game.targetElo;
 	const baseSec = options.clock?.baseSec ?? SIM_TELEMETRY.game.baseSec;
 	const incSec = options.clock?.incSec ?? SIM_TELEMETRY.game.incSec;
+	// The hand's motor class is DERIVED from the clock, never handed in. A harness that can say
+	// "bullet clock, classical hand" is a harness that measures a configuration production cannot
+	// produce — which is how the §13.2 gate came to be measured at a `tcClass` no real game could
+	// reach (no adapter set `PositionSnapshot.timeControl`, so every game conditioned as untimed).
+	const cls = tcClass(baseSec, incSec);
+	const motorClass: ExecutorGameConfig["tcClass"] = cls === "untimed" ? "classical" : cls;
 	const driver = options.driver ?? executorDriver;
 	const rng = createRng(`${options.seed}:harness`);
 
@@ -294,7 +299,7 @@ export async function runSimulatedGame(options: SimulatedGameOptions): Promise<S
 				now: sim.now,
 				scheduler: defaultScheduler,
 				persona,
-				tcClass,
+				tcClass: motorClass,
 				style: options.style ?? "auto",
 				previewScale: options.previewScale ?? DEFAULT_SETTINGS.execution.previewSelectScale,
 				gameSeed: options.seed,

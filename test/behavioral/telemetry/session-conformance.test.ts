@@ -104,6 +104,37 @@ describe("telemetry: the orchestrator end to end (Task 30 / Task 33 ruling 6)", 
 	);
 
 	it(
+		"a bullet game driven through the GameSession is `ac`-conformant with a bullet hand",
+		async () => {
+			// The orchestrator at the speed production could never reach before the time control was
+			// wired through (§4.3). The harness derives the hand's motor class from the clock, and the
+			// session is told the same clock the page reports, so the class cannot disagree with it.
+			const clock = SIM_TELEMETRY.speeds.bullet;
+			driver = createSessionDriver({
+				gameId: "orchestrated-bullet",
+				timeControl: { baseMs: clock.baseSec * 1000, incMs: clock.incSec * 1000 },
+			});
+			game = await runSimulatedGame({
+				seed: "orchestrated-bullet",
+				moves: SIM_TELEMETRY.referenceGameMoves,
+				clock: { baseSec: clock.baseSec, incSec: clock.incSec },
+				driver,
+			});
+			expect(game.moves.every((m) => m.result.ok && m.result.outcome === "executed")).toBe(true);
+			const summary = assertHumanShapedAc(game.acs, { moves: game.moves.map(moveMetaOf) });
+			expect(summary.blurCount).toBe(0);
+			expect(summary.toggles).toBe(0);
+			expect(summary.untrusted).toBe(0);
+			expect(game.blurBits.every((b) => b === 0)).toBe(true);
+			// the hand really is a bullet hand, and the session wrote a row per move
+			expect(driver.session()?.executor()?.timeControlClass()).toBe("bullet");
+			expect(driver.entries()).toHaveLength(game.moves.length);
+			for (const entry of driver.entries()) expect(entry.telemetry).toBeDefined();
+		},
+		RUN_TIMEOUT_MS
+	);
+
+	it(
 		"pooled over 5 orchestrated games (N = 150 moves) the §7.2 top-1 agreement is inside the band for the target",
 		async () => {
 			const acs: AcBlob[] = [];

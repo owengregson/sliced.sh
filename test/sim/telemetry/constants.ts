@@ -76,8 +76,24 @@ export const SIM_TELEMETRY = {
 	lines: { count: 4, bestCp: 20, reasonableStepCp: 10, unreasonableCp: 150, depth: 12 },
 	/** `n_reasonable` is drawn uniformly from 1..maxReasonable per move. */
 	maxReasonable: 4,
-	/** Default game: rapid 10+0 against a bot, 1650 target, the balanced persona. */
-	game: { baseSec: 600, incSec: 0, targetElo: 1650, persona: "balanced", tcClass: "rapid" },
+	/**
+	 * Default game: rapid 10+0 against a bot, 1650 target, the balanced persona. There is no
+	 * `tcClass` here on purpose — the harness derives the hand's motor class from the clock, so a
+	 * run cannot measure a class the clock does not imply.
+	 */
+	game: { baseSec: 600, incSec: 0, targetElo: 1650, persona: "balanced" },
+	/**
+	 * The speeds the §13.2 gate runs at (base/inc seconds), with the clock a "time pressure" game
+	 * of that speed starts on — under `TELEMETRY_BANDS.compression.pressureClockMs` from the first
+	 * move, so the pressure side of the compression band fills without waiting for a 3-minute clock
+	 * to drain. `emergencyStartMs` is low enough that the §8.5 emergency regime
+	 * (`replan.emergencyClockMs`) is entered within a few moves.
+	 */
+	speeds: {
+		bullet: { baseSec: 60, incSec: 0, pressureStartMs: 20_000, emergencyStartMs: 3_000 },
+		blitz: { baseSec: 180, incSec: 0, pressureStartMs: 25_000, emergencyStartMs: 3_000 },
+		rapid: { baseSec: 600, incSec: 0, pressureStartMs: 60_000, emergencyStartMs: 3_000 },
+	},
 	/** Clock left at the start of a "time-pressure" game (§8 compression regime). */
 	pressureStartMs: 60_000,
 	/**
