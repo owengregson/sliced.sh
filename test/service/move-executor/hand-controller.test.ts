@@ -14,6 +14,7 @@ import type {
 } from "@core/motor/types";
 import { createRng } from "@core/rng";
 import { defaultScheduler } from "@core/util/scheduler";
+import type { BoardRectSource } from "@service/board-watch";
 import type { FocusVerdict } from "@service/focus-gate";
 import { HandOwnership } from "@service/hand-ownership";
 import { CdpInputBackend } from "@service/move-executor/cdp-input-backend";
@@ -159,7 +160,11 @@ interface Ctrl {
 	backend: CdpInputBackend;
 }
 
-function makeController(seed = 1, motor: MotorProfile = MOTOR_DEFAULTS): Ctrl {
+function makeController(
+	seed = 1,
+	motor: MotorProfile = MOTOR_DEFAULTS,
+	board?: BoardRectSource
+): Ctrl {
 	const backend = new CdpInputBackend(
 		(method, params) => debuggerSend(tabId, method, params),
 		ownership.position(tabId) ?? START_POINT,
@@ -175,6 +180,7 @@ function makeController(seed = 1, motor: MotorProfile = MOTOR_DEFAULTS): Ctrl {
 		now: sim.now,
 		scheduler: defaultScheduler,
 		onState: (s) => states.push(s),
+		...(board ? { board } : {}),
 	});
 	void motor;
 	return { controller, states, backend };
@@ -351,6 +357,88 @@ describe("HandController drag execution", () => {
 			}
 			expect(squareAt(presses.at(-1) as Cmd)).toBe("e2");
 			expect(inside(releases.at(-1) as Cmd, plan.to.rect)).toBe(true);
+		}
+		expect(found).toBe(true);
+	});
+});
+
+describe("HandController preview selections and a reflow (§9.5 / §9.3a)", () => {
+	/**
+	 * The preview legs used to be the one unguarded press/release pair left in the hand. A reflow
+	 * between a preview press and its release leaves the page with `down` on the square it really
+	 * pressed and `up` on a stale one — a submitted move — and because `pressedCommitted` is false
+	 * nothing re-checks the board afterwards, so `guardPosition` would report a *skip* while a move
+	 * had in fact been played. (The planner's "no press on a legal destination of the selected
+	 * piece" guarantee holds only in the geometry it planned in, so the press/deselect pair can
+	 * become a legal move too.)
+	 */
+	const MOVED: Rect = {
+		left: BOARD.left + 26,
+		top: BOARD.top + 58,
+		width: BOARD.width,
+		height: BOARD.height,
+	};
+
+	it("a reflow during a preview releases on the pressed square, submits nothing and aborts", async () => {
+		let found = false;
+		for (let seed = 1; seed < 60 && !found; seed++) {
+			sim.debugger.clearCommands();
+			ownership.armed(tabId, START_POINT);
+			// The board source reports the reflow as soon as the first press is out: at that moment
+			// the hand is holding a button over a real square.
+			let moved = false;
+			const board = {
+				rect: () => (moved ? MOVED : BOARD),
+				changedAt: () => START,
+			};
+			sim.debugger.respond(CDP.inputDispatchMouseEvent, (params, id) => {
+				if ((params as { type: string }).type === "mousePressed") moved = true;
+				return sim.input.send(id, CDP.inputDispatchMouseEvent, params);
+			});
+			const ctrl = makeController(seed, MOTOR_DEFAULTS, board);
+			const plan = makePlan({}, 2);
+			const result = await run(
+				ctrl,
+				plan,
+				makeTiming({ thinkMs: 9000, preMoveHoverMs: 8000, deadlineMs: START + 9000 })
+			);
+			const cmds = commands();
+			const presses = cmds.filter((c) => c.type === "mousePressed");
+			// Only the runs where a *preview* press went out first say anything about previews: a
+			// run with no preview presses the committed square, which the committed-path tests own.
+			if (presses.length === 0) continue;
+			const first = presses[0] as Cmd;
+			if (inside(first, plan.from.rect)) continue;
+			found = true;
+
+			const releases = cmds.filter((c) => c.type === "mouseReleased");
+			expect(result.outcome).toBe("aborted");
+			expect(result.reason).toBe(EXECUTOR.reasons.boardMoved);
+			// the button is never left held, and the committed press never happened
+			expect(presses).toHaveLength(1);
+			expect(releases).toHaveLength(1);
+			expect(result.pressed).toBe(false);
+
+			// The release is on the square the press landed on, in the geometry the page has *now* —
+			// down and up on one square, which submits nothing on either renderer.
+			const geo = geometry();
+			const pressedSquare = (["a1"] as Square[])
+				.concat(
+					"abcdefgh".split("").flatMap((f) => [1, 2, 3, 4, 5, 6, 7, 8].map((r) => `${f}${r}` as Square))
+				)
+				.find((sq) => inside(first, geo.squareRect(sq)));
+			expect(pressedSquare).toBeDefined();
+			if (!pressedSquare) return;
+			const movedRect = squareRect(pressedSquare, false, MOVED);
+			expect(inside(releases[0] as Cmd, movedRect)).toBe(true);
+			// §13.5: the escape is a path, not a jump
+			let prev: Pt = START_POINT;
+			for (const c of cmds) {
+				expect(Math.hypot(c.x - prev.x, c.y - prev.y)).toBeLessThanOrEqual(
+					maxStepPx(MOTOR_DEFAULTS) + 1
+				);
+				prev = c;
+			}
 		}
 		expect(found).toBe(true);
 	});

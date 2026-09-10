@@ -956,7 +956,7 @@ describe("executor: the board moves under the hand", () => {
 			if (p.type === "mouseMoved" && p.buttons === 1 && ++held === 2) {
 				reflowAt = sim.now();
 				reflowBoard(MOVED_BOARD);
-				port.post({ kind: "boardRect", rect: MOVED_BOARD, at: sim.now() });
+				port.post({ kind: "boardRect", rect: MOVED_BOARD });
 			}
 			return sim.input.send(id, CDP.inputDispatchMouseEvent, params);
 		});
@@ -1028,7 +1028,7 @@ describe("executor: the board moves under the hand", () => {
 			) {
 				reflowAt = sim.now();
 				reflowBoard(MOVED_BOARD);
-				port.post({ kind: "boardRect", rect: MOVED_BOARD, at: sim.now() });
+				port.post({ kind: "boardRect", rect: MOVED_BOARD });
 			}
 			return sim.input.send(id, CDP.inputDispatchMouseEvent, params);
 		});
@@ -1064,10 +1064,10 @@ describe("executor: the board moves under the hand", () => {
 		});
 		// the infobar appears and the page settles over two frames
 		await sw.run(async () => {
-			port.post({ kind: "boardRect", rect: BOARD, at: sim.now() });
+			port.post({ kind: "boardRect", rect: BOARD });
 			await sim.time.advance(40);
 			reflowBoard(MOVED_BOARD);
-			port.post({ kind: "boardRect", rect: MOVED_BOARD, at: sim.now() });
+			port.post({ kind: "boardRect", rect: MOVED_BOARD });
 			await sim.time.runMicrotasks();
 		});
 		const settledAt = sim.now();

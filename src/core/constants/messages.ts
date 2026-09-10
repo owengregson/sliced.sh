@@ -162,8 +162,12 @@ export type GamePortMessage =
 	 * actually changed, so the service worker can tell a board that is still settling after the
 	 * debugger's infobar appeared from one that has stopped, and can abort a drag whose coordinate
 	 * space has moved out from under it rather than drop the piece on the wrong square.
+	 *
+	 * It carries no timestamp on purpose: `BoardWatch` stamps the arrival on its own clock, which is
+	 * the clock `MoveExecutor.now()` and the settle window are measured against. The page's wall
+	 * clock is not comparable with it, and an unread field that looks comparable is a trap.
 	 */
-	| { kind: "boardRect"; rect: Rect; at: number }
+	| { kind: "boardRect"; rect: Rect }
 	| { kind: "moveObserved"; san: string; ply: number; byMe: boolean; atMs: number }
 	/** Task 18: reply to `observeMove` — `ok` once the board/move list shows the move. */
 	| { kind: "observeMoveResult"; id: string; ok: boolean; reason?: string }

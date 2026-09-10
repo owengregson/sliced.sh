@@ -385,7 +385,6 @@ function bootContent(
 			post({
 				kind: "boardRect",
 				rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
-				at: Date.now(),
 			})
 		)
 	);

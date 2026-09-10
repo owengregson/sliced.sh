@@ -623,3 +623,89 @@ describe("ChessComAdapter — observer wiring (fix round 1)", () => {
 		expect(registry.active().length).toBe(0);
 	});
 });
+
+describe("ChessComAdapter — the board-rect watch (§9.5)", () => {
+	/**
+	 * A scroll moves the board's viewport rect, and the report is what the hand's mid-drag reflow
+	 * guard compares against. The coalescing is per animation frame, so these tests own the frame
+	 * queue: `requestAnimationFrame` is installed on the tab window *before* the adapter subscribes
+	 * (the watch is installed on the first `onBoardRect`), and a "frame" is one `runFrame()`.
+	 */
+	function bootWithFrames(): {
+		dom: TabDom;
+		adapter: SiteAdapter;
+		rects: Array<{ top: number }>;
+		runFrame: () => void;
+		pendingFrames: () => number;
+	} {
+		const dom = loadFixture("chesscom-live");
+		cleanups.push(installWindowGlobals(dom.window));
+		const frames: Array<() => void> = [];
+		const win = dom.window as unknown as Record<string, unknown>;
+		win.requestAnimationFrame = (cb: () => void): number => {
+			frames.push(cb);
+			return frames.length;
+		};
+		win.cancelAnimationFrame = (): void => {};
+		const adapter = createChesscomAdapter({
+			document: pageDocument(dom),
+			window: pageWindow(dom),
+		});
+		cleanups.push(() => adapter.destroy());
+		dom.layout("wc-chess-board", BOARD_RECT);
+		const rects: Array<{ top: number }> = [];
+		adapter.onBoardRect((r) => rects.push({ top: r.top }));
+		// the baseline report the watch takes on subscription
+		rects.length = 0;
+		return {
+			dom,
+			adapter,
+			rects,
+			runFrame: () => {
+				const pending = frames.splice(0);
+				for (const f of pending) f();
+			},
+			pendingFrames: () => frames.length,
+		};
+	}
+
+	it("reports the first scroll of a burst at once and coalesces the rest into one trailing report", () => {
+		const { dom, rects, runFrame, pendingFrames } = bootWithFrames();
+
+		// leading edge: the first scroll reports inside the event, with no frame having run
+		dom.layout("wc-chess-board", { ...BOARD_RECT, y: BOARD_RECT.y + 20 });
+		fire(dom, "window", "scroll");
+		expect(rects).toEqual([{ top: BOARD_RECT.y + 20 }]);
+		expect(pendingFrames()).toBe(1);
+
+		// the rest of the burst is coalesced: nothing more until the frame runs
+		dom.layout("wc-chess-board", { ...BOARD_RECT, y: BOARD_RECT.y + 40 });
+		fire(dom, "window", "scroll");
+		dom.layout("wc-chess-board", { ...BOARD_RECT, y: BOARD_RECT.y + 60 });
+		fire(dom, "window", "scroll");
+		expect(rects).toHaveLength(1);
+
+		// one trailing report, carrying where the board actually ended up — without it the guard
+		// could think a board that stopped somewhere new had never moved
+		runFrame();
+		expect(rects).toEqual([{ top: BOARD_RECT.y + 20 }, { top: BOARD_RECT.y + 60 }]);
+
+		// and the window has closed: the next scroll is a leading edge again
+		dom.layout("wc-chess-board", { ...BOARD_RECT, y: BOARD_RECT.y + 80 });
+		fire(dom, "window", "scroll");
+		expect(rects.at(-1)).toEqual({ top: BOARD_RECT.y + 80 });
+	});
+
+	it("a frame with no further scroll reports nothing (and a scroll that moved nothing never does)", () => {
+		const { dom, rects, runFrame } = bootWithFrames();
+		dom.layout("wc-chess-board", { ...BOARD_RECT, y: BOARD_RECT.y + 20 });
+		fire(dom, "window", "scroll");
+		expect(rects).toHaveLength(1);
+		runFrame();
+		expect(rects).toHaveLength(1);
+		// a scroll that moved nothing: reported on the leading edge, dropped by the tolerance check
+		fire(dom, "window", "scroll");
+		runFrame();
+		expect(rects).toHaveLength(1);
+	});
+});

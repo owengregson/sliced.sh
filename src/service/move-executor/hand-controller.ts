@@ -424,6 +424,9 @@ export class HandController {
 		// pause is executed by the controller itself so it can absorb the touch budget.
 		const actions = this.planExploration(plan, timing, preTouchMs, reply);
 		const tail = actions[actions.length - 1]?.kind === "rest" ? actions.pop() : undefined;
+		// The coordinate space the exploration was planned in: a preview **presses** a real square,
+		// so its legs need the same reflow guard the committed touch has (below).
+		const explored = reply !== null ? { board: reply.boardRect, flipped: reply.flipped } : null;
 		this.setState("orientation");
 		tl.begin("orientation");
 		let first = true;
@@ -434,7 +437,7 @@ export class HandController {
 				tl.begin(a.kind === "preview" ? "preview" : "scan");
 			}
 			first = false;
-			await this.perform(a, m);
+			await this.perform(a, m, explored, tl);
 		}
 
 		// Plan the touch from fresh geometry (§9.5) so its duration is known exactly.
@@ -524,33 +527,71 @@ export class HandController {
 		return this.planner.plan(preTouchMs, ex.candidates, geo, plan.motor, this.rng, opts);
 	}
 
-	/** Every pause of a preview was sampled by the planner (its budget already counts them). */
-	private async perform(a: HandAction, m: MotorProfile): Promise<void> {
+	/**
+	 * Every pause of a preview was sampled by the planner (its budget already counts them).
+	 *
+	 * §9.5: a preview **presses** a real square, so its legs carry the same board-reflow guard as
+	 * the committed touch. The planner guarantees that no press lands on a legal destination of
+	 * whatever is selected at that moment — but only in the geometry it planned in: after a reflow
+	 * the same coordinates are different squares, the press/deselect pair can become a legal move,
+	 * and a held preview press released where a stale path ended is a `mousedown` on one square and
+	 * a `mouseup` on another — a submitted move. Worse than the committed case, because
+	 * `pressedCommitted` stays false, so nothing re-checks the board afterwards and `guardPosition`
+	 * would report a *skip* while a move had in fact been played.
+	 *
+	 * A plain hover is deliberately left unguarded: nothing is pressed, so the worst a stale path
+	 * can do is hover over the wrong squares, and the touch is re-planned from fresh geometry
+	 * immediately afterwards — aborting there would throw away a move window for a cosmetic loss.
+	 */
+	private async perform(
+		a: HandAction,
+		m: MotorProfile,
+		planned: PlannedGeometry | null,
+		tl: Timeline
+	): Promise<void> {
 		if (a.kind === "preview" && a.preview) {
 			const pv = a.preview;
-			// §13.2 counts *pieces* the page saw selected: the previewed piece always, and the
-			// resolving click only in the `switch-to-idle` form, where the square it clicks is an
-			// own piece (an empty / enemy square only clears the selection, it never makes one).
-			this.previewed.push(pv.piece);
-			if (pv.deselect?.occupancy === "own") this.previewed.push(pv.deselect.square);
-			await this.travel(pv.approach);
-			await this.pause(pv.prePressMs);
+			const guard = guardOf(planned, (r) => this.guardBoard(r));
+			// Outside the try: nothing is held yet, so a reflow caught here needs no escape.
+			await this.travel(pv.approach, guard);
+			await this.pause(pv.prePressMs, guard);
 			await this.press(pv.press);
-			await this.pause(pv.holdMs);
-			if (pv.dragPath) {
-				await this.pause(pv.grabDelayMs ?? sampleRange(m.grabDelayMs, this.rng));
-				await this.travel(pv.dragPath);
-				await this.pause(pv.settleMs ?? sampleRange(m.releaseSettleMs, this.rng));
+			// §13.2 counts *pieces* the page saw selected, so the record is written once the press is
+			// out — not before, where an aborted approach would claim a selection that never happened.
+			this.previewed.push(pv.piece);
+			try {
+				await this.pause(pv.holdMs, guard);
+				if (pv.dragPath) {
+					await this.pause(pv.grabDelayMs ?? sampleRange(m.grabDelayMs, this.rng), guard);
+					await this.travel(pv.dragPath, guard);
+					await this.pause(pv.settleMs ?? sampleRange(m.releaseSettleMs, this.rng), guard);
+				}
+				// The last look before the button comes up.
+				guard?.();
+			} catch (error) {
+				if (error instanceof BoardMovedError)
+					await this.releaseOnSquare(pv.piece, pv.pieceRect, error.live, planned, m, tl);
+				throw error;
 			}
 			await this.release(pv.release);
-			await this.travel(pv.hoverPath);
-			await this.pause(pv.dwellMs);
+			await this.travel(pv.hoverPath, guard);
+			await this.pause(pv.dwellMs, guard);
 			const d = pv.deselect;
 			if (d) {
-				await this.travel(d.path);
-				await this.pause(d.prePressMs);
+				await this.travel(d.path, guard);
+				await this.pause(d.prePressMs, guard);
 				await this.press(d.press);
-				await this.pause(d.holdMs);
+				// The resolving click counts as a selection only in the `switch-to-idle` form, where
+				// the square it clicks is an own piece (an empty / enemy square only clears one).
+				if (d.occupancy === "own") this.previewed.push(d.square);
+				try {
+					await this.pause(d.holdMs, guard);
+					guard?.();
+				} catch (error) {
+					if (error instanceof BoardMovedError)
+						await this.releaseOnSquare(d.square, null, error.live, planned, m, tl);
+					throw error;
+				}
 				await this.release(d.release);
 			}
 			return;
@@ -804,10 +845,35 @@ export class HandController {
 		m: MotorProfile,
 		tl: Timeline
 	): Promise<void> {
+		await this.releaseOnSquare(
+			plan.from.square,
+			plan.from.rect,
+			live,
+			{ board: live, flipped },
+			m,
+			tl
+		);
+	}
+
+	/**
+	 * The escape above, for whichever square the held press landed on — the committed origin or a
+	 * preview's own piece. `plannedRect` is only for the log line.
+	 */
+	private async releaseOnSquare(
+		square: Square,
+		plannedRect: Rect | null,
+		live: Rect,
+		planned: PlannedGeometry | null,
+		m: MotorProfile,
+		tl: Timeline
+	): Promise<void> {
 		tl.note(EXECUTOR.timelineNotes.boardMoved);
 		tl.begin("correct");
 		this.setState("correcting");
-		const origin = boardGeometryOf({ boardRect: live, flipped }).squareRect(plan.from.square);
+		const origin = boardGeometryOf({
+			boardRect: live,
+			flipped: planned?.flipped ?? false,
+		}).squareRect(square);
 		const target = samplePointInRect(
 			origin,
 			SAMPLING.release.sigmaFrac,
@@ -815,10 +881,10 @@ export class HandController {
 			this.rng
 		);
 		const path = generatePath(this.backend.position(), target, origin, m, this.rng);
-		log.info("hand: releasing on the origin square after a reflow", {
+		log.info("hand: releasing on the pressed square after a reflow", {
 			tabId: this.tabId,
-			from: plan.from.square,
-			shiftPx: Math.round(rectShiftPx(plan.from.rect, origin)),
+			square,
+			shiftPx: plannedRect ? Math.round(rectShiftPx(plannedRect, origin)) : null,
 		});
 		await this.escapeTravel(path);
 		await this.release(lastPoint(path, target));

@@ -674,20 +674,34 @@ export abstract class AdapterBase implements SiteAdapter {
 		if (this.rectWatch || this.destroyed) return;
 		this.rectWatch = true;
 		const report = (): void => this.reportBoardRect();
-		// `scroll` fires far more often than the board moves. It is coalesced on the next animation
-		// frame rather than debounced on a timer: the report feeds the hand's mid-drag reflow guard,
-		// so it must land within a frame of the page settling, not 40 ms later. `resize` — the
-		// infobar's own signal — and the `ResizeObserver` (already frame-aligned) report at once.
+		// `scroll` fires far more often than the board moves, so it is coalesced per animation frame
+		// rather than debounced on a timer: the report feeds the hand's mid-drag reflow guard, so it
+		// must land within a frame of the page settling, not 40 ms later. `resize` — the infobar's
+		// own signal — and the `ResizeObserver` (already frame-aligned) report at once.
+		//
+		// **Leading edge**: the first scroll of a burst reports immediately and the rest of that
+		// frame is coalesced into one trailing report. Trailing-only cost the guard a whole frame on
+		// the very first movement, which is the movement that matters; and the trailing report is
+		// what makes the *final* rect of a burst known, without which a board that stopped somewhere
+		// new could still look unmoved to the guard. At most two reports per frame either way, and
+		// `reportBoardRect` drops the ones that moved nothing.
 		let frame: number | null = null;
+		let pending = false;
 		const raf = this.rafOf();
 		const coalesced = (): void => {
 			if (!raf) {
 				report();
 				return;
 			}
-			if (frame !== null) return;
+			if (frame !== null) {
+				pending = true;
+				return;
+			}
+			report();
 			frame = raf(() => {
 				frame = null;
+				if (!pending) return;
+				pending = false;
 				report();
 			});
 		};
@@ -700,6 +714,7 @@ export abstract class AdapterBase implements SiteAdapter {
 			const cancel = this.win.cancelAnimationFrame?.bind(this.win);
 			if (frame !== null && cancel) cancel(frame);
 			frame = null;
+			pending = false;
 		});
 		const Observer = this.resizeObserverCtor();
 		if (Observer) {
