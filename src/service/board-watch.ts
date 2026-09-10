@@ -77,9 +77,9 @@ export class BoardWatch implements BoardRectSource {
 		const previous = this.tabs.get(tabId);
 		// A report that repeats the rect is not a change: the stability window must not be rearmed by
 		// a scroll that moved nothing, or an execution after an attach would never start. The content
-		// script filters those already, but the window is compared against `MoveExecutor`'s clock and
-		// must not depend on the page's, so the stamp is taken here rather than from `msg.at` (which
-		// stays on the wire as the page's own observation time).
+		// script filters those already, but the window is compared against `MoveExecutor`'s clock, so
+		// the stamp is taken here. The message deliberately carries no timestamp of its own: the
+		// page's wall clock is not comparable with this one.
 		const moved = !previous || rectShiftPx(previous.rect, msg.rect) > EXECUTOR.boardMoveTolerancePx;
 		this.tabs.set(tabId, {
 			rect: { ...msg.rect },

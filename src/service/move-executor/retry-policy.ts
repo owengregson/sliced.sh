@@ -94,9 +94,15 @@ export async function runWithRetry(o: RetryRunnerOptions): Promise<ExecutionResu
 		const result = await o.attempt(tier, i);
 		if (result.outcome !== "skipped" || result.pressed) attempts += 1;
 		if (!result.ok) {
-			if (!result.pressed) return { ...result, attempts };
-			// The committed press went out before the skip/abort: the release may have moved the
-			// piece. One bounded re-check on a fresh signal decides — the board is always looked at.
+			// `pressedAny`, not `pressed`: a §9.3a **preview** press is a real `mousedown` on a real
+			// square and never sets the committed flag, so a window that ended between it and its
+			// release (a reflow caught mid-preview, a focus skip inside a preview drag) could have
+			// left the page with `down` on one square and `up` on another — a submitted move that
+			// nothing would ever have looked for. "The board is always looked at" only held for the
+			// committed press until now.
+			if (!result.pressed && result.pressedAny !== true) return { ...result, attempts };
+			// A press went out before the skip/abort: the release may have moved the piece. One
+			// bounded re-check on a fresh signal decides.
 			const late = await o.recheck(o.checkSignal());
 			if (late.outcome === "ok") {
 				log.info("executor: interrupted attempt still landed the move", { outcome: result.outcome });

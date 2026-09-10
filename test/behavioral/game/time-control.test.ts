@@ -134,42 +134,43 @@ describe("game session: the time control arrives after the game started (§4.3)"
 		// never fire — which is what production did on every game. The page answering its clock is
 		// what opens the gate; nothing else about the game changes.
 		const SEEDS = 6;
-		let firedWithClock = false;
-		let firedUntimed = false;
-		for (let seed = 0; seed < SEEDS; seed++) {
-			for (const withClock of [false, true]) {
-				await h?.dispose();
-				h = await createGameHarness({
-					timeControl: null,
-					gameId: `premove-gate-${seed}`,
-					seed: `premove-gate-${seed}`,
-					settings: {
-						automation: { autoMove: true },
-						strength: { matchOpponentRating: false, targetElo: 3000 },
-					},
-					script: { bestCp: 900, stepCp: 900 },
-				});
-				// move 1 (untimed either way: the site has not answered yet)
-				await h.arrive();
-				expect(await h.until(() => h.session().currentState() === "live:opponent-turn", 60_000)).toBe(
-					true
-				);
-				// the site learns its clock exactly here, before the opponent-turn position
-				if (withClock) h.site.setTimeControl(BULLET);
-				await h.arrive();
-				await h.advance(2_000);
-				const expected = h.transport.movesFor(h.site.board.fen())[0] as string;
-				await h.arrive(expected);
-				expect(await h.until(() => h.session().recommendation() !== null, 20_000)).toBe(true);
-				const source = h.session().recommendation()?.chosen.source;
-				if (withClock && source === "premove") firedWithClock = true;
-				if (!withClock && source === "premove") firedUntimed = true;
-			}
-			if (firedWithClock) break;
+
+		/** Play move 1, hand the page's clock over (or not), let the opponent reply as predicted. */
+		async function run(seed: number, withClock: boolean): Promise<string | undefined> {
+			await h?.dispose();
+			h = await createGameHarness({
+				timeControl: null,
+				gameId: `premove-gate-${seed}`,
+				seed: `premove-gate-${seed}`,
+				settings: {
+					automation: { autoMove: true },
+					strength: { matchOpponentRating: false, targetElo: 3000 },
+				},
+				script: { bestCp: 900, stepCp: 900 },
+			});
+			// move 1 (untimed either way: the site has not answered yet)
+			await h.arrive();
+			expect(await h.until(() => h.session().currentState() === "live:opponent-turn", 60_000)).toBe(
+				true
+			);
+			// the site learns its clock exactly here, before the opponent-turn position
+			if (withClock) h.site.setTimeControl(BULLET);
+			await h.arrive();
+			await h.advance(2_000);
+			const expected = h.transport.movesFor(h.site.board.fen())[0] as string;
+			await h.arrive(expected);
+			expect(await h.until(() => h.session().recommendation() !== null, 20_000)).toBe(true);
+			return h.session().recommendation()?.chosen.source;
 		}
-		// §7.4's probability is a per-game draw, so this is "at least one of the seeds fired".
-		expect(firedWithClock).toBe(true);
-		// …and with no clock on the snapshot it is unreachable, every seed.
-		expect(firedUntimed).toBe(false);
+
+		// With no clock the gate is unreachable, and that is asserted for EVERY seed — a loop that
+		// stopped at the first firing would have proved it for one.
+		for (let seed = 0; seed < SEEDS; seed++) expect(await run(seed, false)).not.toBe("premove");
+
+		// With the page's clock the gate opens; §7.4's probability is a per-game draw, so this is
+		// "at least one of the same seeds fires".
+		let fired = false;
+		for (let seed = 0; seed < SEEDS && !fired; seed++) fired = (await run(seed, true)) === "premove";
+		expect(fired).toBe(true);
 	}, 300_000);
 });

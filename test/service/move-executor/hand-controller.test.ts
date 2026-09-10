@@ -414,6 +414,9 @@ describe("HandController preview selections and a reflow (§9.5 / §9.3a)", () =
 			const releases = cmds.filter((c) => c.type === "mouseReleased");
 			expect(result.outcome).toBe("aborted");
 			expect(result.reason).toBe(EXECUTOR.reasons.boardMoved);
+			// A preview press is not the committed press, but it *was* a press: the flag the retry
+			// policy reads to decide whether the board must be looked at before reporting.
+			expect(result.pressedAny).toBe(true);
 			// the button is never left held, and the committed press never happened
 			expect(presses).toHaveLength(1);
 			expect(releases).toHaveLength(1);

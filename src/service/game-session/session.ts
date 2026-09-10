@@ -38,7 +38,7 @@
  * attached while the switch is off buys nothing and only leaves the infobar).
  */
 
-import { legalMoves, uciToSan } from "@core/chess/san";
+import { applyMoves, legalMoves, uciToSan } from "@core/chess/san";
 import { sanToSpeech } from "@core/chess/san-speech";
 import { isSquare } from "@core/chess/squares";
 import { chromeLocalGet, chromeLocalSet } from "@core/chrome/storage";
@@ -47,7 +47,7 @@ import type { GamePortCommand, GamePortMessage } from "@core/constants/messages"
 import { LOCAL_KEYS } from "@core/constants/storage-keys";
 import { TELEMETRY_BANDS } from "@core/constants/telemetry";
 import type { TimingProfile } from "@core/constants/timings";
-import type { AnalysisRequest } from "@core/engine/types";
+import type { AnalysisHandle, AnalysisRequest } from "@core/engine/types";
 import { log } from "@core/logger";
 import type { TimeControlClass } from "@core/motor/types";
 import { createRng, type Rng } from "@core/rng";
@@ -91,7 +91,7 @@ import type { PersonaId, Settings } from "@typedefs/settings";
 import { PonderController } from "./ponder";
 import { autoPlayAllowed, effectiveTimingProfile, timingSettingsFor } from "./presets";
 import type { RecommendationInput, RecommendationOutcome } from "./recommendation";
-import { RecommendationPipeline } from "./recommendation";
+import { ownMoveBudget, RecommendationPipeline } from "./recommendation";
 import { EMPTY_STATS, foldGame, foldMove } from "./stats";
 import { MoveWindow, selectedMultiplePieces } from "./telemetry";
 import { type GameSessionEvent, isLiveState, nextState } from "./transitions";
@@ -254,6 +254,8 @@ export class GameSession implements SessionSource {
 
 	private timing: TimingModel | null = null;
 	private ponderer: PonderController | null = null;
+	/** Appendix E §4.5: the in-flight pre-analysis of the position the expected reply leads to. */
+	private preAnalysis: AnalysisHandle | null = null;
 	private pipeline: SessionPipeline | null = null;
 	private executorHandle: MoveExecutor | null = null;
 	private executorOffs: Array<() => void> = [];
@@ -519,8 +521,11 @@ export class GameSession implements SessionSource {
 		else await this.onOpponentTurn(snapshot);
 	}
 
-	/** Stop a running ponder / panel search (Task 13's `pendingOptions`, §6.4). */
+	/** Stop a running ponder / panel / pre-analysis search (Task 13's `pendingOptions`, §6.4). */
 	stopSearch(): Promise<void> {
+		const pre = this.preAnalysis;
+		this.preAnalysis = null;
+		if (pre) void pre.stop();
 		return this.ponderer?.stop() ?? Promise.resolve();
 	}
 
@@ -802,6 +807,106 @@ export class GameSession implements SessionSource {
 			return;
 		}
 		await this.armPremove(snapshot);
+		await this.preAnalysePredicted(snapshot, ponderer);
+	}
+
+	/**
+	 * Appendix E §4.5: "a hit … common when the opponent plays the predicted move: the ponder result
+	 * for that FEN is already there". It never was. The opponent-turn ponder is keyed under the
+	 * *opponent's* position, and §7.4's own `m r` gate search is MultiPV 2 at 120 ms — below the
+	 * own-move `K` (3–8) and far below the cache's `depthCap − 2` gate — so nothing this session
+	 * produced could ever answer its next own-move search, and every move paid the full search again.
+	 *
+	 * This is that search, run early: the position we will face if the opponent plays the reply we
+	 * expect, analysed at **exactly the budget the own-move search will ask for** (`ownMoveBudget`),
+	 * which is what puts its depth inside the slack. Engine time on the opponent's clock is free, and
+	 * the own-move search supersedes it by priority if the reply comes first.
+	 *
+	 * Raising `PREMOVE.replyMultiPv` instead would not have worked: the MultiPV is only one of the
+	 * two gates, and a 120 ms search cannot reach `depthCap − 2` on any machine. Those constants are
+	 * Appendix E §3.1 normative and sized for a *gate decision*, so they stand.
+	 *
+	 * Only when a reply is already predicted, which today means the classes where §7.4 ran its own
+	 * prediction (bullet / blitz). In rapid and classical the `go infinite` ponder is still running
+	 * and has not settled, so there is no prediction to work from — and interrupting it to get one
+	 * would trade depth on the real position for a head start on a guess, at speeds where the
+	 * own-move search already fits inside the planned think. That is a design question, not a bug;
+	 * it is in the report.
+	 */
+	private async preAnalysePredicted(
+		snapshot: PositionSnapshot,
+		ponderer: PonderController
+	): Promise<void> {
+		const engine = this.deps.engine;
+		const timing = this.timing;
+		const myColor = snapshot.myColor;
+		if (!engine || !timing || myColor === null || !this.mayAct()) return;
+		// The prediction. §7.4 produces one on the classes it runs on, and only when its own draw
+		// came up; otherwise the `go infinite` ponder is still running and is *holding* the answer —
+		// it settles on `stop`. Stopping it early costs depth on the opponent's position, which is
+		// only ever read for this prediction; the pre-analysis then spends the rest of that time on
+		// the position we are actually about to face, and the ponder is restarted underneath it.
+		let reply = this.premove?.reply ?? ponderer.expectedReply(snapshot.fen);
+		if (reply === null) {
+			await ponderer.stop();
+			if (this.disposed || this.snapshot !== snapshot) return;
+			reply = ponderer.expectedReply(snapshot.fen);
+		}
+		if (reply === null) {
+			await this.resumePonder(snapshot, ponderer);
+			return;
+		}
+		const predicted = applyMoves(snapshot.fen, [reply]);
+		if (predicted === null) {
+			await this.resumePonder(snapshot, ponderer);
+			return;
+		}
+		const budget = ownMoveBudget(
+			{
+				fen: predicted,
+				ply: snapshot.ply + 1,
+				myClockMs: snapshot.clocks[myColor].ms,
+				timeControl: this.currentTimeControl(),
+				tau: timing.persona.tau,
+				budgetUsedRatio: this.budgetUsedRatio(snapshot),
+			},
+			this.deps.getSettings()
+		);
+		const request: AnalysisRequest = {
+			id: `${this.deps.tabId}-predicted-${this.now()}`,
+			fen: snapshot.fen,
+			moves: [reply],
+			multiPv: budget.multiPv,
+			limit: { movetimeMs: Math.round(budget.movetimeMs), depth: budget.depthCap },
+			priority: "ponder",
+		};
+		const elo = engine.engineElo();
+		if (elo !== undefined) request.elo = elo;
+		try {
+			const handle = engine.analyse(request);
+			this.preAnalysis = handle;
+			const result = await handle.result;
+			log.debug("game-session: pre-analysed the predicted position", {
+				tabId: this.deps.tabId,
+				reply,
+				depth: result.final.depth,
+				status: result.status,
+			});
+		} catch (error) {
+			log.debug("game-session: pre-analysis unavailable", { error: errorMessage(error) });
+		} finally {
+			this.preAnalysis = null;
+		}
+		// §6.4: the rest of the opponent's clock goes back to pondering their position — the engine
+		// must not sit idle for the remainder of a long turn.
+		await this.resumePonder(snapshot, ponderer);
+	}
+
+	/** Put the opponent-turn ponder back, unless the position (or the switch) has moved on. */
+	private async resumePonder(snapshot: PositionSnapshot, ponderer: PonderController): Promise<void> {
+		if (this.disposed || this.snapshot !== snapshot || !this.mayAct()) return;
+		if (ponderer.isRunning()) return;
+		await ponderer.start("opponent", snapshot.fen);
 	}
 
 	/** §3.2 steps 1–5 for the current position. */
@@ -1396,6 +1501,10 @@ export class GameSession implements SessionSource {
 		this.playWhenReady = false;
 		this.executorHandle?.cancel();
 		void this.ponderer?.stop();
+		// The prediction it was preparing for is no longer the live one (§4.4 stops it too).
+		const pre = this.preAnalysis;
+		this.preAnalysis = null;
+		if (pre) void pre.stop();
 	}
 
 	/** Content-script settings that gate what it may draw (§13.3 rule 4). */

@@ -289,6 +289,8 @@ export class HandController {
 	private signal: AbortSignal | null = null;
 	/** The committed press went out (a release may land the move even on abort/skip). */
 	private pressedCommitted = false;
+	/** Any press went out, preview selections included (§13.2 / the retry policy's board re-check). */
+	private pressedAny = false;
 	/** Squares pressed in this execution besides the committed from-square (§13.2). */
 	private previewed: Square[] = [];
 	/** Clock time of the drop (second click / release); `null` until then. */
@@ -320,6 +322,7 @@ export class HandController {
 		this.tabId = plan.tabId;
 		this.signal = signal;
 		this.pressedCommitted = false;
+		this.pressedAny = false;
 		this.dropAt = null;
 		const startedPx = this.backend.travelledPx?.() ?? 0;
 		this.previewed = [];
@@ -333,12 +336,14 @@ export class HandController {
 			| "san"
 			| "pointerOffsetPx"
 			| "previewedSquares"
+			| "pressedAny"
 		> => ({
 			tier: plan.style,
 			endPoint: this.backend.position(),
 			elapsedMs: (this.dropAt ?? this.now()) - t0,
 			timeline: tl.entries,
 			pressed: this.pressedCommitted,
+			pressedAny: this.pressedAny,
 			san: plan.expected.san ?? plan.expected.uci,
 			pointerOffsetPx: (this.backend.travelledPx?.() ?? 0) - startedPx,
 			previewedSquares: [...this.previewed],
@@ -1022,6 +1027,7 @@ export class HandController {
 		throwIfAborted(this.signal ?? undefined);
 		this.gate();
 		await this.backend.press(p, this.now(), this.signal ?? undefined);
+		this.pressedAny = true;
 		if (committed) this.pressedCommitted = true;
 		this.ownership.setPosition(this.tabId, this.backend.position());
 	}

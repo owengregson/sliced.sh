@@ -85,6 +85,34 @@ describe("timeControlFromBridge", () => {
 		expect(timeControlFromBridge({ baseTime: 99_999_999_999 })).toBeNull();
 	});
 
+	it("catches a seconds-reported base the magnitude test cannot see, using the page's clock", () => {
+		// A 30-minute game reported in seconds is `1800`, which clears `minPlausibleMs` and would
+		// read as a 1.8 s base: `base_eff` 1.8 s, every cap at 0.9 s, every move in the §8.5
+		// emergency regime. The clock the page is showing is what gives it away.
+		expect(timeControlFromBridge({ baseTime: 1_800, increment: 0 }, 1_800_000)).toEqual({
+			baseMs: 1_800_000,
+			incMs: 0,
+		});
+		expect(timeControlFromBridge({ baseTime: 1_200, increment: 10 }, 1_200_000)).toEqual({
+			baseMs: 1_200_000,
+			incMs: 10_000,
+		});
+		// …and with no clock showing, or a clock consistent with the base, the reading stands as ms.
+		expect(timeControlFromBridge({ baseTime: 1_800, increment: 0 })).toEqual({
+			baseMs: 1_800,
+			incMs: 0,
+		});
+		expect(timeControlFromBridge({ baseTime: 180_000, increment: 0 }, 180_000)).toEqual({
+			baseMs: 180_000,
+			incMs: 0,
+		});
+		// a mid-game clock is far *smaller* than the base: that must never trip the guard
+		expect(timeControlFromBridge({ baseTime: 180_000, increment: 0 }, 4_000)).toEqual({
+			baseMs: 180_000,
+			incMs: 0,
+		});
+	});
+
 	it("guards the implausible unit rather than planning with a 2 ms increment", () => {
 		// The increment's unit is UNCONFIRMED (0 in the only sample). chess.com's increments are
 		// whole seconds, so a nonzero value under a second cannot be milliseconds: read as seconds.

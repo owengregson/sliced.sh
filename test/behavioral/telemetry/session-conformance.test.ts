@@ -4,6 +4,7 @@
 // differs — every move goes position → session → recommendation → executor → verified drop, and
 // the session writes the §8.6 row and its §13.2 `MoveTelemetryRecord` for each one.
 import { afterEach, describe, expect, it } from "bun:test";
+import { TELEMETRY_BANDS } from "@core/constants/telemetry";
 import { checkBand } from "@core/strength/bands";
 import { SIM_TELEMETRY } from "@test/sim/telemetry/constants";
 import {
@@ -121,10 +122,24 @@ describe("telemetry: the orchestrator end to end (Task 30 / Task 33 ruling 6)", 
 				driver,
 			});
 			expect(game.moves.every((m) => m.result.ok && m.result.outcome === "executed")).toBe(true);
-			const summary = assertHumanShapedAc(game.acs, { moves: game.moves.map(moveMetaOf) });
+			// The blob-level §13.2 invariants, which hold per move and cannot depend on the draw. The
+			// *statistical* bands (CV, complexity correlation, preview rate) are deliberately not
+			// asserted on one 30-move game: at ≈ 12 normal rows their standard error is wider than
+			// the distance to their own floors, which is a coin flip dressed as a gate. They are
+			// asserted over a pooled population in `timing-shape-speeds.test.ts`.
+			const meta = game.moves.map(moveMetaOf);
+			const summary = summarizeAc(game.acs, meta);
 			expect(summary.blurCount).toBe(0);
 			expect(summary.toggles).toBe(0);
 			expect(summary.untrusted).toBe(0);
+			expect(summary.focusFieldsSet).toBe(0);
+			game.acs.forEach((ac, i) => {
+				const m = meta[i];
+				expect(ac.EventTrusted).toBe(true);
+				expect(ac.TotalBlurTime).toBe(0);
+				if (!m || m.mode === "premove" || m.mode === "instant") return;
+				expect(ac.MoveHoldTime).toBeGreaterThanOrEqual(TELEMETRY_BANDS.holdTime.minMs);
+			});
 			expect(game.blurBits.every((b) => b === 0)).toBe(true);
 			// the hand really is a bullet hand, and the session wrote a row per move
 			expect(driver.session()?.executor()?.timeControlClass()).toBe("bullet");

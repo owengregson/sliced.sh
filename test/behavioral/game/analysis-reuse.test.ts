@@ -50,6 +50,41 @@ function snapshotOf(harness: GameHarness, fen: string, timed: boolean): Position
 }
 
 describe("game session: an analysed position is not searched twice", () => {
+	it("the predicted position is pre-analysed on the opponent's clock, so the reply is answered instantly", async () => {
+		// Appendix E §4.5's promised hit, which nothing could ever satisfy: the opponent-turn ponder
+		// is keyed under the *opponent's* position and §7.4's gate search is MultiPV 2 at 120 ms.
+		// Bullet, because the cache's depth gate is `depthCap − 2` = 12 and the scripted engine
+		// answers at depth 14 — plausible for a 400 ms search, which is what the pre-analysis asks
+		// for. (At blitz the same fake depth would have to satisfy a cap of 18, which is the sort of
+		// harness-flattered pass this lane exists to stop writing.)
+		h = await createGameHarness({
+			timeControl: BULLET,
+			gameId: "reuse-predicted",
+			settings: {
+				automation: { autoMove: true },
+				strength: { matchOpponentRating: false, targetElo: 3000 },
+			},
+			script: { bestCp: 900, stepCp: 900 },
+		});
+		// our move, then the opponent's turn: ponder → premove → pre-analysis
+		await h.arrive();
+		expect(await h.until(() => h.session().currentState() === "live:opponent-turn", 60_000)).toBe(
+			true
+		);
+		await h.arrive();
+		await h.advance(2_000);
+		const expected = h.transport.movesFor(h.site.board.fen())[0] as string;
+		const before = moveSearches(h);
+
+		await h.arrive(expected); // the opponent plays exactly what we predicted
+		expect(await h.until(() => h.session().recommendation() !== null, 20_000)).toBe(true);
+		const rec = h.session().recommendation();
+		// Either the premove fired (no search at all, §7.4) or the own-move search was answered from
+		// the pre-analysis. Both are "the move was there already"; neither runs a fresh own search.
+		expect(moveSearches(h)).toBe(before);
+		expect(rec?.chosen.uci.length).toBeGreaterThanOrEqual(4);
+	}, 120_000);
+
 	it("the bridge's spelling of a ply already analysed from the replay spelling hits the cache", async () => {
 		h = await createGameHarness({
 			timeControl: null,

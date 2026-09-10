@@ -92,6 +92,14 @@ export interface ExecutionResult {
 	previewedSquares?: Square[];
 	/** The committed press was dispatched — even a skipped/aborted attempt may have landed the move. */
 	pressed?: boolean;
+	/**
+	 * *Any* press was dispatched in this attempt, the §9.3a preview selections included. A preview
+	 * press is never `pressed` (it is not the committed press), but it is a real `mousedown` on a
+	 * real square: if the window ends between it and its release — a reflow, a focus skip mid-drag —
+	 * the page can have seen `down` on one square and `up` on another, which is a submitted move. So
+	 * this is the flag that decides whether the board must be looked at before reporting the outcome.
+	 */
+	pressedAny?: boolean;
 }
 
 export interface GameSessionView {

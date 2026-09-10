@@ -119,7 +119,7 @@ export interface SearchBudgetInput {
 	tc: TcClass;
 	/** Our remaining clock in ms; `0` when the page reports none (an untimed game). */
 	myClockMs: number;
-	/** Legal moves in the position — one means there is nothing to search. */
+	/** Legal moves in the position — exactly one means there is nothing to search (0 = unreadable). */
 	legalMoves: number;
 	/** §7.5's bound: the think time the model is expected to plan (`estimatedThinkMs`). */
 	plannedThinkMs: number;
@@ -132,8 +132,8 @@ export interface SearchBudgetInput {
  * the class base (§6.4's plan-independent 400–1500 ms), §7.5's
  * `0.6 · plannedThinkMs` (the search must finish before we act) and
  * `clockFraction` of the clock we have left (never burn the clock searching).
- * A position with one legal move takes the floor: no search can change the
- * answer.
+ * A position with exactly one legal move takes the floor: no search can change
+ * the answer.
  */
 export function searchBudget(input: SearchBudgetInput, settings: Settings): SearchBudget {
 	const { tc, myClockMs, legalMoves, plannedThinkMs } = input;
@@ -144,7 +144,9 @@ export function searchBudget(input: SearchBudgetInput, settings: Settings): Sear
 		myClockMs > 0 ? SEARCH_BUDGET.clockFraction * myClockMs : Number.POSITIVE_INFINITY,
 	];
 	const movetimeMs =
-		legalMoves <= 1
+		// Exactly one: `legalMoves()` answers `[]` on a FEN chess.js cannot parse, and an unreadable
+		// position is the last thing that should get the shortest search.
+		legalMoves === 1
 			? SEARCH_BUDGET.minMovetimeMs
 			: clamp(Math.min(...bounds), SEARCH_BUDGET.minMovetimeMs, SEARCH_BUDGET.maxMovetimeMs);
 	const depthCap = Math.min(SEARCH_BUDGET.depthCap[tc], settings.engine.depthCap);
@@ -157,6 +159,44 @@ export function searchBudget(input: SearchBudgetInput, settings: Settings): Sear
 	// §6.4: never below the user's MultiPV (the panel shows that many lines).
 	const multiPv = Math.min(SEARCH_BUDGET.multiPvLarge, Math.max(adaptive, settings.engine.multiPv));
 	return { movetimeMs, depthCap, multiPv };
+}
+
+/** Everything the own-move budget is a function of (§6.4 / §7.5): the clock and the position. */
+export interface OwnMoveBudgetInput {
+	fen: string;
+	ply: number;
+	myClockMs: number;
+	timeControl: TimeControl | undefined;
+	/** `Persona.tau` — the reserve scales with it. */
+	tau: number;
+	budgetUsedRatio: number;
+}
+
+/**
+ * The budget an own-move search of `fen` is given. One definition, because the §4.5 pre-analysis
+ * of the *predicted* position has to ask for exactly what the own-move search will ask for: the
+ * cache's depth gate is `depthCap − 2`, so a cheaper pre-analysis could never answer it.
+ */
+export function ownMoveBudget(input: OwnMoveBudgetInput, settings: Settings): SearchBudget {
+	const [baseSec, incSec] = tcSeconds(input.timeControl);
+	const tc = tcClass(baseSec, incSec);
+	const plannedThinkMs = estimatedThinkMs(
+		{
+			fen: input.fen,
+			ply: input.ply,
+			myClockMs: input.myClockMs,
+			baseSec,
+			incSec,
+			tc,
+			tau: input.tau,
+			budgetUsedRatio: input.budgetUsedRatio,
+		},
+		settings
+	);
+	return searchBudget(
+		{ tc, myClockMs: input.myClockMs, legalMoves: legalMoves(input.fen).length, plannedThinkMs },
+		settings
+	);
 }
 
 export interface RecommendationInput {
@@ -235,28 +275,16 @@ export class RecommendationPipeline {
 		const myColor = snapshot.myColor;
 		if (myColor === null) return null;
 		const [baseSec, incSec] = tcSeconds(snapshot.timeControl);
-		const tc = tcClass(baseSec, incSec);
 		const myClockMs = snapshot.clocks[myColor].ms;
 		const oppClockMs = snapshot.clocks[myColor === "w" ? "b" : "w"].ms;
-		const plannedThinkMs = estimatedThinkMs(
+		const budget = ownMoveBudget(
 			{
 				fen: snapshot.fen,
 				ply: snapshot.ply,
 				myClockMs,
-				baseSec,
-				incSec,
-				tc,
+				timeControl: snapshot.timeControl,
 				tau: input.tau,
 				budgetUsedRatio: input.budgetUsedRatio,
-			},
-			settings
-		);
-		const budget = searchBudget(
-			{
-				tc,
-				myClockMs,
-				legalMoves: legalMoves(snapshot.fen).length,
-				plannedThinkMs,
 			},
 			settings
 		);

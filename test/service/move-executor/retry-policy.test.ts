@@ -216,6 +216,45 @@ describe("runWithRetry", () => {
 		}
 	});
 
+	it("a preview press that never became the committed one is still re-checked (§9.3a)", async () => {
+		// `pressed` is the *committed* press. A §9.3a preview press is a real `mousedown` on a real
+		// square and never sets it, so the board used to be reported on without ever being looked at
+		// — and in the reflow ordering the escape release can land on a different square, i.e. submit
+		// a move, which is exactly what the re-check exists to notice.
+		const previewed = (tier: ClickStyle): ExecutionResult => ({
+			...dispatched(tier),
+			ok: false,
+			outcome: "aborted",
+			reason: EXECUTOR.reasons.boardMoved,
+			pressed: false,
+			pressedAny: true,
+		});
+		const landed = harness([], [{ outcome: "ok" }], previewed);
+		const up = await landed.run();
+		expect(landed.rechecks).toBe(1);
+		expect(up).toMatchObject({ ok: true, outcome: "executed" });
+		const missed = harness([], [{ outcome: "rejected" }], previewed);
+		expect(await missed.run()).toMatchObject({
+			ok: false,
+			outcome: "aborted",
+			reason: EXECUTOR.reasons.boardMoved,
+		});
+		expect(missed.rechecks).toBe(1);
+
+		// …and an attempt that dispatched nothing at all still returns without a board read.
+		const nothing = (tier: ClickStyle): ExecutionResult => ({
+			...dispatched(tier),
+			ok: false,
+			outcome: "aborted",
+			reason: EXECUTOR.reasons.boardMoved,
+			pressed: false,
+			pressedAny: false,
+		});
+		const untouched = harness([], [{ outcome: "ok" }], nothing);
+		expect(await untouched.run()).toMatchObject({ ok: false, outcome: "aborted" });
+		expect(untouched.rechecks).toBe(0);
+	});
+
 	it("the cancel that interrupted the attempt never poisons the re-check: it runs on a fresh signal and the board is looked at", async () => {
 		const ac = new AbortController();
 		const interrupted = (tier: ClickStyle): ExecutionResult => {
