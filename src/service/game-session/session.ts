@@ -21,7 +21,15 @@
  *
  * `Settings.enabled` (§4.4) is the master switch and it is enforced *here*,
  * because this is the only place that asks the engine for anything, draws on
- * the board or hands a move to the hand. While it is off the session still
+ * the board or hands a move to the hand. The switch is read through `mayAct()`,
+ * which is three-valued in practice: on, off, and *not known yet* — a worker
+ * woken by a queued port connect can be handed a position before its
+ * `chrome.storage.local` read answers, and guessing `DEFAULT_SETTINGS` there
+ * fails open in whichever direction that default currently points. Unknown
+ * therefore holds: the session acts on nothing until the real settings arrive,
+ * and the first read's fan-out resumes whatever it was holding.
+ *
+ * While the switch is off (or unknown) the session still
  * follows the game — positions, clocks, the move list, the state machine — so
  * the panel stays truthful and a flip back on resumes from the live position,
  * but nothing is analysed, pondered, recommended, highlighted, scheduled,
@@ -163,6 +171,12 @@ export interface GameSessionDeps {
 	createPipeline?: ((timing: TimingModel) => SessionPipeline) | undefined;
 	/** The latest settings the registry has read. */
 	getSettings(): Settings;
+	/**
+	 * Whether `getSettings()` is the *stored* settings yet, rather than `DEFAULT_SETTINGS` standing
+	 * in until the first `chrome.storage.local` read answers (§4.4 / the MV3 cold start). Omitted
+	 * by a caller that hands the session real settings synchronously, which is every harness.
+	 */
+	settingsKnown?: (() => boolean) | undefined;
 	/** Something the panel snapshot reflects changed. */
 	notify(): void;
 	/** `chrome.tts.speak` through the service's wrapper. */
@@ -266,12 +280,12 @@ export class GameSession implements SessionSource {
 	/** A `playNow` issued while the pipeline was still running. */
 	private playWhenReady = false;
 	private disposed = false;
-	/** `Settings.enabled` as of the last settings write this session saw (§4.4 flip detection). */
-	private assistantOn: boolean;
+	/** `mayAct()` as of the last settings write this session saw (§4.4 flip detection). */
+	private acting: boolean;
 
 	constructor(deps: GameSessionDeps) {
 		this.deps = deps;
-		this.assistantOn = deps.getSettings().enabled;
+		this.acting = this.mayAct();
 		this.now = deps.now ?? defaultNow;
 		this.scheduler = deps.scheduler ?? defaultScheduler;
 		this.seed = deps.seed ?? `tab-${deps.tabId}`;
@@ -394,9 +408,9 @@ export class GameSession implements SessionSource {
 	 * could still do to the page, on picks the live position back up.
 	 */
 	onSettingsChanged(): void {
-		const on = this.assistantEnabled();
-		const flipped = on !== this.assistantOn;
-		this.assistantOn = on;
+		const on = this.mayAct();
+		const flipped = on !== this.acting;
+		this.acting = on;
 		// Sent first either way: `highlightMoves` is reported as `enabled && highlightMoves`, so
 		// this is also what clears a mark the content script has already drawn.
 		this.pushContentSettings();
@@ -405,9 +419,19 @@ export class GameSession implements SessionSource {
 		else this.stopDisabled();
 	}
 
-	/** §4.4: the master switch, as every acting path in this file reads it. */
-	private assistantEnabled(): boolean {
-		return this.deps.getSettings().enabled;
+	/**
+	 * §4.4: may this session act on the page at all right now? The master switch, plus the
+	 * cold-start rule that an *unknown* switch holds rather than guesses — `DEFAULT_SETTINGS` is
+	 * not the user's answer, in either direction, so nothing is analysed, drawn, armed or played
+	 * until the stored settings have actually been read.
+	 */
+	private mayAct(): boolean {
+		return this.settingsKnown() && this.deps.getSettings().enabled;
+	}
+
+	/** Whether `getSettings()` is the stored settings yet (a caller that omits the seam knows them). */
+	private settingsKnown(): boolean {
+		return this.deps.settingsKnown?.() ?? true;
 	}
 
 	/**
@@ -444,7 +468,7 @@ export class GameSession implements SessionSource {
 	private async releaseDebugger(executor: MoveExecutor | null): Promise<void> {
 		try {
 			await executor?.whenIdle();
-			if (this.disposed || this.assistantEnabled()) return;
+			if (this.disposed || this.mayAct()) return;
 			await this.deps.debugger.detach(this.deps.tabId);
 			this.deps.notify();
 		} catch (error) {
@@ -626,7 +650,7 @@ export class GameSession implements SessionSource {
 		this.trackMove(previous, snapshot);
 		if (!this.apply("positionChanged", { myTurn })) return;
 		this.deps.notify();
-		if (!this.assistantEnabled()) {
+		if (!this.mayAct()) {
 			// §4.4: everything above is bookkeeping the panel reads and a resume needs (the ply, the
 			// clocks, the move list, the focus gate's window). Nothing below it runs while the
 			// switch is off: no `go`, no ponder, no premove, no recommendation, no schedule.
@@ -696,9 +720,14 @@ export class GameSession implements SessionSource {
 		const ponderer = this.ponderer;
 		if (!ponderer) return;
 		await ponderer.start("opponent", snapshot.fen);
-		// §4.4: starting the ponder is an await, so the switch may have gone off inside it — and
-		// `stopDisabled` stopped that ponder. Nothing more is searched for this position.
-		if (!this.assistantEnabled()) return;
+		// §4.4: starting the ponder is an await, so the switch can go off *inside* it — and
+		// `stopDisabled`'s own stop then ran before this search existed, which would leave a
+		// `go infinite` running with the assistant off. Stop what we just started, and search
+		// nothing more for this position.
+		if (!this.mayAct()) {
+			await ponderer.stop();
+			return;
+		}
 		await this.armPremove(snapshot);
 	}
 
@@ -811,8 +840,8 @@ export class GameSession implements SessionSource {
 		const settings = this.deps.getSettings();
 		const last = this.moves[this.moves.length - 1];
 		// §4.4: `premoveCandidate` issues its own `analyse` at `ponder` priority, so the switch is
-		// checked here too — `settings.enabled` is read from the same snapshot as `autoMoveAllowed`.
-		if (!settings.enabled) return;
+		// checked here too (unknown holds, like everywhere else).
+		if (!this.mayAct()) return;
 		if (!engine || !timing || last === undefined || !this.autoMoveAllowed(settings)) return;
 		const previous = this.priorFen;
 		if (previous === null) return;
@@ -845,8 +874,7 @@ export class GameSession implements SessionSource {
 			);
 			// The search above is an await: a flip-off inside it already nulled `this.premove`, so a
 			// candidate must not be published over the top of that (§4.4).
-			if (!candidate || this.disposed || this.snapshot !== snapshot || !this.assistantEnabled())
-				return;
+			if (!candidate || this.disposed || this.snapshot !== snapshot || !this.mayAct()) return;
 			const chosen: ChosenMove = {
 				uci: candidate.premove,
 				san: candidate.premove,
@@ -949,7 +977,7 @@ export class GameSession implements SessionSource {
 			log.info("game-session: nothing to arm (no game on this tab)", { tabId: this.deps.tabId });
 			return;
 		}
-		if (!this.assistantEnabled()) {
+		if (!this.mayAct()) {
 			// §4.4: an armed hand with nothing to play is a promise the switch says is off.
 			log.info("game-session: arm refused — the assistant is off", { tabId: this.deps.tabId });
 			return;
@@ -990,7 +1018,7 @@ export class GameSession implements SessionSource {
 	private async playNow(): Promise<void> {
 		const executor = this.executorHandle;
 		if (!executor) return;
-		if (!this.assistantEnabled()) {
+		if (!this.mayAct()) {
 			log.info("game-session: playNow refused — the assistant is off", { tabId: this.deps.tabId });
 			return;
 		}
@@ -1077,7 +1105,7 @@ export class GameSession implements SessionSource {
 			gameId: meta.gameId,
 		});
 		// §4.4: with the switch off nothing will search, so nothing is pre-warmed either.
-		if (this.assistantEnabled()) this.deps.warmTiming?.(targetElo);
+		if (this.mayAct()) this.deps.warmTiming?.(targetElo);
 
 		const engine = this.deps.engine;
 		if (engine) {
@@ -1117,8 +1145,7 @@ export class GameSession implements SessionSource {
 		await this.updateStats((stats) => foldGame(stats, this.targetElo()));
 		const settings = this.deps.getSettings();
 		// §4.4: the auto-queue asks the *page* for a new game, so the switch gates it like the rest.
-		if (settings.enabled && settings.automation.autoQueue)
-			this.deps.autoQueue.schedule(this.deps.tabId);
+		if (this.mayAct() && settings.automation.autoQueue) this.deps.autoQueue.schedule(this.deps.tabId);
 		log.info("game-session: game over", { tabId: this.deps.tabId, result });
 	}
 
@@ -1147,7 +1174,7 @@ export class GameSession implements SessionSource {
 		// happens here — before the first position of the game, i.e. outside every move window
 		// (§13.4) — never once a move is due.
 		// §4.4: neither default arms anything while the assistant is off.
-		if (this.assistantEnabled() && (wasArmed || this.deps.getSettings().automation.autoMove))
+		if (this.mayAct() && (wasArmed || this.deps.getSettings().automation.autoMove))
 			void executor.arm().catch((error: unknown) => log.warn("game-session: re-arm failed", error));
 	}
 
@@ -1291,7 +1318,7 @@ export class GameSession implements SessionSource {
 		const commands: GamePortCommand[] = [
 			// §4.4: the master switch gates the board marks too — and because the content script
 			// clears what it has drawn the moment this turns off, this is also the clear.
-			{ kind: "settings", highlightMoves: settings.enabled && settings.automation.highlightMoves },
+			{ kind: "settings", highlightMoves: this.mayAct() && settings.automation.highlightMoves },
 			{ kind: "keybinds", keybinds: settings.keybinds },
 		];
 		for (const cmd of commands) this.deps.link.post(this.deps.tabId, cmd);
@@ -1299,7 +1326,7 @@ export class GameSession implements SessionSource {
 
 	private postHighlight(rec: Recommendation): void {
 		const settings = this.deps.getSettings();
-		if (!settings.enabled || !settings.automation.highlightMoves) return;
+		if (!this.mayAct() || !settings.automation.highlightMoves) return;
 		this.deps.link.post(this.deps.tabId, {
 			kind: "highlight",
 			from: rec.chosen.from,

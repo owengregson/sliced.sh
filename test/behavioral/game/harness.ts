@@ -112,10 +112,11 @@ export interface GameHarness {
 const DEFAULT_TC = { baseMs: 300_000, incMs: 2_000 };
 
 export async function createGameHarness(options: GameHarnessOptions = {}): Promise<GameHarness> {
-	// `DEFAULT_SETTINGS.enabled` is false (§4.4: a fresh install does nothing until the user turns
-	// the assistant on), and every session path is gated on it — so the fixture is a user who has
-	// turned it on, seeded as stored settings so no settings-write event fires before the stack is
-	// up. A test about the switch itself passes `settings: { enabled: false }`, which wins below.
+	// §4.4: every session path is gated on the switch, so the fixture states it — a user with the
+	// assistant on — rather than inheriting `DEFAULT_SETTINGS` and silently changing meaning when
+	// that default moves. Seeded as *stored* settings so no settings-write event fires before the
+	// stack is up. A test about the switch itself passes `settings: { enabled: false }`, which wins
+	// below.
 	const sim = createSimulator({
 		startAt: START_AT,
 		storageLocal: { [LOCAL_KEYS.settings]: { enabled: true }, ...options.storage },

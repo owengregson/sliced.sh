@@ -24,8 +24,9 @@ import type { Settings } from "@typedefs/settings";
 import { FakeSession, fakeSources, makePlan, makeRecommendation } from "./harness";
 
 /**
- * §4.4: these tests are a user who has the assistant *on* — `DEFAULT_SETTINGS.enabled` is false
- * and the acting panel commands (arm, play, re-attach) refuse while the switch is off.
+ * §4.4: these tests are a user who has the assistant *on*, said explicitly rather than inherited
+ * from `DEFAULT_SETTINGS` — the acting panel commands (arm, play, re-attach) refuse while the
+ * switch is off, so the fixture must not move when the default does.
  */
 const SETTINGS: Settings = { ...DEFAULT_SETTINGS, enabled: true };
 

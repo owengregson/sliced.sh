@@ -54,6 +54,12 @@ export interface SessionRegistryDeps {
 	timingLog: TimingLogWriter;
 	/** The latest settings; the service worker keeps it fresh from storage. */
 	getSettings(): Settings;
+	/**
+	 * Whether `getSettings()` is the stored settings yet (§4.4 / the MV3 cold start): a session
+	 * built before the first `chrome.storage.local` read answers must hold rather than act on
+	 * `DEFAULT_SETTINGS`. Omitted by a caller whose settings are already real.
+	 */
+	settingsKnown?: (() => boolean) | undefined;
 	notify(): void;
 	speak(text: string): Promise<void>;
 	license(): LicenseState;
@@ -225,6 +231,7 @@ export class SessionRegistry implements GameSessionRegistry, SnapshotSources {
 			autoQueue: this.autoQueue,
 			createExecutor: (config) => this.makeExecutor(tabId, config),
 			getSettings: this.deps.getSettings,
+			settingsKnown: this.deps.settingsKnown,
 			notify: this.deps.notify,
 			speak: this.deps.speak,
 			warmTiming: this.deps.warmTiming,

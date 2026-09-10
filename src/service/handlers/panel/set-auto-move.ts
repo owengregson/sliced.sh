@@ -10,11 +10,11 @@
 import { PANEL_COMMAND_ERRORS } from "@core/constants/cdp";
 import { MSG } from "@core/constants/messages";
 import type { MessageRouter } from "@core/messaging/router";
-import type { PanelHandlerDeps } from "@service/handlers/panel";
+import { mayAct, type PanelHandlerDeps } from "@service/handlers/panel";
 
 export function registerSetAutoMoveHandler(
 	router: MessageRouter,
-	deps: Pick<PanelHandlerDeps, "broadcaster" | "sources" | "getSettings">
+	deps: Pick<PanelHandlerDeps, "broadcaster" | "sources" | "getSettings" | "settingsKnown">
 ): void {
 	router.on(MSG.PANEL_SET_AUTO_MOVE, async (msg) => {
 		const executor = deps.sources.executor(msg.tabId);
@@ -24,8 +24,9 @@ export function registerSetAutoMoveHandler(
 				executor.disarm();
 				return;
 			}
-			// §4.4: disarming is always allowed; arming is not, while the assistant is off.
-			if (!deps.getSettings().enabled) throw new Error(PANEL_COMMAND_ERRORS.assistantOff);
+			// §4.4: disarming is always allowed; arming is not, while the assistant is off (or while
+			// the stored settings are still unknown).
+			if (!mayAct(deps)) throw new Error(PANEL_COMMAND_ERRORS.assistantOff);
 			await executor.arm();
 			const session = deps.sources.session(msg.tabId);
 			const rec = session?.recommendation() ?? null;

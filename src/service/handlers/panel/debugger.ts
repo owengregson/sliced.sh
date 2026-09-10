@@ -10,15 +10,15 @@ import { PANEL_COMMAND_ERRORS } from "@core/constants/cdp";
 import { MSG } from "@core/constants/messages";
 import { TOAST_KEYS } from "@core/constants/toasts";
 import type { MessageRouter } from "@core/messaging/router";
-import type { PanelHandlerDeps } from "@service/handlers/panel";
+import { mayAct, type PanelHandlerDeps } from "@service/handlers/panel";
 
 export function registerDebuggerHandlers(
 	router: MessageRouter,
-	deps: Pick<PanelHandlerDeps, "broadcaster" | "sources" | "getSettings">
+	deps: Pick<PanelHandlerDeps, "broadcaster" | "sources" | "getSettings" | "settingsKnown">
 ): void {
 	router.on(MSG.PANEL_REATTACH_DEBUGGER, async (msg) => {
 		// §4.4: re-arming is an acting command; releasing the debugger below never is.
-		if (!deps.getSettings().enabled) throw new Error(PANEL_COMMAND_ERRORS.assistantOff);
+		if (!mayAct(deps)) throw new Error(PANEL_COMMAND_ERRORS.assistantOff);
 		const executor = deps.sources.executor(msg.tabId);
 		const hand = deps.sources.hand;
 		try {

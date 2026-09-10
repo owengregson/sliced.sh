@@ -56,6 +56,7 @@ registerPanelHandlers(router, {
 	sources: game.registry,
 	link: game.link,
 	getSettings: game.getSettings,
+	settingsKnown: game.settingsKnown,
 });
 
 router.install();

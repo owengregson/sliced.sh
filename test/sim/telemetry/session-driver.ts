@@ -56,9 +56,9 @@ export interface SessionDriver extends MoveDriver {
 export function createSessionDriver(options: SessionDriverOptions = {}): SessionDriver {
 	const site: Site = options.site ?? "chesscom";
 	const gameId = options.gameId ?? "conformance-game";
-	// §4.4: the orchestrator gates every acting path on `Settings.enabled`, and
-	// `DEFAULT_SETTINGS.enabled` is false — the conformance game is a user who has turned the
-	// assistant on, which is what the harness is measuring in the first place.
+	// §4.4: the orchestrator gates every acting path on `Settings.enabled`, so the conformance game
+	// says it outright — a user with the assistant on, which is what the harness measures — rather
+	// than inheriting whatever `DEFAULT_SETTINGS` currently says.
 	const settings = options.settings ?? { ...DEFAULT_SETTINGS, enabled: true };
 	const timeControl = options.timeControl ?? {
 		baseMs: SIM_TELEMETRY.game.baseSec * 1000,

@@ -48,6 +48,11 @@ export interface GameStack {
 	timingLog: TimingLogWriter;
 	/** The worker's one fresh `Settings` snapshot (what every consumer here reads). */
 	getSettings(): Settings;
+	/**
+	 * Whether that snapshot is the stored settings yet, rather than `DEFAULT_SETTINGS` standing in
+	 * until the first read answers (§4.4): every path that acts on the page holds while it is false.
+	 */
+	settingsKnown(): boolean;
 	dispose(): void;
 }
 
@@ -76,8 +81,12 @@ function defaultEnv(): OptionsEnv {
 export function createGameStack(options: GameStackOptions): GameStack {
 	const { systems, router, broadcaster } = options;
 	// Settings are read once and kept fresh; every consumer takes the snapshot synchronously.
+	// `settingsRead` is the part that matters for §4.4: until the first `chrome.storage.local` read
+	// answers, `settings` is a placeholder and nothing may act on it in either direction.
 	let settings: Settings = DEFAULT_SETTINGS;
+	let settingsRead = false;
 	const readSettings = (): Settings => settings;
+	const settingsKnown = (): boolean => settingsRead;
 
 	const transport = new RemoteEngine({
 		ensureHost: ensureOffscreen,
@@ -117,6 +126,7 @@ export function createGameStack(options: GameStackOptions): GameStack {
 		keepalive: systems.keepalive,
 		timingLog,
 		getSettings: readSettings,
+		settingsKnown,
 		notify: () => broadcaster.notify(),
 		speak,
 		license: () => systems.license.getState(),
@@ -148,15 +158,16 @@ export function createGameStack(options: GameStackOptions): GameStack {
 	// session's `go infinite` is stopped when one is waiting.
 	const applySettings = (next: Settings): void => {
 		settings = next;
+		settingsRead = true;
 		// The registry owns the whole reaction (content re-push + the `pendingOptions` stop), so
 		// this path and any harness driving the registry directly cannot drift apart.
 		//
 		// The *first* read fans out too, even though it is not a write: on a cold MV3 wake the
 		// queued port connect — and the first `position` behind it — can beat this read, so a
-		// `GameSession` can be built, and a ply arrive, while `settings` is still
-		// `DEFAULT_SETTINGS`. That ply is then gated on the wrong value of `Settings.enabled`
-		// (§4.4) and nothing retries it: the content script's replay is swallowed by the feed
-		// dedupe. Fanning out hands the session its real settings, which is what makes it resume.
+		// `GameSession` can be built, and a ply arrive, before `settings` is the user's. That ply
+		// is *held* (`settingsKnown()` is false until the line above), and nothing re-delivers it:
+		// the content script's replay is swallowed by the feed dedupe. Fanning out is what releases
+		// it — `resumeEnabled` picks the held position up with the settings that really apply.
 		registry.settingsChanged();
 	};
 	const offSettings = onSettingsChanged(applySettings);
@@ -178,6 +189,7 @@ export function createGameStack(options: GameStackOptions): GameStack {
 		registry,
 		timingLog,
 		getSettings: readSettings,
+		settingsKnown,
 		dispose(): void {
 			offSettings();
 			detachEngineHandlers();

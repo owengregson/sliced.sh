@@ -18,6 +18,8 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { CDP, PANEL_COMMAND_ERRORS } from "@core/constants/cdp";
 import { MSG } from "@core/constants/messages";
 import { TIMINGS } from "@core/constants/timings";
+import { setSettings } from "@core/storage/settings-storage";
+import type { PositionSnapshot } from "@typedefs/game";
 import { createGameHarness, type GameHarness } from "./harness";
 
 let h: GameHarness;
@@ -195,6 +197,53 @@ describe("game session: the assistant switch (Settings.enabled, §4.4)", () => {
 		expect(h.transport.goLines).toHaveLength(searches);
 		expect(h.session().recommendation()).toBeNull();
 		expect(h.executor()?.pendingMove()).toBeNull();
+	});
+
+	it("turned off while the ponder is starting: the search it started is stopped, not left running", async () => {
+		// §6.4 / §7.4 reach the engine on the *opponent's* turn behind an await (`ponderer.start`),
+		// and that await is the one window where `stopDisabled`'s own stop runs *before* the search
+		// it is meant to stop exists. The session therefore re-checks the switch when the start
+		// returns and stops what it just started. The window is one microtask wide, so it is driven
+		// here the only way a black-box test can: two settings writes in the same turn, the second
+		// landing while the first one's resume is parked inside the start.
+		h = await createGameHarness({ settings: { enabled: false } });
+		const session = h.session();
+
+		// An opponent-turn position, held because the switch is off (nothing is searched for it).
+		const snapshot: PositionSnapshot = {
+			site: "lichess",
+			gameId: h.site.gameId,
+			fen: h.site.board.fen(),
+			ply: 1,
+			sideToMove: "b",
+			myColor: "w",
+			lastMove: { from: "e2", to: "e4", san: "e4" },
+			clocks: { w: { ms: 300_000, running: false }, b: { ms: 300_000, running: true } },
+			timeControl: { baseMs: 300_000, incMs: 2_000 },
+			capturedAt: h.sim.now(),
+		};
+		await h.sw.run(() => session.onPosition(snapshot));
+		expect(h.transport.goLines).toEqual([]);
+
+		// On, then off, in the same turn: the `resumeEnabled` the first write starts parks inside
+		// `ponderer.start()`, and the second write's `stopDisabled` runs while it is parked.
+		await h.sw.run(async () => {
+			void setSettings({ enabled: true });
+			void setSettings({ enabled: false });
+			await h.sim.time.runMicrotasks();
+		});
+		await h.advance(5_000);
+
+		// One search went out — the `go infinite` that was already on its way — and it was stopped
+		// rather than left running with the assistant off. No premove search followed it either.
+		expect(h.transport.goLines).toEqual(["go infinite"]);
+		expect(h.transport.sent.lastIndexOf("stop")).toBeGreaterThan(
+			h.transport.sent.lastIndexOf("go infinite")
+		);
+		expect(h.controller.status().state).toBe("idle");
+		expect(h.settings().enabled).toBe(false);
+		expect(session.recommendation()).toBeNull();
+		expect(presses()).toHaveLength(0);
 	});
 
 	it("turned back on: the live position is picked up again and the next position is played", async () => {

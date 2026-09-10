@@ -11,14 +11,14 @@ import { MSG } from "@core/constants/messages";
 import { log } from "@core/logger";
 import type { MessageRouter } from "@core/messaging/router";
 import { errorMessage } from "@core/util/errors";
-import type { PanelHandlerDeps } from "@service/handlers/panel";
+import { mayAct, type PanelHandlerDeps } from "@service/handlers/panel";
 
 export function registerPlayNowHandler(
 	router: MessageRouter,
-	deps: Pick<PanelHandlerDeps, "broadcaster" | "sources" | "getSettings">
+	deps: Pick<PanelHandlerDeps, "broadcaster" | "sources" | "getSettings" | "settingsKnown">
 ): void {
 	router.on(MSG.PANEL_PLAY_NOW, (msg) => {
-		if (!deps.getSettings().enabled) throw new Error(PANEL_COMMAND_ERRORS.assistantOff);
+		if (!mayAct(deps)) throw new Error(PANEL_COMMAND_ERRORS.assistantOff);
 		const executor = deps.sources.executor(msg.tabId);
 		if (!executor) throw new Error(PANEL_COMMAND_ERRORS.noExecutor);
 		if (!executor.isArmed()) throw new Error(PANEL_COMMAND_ERRORS.notArmed);

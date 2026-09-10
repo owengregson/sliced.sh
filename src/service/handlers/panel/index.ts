@@ -35,6 +35,21 @@ export interface PanelHandlerDeps {
 	 * (and anything else on this router) cannot route around the session's own gate.
 	 */
 	getSettings(): Settings;
+	/**
+	 * Whether those settings are the stored ones yet (§4.4 / the MV3 cold start). While they are
+	 * not, the acting commands hold: `DEFAULT_SETTINGS` is a placeholder, not the user's answer.
+	 * Omitted by a caller whose settings are already real.
+	 */
+	settingsKnown?: (() => boolean) | undefined;
+}
+
+/**
+ * §4.4: may the worker act on the page right now? The master switch, and `false` while the stored
+ * settings are still unknown — the same rule `GameSession.mayAct` applies, so the panel's own
+ * route to the executor cannot disagree with the session's.
+ */
+export function mayAct(deps: Pick<PanelHandlerDeps, "getSettings" | "settingsKnown">): boolean {
+	return deps.settingsKnown?.() !== false && deps.getSettings().enabled;
 }
 
 export function registerPanelHandlers(router: MessageRouter, deps: PanelHandlerDeps): void {

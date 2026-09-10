@@ -54,9 +54,10 @@ const settle = async (): Promise<void> => {
 };
 
 beforeEach(async () => {
-	// §4.4: `DEFAULT_SETTINGS.enabled` is false and the session gates every acting path (and the
-	// content-side `highlightMoves` gate) on it, so the stored fixture is a user who has turned the
-	// assistant on — the same fixture `test/behavioral/game/harness.ts` seeds.
+	// §4.4: the session gates every acting path (and the content-side `highlightMoves` gate) on the
+	// switch, so the stored fixture says what it means — a user with the assistant on — instead of
+	// inheriting `DEFAULT_SETTINGS` and changing meaning when that moves. Same seed as
+	// `test/behavioral/game/harness.ts`.
 	sim = createSimulator({
 		startAt: START,
 		storageLocal: { [LOCAL_KEYS.settings]: { enabled: true } },
