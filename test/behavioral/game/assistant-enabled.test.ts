@@ -211,7 +211,7 @@ describe("game session: the assistant switch (Settings.enabled, §4.4)", () => {
 
 		// An opponent-turn position, held because the switch is off (nothing is searched for it).
 		const snapshot: PositionSnapshot = {
-			site: "lichess",
+			site: "chesscom",
 			gameId: h.site.gameId,
 			fen: h.site.board.fen(),
 			ply: 1,

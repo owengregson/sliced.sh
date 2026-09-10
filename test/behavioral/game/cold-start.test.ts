@@ -166,7 +166,7 @@ async function boot(enabled: boolean): Promise<void> {
 async function openGameInsideTheWindow(): Promise<SimulatedSite> {
 	const worker = sw as SwContext;
 	const built = stack as GameStack;
-	site = await createSimulatedSite(sim, tabId, { site: "lichess", myColor: "w" });
+	site = await createSimulatedSite(sim, tabId, { myColor: "w" });
 	const page = site;
 	await worker.run(async () => {
 		page.hello();

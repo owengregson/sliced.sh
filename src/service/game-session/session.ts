@@ -794,6 +794,10 @@ export class GameSession implements SessionSource {
 		if (!executor?.isArmed() || !this.autoMoveAllowed(settings)) {
 			// Panel-only mode (§7.5): keep deepening the eval on our own position.
 			await this.ponderer?.start("panel", rec.fen);
+			// Mirror of the opponent-turn re-check above: `start` can await, so a flip-off landing
+			// inside it would have run `stopDisabled`'s stop before this search existed, leaving a
+			// `go infinite` running with the assistant off.
+			if (!this.mayAct()) await this.ponderer?.stop();
 			return;
 		}
 		executor.schedule(rec, rec.plan, this.moveContext(rec));
