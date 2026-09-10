@@ -200,6 +200,13 @@ describe("§6.4 / §7.5 search budget", () => {
 		expect(searchBudget(forced, settings()).movetimeMs).toBe(SEARCH_BUDGET.minMovetimeMs);
 	});
 
+	it("…but zero legal moves is an unreadable FEN, not a forced move, and keeps the full budget", () => {
+		// `legalMoves()` answers `[]` on a FEN chess.js cannot parse (`san.ts`), so `<= 1` would have
+		// given the shortest search of all to the position we understand least.
+		const unreadable = { ...comfortable("classical"), legalMoves: 0 };
+		expect(searchBudget(unreadable, settings()).movetimeMs).toBe(1_500);
+	});
+
 	it("depthCap follows the speed class and is capped by Settings.engine.depthCap", () => {
 		expect(searchBudget(comfortable("bullet"), settings()).depthCap).toBe(14);
 		expect(searchBudget(comfortable("blitz"), settings()).depthCap).toBe(18);

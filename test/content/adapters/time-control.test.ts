@@ -93,9 +93,38 @@ describe("timeControlFromBridge", () => {
 			baseMs: 1_800_000,
 			incMs: 0,
 		});
+		// The one reading left unguarded, recorded rather than wished away: a seconds-reported pair
+		// *with* an increment (20+10) keeps its millisecond-looking base, because the only witness
+		// that would catch it is the clock one and consulting that with an increment present is the
+		// false positive below. The increment is still rescaled, so the game reads as blitz
+		// (base_eff 1.2 + 40×10 = 401 s) rather than as a sub-second emergency — the bad direction
+		// is covered, and the log says the units were not milliseconds.
 		expect(timeControlFromBridge({ baseTime: 1_200, increment: 10 }, 1_200_000)).toEqual({
-			baseMs: 1_200_000,
+			baseMs: 1_200,
 			incMs: 10_000,
+		});
+		// …and with no increment the same game is caught outright
+		expect(timeControlFromBridge({ baseTime: 1_200, increment: 0 }, 1_200_000)).toEqual({
+			baseMs: 1_200_000,
+			incMs: 0,
+		});
+		// The increment-heavy controls that made the first version of this check WORSE than the bug
+		// it fixed: with an increment, a clock can outgrow any multiple of its base by being played,
+		// so the clock carries no information about the unit and must not be consulted at all.
+		// `{60_000, 60_000}` with a 601 s clock used to read as 16.7 HOURS — a one-minute game,
+		// under `maxPlausibleMs` so nothing dropped it, with `tcClass` flipping to classical.
+		expect(timeControlFromBridge({ baseTime: 60_000, increment: 60_000 }, 601_000)).toEqual({
+			baseMs: 60_000,
+			incMs: 60_000,
+		});
+		expect(timeControlFromBridge({ baseTime: 60_000, increment: 30_000 }, 900_000)).toEqual({
+			baseMs: 60_000,
+			incMs: 30_000,
+		});
+		// …and the same pair at the start of the game, where the clock is the base
+		expect(timeControlFromBridge({ baseTime: 60_000, increment: 60_000 }, 60_000)).toEqual({
+			baseMs: 60_000,
+			incMs: 60_000,
 		});
 		// …and with no clock showing, or a clock consistent with the base, the reading stands as ms.
 		expect(timeControlFromBridge({ baseTime: 1_800, increment: 0 })).toEqual({

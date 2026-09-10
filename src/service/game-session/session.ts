@@ -54,7 +54,7 @@ import { createRng, type Rng } from "@core/rng";
 import type { BookPolicy } from "@core/strength/book/book-policy";
 import { createSelectionState } from "@core/strength/move-selector";
 import { createFormLatent, type FormLatent } from "@core/strength/persona";
-import { premoveCandidate } from "@core/strength/premove";
+import { isPremoveSpeed, premoveCandidate } from "@core/strength/premove";
 import type { SelectionState } from "@core/strength/types";
 import { TIMING_CONSTANTS } from "@core/timing/constants";
 import { tcClass } from "@core/timing/features";
@@ -535,6 +535,10 @@ export class GameSession implements SessionSource {
 		for (const off of this.offs.splice(0)) off();
 		this.detachExecutor();
 		this.pipelineAc?.abort();
+		// Consistent with `cancelInFlight()` / `stopSearch()`: a disposed session leaves no search running.
+		const inFlight = this.preAnalysis;
+		this.preAnalysis = null;
+		if (inFlight) void inFlight.stop();
 		this.ponderer?.dispose();
 		this.deps.autoQueue.cancel(this.deps.tabId);
 		this.window.discard();
@@ -826,12 +830,11 @@ export class GameSession implements SessionSource {
 	 * two gates, and a 120 ms search cannot reach `depthCap − 2` on any machine. Those constants are
 	 * Appendix E §3.1 normative and sized for a *gate decision*, so they stand.
 	 *
-	 * Only when a reply is already predicted, which today means the classes where §7.4 ran its own
-	 * prediction (bullet / blitz). In rapid and classical the `go infinite` ponder is still running
-	 * and has not settled, so there is no prediction to work from — and interrupting it to get one
-	 * would trade depth on the real position for a head start on a guess, at speeds where the
-	 * own-move search already fits inside the planned think. That is a design question, not a bug;
-	 * it is in the report.
+	 * A prediction already in hand is used at any speed, but *harvesting* one — stopping the
+	 * `go infinite` so it settles — happens only at a **premove speed** (`isPremoveSpeed`, i.e.
+	 * bullet / blitz), because at rapid and classical that trades §7.5's continuous ponder for a head
+	 * start on a depth-0 guess at speeds where the own-move search already fits inside the planned
+	 * think. `dispose()` / `cancelInFlight()` / `stopSearch()` all stop the search this issues.
 	 */
 	private async preAnalysePredicted(
 		snapshot: PositionSnapshot,
@@ -848,6 +851,16 @@ export class GameSession implements SessionSource {
 		// the position we are actually about to face, and the ponder is restarted underneath it.
 		let reply = this.premove?.reply ?? ponderer.expectedReply(snapshot.fen);
 		if (reply === null) {
+			// Harvesting means stopping the `go infinite` to make it settle, and that is only worth
+			// doing where the prediction buys something. At a premove speed §7.4 has usually already
+			// interrupted the ponder for its own 150 ms MultiPV-3 prediction, so the harvest costs
+			// little and the latency it saves is the whole point. At rapid and classical it would cut
+			// §7.5's continuous ponder off after a couple of round trips and spend 1.0–1.5 s on a
+			// position predicted by an essentially depth-0 search — while the own-move search there
+			// (1000–1500 ms) already fits inside a 4–16 s planned think, so there is no latency to
+			// win. Measured on the wire before this gate: `go infinite → go depth 22 movetime 1000 →
+			// go infinite` on every rapid opponent turn.
+			if (!isPremoveSpeed(this.currentTimeControl())) return;
 			await ponderer.stop();
 			if (this.disposed || this.snapshot !== snapshot) return;
 			reply = ponderer.expectedReply(snapshot.fen);

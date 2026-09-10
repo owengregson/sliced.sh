@@ -23,11 +23,11 @@
 import { describe, expect, it } from "bun:test";
 import { TELEMETRY_BANDS } from "@core/constants/telemetry";
 import { TIMING_CONSTANTS } from "@core/timing/constants";
+import { type SplitViolations, splitViolations } from "@test/sim/telemetry/bands";
 import { SIM_TELEMETRY } from "@test/sim/telemetry/constants";
 import { runSimulatedGame, type SimulatedMove } from "@test/sim/telemetry/harness";
 import type { AcBlob } from "@typedefs/telemetry";
 import {
-	AcConformanceError,
 	type AcMoveMeta,
 	assertHumanShapedAc,
 	formatConformanceReport,
@@ -36,8 +36,12 @@ import {
 } from "../../../tools/telemetry-conformance/ac-model";
 
 const RUN_TIMEOUT_MS = 300_000;
-/** Independent seed prefixes pooled into one population per speed. */
-const PREFIXES = 8;
+/**
+ * Independent seed prefixes pooled into one population per speed. Twelve, not eight: the reviewer's
+ * 12-family re-measurement showed the `p0…p7` set is the *low tail* of the preview-rate distribution
+ * (0.72–7.14 % across families), so eight of them measured a tail rather than a population.
+ */
+const PREFIXES = 12;
 /** Comfortable games per prefix, moves each, and games that start in time trouble. */
 const GAMES = 6;
 const MOVES = 30;
@@ -137,19 +141,11 @@ function assertHardInvariants(pool: Pool): ReturnType<typeof summarizeAc> {
 	return summary;
 }
 
-/**
- * The violations the unmodified model reports on `pool`. Throws when it reports none — a recorded
- * failure that silently starts passing is a finding of its own, and `it.failing` would have hidden
- * both that and any *other* band breaking on the same pool (it passes on any throw).
- */
-function violationsOf(pool: Pool): string[] {
-	try {
-		assertHumanShapedAc(pool.acs, { moves: pool.meta });
-	} catch (error) {
-		if (error instanceof AcConformanceError) return error.violations;
-		throw error;
-	}
-	throw new Error("assertHumanShapedAc passed: the recorded failure below no longer holds");
+/** The per-move rules hold at any sample size: they are asserted, not recorded, everywhere. */
+function expectNoPerMoveViolations(pool: Pool): SplitViolations {
+	const split = splitViolations(pool.acs, pool.meta);
+	expect(split.perMove).toEqual([]);
+	return split;
 }
 
 /** ln(hold) means, medians and long-think frequency per `n_reasonable` — the mechanism table. */
@@ -190,8 +186,11 @@ describe("telemetry: the §13.2 gate at bullet and blitz, pooled", () => {
 			`${speed}: the §13.2 hard invariants hold over ${PREFIXES * (GAMES + PRESSURE_GAMES) * MOVES} moves, and the summary is on the record`,
 			async () => {
 				const pool = await poolOf(speed);
-				expect(pool.acs).toHaveLength(PREFIXES * (GAMES + PRESSURE_GAMES) * MOVES);
+				// A floor, not an equality: a simulated game can end in mate before its 30th move.
+				expect(pool.acs.length).toBeGreaterThan(PREFIXES * (GAMES + PRESSURE_GAMES) * MOVES * 0.95);
 				const summary = assertHardInvariants(pool);
+				// Every per-move rule, through the model rather than a hand-picked subset.
+				expectNoPerMoveViolations(pool);
 				console.log(formatConformanceReport(summary, `ac conformance — ${speed} (pooled)`));
 				console.log(`  per-prefix r: ${rSpread(pool)}`);
 			},
@@ -199,35 +198,43 @@ describe("telemetry: the §13.2 gate at bullet and blitz, pooled", () => {
 		);
 	}
 
-	// A FINDING, not a knob. Two §13.2 bands fail at bullet on the pooled population, and both are
-	// left exactly as they are:
+	// A FINDING, not a knob. Three §13.2 rows fail at bullet on the pooled population, and the band
+	// constants are left exactly as they are:
 	//
-	//   multi-select rate 0.4 % (1/268) outside 4–12 %
-	//   hold-time vs n_reasonable correlation 0.10 < 0.2
+	//   hold-time vs n_reasonable correlation 0.12 < 0.2     (robust: 10 of 12 families below)
+	//   multi-select rate 2.3 % (9/397) outside 4–12 %        (recorded: the population is ≈ 3.7 %
+	//                                                          with a per-pool sd of ~1.5 pp, so a
+	//                                                          pool either side of 4 % is ordinary)
+	//   time-pressure hold ratio 0.99 > 0.85                  (recorded: the reference side is 14
+	//                                                          moves against 547, see the case below)
 	//
-	// The correlation declines monotonically with speed (rapid ≈ 0.30, blitz ≈ 0.24, bullet ≈ 0.10 on
-	// this seed population) and the per-prefix spread at bullet is −0.06 … 0.24, so no single pool's
-	// verdict means anything; 7 of 8 prefixes are under the floor. The preview rate is the starker of
-	// the two: one preview in 268 eligible moves, an order of magnitude under the band, because the
-	// probability ramp `g(thinkMs)` is ≈ 0 at the 1200 ms the band's own denominator starts at.
-	// Neither the band nor the model is changed here — both are Appendix D questions, with the
-	// numbers in the report.
+	// Only the correlation is asserted *present*. The other two are recorded with their numbers,
+	// because their verdict moves with the draw and the pool size — asserting them would be the same
+	// coin-flip gate this file exists to remove. What **is** asserted for all three is that nothing
+	// *else* fails: every row is one of the known statistical rows, so a regression in any per-move
+	// rule cannot hide behind them.
 	it(
-		"bullet: TWO §13.2 bands fail on the pooled population — recorded exactly, not widened",
+		"bullet: the complexity band fails on the pooled population, and nothing unknown does",
 		async () => {
 			const pool = await poolOf("bullet");
-			const violations = violationsOf(pool);
-			console.log(`bullet pooled violations: ${JSON.stringify(violations)}`);
-			// Exactly these two, so that a third band breaking on this pool cannot hide behind them.
-			expect(violations).toHaveLength(2);
-			expect(violations.some((v) => v.includes("multi-select rate"))).toBe(true);
-			expect(violations.some((v) => v.includes("hold-time vs n_reasonable correlation"))).toBe(true);
+			const split = expectNoPerMoveViolations(pool);
+			console.log(`bullet pooled violations: ${JSON.stringify(split.all)}`);
 			const summary = summarizeAc(pool.acs, pool.meta);
-			expect(summary.holdVsComplexity ?? 1).toBeLessThan(TELEMETRY_BANDS.holdTime.complexityCorrMin);
-			expect(summary.multiSelect.eligible).toBeGreaterThanOrEqual(
-				TELEMETRY_BANDS.multiSelect.minMovesForBand
+
+			// the robust one, asserted
+			expect(split.statistical.some((v) => v.includes("hold-time vs n_reasonable correlation"))).toBe(
+				true
 			);
-			expect(summary.multiSelect.rate ?? 1).toBeLessThan(TELEMETRY_BANDS.multiSelect.rate[0]);
+			expect(summary.holdVsComplexity ?? 1).toBeLessThan(TELEMETRY_BANDS.holdTime.complexityCorrMin);
+			// the two recorded ones: whatever they do, they are the only other rows that may appear
+			const known = ["multi-select rate", "time-pressure hold ratio"];
+			for (const row of split.statistical)
+				expect(
+					row.includes("hold-time vs n_reasonable correlation") || known.some((k) => row.includes(k))
+				).toBe(true);
+			console.log(
+				`bullet preview rate ${(100 * (summary.multiSelect.rate ?? 0)).toFixed(2)} % (${summary.multiSelect.count}/${summary.multiSelect.eligible}) — band ${100 * TELEMETRY_BANDS.multiSelect.rate[0]}–${100 * TELEMETRY_BANDS.multiSelect.rate[1]} %, population ≈ 3.7 % over 12 families`
+			);
 		},
 		RUN_TIMEOUT_MS
 	);
@@ -244,12 +251,19 @@ describe("telemetry: the §13.2 gate at bullet and blitz, pooled", () => {
 			// its own draw. What is asserted is the part that does not move: the effect has the right
 			// sign, and every other band passes (above).
 			const pool = await poolOf("blitz");
+			const split = expectNoPerMoveViolations(pool);
 			const summary = summarizeAc(pool.acs, pool.meta);
 			const r = summary.holdVsComplexity ?? 0;
 			console.log(
-				`blitz pooled r = ${r.toFixed(3)} (floor ${TELEMETRY_BANDS.holdTime.complexityCorrMin}) over ${summary.holdNormal.n} normal rows · per-prefix ${rSpread(pool)}`
+				`blitz pooled r = ${r.toFixed(3)} (floor ${TELEMETRY_BANDS.holdTime.complexityCorrMin}) over ${summary.holdNormal.n} normal rows · per-prefix ${rSpread(pool)} · statistical rows ${JSON.stringify(split.statistical)}`
 			);
-			expect(r).toBeGreaterThan(0);
+			// A floor of 0.10, not `> 0`. The decisive re-measurement (432 games per speed) puts blitz
+			// at 0.2087 with a family minimum of 0.168 and a spread of 0.168–0.259, so 0.10 is half the
+			// worst family and cannot flake, while still failing loudly if the complexity term stops
+			// acting at this speed. The 0.20 floor itself is not asserted here: at blitz its verdict
+			// moves with the seed population (0.2087 over 432 games, 0.234 over these 108, ≈ 0.15 over
+			// the reviewer's first prefix set), which is exactly the coin flip C1 was about.
+			expect(r).toBeGreaterThanOrEqual(0.1);
 			// the preview band, which blitz does clear with the population behind it
 			expect(summary.multiSelect.eligible).toBeGreaterThanOrEqual(
 				TELEMETRY_BANDS.multiSelect.minMovesForBand
@@ -320,9 +334,12 @@ describe("telemetry: the §13.2 gate at bullet and blitz, pooled", () => {
 				`compression — bullet: pressure ${bullet.compression.pressure.mean.toFixed(0)} ms (n=${bullet.compression.pressure.n}) vs comfortable ${bullet.compression.comfortable.mean.toFixed(0)} ms (n=${bullet.compression.comfortable.n}) → ratio ${bullet.compression.ratio?.toFixed(2) ?? "n/a"}`
 			);
 			expect(bullet.compression.pressure.n).toBeGreaterThan(0);
-			expect(bullet.compression.comfortable.n).toBeLessThan(
-				TELEMETRY_BANDS.compression.minMovesPerSide
-			);
+			// With twelve families the reference side finally crosses `minMovesPerSide` — on 14 moves
+			// against 547, every one of them the first move of a game at exactly the 60 s threshold —
+			// so the band *fires* at bullet on a ratio that is not a measurement of anything. That is
+			// the finding: the reference is defined in absolute seconds, and a 1+0 game has no
+			// "comfortable" phase to compare against. Recorded, with the band untouched.
+			expect(bullet.compression.comfortable.n).toBeLessThan(bullet.compression.pressure.n / 20);
 		},
 		RUN_TIMEOUT_MS
 	);

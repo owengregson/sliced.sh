@@ -41,10 +41,11 @@ function numberOf(value: unknown): number | null {
  * confused with "the site told us 0 + 0".
  *
  * `clockHintMs` is the largest clock the page is currently *showing* (0 when it
- * shows none). It is the second half of the unit guard: the magnitude test alone
- * cannot tell a 30-minute game reported in seconds (`1800`) from a 1.8 s base,
- * and getting that wrong puts every move of the game in the §8.5 emergency
- * regime. Both branches log loudly rather than planning quietly.
+ * shows none). It is the third witness of the unit guard: the magnitude test
+ * alone cannot tell a 30-minute game reported in seconds (`1800`) from a 1.8 s
+ * base, and getting that wrong puts every move of the game in the §8.5
+ * emergency regime. It is only consulted when the increment is zero — see
+ * below. Every branch logs loudly rather than planning quietly.
  */
 export function timeControlFromBridge(value: unknown, clockHintMs = 0): TimeControl | null {
 	if (typeof value !== "object" || value === null) return null;
@@ -57,36 +58,52 @@ export function timeControlFromBridge(value: unknown, clockHintMs = 0): TimeCont
 	}
 	const inc = numberOf(record[INCREMENT_FIELD]) ?? 0;
 
-	// Is the pair in seconds? Either it is too small to be milliseconds at all, or the clock the
-	// page is showing dwarfs it — chess.com's increments and base times are whole seconds, so a
-	// nonzero field under a second is not a millisecond reading either way.
-	const tooSmall = base < TIME_CONTROL.minPlausibleMs;
-	const clockDwarfsIt = clockHintMs > 0 && base * TIME_CONTROL.unitMismatchFactor < clockHintMs;
-	if (tooSmall || clockDwarfsIt) {
-		log.warn("adapter: time control is in seconds, not milliseconds", {
+	// The two fields are guarded **independently**, because the object can legitimately be mixed:
+	// `baseTime` is confirmed milliseconds (the owner's capture) while the increment's unit is not,
+	// so `{baseTime: 180_000, increment: 2}` is a plausible way for chess.com to say 3+2.
+	//
+	// The base is in seconds when it is under a second (no game is that short), or when the clock on
+	// the page is a hundred times larger than it **and there is no increment** — with nothing adding
+	// to the clock it can never exceed the base, so the units must differ.
+	//
+	// Both halves of that third witness matter. Without `inc === 0` it is wrong: an increment-heavy
+	// control reaches any multiple of its base by being played (a 1+60 game passes ten times its base
+	// after nine moves), and reading that as seconds gives `{baseMs: 60_000_000}` — a one-minute game
+	// as 16.7 hours, under `maxPlausibleMs` so nothing drops it, with `tcClass` flipping to classical
+	// mid-game. A closeness test (is `base` nearer `clock` or `clock / 1000`?) has the same false
+	// positive for the same reason: mid-game the clock is not the base, so "near" says nothing about
+	// the unit. And the factor must be large, not 2: the clocks on the page can still belong to the
+	// previous game for a moment after a rematch, which is a ratio of ten or thirty, while the
+	// seconds hypothesis predicts a thousand.
+	//
+	// One reading is therefore left unguarded on purpose: a seconds-reported pair *with* an
+	// increment (`{1800, 30}` for 30+30) keeps its 1.8 s base, because the only witness that would
+	// catch it is the clock one, and enabling that with an increment present is the false positive
+	// above. Its increment is still rescaled, so the game reads as classical rather than as an
+	// emergency — the bad direction is covered.
+	const tooSmallBase = base < TIME_CONTROL.minPlausibleMs;
+	const clockExceedsBase = inc === 0 && clockHintMs > base * TIME_CONTROL.clockExceedsBaseFactor;
+	const baseInSeconds = tooSmallBase || clockExceedsBase;
+	const incInSeconds = inc > 0 && inc < TIME_CONTROL.minPlausibleMs;
+	if (baseInSeconds || incInSeconds) {
+		log.warn("adapter: time control is not in milliseconds", {
 			baseTime: base,
 			increment: inc,
 			clockMs: clockHintMs,
-			reason: tooSmall ? "below the millisecond floor" : "the clock on the page dwarfs it",
+			baseWitness: tooSmallBase
+				? "the base is under a second"
+				: clockExceedsBase
+					? "the clock on the page exceeds the base with no increment to explain it"
+					: "none (the base reads as milliseconds)",
+			incrementWitness: incInSeconds ? "the increment is under a second" : "none",
 		});
-		const baseMs = base * TIME_CONTROL.msPerSecond;
-		return baseMs > TIME_CONTROL.maxPlausibleMs
-			? null
-			: { baseMs, incMs: inc * TIME_CONTROL.msPerSecond };
 	}
-
-	// The base reads as milliseconds. The increment's unit is the unconfirmed one, so it keeps its
-	// own guard: a nonzero value under a second cannot be a real chess.com increment in ms.
-	if (inc > 0 && inc < TIME_CONTROL.minPlausibleMs) {
-		log.warn("adapter: implausible time-control increment, reading it as seconds", {
-			increment: inc,
-			thresholdMs: TIME_CONTROL.minPlausibleMs,
-		});
-		return { baseMs: base, incMs: inc * TIME_CONTROL.msPerSecond };
-	}
-	if (inc > TIME_CONTROL.maxPlausibleMs) {
+	const baseMs = baseInSeconds ? base * TIME_CONTROL.msPerSecond : base;
+	const incRaw = incInSeconds ? inc * TIME_CONTROL.msPerSecond : inc;
+	if (baseMs > TIME_CONTROL.maxPlausibleMs) return null;
+	if (incRaw > TIME_CONTROL.maxPlausibleMs) {
 		log.warn("adapter: time-control increment out of range, ignoring it", { increment: inc });
-		return { baseMs: base, incMs: 0 };
+		return { baseMs, incMs: 0 };
 	}
-	return { baseMs: base, incMs: inc };
+	return { baseMs, incMs: incRaw };
 }

@@ -80,12 +80,20 @@ export const TIME_CONTROL = {
 	/**
 	 * The magnitude test alone only catches a *small* seconds value: a 30-minute game reported in
 	 * seconds is `1800`, which passes `minPlausibleMs` and then reads as a 1.8 s base — `base_eff`
-	 * 1.8 s, every hard cap at 0.9 s, every move in the emergency regime. So the base is also
-	 * cross-checked against the clock the page is *showing*: a clock this many times larger than the
-	 * claimed base cannot be the same unit (a clock can exceed its base slightly on increments,
-	 * never tenfold), so the pair is read as seconds and logged.
+	 * 1.8 s, every hard cap at 0.9 s, every move in the emergency regime. The clock the page is
+	 * showing is the second witness, but **only when the increment is zero**: with no increment the
+	 * clock can never exceed the base, so a clock larger than it proves the units differ and the
+	 * comparison has no false positive. With an increment it proves nothing — a 1+60 game's clock
+	 * passes ten times its base after nine moves, and reading *that* as seconds turns a one-minute
+	 * game into 16.7 hours.
+	 *
+	 * The factor is 100, not 2, for a second false positive: the clocks on the page can briefly
+	 * belong to the *previous* game (a rematch re-renders them), so a 1+0 game can legitimately be
+	 * read beside a finished 10- or 30-minute game's clock — a ratio of 10 to 30. The seconds
+	 * hypothesis predicts `clock ≈ base × 1000`, so demanding 100× separates them with room to
+	 * spare and still catches a seconds-reported game through the first 90 % of its clock.
 	 */
-	unitMismatchFactor: 10,
+	clockExceedsBaseFactor: 100,
 	msPerSecond: 1_000,
 	/** Beyond 24 h the value is not a clock in ms either (nor in seconds). */
 	maxPlausibleMs: 86_400_000,

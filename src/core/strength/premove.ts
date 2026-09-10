@@ -82,7 +82,8 @@ export function replyProbability(reply: string, lines: readonly EvalLine[]): num
 	return total > 0 ? own / total : 0;
 }
 
-function isPremoveSpeed(timeControl: TimeControl | undefined): boolean {
+/** §7.4 runs only in these classes (`PREMOVE.speeds`); also the gate on the §4.5 pre-analysis. */
+export function isPremoveSpeed(timeControl: TimeControl | undefined): boolean {
 	if (!timeControl) return false;
 	const cls = tcClass(timeControl.baseMs / 1000, timeControl.incMs / 1000);
 	return (PREMOVE.speeds as readonly TcClass[]).includes(cls);

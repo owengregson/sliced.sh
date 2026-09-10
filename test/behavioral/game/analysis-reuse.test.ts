@@ -85,6 +85,32 @@ describe("game session: an analysed position is not searched twice", () => {
 		expect(rec?.chosen.uci.length).toBeGreaterThanOrEqual(4);
 	}, 120_000);
 
+	it("the opponent ponder is left alone at rapid: no harvest, no pre-analysis, one `go infinite`", async () => {
+		// §7.5's opponent ponder is continuous. The pre-analysis harvests a prediction by stopping it,
+		// which is only worth doing at a premove speed — measured on the wire before the gate, every
+		// rapid opponent turn was `go infinite → go depth 22 movetime 1000 → go infinite`: the ponder
+		// cut off after a couple of round trips and restarted from scratch, 1.0 s spent on a position
+		// predicted by an essentially depth-0 search, at a speed where the own-move search already
+		// fits inside a 4-second planned think.
+		h = await createGameHarness({
+			timeControl: { baseMs: 600_000, incMs: 0 }, // rapid 10+0
+			gameId: "no-harvest-rapid",
+			settings: {
+				automation: { autoMove: true },
+				strength: { matchOpponentRating: false, targetElo: 3000 },
+			},
+			script: { bestCp: 900, stepCp: 900 },
+		});
+		await h.arrive();
+		expect(await h.until(() => h.session().currentState() === "live:opponent-turn", 60_000)).toBe(
+			true
+		);
+		const before = h.transport.goLines.length;
+		await h.arrive(); // the opponent is to move: ponder, and nothing else
+		await h.advance(3_000);
+		expect(h.transport.goLines.slice(before)).toEqual(["go infinite"]);
+	}, 120_000);
+
 	it("the bridge's spelling of a ply already analysed from the replay spelling hits the cache", async () => {
 		h = await createGameHarness({
 			timeControl: null,
