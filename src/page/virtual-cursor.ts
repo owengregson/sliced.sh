@@ -70,21 +70,26 @@ export const CURSOR_ART = {
 const A = CURSOR_ART;
 
 /**
- * Everything but the fade duration, the opacity and the transform. No `--sl-*`
- * token can appear here: this CSS is applied inside the page.
+ * The style attribute, written **once** at insert time; after that only
+ * `style.transform` and `style.opacity` move, which is what the reference does
+ * and keeps the per-point work (and the `style` mutation record a page-side
+ * `MutationObserver` would see) as small as it can be. No `--sl-*` token can
+ * appear here: this CSS is applied inside the page, where they do not resolve.
+ * `opacity:0` is the fade's start value — see `curEnsure`.
  */
 const STYLE_HEAD =
 	`position:fixed;left:0;top:0;width:${A.sizePx}px;height:${A.sizePx}px;` +
 	`pointer-events:none;z-index:${A.zIndex};transform-origin:${A.hotX}px ${A.hotY}px;` +
 	"will-change:transform;filter:drop-shadow(1.5px 1.5px 2px rgba(0,0,0,0.3));transition:opacity ";
-const STYLE_TAIL = "ms ease;opacity:";
-
-const CSS = { on: "1", off: "0", none: "none" } as const;
+const STYLE_TAIL = "ms ease;opacity:0";
 
 const add = (a: Expression, b: Expression): Expression => js.op(a, "+", b);
 const text = (v: Expression): Expression => js.call(js.id("String"), v);
-const joined = (parts: Expression[]): Expression =>
-	parts.reduce((acc, part) => add(acc, part)) ?? js.str("");
+/** `a + b + c…`; an empty list is the empty string rather than a throw. */
+const joined = (parts: Expression[]): Expression => {
+	const [first, ...rest] = parts;
+	return first === undefined ? js.str("") : rest.reduce(add, first);
+};
 
 export interface CursorParams {
 	/** The per-build class name of the mirror's `<div>`. */
@@ -95,28 +100,19 @@ export interface CursorParams {
 
 /**
  * Declares, inside the enclosing closure:
- *   `curCss(o, t)`  — the full style attribute for opacity `o` and transform `t`
+ *   `curBase`       — the style attribute the element is inserted with
  *   `curFind()`     — the existing element (DOM lookup by class), or null
- *   `curTo(q)`      — (re)draw at a wire payload `{ x, y, d }`
+ *   `curEnsure()`   — that element, inserting it the first time
+ *   `curTo(q)`      — move to a wire payload `{ x, y, d }`
  *   `curHide()`     — remove the element
  */
 export function cursorStatements(p: CursorParams): Statement[] {
 	const el = js.id("el");
 	const host = js.id("host");
 	const q = js.id("q");
-	const curCss = js.const_(
-		"curCss",
-		js.arrow(
-			["o", "t"],
-			joined([
-				js.str(STYLE_HEAD),
-				text(p.fadeMs),
-				js.str(STYLE_TAIL),
-				js.id("o"),
-				js.str(";transform:"),
-				js.id("t"),
-			])
-		)
+	const curBase = js.const_(
+		"curBase",
+		joined([js.str(STYLE_HEAD), text(p.fadeMs), js.str(STYLE_TAIL)])
 	);
 	const curFind = js.const_(
 		"curFind",
@@ -133,17 +129,16 @@ export function cursorStatements(p: CursorParams): Statement[] {
 				js.if_(js.not(host), [js.ret(js.nil())]),
 				js.assign(el, js.call(js.member(doc, "createElement"), js.str("div"))),
 				js.expr(js.call(js.member(el, "setAttribute"), js.str("class"), p.cls)),
-				js.expr(
-					js.call(
-						js.member(el, "setAttribute"),
-						js.str("style"),
-						js.call(js.id("curCss"), js.str(CSS.off), js.str(CSS.none))
-					)
-				),
+				js.expr(js.call(js.member(el, "setAttribute"), js.str("style"), js.id("curBase"))),
 				js.assign(js.member(el, "innerHTML"), js.str(markup.trim())),
 				js.expr(js.call(js.member(host, "appendChild"), el)),
-				// Flush the inserted element's style so the opacity transition has a start value
-				// (without this the first draw jumps straight to full opacity).
+				// DO NOT REMOVE. The element is inserted at `opacity:0` and `curTo` raises it to 1 in
+				// the same task, so without a forced style flush between the two the computed value
+				// never holds 0 and the transition does not run — the arrow pops instead of fading.
+				// happy-dom has no style recalculation, so no offline test can catch its loss; the
+				// emitted program is asserted to still contain this call
+				// (`test/page/virtual-cursor.test.ts`) and `docs/qa-checklist.md` §B5.5 is the
+				// browser check.
 				js.expr(js.call(js.member(el, "getBoundingClientRect"))),
 				js.ret(el),
 			]
@@ -157,24 +152,18 @@ export function cursorStatements(p: CursorParams): Statement[] {
 				js.if_(js.not(q), [js.ret()]),
 				js.const_("el", js.call(js.id("curEnsure"))),
 				js.if_(js.not(el), [js.ret()]),
-				js.expr(
-					js.call(
-						js.member(el, "setAttribute"),
-						js.str("style"),
-						js.call(
-							js.id("curCss"),
-							js.str(CSS.on),
-							joined([
-								js.str("translate3d("),
-								text(js.op(js.member(q, W.x), "-", js.num(A.hotX))),
-								js.str("px,"),
-								text(js.op(js.member(q, W.y), "-", js.num(A.hotY))),
-								js.str("px,0)"),
-								js.cond(js.member(q, W.down), js.str(` scale(${A.pressScale})`), js.str("")),
-							])
-						)
-					)
+				js.assign(
+					js.member(el, "style", "transform"),
+					joined([
+						js.str("translate3d("),
+						text(js.op(js.member(q, W.x), "-", js.num(A.hotX))),
+						js.str("px,"),
+						text(js.op(js.member(q, W.y), "-", js.num(A.hotY))),
+						js.str("px,0)"),
+						js.cond(js.member(q, W.down), js.str(` scale(${A.pressScale})`), js.str("")),
+					])
 				),
+				js.assign(js.member(el, "style", "opacity"), js.str("1")),
 			]
 		)
 	);
@@ -188,7 +177,7 @@ export function cursorStatements(p: CursorParams): Statement[] {
 			]
 		)
 	);
-	return [curCss, curFind, curEnsure, curTo, curHide];
+	return [curBase, curFind, curEnsure, curTo, curHide];
 }
 
 /** `curTo(payload)` / `curHide()` as statements. */

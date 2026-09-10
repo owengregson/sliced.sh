@@ -13,9 +13,13 @@
  * Each position is one fire-and-forget `notify`, not a `call`: the hand
  * dispatches a point every few milliseconds (~45/s measured over a move), and a
  * reply per point would double the traffic and allocate a pending entry and a
- * timer for an answer nobody reads. The only state kept here is whether
- * something is on screen, so a hide is posted once and only when there is
- * something to erase.
+ * timer for an answer nobody reads.
+ *
+ * This is also the only place the mirror is deduplicated, and the only place it
+ * *can* be: `drawn` and the element share a lifetime — both live in the tab —
+ * whereas the service worker is suspended and rebuilt underneath them, so it
+ * posts its hides unconditionally and this decides whether there is anything to
+ * erase.
  */
 
 import { BRIDGE_KINDS, type PageBridge } from "@content/adapters/adapter";
@@ -42,8 +46,9 @@ export function createVirtualCursor(bridge: PageBridge): VirtualCursor {
 
 	const hide = (): void => {
 		if (!drawn) return;
-		drawn = false;
-		send(BRIDGE_KINDS.cursorHide);
+		// Cleared only on a send that actually left: a hide we could not deliver must not be
+		// forgotten, or the element stays on the page with nothing left to erase it.
+		if (send(BRIDGE_KINDS.cursorHide)) drawn = false;
 	};
 
 	const api: VirtualCursor = {

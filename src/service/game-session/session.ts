@@ -156,7 +156,7 @@ export interface GameSessionDeps {
 	book: BookPolicy | null;
 	/** Shared timing head (ChessMimic with the v1 fallback); one per service worker. */
 	head: DistributionHead;
-	debugger: Pick<DebuggerManager, "isAttached" | "detach">;
+	debugger: Pick<DebuggerManager, "isAttached" | "detach" | "onDetached">;
 	focus: Pick<FocusGate, "positionArrived" | "onEdge" | "snapshot">;
 	ownership: Pick<HandOwnership, "realPointerCount">;
 	timingLog: Pick<TimingLogWriter, "append" | "upsert" | "markActual" | "attachTelemetry">;
@@ -284,8 +284,6 @@ export class GameSession implements SessionSource {
 	private disposed = false;
 	/** `mayAct()` as of the last settings write this session saw (§4.4 flip detection). */
 	private acting: boolean;
-	/** Fix D: whether a pointer mirror is currently drawn on this tab's page. */
-	private cursorShown = false;
 
 	constructor(deps: GameSessionDeps) {
 		this.deps = deps;
@@ -298,6 +296,14 @@ export class GameSession implements SessionSource {
 			deps.link.onMessage(deps.tabId, (msg) => this.onPortMessage(msg)),
 			deps.focus.onEdge((tabId, hasFocus, at) => {
 				if (tabId === deps.tabId) this.onFocusEdge(hasFocus, at);
+			}),
+			// Fix D: the attachment went away — the owner clicked Cancel on the infobar, the tab
+			// closed, the idle timer fired, or the panel detached. §13.4 forbids the mid-game
+			// re-attach, and `MoveExecutor.isArmed()` is `armed && isAttached`, so from here the hand
+			// owns no pointer for the rest of this game and the mirror can never move again. An arrow
+			// left parked there is a fossil, not a report of where the pointer is.
+			deps.debugger.onDetached((tabId) => {
+				if (tabId === deps.tabId) this.hideVirtualCursor();
 			})
 		);
 	}
@@ -620,8 +626,8 @@ export class GameSession implements SessionSource {
 		this.cancelInFlight();
 		this.deps.autoQueue.cancel(this.deps.tabId);
 		this.rec = null;
-		this.clearBoardMarks();
 		this.hideVirtualCursor();
+		this.clearBoardMarks();
 		if (event === "navigated") this.game = null;
 		this.apply(event);
 		this.deps.notify();
@@ -641,8 +647,8 @@ export class GameSession implements SessionSource {
 		this.cancelInFlight();
 		this.rec = null;
 		this.premove = null;
-		this.clearBoardMarks();
 		this.hideVirtualCursor();
+		this.clearBoardMarks();
 		void this.finishGame(result);
 		this.deps.notify();
 	}
@@ -1218,8 +1224,10 @@ export class GameSession implements SessionSource {
 		this.cancelInFlight();
 		this.executorHandle?.disarm();
 		this.deps.autoQueue.cancel(this.deps.tabId);
-		this.clearBoardMarks();
+		// The arrow first, the board marks second: `clearBoardMarks()` stays the last thing every
+		// stop path posts, which is what `test/behavioral/game/keybinds.test.ts` reads.
 		this.hideVirtualCursor();
+		this.clearBoardMarks();
 		this.rec = null;
 		this.premove = null;
 		this.apply("disable");
@@ -1582,7 +1590,6 @@ export class GameSession implements SessionSource {
 	 */
 	private onHandPointer(p: { x: number; y: number; pressed: boolean }): void {
 		if (!this.virtualCursorAllowed()) return;
-		this.cursorShown = true;
 		this.deps.link.post(this.deps.tabId, {
 			kind: "cursorTo",
 			x: p.x,
@@ -1597,12 +1604,18 @@ export class GameSession implements SessionSource {
 	}
 
 	/**
-	 * Erase the mirror — a no-op when nothing was drawn, so every stop path can call it
-	 * unconditionally: disarm, `Shift+X`, the switch, the setting, game over, a navigation, dispose.
+	 * Erase the mirror. Unconditional and idempotent, like `clearBoardMarks()` beside it, and that
+	 * is deliberate: the element lives in the *page*, so nothing this worker remembers is evidence
+	 * about whether it is there. Chrome does not call `dispose()` when it suspends a worker — the
+	 * session object simply vanishes and a new one is built on wake, while the content script
+	 * reconnects rather than reboots and still holds the element. A guard on worker-local state
+	 * would make every stop path (disarm, `Shift+X`, the switch, the setting, game over, a
+	 * navigation, a detach, dispose) a no-op from then on and strand the arrow on a live game for
+	 * good. Removing an element that is not there is already a no-op on the page side, and the
+	 * deduplication lives one layer down in `src/content/virtual-cursor.ts`, where the flag and the
+	 * element share a lifetime.
 	 */
 	private hideVirtualCursor(): void {
-		if (!this.cursorShown) return;
-		this.cursorShown = false;
 		this.deps.link.post(this.deps.tabId, { kind: "cursorHide" });
 	}
 

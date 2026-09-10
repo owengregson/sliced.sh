@@ -15,13 +15,18 @@ interface Sent {
 	payload: unknown;
 }
 
-function fakeBridge(available = true): PageBridge & { sent: Sent[]; calls: string[] } {
+function fakeBridge(
+	available = true
+): PageBridge & { sent: Sent[]; calls: string[]; available: boolean } {
 	const sent: Sent[] = [];
 	const calls: string[] = [];
 	return {
 		sent,
 		calls,
-		isAvailable: () => available,
+		available,
+		isAvailable(): boolean {
+			return this.available;
+		},
 		call<T>(kind: string): Promise<T> {
 			calls.push(kind);
 			return Promise.resolve(undefined as T);
@@ -85,6 +90,25 @@ describe("content virtual-cursor relay", () => {
 		mirror.apply(to(1, 1));
 		mirror.apply(hide);
 		expect(bridge.sent).toEqual([]);
+	});
+
+	it("does not forget a hide it could not send", () => {
+		const bridge = fakeBridge();
+		const mirror = createVirtualCursor(bridge);
+		mirror.apply(to(5, 5));
+		expect(mirror.shown()).toBe(true);
+
+		// The page side went away between the draw and the hide: the message cannot leave, so the
+		// element is still there and `drawn` must not be cleared — or nothing would ever erase it.
+		bridge.available = false;
+		mirror.apply(hide);
+		expect(bridge.sent.filter((s) => s.kind === BRIDGE_KINDS.cursorHide)).toHaveLength(0);
+		expect(mirror.shown()).toBe(true);
+
+		bridge.available = true;
+		mirror.apply(hide);
+		expect(bridge.sent.filter((s) => s.kind === BRIDGE_KINDS.cursorHide)).toHaveLength(1);
+		expect(mirror.shown()).toBe(false);
 	});
 
 	it("erases the mirror on dispose (the tab is going away with it on screen)", () => {

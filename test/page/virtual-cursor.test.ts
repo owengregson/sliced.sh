@@ -65,6 +65,18 @@ describe("virtual-cursor (the page-realm pointer mirror)", () => {
 		expect(emitted.code).toContain("<svg");
 	});
 
+	/**
+	 * The fade is the one behaviour no simulator can check: happy-dom has no style recalculation,
+	 * so deleting the forced flush between the `opacity:0` insert and the raise to 1 passes every
+	 * behavioural test while the arrow pops instead of fading. This is the proxy that stops a
+	 * refactor silently removing it; `docs/qa-checklist.md` §B5.5 is the browser check.
+	 */
+	it("inserts at opacity 0 and flushes style immediately after the insert (the fade's start value)", () => {
+		expect(emitted.code).toContain(`ms ease;opacity:0`);
+		expect(emitted.code).toMatch(/appendChild\(el\);\s*el\.getBoundingClientRect\(\)/);
+		expect(emitted.code).toContain(`el.style.opacity = "1"`);
+	});
+
 	it("inserts nothing until the first position arrives", () => {
 		const { win, keysBefore } = boot();
 		expect(Object.keys(win)).toEqual(keysBefore);
@@ -78,10 +90,13 @@ describe("virtual-cursor (the page-realm pointer mirror)", () => {
 		const node = el(win);
 		expect(node).not.toBeNull();
 		expect(win.document.querySelectorAll(`.${cursorClass}`)).toHaveLength(1);
-		const style = node?.getAttribute("style") ?? "";
-		expect(style).toContain("pointer-events:none");
-		expect(style).toContain("position:fixed");
+		const style = (node as HTMLElement | null)?.style;
+		expect(style?.pointerEvents).toBe("none");
+		expect(style?.position).toBe("fixed");
+		// §13.3 rule 3 over the WHOLE subtree, not just the wrapper: the inlined SVG is markup we
+		// pasted, and re-pasting it from upstream would reintroduce the theme's `id="…-shadow"`.
 		expect(node?.getAttribute("id")).toBeNull();
+		expect(node?.outerHTML).not.toContain("id=");
 		expect(node?.outerHTML).not.toContain("data-");
 		expect(node?.querySelectorAll("path").length).toBeGreaterThan(0);
 		// fire-and-forget: the page answers nothing at all
@@ -95,20 +110,27 @@ describe("virtual-cursor (the page-realm pointer mirror)", () => {
 		sendToPage(win, to(140, 260));
 		expect(win.document.querySelectorAll(`.${cursorClass}`)).toHaveLength(1);
 		expect(win.document.querySelectorAll("svg")).toHaveLength(1);
+		// both listeners moved the same element to the latest point
+		expect((el(win) as HTMLElement | null)?.style.transform).toBe(
+			`translate3d(${140 - CURSOR_ART.hotX}px,${260 - CURSOR_ART.hotY}px,0)`
+		);
 	});
 
 	it("positions the arrow tip on the point and dips on press", () => {
 		const { win } = boot();
 		sendToPage(win, to(100, 200));
-		const node = el(win);
-		const moved = node?.getAttribute("style") ?? "";
-		expect(moved).toContain(`translate3d(${100 - CURSOR_ART.hotX}px,${200 - CURSOR_ART.hotY}px,0)`);
-		expect(moved).not.toContain("scale(");
+		const style = (el(win) as HTMLElement | null)?.style;
+		expect(style?.transform).toBe(
+			`translate3d(${100 - CURSOR_ART.hotX}px,${200 - CURSOR_ART.hotY}px,0)`
+		);
+		expect(style?.opacity).toBe("1");
 
 		sendToPage(win, to(100, 200, true));
-		expect(node?.getAttribute("style")).toContain(`scale(${CURSOR_ART.pressScale})`);
+		expect(style?.transform).toBe(
+			`translate3d(${100 - CURSOR_ART.hotX}px,${200 - CURSOR_ART.hotY}px,0) scale(${CURSOR_ART.pressScale})`
+		);
 		sendToPage(win, to(100, 200, false));
-		expect(node?.getAttribute("style")).not.toContain("scale(");
+		expect(style?.transform).not.toContain("scale(");
 	});
 
 	it("removes the element on hide, and a later position draws it again", () => {

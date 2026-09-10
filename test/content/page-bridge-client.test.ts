@@ -264,13 +264,14 @@ describe("PageBridgeClient — the pointer mirror's fire-and-forget channel (Fix
 		// `window.postMessage` delivers on a later task, so each step is awaited.
 		client.notify(BRIDGE_KINDS.cursorTo, { x: 410, y: 320, down: false });
 		await waitFor(() => win.document.querySelector(`.${cls}`) !== null);
-		const node = win.document.querySelector(`.${cls}`);
-		const first = node?.getAttribute("style") ?? "";
-		expect(first).toContain("pointer-events:none");
+		const node = win.document.querySelector(`.${cls}`) as HTMLElement | null;
+		const first = node?.style.transform ?? "";
+		expect(node?.style.pointerEvents).toBe("none");
+		expect(first).toContain("translate3d(");
 		client.notify(BRIDGE_KINDS.cursorTo, { x: 500, y: 360, down: true });
-		await waitFor(() => (node?.getAttribute("style") ?? "") !== first);
+		await waitFor(() => (node?.style.transform ?? "") !== first);
 		expect(win.document.querySelectorAll(`.${cls}`)).toHaveLength(1);
-		expect(node?.getAttribute("style")).toContain("scale(");
+		expect(node?.style.transform).toContain("scale(");
 		client.notify(BRIDGE_KINDS.cursorHide);
 		await waitFor(() => win.document.querySelector(`.${cls}`) === null);
 	});
