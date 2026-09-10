@@ -963,9 +963,27 @@ export abstract class AdapterBase implements SiteAdapter {
 			for (const cb of this.startCbs) cb();
 			this.probe();
 		}
-		// Only for the game already being followed: a *different* board (an SPA hop to another page)
-		// changes the colour along with everything else, and republishing its position would start a
-		// second session on the same board.
+		// A colour that *changes* from one definite answer to another is always delivered, whatever
+		// else moved.
+		//
+		// The dedupe key is the position alone, so every reading of ply 0 shares one string, and the
+		// live page's first readable moment can answer the wrong colour: the clocks before the board
+		// is turned round, a lobby board still showing white at the bottom, or the bridge cache
+		// holding the previous game's `playingAs` (`refreshBridgeState` merges, and `evaluate()` reads
+		// before it refreshes). Publishing only `null → known` left a `"w" → "b"` correction with no
+		// way through at all — the session kept predicting, highlighting and playing for the
+		// *opponent* until the position itself moved on (owner's live game, 2026-09-10: white's first
+		// move, recommended to a black player, for the whole of white's turn). The new game's own
+		// first reading is the likeliest place to need it, because the lobby board it replaces
+		// answered the colour of the *last* game.
+		const colourChanged =
+			this.lastColor !== null &&
+			reading.snapshot.myColor !== null &&
+			this.lastColor !== reading.snapshot.myColor;
+		// Learning a colour from nothing is different, and stays limited to the game already being
+		// followed: an SPA hop to another page (`/game/<id>` → `/analysis/…` → `/play/computer`)
+		// changes the derived game id and re-reads the colour from a board that is no longer the one
+		// we were following, and republishing there would start a second session on it.
 		const colourLearned =
 			!gameChanged && this.lastColor === null && reading.snapshot.myColor !== null;
 		// Same shape, same reason (§4.3): the time control arrives after the first reading of the
@@ -974,7 +992,7 @@ export abstract class AdapterBase implements SiteAdapter {
 			!gameChanged && this.lastTimeControl === null && reading.snapshot.timeControl !== undefined;
 		this.lastColor = reading.snapshot.myColor;
 		this.lastTimeControl = reading.snapshot.timeControl ?? null;
-		if (reading.key !== this.lastKey || colourLearned || timeControlLearned) {
+		if (reading.key !== this.lastKey || colourChanged || colourLearned || timeControlLearned) {
 			this.lastKey = reading.key;
 			for (const cb of this.positionCbs) cb(reading.snapshot);
 		}

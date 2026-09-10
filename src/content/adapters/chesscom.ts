@@ -4,8 +4,10 @@
  * colour / mode and for native markings when it is available.
  */
 
+import { sideToMove as turnOfFen } from "@core/chess/fen";
 import { squareOf } from "@core/chess/squares";
 import { TIMINGS } from "@core/constants/timings";
+import { log } from "@core/logger";
 import type {
 	Color,
 	GameResult,
@@ -159,12 +161,20 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 
 	getMyColor(): Color | null {
 		const s = this.bridgeState;
-		if (s?.mode) {
-			return s.mode === "playing" ? bridgeColor(s.playingAs) : null;
-		}
+		const playing = bridgeColor(s?.playingAs);
+		// The site's own answer, when the site says we are playing.
+		if (s?.mode === "playing") return playing;
+		// Any other mode (or none): the page kind decides whether this is a game of ours at all, and
+		// it already folds the mode in — `detectPageKind()` answers `live-spectate` for `observing`
+		// and `analysis` for `analysis`, so a genuine spectator is still colourless here.
+		//
+		// What must NOT happen is the reverse: a mode name we do not recognise — chess.com is free to
+		// rename or add one — stranding a live game colourless for its whole length, because
+		// `GameSession.mayActOn` holds on a null colour and nothing would ever release it. So a mode
+		// we cannot read is treated as no mode at all, and `getPlayingAs()` (which a spectator does
+		// not have) still answers below.
 		const kind = this.detectPageKind();
 		if (kind !== "live-game" && kind !== "vs-computer" && kind !== "daily") return null;
-		const playing = bridgeColor(s?.playingAs);
 		if (playing) return playing;
 		// The page shows my colour at the bottom unless the user turned the board round by hand,
 		// which it does not report separately: the bottom colour is the best DOM answer there is.
@@ -411,8 +421,7 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 		if (!info) return null;
 		// A board that renders pieces but cannot be read is mid-animation: retry on the next record.
 		if (domPieces && placement === null) return null;
-		const sideToMove =
-			this.sideToMoveFor(placement, list) ?? (info.fen.split(" ")[1] === "b" ? "b" : "w");
+		const sideToMove = this.reconciledTurn(info, this.sideToMoveFor(placement, list));
 		const ply = plyOf(list);
 		const replay = replayMoves(list.sans.slice(0, ply));
 		const lastMove = replay?.lastMove ?? this.bridgeLastMove();
@@ -530,6 +539,35 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 			...(this.lastMoveBetween(placement, this.highlightSquares()) ?? {}),
 		});
 		return { fen, approximate: true, source: "dom" };
+	}
+
+	/**
+	 * One turn per snapshot: the side to move published beside a FEN is that FEN's own.
+	 *
+	 * `positionInfoFor` and `sideToMoveFor` are two different ladders over the same page (bridge →
+	 * replay → DOM against bridge → active clock → move-list parity), so they can answer
+	 * differently — a replay that is white to move while the clocks still mark black's, say. Every
+	 * search, every recommendation and every plan downstream is for whoever the **FEN** says is to
+	 * move, while `GameSession.myTurn` is `sideToMove === myColor`: publish the contradiction and the
+	 * session recommends the *opponent's* move and calls it ours (owner's live game, 2026-09-10 —
+	 * white's first move, shown to a black player).
+	 *
+	 * So the FEN wins whenever it carries a turn field. A DOM approximation is no exception and needs
+	 * no special case: `approximateFen` is built *from* `observed`, so the two already agree there.
+	 * A FEN with no readable turn field (the site answering a bare placement) is the only case left
+	 * to the observed value — nothing else is known about it.
+	 */
+	private reconciledTurn(info: PositionInfo, observed: Color | null): Color {
+		const fromFen = turnOfFen(info.fen);
+		if (fromFen === null) return observed ?? "w";
+		if (observed !== null && observed !== fromFen)
+			log.debug("adapter.turnDisagreed", {
+				site: SITE,
+				source: info.source,
+				fen: fromFen,
+				observed,
+			});
+		return fromFen;
 	}
 
 	/** Bridge FEN (when consistent with the DOM) → active clock → move-list parity. */
