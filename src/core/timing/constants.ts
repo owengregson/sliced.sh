@@ -124,6 +124,30 @@ export const TIMING_CONSTANTS = {
 		incFloorClockS: 5,
 		incFloor: 0.6,
 	},
+	/**
+	 * Relative-clock urgency (§8, fix C). `compression` above is written in **absolute** seconds,
+	 * so it says nothing until a 10+0 game has 30 s left (5 % of its base) while it covers half of
+	 * a 1+0 game — and between 3:00 and ~0:36 of a 3+0 game neither it nor the hard cap binds at
+	 * all. The owner's live 3+0 report ("it was still moving like it had a lot of time left even
+	 * though it didnt") is that gap, and the controller has ruled that the report overrides
+	 * Appendix D §3a.3's absolute thresholds.
+	 *
+	 * So this one is a fraction of the game's **own** starting clock: the factor is 1 at or above
+	 * `kneeFraction` of `base_s` and falls linearly to `floor` at an empty clock. It may only ever
+	 * pull the planned think down (it is ≤ 1 everywhere) and the plan applies
+	 * `min(compressionFactor, urgencyFactor)`, so where the §3a.3 compression is the smaller term
+	 * it is still the one that acts and the late-game regime §13.2 measures does not move.
+	 */
+	urgency: {
+		/** At or above this fraction of `base_s` the factor is 1: a full clock is not hurried. */
+		kneeFraction: 0.8,
+		/** Value at an empty clock — a human at 0:05 of a 3+0 is not 20× quicker, but is ~2× quicker. */
+		floor: 0.45,
+		/** An increment of at least this many seconds floors the factor (as `compression.incFloor` does) … */
+		incFloorIncS: 2,
+		/** … at this: the clock is low but every move buys time back. */
+		incFloor: 0.6,
+	},
 	/** Hard caps: `0.5·C`; `0.15·C` if `C < 30 && inc < 2`; `0.35 s` if `C < 3`. */
 	caps: {
 		fraction: 0.5,

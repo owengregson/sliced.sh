@@ -27,6 +27,43 @@ export function compressionFactor(f: Features): number {
 	return comp;
 }
 
+/**
+ * Fraction of the game's **own** starting clock still on our clock, clamped to [0, 1] (1 for an
+ * untimed game). Deliberately `base_s` and not `base_eff`: `base_eff` folds in `40 × inc`, so a
+ * 3+2 game would read 0.69 on its very first move and be hurried before anything had happened.
+ * The increment is handled by `urgency.incFloor` instead, exactly as `compression` handles it.
+ */
+export function relativeClock(f: Pick<Features, "tc" | "clock_s" | "base_s">): number {
+	if (f.tc === "untimed") return 1;
+	if (!(f.base_s > 0)) return 1;
+	return clamp(f.clock_s / f.base_s, 0, 1);
+}
+
+/**
+ * Relative-clock urgency factor (§8, fix C): 1 at or above `urgency.kneeFraction` of the game's own
+ * base clock, falling linearly to `urgency.floor` at an empty clock. Never above 1 — it may only
+ * ever pull a planned think *down* — and 1 for an untimed game, which has no clock to respond to.
+ */
+export function urgencyFactor(f: Features): number {
+	if (f.tc === "untimed") return 1;
+	const U = C.urgency;
+	const u = clamp(U.floor + ((1 - U.floor) * relativeClock(f)) / U.kneeFraction, U.floor, 1);
+	if (f.inc_s >= U.incFloorIncS && f.clock_s > C.compression.incFloorClockS)
+		return Math.max(u, U.incFloor);
+	return u;
+}
+
+/**
+ * The factor the plan actually applies: the smaller of the §3a.3 compression and the relative-clock
+ * urgency. Two consequences, both required of this lane: the result is never above the compression
+ * alone (so no move is ever planned slower than it is today), and in the regime where compression
+ * is the binding term — the last seconds, which the §13.2 conformance suite measures — the pace
+ * factor *is* the compression, unchanged.
+ */
+export function paceFactor(f: Features): number {
+	return Math.min(compressionFactor(f), urgencyFactor(f));
+}
+
 /** Hard cap in seconds (`∞` for untimed games). */
 export function hardCapSec(f: Features): number {
 	if (f.tc === "untimed") return Number.POSITIVE_INFINITY;

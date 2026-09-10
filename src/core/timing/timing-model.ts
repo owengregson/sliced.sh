@@ -19,7 +19,7 @@ import { computeFeatures, featuresToRecord, isBotPace } from "./features";
 import { allocateWindow, type MotorTimes, motorModel } from "./move-window";
 import { sampleOrientationMs } from "./orientation";
 import { samplePersona } from "./persona-latents";
-import { boundByCap, compressionFactor, hardCapSec } from "./pressure";
+import { boundByCap, hardCapSec, paceFactor } from "./pressure";
 import { buildTimingLogEntry } from "./timing-log";
 import type {
 	DistributionHead,
@@ -243,7 +243,13 @@ export class TimingModel {
 		const sample = this.sampleGuarded(f, alloc);
 		let { tSec, mode } = sample;
 		const why = [...sample.why];
-		const comp = compressionFactor(f);
+		// `min(§3a.3 compression, relative-clock urgency)` — NOT the compression alone. The shipped
+		// ChessMimic head never reads `alloc`, so without this the budget controller has no effect on
+		// the plan at all and a 3+0 game is paced the same at 1:00 as at 3:00 (the owner's live
+		// report, 2026-09-10; the measured curves are in fixC-report.md). It is a `min`, so no move is
+		// ever planned slower than it is today and the last seconds stay exactly as §13.2 measures
+		// them.
+		const comp = paceFactor(f);
 		const capSec = hardCapSec(f);
 		tSec *= comp;
 		if (mode === "premove" && (!f.premove_eligible || this.forbidPremove)) {
