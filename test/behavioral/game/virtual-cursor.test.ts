@@ -11,6 +11,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { CDP } from "@core/constants/cdp";
 import type { GamePortCommand } from "@core/constants/messages";
+import type { Rect } from "@core/motor/types";
 import { createGameHarness, type GameHarness } from "./harness";
 
 let h: GameHarness;
@@ -37,6 +38,13 @@ const dispatched = (): Array<[number, number, boolean]> =>
 			return [p.x, p.y, (p.buttons & CDP.mouse.leftButtons) !== 0] as [number, number, boolean];
 		});
 
+const within = (p: [number, number, boolean] | undefined, r: Rect): boolean =>
+	p !== undefined &&
+	p[0] >= r.left &&
+	p[0] <= r.left + r.width &&
+	p[1] >= r.top &&
+	p[1] <= r.top + r.height;
+
 /** Arm the hand and let it play the move it is given. */
 async function playOneMove(): Promise<void> {
 	await h.sw.run(() => h.session().command("armAutoMove"));
@@ -49,7 +57,10 @@ async function playOneMove(): Promise<void> {
 
 describe("game session: the pointer mirror follows what the hand dispatched", () => {
 	it("posts exactly the dispatched sequence and parks on the last point", async () => {
-		h = await createGameHarness({ settings: { automation: { autoMove: true } } });
+		// `style: "drag"` is pinned so the press/release pair below is the drag's, not click-click's.
+		h = await createGameHarness({
+			settings: { automation: { autoMove: true }, execution: { style: "drag" } },
+		});
 		await playOneMove();
 
 		const sent = positions();
@@ -62,16 +73,22 @@ describe("game session: the pointer mirror follows what the hand dispatched", ()
 		// it parks where the pointer is: the last post is the last dispatch, and nothing hid it
 		expect(sent.at(-1)).toEqual(dispatched().at(-1));
 		expect(mirror().at(-1)?.kind).toBe("cursorTo");
-		// viewport CSS px, the same space the board rect is reported in
-		const board = h.site.board.boardRect;
-		const inside = sent.filter(
-			([x, y]) =>
-				x >= board.left &&
-				x <= board.left + board.width &&
-				y >= board.top &&
-				y <= board.top + board.height
-		);
-		expect(inside.length).toBeGreaterThan(0);
+		// Viewport CSS px end to end, and that is checkable rather than assertable: the page reports
+		// its rects from `getBoundingClientRect()`, the hand aims at the centre of those rects, and
+		// the mirror carries the coordinate the CDP command carried. So the press must land inside
+		// the from-square the *page itself* reports and the release inside the to-square — which it
+		// could not if anything in the chain converted between spaces.
+		const last = h.site.board.lastMove();
+		if (!last) throw new Error("no move was played");
+		const lastDown = sent.reduce((acc, p, i) => (p[2] ? i : acc), -1);
+		expect(lastDown).toBeGreaterThan(0);
+		expect(
+			within(
+				sent.find(([, , down]) => down),
+				h.site.board.squareRect(last.from)
+			)
+		).toBe(true);
+		expect(within(sent[lastDown + 1], h.site.board.squareRect(last.to))).toBe(true);
 	});
 
 	it("hides the mirror when the hand is disarmed, and only once", async () => {

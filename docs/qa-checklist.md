@@ -142,6 +142,28 @@ because that could not be verified offline — B4.1 is what decides which of tho
 | B4.4 | Armed, click **Cancel** on the infobar (layout shifts back) then Reattach | The settle wait runs again on the next execution; the move after the reattach lands on the right squares | |
 | B4.5 | Page console on a live game: `new ResizeObserver(() => console.log("board resized")).observe(document.querySelector("wc-chess-board"))`, then arm | Record whether the board element itself reports, or only the viewport did. This is the answer B4.1 needs | |
 
+### B5. The pointer mirror (Fix D) — **answerable only in a browser**
+
+The mirror is one `position: fixed` `<div>` the MAIN-world bridge appends to `document.body` on the
+first point the hand dispatches. Everything about the *stream* is covered offline
+(`test/behavioral/game/virtual-cursor.test.ts` holds the posted sequence to the CDP sequence point
+for point), and everything about the *element* is covered in happy-dom
+(`test/page/virtual-cursor.test.ts`). What no simulator can answer is whether the page's own layout
+and compositing leave it where it belongs, and whether the motion reads as continuous at real port
+latency — happy-dom has no layout, no compositor and no frame clock.
+
+| # | Do | Expect | Observed |
+|---|---|---|---|
+| B5.1 | Armed on a live game, watch a move play with the real mouse held still well away from the board | The arrow appears, moves along the hand's path and stays where the hand stopped. It must be the *only* thing moving: if it tracks your real mouse, the feed is wrong (a finding, not a setting) | |
+| B5.2 | Same, with the page **scrolled** so the board is not at the top of the document | The arrow sits on the squares the hand is touching, not offset by the scroll amount. An offset equal to `scrollY` means the coordinate spaces diverged | |
+| B5.3 | Page console on a live game: `getComputedStyle(document.body).transform` and the same for every ancestor of the board | Record the values. Anything but `none` on `<body>` makes it a containing block for `position: fixed` and would shift the mirror — the one assumption the offline tests cannot check | |
+| B5.4 | Watch the arrow during the press and the release | It dips slightly (about the tip, not the box corner) exactly while the piece is held, and returns on the release | |
+| B5.5 | Watch the first appearance | It fades in over ~0.4 s rather than popping. No fade at all means the post-insert style flush did not take effect in this Chrome | |
+| B5.6 | Watch the motion closely during a drag, then record `performance.now()` gaps between `cursorTo` arrivals in the page (temporarily, in a dev build) | Continuous glide. Gaps consistently above ~30 ms would be the first evidence that the port cannot keep up and that the rAF smoothing from the reference is needed after all — the offline measurement says it is not (~45 points/s, 4-6 ms apart) | |
+| B5.7 | Disarm, `Shift+X`, turn the assistant off, turn **Settings › Display › Show the hand's pointer** off, let a game end, navigate away | The arrow disappears and `document.querySelector` finds no leftover element in each case | |
+| B5.8 | Click **Cancel** on the debugger infobar while the arrow is parked between moves | Record what happens. The hand stops dispatching, so the arrow stays parked; decide whether that reads as stale to the owner (it is literally where the pointer is) | |
+| B5.9 | With the mirror on screen, inspect `document.body.children` and the site's own network payloads | Record whether anything the site sends changes. The element is a body child with a per-build class, no `id`, no `data-*` and no listeners — but it *is* an extra DOM node while the hand plays (§13.3 residual) | |
+
 ---
 
 ## C. Focus discipline (`docs/qa/focus-discipline.md`)
