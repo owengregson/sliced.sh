@@ -214,17 +214,28 @@ export const TC_MODULATION: Readonly<Record<TimeControlClass, Partial<MotorProfi
  * without repeating every field of it; this table scales the rates instead, once (C1).
  *
  * The hover appetite is the behaviour that reads as the hand "touching pieces before it moves"
- * (the owner's live 3+0 game): measured over 420 moves of a simulated 3+0 game, the hand hovered
- * a candidate piece on 75 % of the moves whose pre-touch window was long enough to explore at all
- * — on the slow, conspicuous moves, which are the ones a watcher notices. A blitz or bullet hand
- * does not browse the board with its mouse; it goes for the piece. Rapid and classical keep the
- * modelled rate, where a 4 s think is a small part of the clock and browsing is plausible.
+ * (the owner's live game): measured over 420 moves of a simulated 3+0 game, the hand hovered a
+ * candidate piece on 75 % of the moves whose pre-touch window was long enough to explore at all
+ * — the slow, conspicuous moves a watcher notices — and on a saturated window at rapid the
+ * unscaled model hovers on 0.775 of them.
+ *
+ * **The rule these numbers come from: hovering must be something the hand sometimes does, never
+ * its default.** "Not its default" is `< 0.5` on the windows where the `hoverRampMs` ramp is
+ * saturated, evaluated at four reasonable moves — the richest position the conformance harness
+ * draws — where the planner's `f = 1 + hoverNSlope·(n−1)` is 1.6. (A position richer than that
+ * browses a little more, which is the n-term's intent.) That caps the scale at
+ * `0.5 / 1.6 / MOTOR_DEFAULTS.exploration.hoverProb` = 0.568, so rapid and classical take 0.55 —
+ * the rule's own ceiling, rounded down. A faster clock browses less still: a blitz or bullet hand
+ * goes straight for the piece. Realised rates on a 3500 ms window (3000 seeds, n = 4): bullet
+ * 0.269, blitz 0.391, rapid and classical 0.426. There is no behaviour dataset behind any of
+ * this (see `MOTOR_DEFAULTS`); the rule is the justification, and it is the lever to move if the
+ * owner still sees the hand touching pieces.
  */
 export const TC_EXPLORATION: Readonly<Record<TimeControlClass, { hoverProb: number }>> = {
 	bullet: { hoverProb: 0.35 },
 	blitz: { hoverProb: 0.5 },
-	rapid: { hoverProb: 1 },
-	classical: { hoverProb: 1 },
+	rapid: { hoverProb: 0.55 },
+	classical: { hoverProb: 0.55 },
 };
 
 /** Mild persona modulation (Elo affects think time far more than motor time). */

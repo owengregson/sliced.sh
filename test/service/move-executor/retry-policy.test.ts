@@ -80,11 +80,17 @@ function harness(
 }
 
 describe("retry policy tables", () => {
-	it("the registry allows exactly two dispatches and the delay table's last entry repeats", () => {
-		expect(EXECUTOR.maxAttempts).toBe(2);
+	it("the delay table covers every retry the registry allows and its last entry repeats", () => {
 		expect(EXECUTOR.committedTier).toBe("drag");
+		// one delay per retry (attempts after the first), and anything past the table repeats its end
+		expect(TIMINGS.executorRetryDelayMs.length).toBeGreaterThanOrEqual(EXECUTOR.maxAttempts - 1);
 		expect(retryDelayMs(1)).toBe(TIMINGS.executorRetryDelayMs[0]);
-		expect(retryDelayMs(99)).toBe(TIMINGS.executorRetryDelayMs.at(-1) as number);
+		expect(retryDelayMs(TIMINGS.executorRetryDelayMs.length)).toBe(
+			TIMINGS.executorRetryDelayMs.at(-1) as number
+		);
+		expect(retryDelayMs(TIMINGS.executorRetryDelayMs.length + EXECUTOR.maxAttempts)).toBe(
+			TIMINGS.executorRetryDelayMs.at(-1) as number
+		);
 	});
 });
 
@@ -109,8 +115,8 @@ describe("runWithRetry", () => {
 			tier: "drag",
 			attempts: 2,
 		});
-		// both dispatches, and both of them drags: there is no click-click tier to fall back to
-		expect(h.attempts).toEqual([0, 1]);
+		// every dispatch the registry allows, and all of them drags: no click-click tier to fall back to
+		expect(h.attempts).toEqual([...Array(EXECUTOR.maxAttempts).keys()]);
 		expect(h.delays).toEqual([TIMINGS.executorRetryDelayMs[0]]);
 		expect(h.rechecks).toBe(1);
 		expect(h.verifies).toHaveLength(2);

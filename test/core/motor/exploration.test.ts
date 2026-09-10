@@ -30,8 +30,15 @@ const DESTS: Partial<Record<Square, Square[]>> = {
 const legalDestinations = (sq: Square): Square[] => DESTS[sq] ?? [];
 const GEO = geometry();
 const CURSOR: Pt = { x: 420, y: 720 };
-/** A pre-touch window past the top of `hoverRampMs`, so the hover ramp is saturated (ramp = 1). */
-const LONG_WAIT_MS = 4 * EXPLORATION.hoverRampMs[1];
+/**
+ * A pre-touch window that saturates the hover ramp (`hoverRampMs[1]`) and still has room for the
+ * most hovers the planner will ever schedule at their longest dwell, after the decision pause has
+ * taken its largest share. Every term is a registry value.
+ */
+const LONG_WAIT_MS =
+	EXPLORATION.hoverRampMs[1] +
+	(EXPLORATION.hoverCountWeights.length * EXPLORATION.hoverDwellMs[1]) /
+		(1 - EXPLORATION.decisionPauseFrac[1]);
 
 function opts(over: Partial<ExplorationOptions> = {}): ExplorationOptions {
 	return {
@@ -179,12 +186,14 @@ describe("ExplorationPlanner.plan", () => {
 			expect(hovered / runs).toBeCloseTo(model, 1);
 		}
 		const r = (tc: TimeControlClass) => rates.get(tc)?.realised ?? 0;
-		// a blitz hand goes for the piece; a rapid one has time to browse (`TC_EXPLORATION`)
+		// a faster clock browses less (`TC_EXPLORATION`)
 		expect(r("bullet")).toBeLessThan(r("blitz"));
 		expect(r("blitz")).toBeLessThan(r("rapid"));
 		expect(r("classical")).toBeCloseTo(r("rapid"), 1);
-		// and no class hovers on "almost every" move
-		for (const tc of ["bullet", "blitz"] as const) expect(r(tc)).toBeLessThan(0.5);
+		// and in **no** class is hovering the hand's default: the owner's complaint was that it
+		// always touches pieces first, and the unscaled rapid model hovered on 0.775 of these moves
+		for (const tc of ["bullet", "blitz", "rapid", "classical"] as const)
+			expect(r(tc)).toBeLessThan(0.5);
 	});
 
 	it("produces traces/feints toward the to-square without pressing, occasionally", () => {

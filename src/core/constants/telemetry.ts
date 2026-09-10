@@ -35,10 +35,11 @@ const MAX_HAND_STEP_PX = Math.ceil(
 );
 
 /**
- * Longest a committed press can be held: the profile's press-hold ceiling with both
- * jitters at their upper clamp. A click-click submits the move on the *press* while the
- * hand's drop time is taken at the release, so the page's `MoveHoldTime` can precede the
- * executor's `elapsedMs` by at most this.
+ * Longest a committed press can be held: the profile's press-hold ceiling with both jitters at
+ * their upper clamp. It bounds how far the page's `MoveHoldTime` may precede the executor's
+ * `elapsedMs`, which only a form that submits on the *press* can do. Click-to-move was removed end
+ * to end, so every committed move now submits on the release and the bound is slack; it is kept as
+ * the ceiling on that gap rather than silently dropped (see `submitBeforeDropMaxMs`).
  */
 const MAX_PRESS_HOLD_MS = Math.ceil(MOTOR_DEFAULTS.pressHoldMs[1] * MAX_PROFILE_STRETCH);
 
@@ -88,8 +89,11 @@ export const TELEMETRY_BANDS = {
 		 */
 		complexityMinRows: 12,
 		/**
-		 * The page's `MoveHoldTime` never runs past the hand's own drop time, and precedes
-		 * it by at most one committed press hold (a click-click submits on the press).
+		 * The page's `MoveHoldTime` never runs past the hand's own drop time, and precedes it by at
+		 * most one committed press hold. This band existed only to police a click-committed move,
+		 * which submitted on the press while the hand's drop time was taken at the release; with
+		 * drag-only the quantity it bounds is ~0 and the band is slack. Left in place deliberately:
+		 * it is the one §13 rule that keyed off the input method, and it still holds.
 		 */
 		submitBeforeDropMaxMs: MAX_PRESS_HOLD_MS,
 	},

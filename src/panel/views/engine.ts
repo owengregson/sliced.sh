@@ -433,7 +433,9 @@ export function createEngineView(deps: EngineViewDeps = {}): View {
 				);
 				valueCell("last").textContent = execution
 					? COPY.engineView.lastAction(
-							execution.tier,
+							// Every committed move is a drag, and the word the user reads comes from
+							// `copy.ts` (C5) — never from the service worker's own `tier` value.
+							COPY.execution.drag,
 							seconds(execution.elapsedMs),
 							COPY.engineView.outcomes[execution.outcome]
 						)

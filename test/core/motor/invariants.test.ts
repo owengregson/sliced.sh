@@ -94,6 +94,7 @@ describe("motor invariants (500 random moves)", () => {
 		const seenPaths = new Set<string>();
 		let cursor: Pt = plausibleStart(BOARD, rng);
 		let previews = 0;
+		let maxPresses = 0;
 		let idleSwitches = 0;
 		let switches = 0;
 		let moves = 0;
@@ -111,6 +112,8 @@ describe("motor invariants (500 random moves)", () => {
 			const toRect = squareRect(pos.committed.to);
 			const sel = { selected: null as Square | null };
 			let pressCount = 0;
+			/** What the plan says the page will be pressed on: one press per preview leg. */
+			let plannedPresses = 0;
 
 			// Exploration (pre-touch window) — previews are the only non-committed presses.
 			const actions = planner.plan(rng.int(300, 5000), pos.candidates, GEO, m, rng, {
@@ -135,6 +138,7 @@ describe("motor invariants (500 random moves)", () => {
 				if (!pv) continue;
 				previews++;
 				pressCount++;
+				plannedPresses += 1 + (pv.deselect ? 1 : 0);
 				expect(inside(pv.press, pv.pieceRect)).toBe(true);
 				expect(pos.occupancy(pv.piece)).toBe("own");
 				// The preview press must select, never play a move.
@@ -214,10 +218,17 @@ describe("motor invariants (500 random moves)", () => {
 			seenPaths.add(JSON.stringify(travel));
 			cursor = { x: last.x, y: last.y };
 			expect(inside(cursor, toRect)).toBe(true); // mouseReleased inside its target
-			// one committed press plus at most two previews, each with at most one deselect click
-			expect(pressCount).toBeLessThanOrEqual(1 + 2 * 2);
+			// The page is pressed exactly once for the committed drag plus once per planned preview
+			// leg — an equality, so a plan that grew a press the simulation did not walk (or a
+			// second committed press) fails here rather than sliding under a slack ceiling.
+			expect(pressCount).toBe(1 + plannedPresses);
+			maxPresses = Math.max(maxPresses, pressCount);
 		}
 		expect(moves).toBe(500);
+		// and the model's own ceiling — one committed press plus two previews with a deselect each —
+		// is never exceeded over the whole run
+		expect(maxPresses).toBeLessThanOrEqual(1 + 2 * 2);
+		expect(maxPresses).toBeGreaterThan(1);
 		expect(previews).toBeGreaterThan(0);
 		expect(switches).toBeGreaterThan(0);
 		expect(seenPaths.size).toBeGreaterThan(500);

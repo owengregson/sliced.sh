@@ -447,6 +447,40 @@ describe("HandController preview selections and a reflow (§9.5 / §9.3a)", () =
 });
 
 describe("HandController: the committed touch is always a drag", () => {
+	// The plan's `dragDurationMs` is what makes one drag slower than another; a hand whose travel
+	// is pinned to `EXECUTOR.minTravelMs` regardless of the plan would still pass every other
+	// assertion in this file while moving every piece at exactly the same speed — the robotic
+	// failure the timing-shape run cannot see, because its spread comes from the approach fit.
+	it("the held leg follows the plan's dragDurationMs, not a fixed floor", async () => {
+		const held: number[] = [];
+		for (const dragDurationMs of [EXECUTOR.minTravelMs, EXECUTOR.minTravelMs * 8]) {
+			sim.debugger.clearCommands();
+			const ctrl = makeController(9);
+			const timing = makeTiming({
+				thinkMs: 8000,
+				preMoveHoverMs: 4000,
+				dragDurationMs,
+				deadlineMs: START + 8000,
+				window: {
+					orientationMs: 4000,
+					scanMs: 0,
+					previewMs: 0,
+					decisionMs: 0,
+					approachMs: dragDurationMs,
+				},
+			});
+			const result = await run(ctrl, makePlan(), timing);
+			expect(result.outcome).toBe("executed");
+			const cmds = commands();
+			const press = cmds.find((c) => c.type === "mousePressed") as Cmd;
+			const release = cmds.find((c) => c.type === "mouseReleased") as Cmd;
+			held.push(release.at - press.at);
+		}
+		expect(held[0]).toBeGreaterThan(0);
+		// eight times the floor has to show up as a materially longer hold
+		expect(held[1] ?? 0).toBeGreaterThan((held[0] ?? 0) * 2);
+	});
+
 	// Click-to-move was removed end to end (the owner's live-game report): there is no plan field,
 	// no persona weighting and no retry tier that can make the hand commit a move with two clicks.
 	// What that means at the page is one press, one release, and the button *held* in between —
