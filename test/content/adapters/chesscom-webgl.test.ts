@@ -45,11 +45,11 @@ interface Booted {
 }
 
 /** The canvas fixture with a bridge answering `getState` from `state()`. */
-function boot(state: () => Record<string, unknown> = () => ({ fen: WEBGL_FEN })): Booted {
+function boot(state: () => Record<string, unknown> | null = () => ({ fen: WEBGL_FEN })): Booted {
 	const dom = loadFixture("chesscom-webgl");
 	cleanups.push(installWindowGlobals(dom.window));
 	const bridge = new FakeBridge();
-	bridge.responses.set("getState", () => state());
+	bridge.responses.set("getState", () => state() ?? {});
 	const adapter = createChesscomAdapter({
 		document: pageDocument(dom),
 		window: pageWindow(dom),
@@ -98,6 +98,18 @@ describe("ChessComAdapter — WebGL canvas board (no DOM pieces)", () => {
 		expect(snapshot?.approximate).toBe(false);
 		// `/game/<digits>` is the live game URL chess.com actually uses
 		expect(snapshot?.gameId).toBe(GAME_ID);
+	});
+
+	it("an empty move list never proves the start position while the bridge is unanswered", () => {
+		// Canvas board + bridge not yet ready + a rendered but empty move list. Requiring only
+		// that the list element exists would publish the start position as a confident reading on
+		// a mid-game board, and with highlights now on by default, draw on the wrong squares.
+		const { dom, adapter } = boot(() => null);
+		const list = dom.window.document.querySelector(".timestamps-with-base-time");
+		if (list) list.innerHTML = "";
+		expect(adapter.getPlacement()).toBeNull();
+		expect(adapter.getPositionInfo()).toBeNull();
+		expect(adapter.readSnapshot()).toBeNull();
 	});
 
 	it("detects a position change across a move with no piece elements", async () => {

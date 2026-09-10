@@ -67,7 +67,7 @@ game against a human.
 | B0.4 | Highlights on (default), observing a live game | The two highlighted squares are the recommended move's, on the correct squares — check a game **as black** as well, where the board is rotated 180° | |
 | B0.5 | Flip the live board by hand (board context menu / keyboard) mid-game | Highlights stay on the right squares; the panel's lines do not change | |
 | B0.6 | `/play/computer` against a bot | Same as above, with `pieces: 32` in B0.1's probe — the DOM path must not have regressed | |
-| B0.7 | A promotion on the **live** board with auto-queen off in chess.com's settings | **Known gap:** the picker is drawn on the canvas, so the hand cannot find it and leaves the pawn on the last rank. Record what the picker looks like in the DOM (if anything) — that capture is what a fix needs | |
+| B0.7 | A promotion on the **live** board with auto-queen off in chess.com's settings (do this once, deliberately, *not* while armed on a game you care about) | **Known gap:** the picker is drawn on the canvas, so the hand cannot find it and leaves the pawn on the last rank. Record what the picker looks like in the DOM (if anything) — that capture is what a fix needs | |
 
 ### B1. chess.com — blitz vs a bot, with a promotion and a premove
 
@@ -81,7 +81,7 @@ plausible. Play a 3+0 or 5+0 game against a bot.
 | B1.3 | Watch the clocks through a move | Both clocks track the page's clocks; the running one is the side to move; tenths appear under 10 s | |
 | B1.4 | Arm auto-play (hold the toggle ~600 ms) | Debugger infobar appears; toggle reads "Auto-play on"; countdown ring drains on your turn | |
 | B1.5 | Let it play ~10 moves | Each move is a *drag*: press, a continuous path, release. No teleporting cursor, no instant click-click. Move times vary and look human | |
-| B1.6 | Reach a promotion (push a pawn to the 8th) | The promotion window opens and the correct piece is picked; the move is verified as played, not left dangling | |
+| B1.6 | Reach a promotion (push a pawn to the 8th) | **Turn chess.com's auto-promote-to-queen ON before arming on a live board.** With it on, the promotion completes and is verified as played. With it off the picker is drawn on the canvas, the hand cannot find it, and the pawn is left on the last rank until the two-failure disarm — see B0.7 | |
 | B1.7 | Make a premove yourself while armed | The extension does not fight you: your premove is left alone or cleanly superseded; no double move, no illegal attempt | |
 | B1.8 | Let the extension premove (obvious recapture, low clock) | The premove is placed during the opponent's turn and resolves; the panel's plan line says `premove` | |
 | B1.9 | Switch tabs mid-move-window, come back | The move is **skipped** while hidden and played after the next fresh position. Nothing pulls the tab back | |

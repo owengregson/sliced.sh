@@ -447,9 +447,13 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 			return { fen: fromBridge, approximate: false, source: "bridge" };
 		const ply = plyOf(list);
 		const replay = replayMoves(list.sans.slice(0, ply));
-		// With no placement to corroborate it, a replay is evidence only when the page renders a
-		// move list: an absent one would otherwise "prove" the start position on any board.
-		if (replay && (placement !== null ? placementOf(replay.fen) === placement : this.hasMoveList()))
+		// With no placement to corroborate it, a replay is evidence only when the move list
+		// actually holds plies. Requiring merely that the list *element* exists would let an
+		// empty one "prove" the start position on a mid-game canvas board during the window
+		// before the bridge answers — publishing a confident wrong position, and now a
+		// highlight on the wrong squares. A genuine ply-0 live game is answered by the bridge;
+		// with no bridge and no plies, `null` (keep polling) is the honest reading.
+		if (replay && (placement !== null ? placementOf(replay.fen) === placement : ply > 0))
 			return { fen: replay.fen, approximate: false, source: "replay" };
 		if (!placement) return null;
 		const turn = this.sideToMoveFor(placement, list) ?? "w";
