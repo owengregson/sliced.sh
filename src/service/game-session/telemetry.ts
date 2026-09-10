@@ -1,7 +1,9 @@
 /**
  * Per-move telemetry (§13.2, §13.6). One `MoveWindow` per move: opened when the
  * position arrives, fed every `FocusGate` edge, closed with the execution
- * result. It produces the `MoveTelemetryRecord` the `GameSession` attaches to
+ * result — plus, for a premove sent during the opponent's turn, a `fork()` of
+ * that window with its own lifetime (Fix F). It produces the
+ * `MoveTelemetryRecord` the `GameSession` attaches to
  * that move's `TimingLogEntry`, which is what
  * `tools/telemetry-conformance/report.py` reads.
  *
