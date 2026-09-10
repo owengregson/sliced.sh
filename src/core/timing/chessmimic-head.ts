@@ -225,8 +225,20 @@ export class ChessMimicHead implements DistributionHead {
 			return s;
 		}
 		const mask = bucketMask(c.inputs.playerClockS, c.inputs.incrementS);
-		let bucket = sampleBucket(c.probs, mask, this.temperature, rng);
+		const bucket = sampleBucket(c.probs, mask, this.temperature, rng);
 		const why = [`chessmimic band=${c.band} bucket ${bucket} p=${(c.probs[bucket] ?? 0).toFixed(3)}`];
+		// Bucket 0 is the model saying "this move took under a second". That is a statement about the
+		// *pace*, so it answers `instant` whatever the position is; only the premove branch on top of it
+		// is gated on §7.4 eligibility, because a premove is entered before the opponent has replied and
+		// a move that cannot be predicted cannot be pre-entered.
+		//
+		// Until 2026-09-10 an ineligible bucket-0 draw was discarded and re-drawn from buckets ≥ 1.
+		// Measured on the real ONNX bands: ≈ 21 % of the mass sits on bucket 0 at a full 3+0 clock, and
+		// redistributing all of it upward left the shipped head with 0 instant-mode plans in 2000
+		// against 222 for the v1 fallback — the model's entire fast tail was being thrown away on every
+		// position that was not a recapture, a book move, a ponder hit or the only legal move. The owner
+		// asked about exactly that on 2026-09-09 ("the bot never is able to come up with the move nearly
+		// instantly"); we were causing it.
 		if (bucket === 0) {
 			if (f.premove_eligible) {
 				const pPre = sigmoid(premoveLogit(f, p, st.knobs));
@@ -236,22 +248,12 @@ export class ChessMimicHead implements DistributionHead {
 						mode: "premove",
 						why: [...why, `bucket 0 → premove p=${pPre.toFixed(2)}`],
 					};
-				return {
-					tSec: this.instantSec(c.band, rng),
-					mode: "instant",
-					why: [...why, "bucket 0 → instant"],
-				};
 			}
-			const rest = mask.map((m, b) => m && b > 0);
-			const again = sampleBucket(c.probs, rest, this.temperature, rng);
-			if (again === 0)
-				return {
-					tSec: this.instantSec(c.band, rng),
-					mode: "instant",
-					why: [...why, "bucket 0 not eligible; nothing else affordable → instant"],
-				};
-			bucket = again;
-			why.push(`bucket 0 not premove-eligible → re-sampled bucket ${bucket}`);
+			return {
+				tSec: this.instantSec(c.band, rng),
+				mode: "instant",
+				why: [...why, "bucket 0 → instant"],
+			};
 		}
 		let t = sampleWithinBucket(c.band, bucket, rng);
 		if (!st.freezeEps) {
