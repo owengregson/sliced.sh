@@ -46,8 +46,14 @@ describe("game session: the board mark follows the current recommendation", () =
 		expect(
 			await h.until(() => marks().filter((c) => c.kind === "highlight").length > drawn, 10_000)
 		).toBe(true);
+		// The clear must lie *between* the two highlights. `indexOf(clear) < lastIndexOf(highlight)` is
+		// satisfied by `-1 < n`, i.e. by there being no clear at all — the very case it would claim to
+		// detect — so the slice between them is what is asserted.
 		const kinds = marks().map((c) => c.kind);
-		expect(kinds.indexOf("clearHighlight")).toBeLessThan(kinds.lastIndexOf("highlight"));
+		const first = kinds.indexOf("highlight");
+		const last = kinds.lastIndexOf("highlight");
+		expect(last).toBeGreaterThan(first);
+		expect(kinds.slice(first + 1, last)).toContain("clearHighlight");
 	});
 
 	it("the mark is cleared when the owner plays the move themselves (panel-only mode)", async () => {

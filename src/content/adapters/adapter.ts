@@ -652,12 +652,32 @@ export abstract class AdapterBase implements SiteAdapter {
 		if (this.rectWatch || this.destroyed) return;
 		this.rectWatch = true;
 		const report = (): void => this.reportBoardRect();
+		// `scroll` fires far more often than the board moves. It is coalesced on the next animation
+		// frame rather than debounced on a timer: the report feeds the hand's mid-drag reflow guard,
+		// so it must land within a frame of the page settling, not 40 ms later. `resize` — the
+		// infobar's own signal — and the `ResizeObserver` (already frame-aligned) report at once.
+		let frame: number | null = null;
+		const raf = this.rafOf();
+		const coalesced = (): void => {
+			if (!raf) {
+				report();
+				return;
+			}
+			if (frame !== null) return;
+			frame = raf(() => {
+				frame = null;
+				report();
+			});
+		};
 		const opts: AddEventListenerOptions = { capture: true, passive: true };
 		this.win.addEventListener("resize", report, opts);
-		this.win.addEventListener("scroll", report, opts);
+		this.win.addEventListener("scroll", coalesced, opts);
 		this.disposers.push(() => {
 			this.win.removeEventListener("resize", report, opts);
-			this.win.removeEventListener("scroll", report, opts);
+			this.win.removeEventListener("scroll", coalesced, opts);
+			const cancel = this.win.cancelAnimationFrame?.bind(this.win);
+			if (frame !== null && cancel) cancel(frame);
+			frame = null;
 		});
 		const Observer = this.resizeObserverCtor();
 		if (Observer) {
@@ -698,6 +718,12 @@ export abstract class AdapterBase implements SiteAdapter {
 		if (last && rectShiftPx(last, rect) <= EXECUTOR.boardMoveTolerancePx) return;
 		this.lastBoardRect = rect;
 		for (const cb of [...this.boardRectCbs]) cb(rect);
+	}
+
+	/** The page's `requestAnimationFrame` (absent in a stripped test window). */
+	private rafOf(): ((cb: () => void) => number) | null {
+		const raf = this.win.requestAnimationFrame;
+		return typeof raf === "function" ? (cb) => raf.call(this.win, cb) : null;
 	}
 
 	/** The page's `ResizeObserver` (absent in an old engine or a stripped test window). */

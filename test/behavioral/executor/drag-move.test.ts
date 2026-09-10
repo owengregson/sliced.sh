@@ -1001,6 +1001,57 @@ describe("executor: the board moves under the hand", () => {
 		}
 	});
 
+	it("a reflow between the plan and the press dispatches nothing at all", async () => {
+		// The ~300 ms approach (plus the pre-grab pause) runs *after* the geometry re-read and before
+		// the committed press. A reflow landing there would otherwise press a point that is a
+		// different square in the new layout, and the escape release on the origin would then read as
+		// a drag *from* that wrong square — a wrong move, submitted. Nothing is committed yet, so the
+		// right answer is to dispatch nothing more.
+		const reports: Array<[string, ExecutionReport]> = [];
+		await sw.run(async () => {
+			for (const ev of ["executed", "aborted", "skipped", "failed"] as const)
+				executor.on(ev, (r) => reports.push([ev, r]));
+			await executor.arm();
+			focus.positionArrived(tabId, sim.now());
+			const plan = plan1200();
+			executor.schedule(recommendation(plan), plan);
+		});
+		let reflowAt = 0;
+		sim.debugger.respond(CDP.inputDispatchMouseEvent, (params, id) => {
+			const p = params as { type: string; buttons: number; x: number; y: number };
+			// the first free move that arrives on the from-square: the approach is landing
+			if (
+				reflowAt === 0 &&
+				p.type === "mouseMoved" &&
+				p.buttons === 0 &&
+				inside(p, squareRect("e2"))
+			) {
+				reflowAt = sim.now();
+				reflowBoard(MOVED_BOARD);
+				port.post({ kind: "boardRect", rect: MOVED_BOARD, at: sim.now() });
+			}
+			return sim.input.send(id, CDP.inputDispatchMouseEvent, params);
+		});
+		await sw.run(() => sim.time.advanceUntilIdle({ maxAdvanceMs: 30_000 }));
+
+		expect(reflowAt).toBeGreaterThan(0);
+		expect(reports.map(([ev]) => ev)).toEqual(["aborted"]);
+		expect((reports[0] as [string, ExecutionReport])[1].result).toMatchObject({
+			ok: false,
+			outcome: "aborted",
+			reason: EXECUTOR.reasons.boardMoved,
+			pressed: false,
+		});
+		// nothing was pressed, so nothing can have been submitted
+		const cmds = commands();
+		expect(cmds.filter((c) => c.type === "mousePressed")).toHaveLength(0);
+		expect(cmds.filter((c) => c.type === "mouseReleased")).toHaveLength(0);
+		expect(sim.input.events.filter((e) => e.type === "mousedown")).toHaveLength(0);
+		expect(submitted).toEqual([]);
+		expect(sim.input.pointer(tabId)?.buttons).toBe(0);
+		expect(executor.isRunning()).toBe(false);
+	});
+
 	it("after an arm-time attach the first execution waits for the layout to settle, then plays on the new geometry", async () => {
 		const geometryAt: number[] = [];
 		adapter.onGeometry = () => {

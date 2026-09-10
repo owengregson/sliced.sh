@@ -338,6 +338,11 @@ describe("ChessComAdapter — highlights via the bridge", () => {
 		expect(bridge.callsOf("clear")[0]?.payload).toEqual({
 			keys: ["arrow|e2e4", "highlight|e2", "highlight|e4"],
 		});
+		// A clear with no keys of its own must omit `keys` entirely: the page reads
+		// `(q && q.keys) || keys`, and an empty array is truthy — it would clear nothing.
+		adapter.clearHighlights();
+		await waitFor(() => bridge.callsOf("clear").length === 2);
+		expect(bridge.callsOf("clear")[1]?.payload).toEqual({});
 		expect(dom.document.body.querySelectorAll("*").length).toBe(before);
 	});
 	it("does nothing without a bridge (no DOM insertion) and arrows() weights lines", async () => {

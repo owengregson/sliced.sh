@@ -13,8 +13,10 @@ import type { GamePortCommand } from "@core/constants/messages";
 import type { Color, PositionSnapshot } from "@typedefs/game";
 import { createGameHarness, type GameHarness } from "./harness";
 
-/** After 1.e4 — black to move, ply 1. The owner is black in every case below. */
+/** After 1.e4 — black to move, ply 1. */
 const BLACK_TO_MOVE = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
+/** The start position — white to move, ply 0: the owner's very first move of a game. */
+const START_POSITION = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 const GAME_ID = "harness-game";
 
 let h: GameHarness;
@@ -22,7 +24,7 @@ afterEach(async () => {
 	await h?.dispose();
 });
 
-function position(myColor: Color | null): PositionSnapshot {
+function position(myColor: Color | null, over: Partial<PositionSnapshot> = {}): PositionSnapshot {
 	return {
 		site: "chesscom",
 		gameId: GAME_ID,
@@ -33,8 +35,13 @@ function position(myColor: Color | null): PositionSnapshot {
 		clocks: { w: { ms: 300_000, running: false }, b: { ms: 300_000, running: true } },
 		timeControl: { baseMs: 300_000, incMs: 2_000 },
 		capturedAt: h.sim.now(),
+		...over,
 	};
 }
+
+/** The owner's own first move, as the real content script delivers it: white, ply 0. */
+const firstMove = (myColor: Color | null): PositionSnapshot =>
+	position(myColor, { fen: START_POSITION, ply: 0, sideToMove: "w" });
 
 const boardCommands = (): GamePortCommand[] =>
 	h.commands().filter((c) => c.kind === "highlight" || c.kind === "clearHighlight");
@@ -86,6 +93,37 @@ describe("game session: an unknown colour holds (it is never guessed)", () => {
 		});
 	});
 
+	it("releases the hold when the page sent gameStarted first — the production order", async () => {
+		// The real content script posts `gameStarted` before the first `position`
+		// (`src/content/index.ts`), so `startGame()` has already reset the feed dedupe by the time the
+		// colourless ply arrives. The republished ply carries an identical `gameId|ply|fen`, so a
+		// dedupe key that omits `myColor` drops it as the reconnect replay — and nothing else can
+		// release the hold, because as white the position cannot change until the owner moves by hand.
+		h = await createGameHarness({
+			manualStart: true,
+			myColor: "w",
+			settings: { automation: { autoMove: true, highlightMoves: true } },
+		});
+		await h.drive(() => {
+			h.site.hello();
+			h.site.startGame({ myColor: null });
+		});
+		await h.drive(() => h.site.post({ kind: "position", snapshot: firstMove(null) }));
+		await h.advance(2_000);
+		const session = h.session();
+		expect(session.view().ply).toBe(0);
+		expect(session.view().myColor).toBeNull();
+		expect(session.recommendation()).toBeNull();
+		expect(h.transport.goLines).toEqual([]);
+
+		// The bridge answers. Same game, same ply, same FEN — only the colour is new.
+		await h.drive(() => h.site.post({ kind: "position", snapshot: firstMove("w") }));
+		expect(await h.until(() => session.recommendation() !== null, 10_000)).toBe(true);
+		expect(session.view().myColor).toBe("w");
+		expect(h.transport.goLines.length).toBeGreaterThan(0);
+		expect(legalMoves(START_POSITION)).toContain(session.recommendation()?.chosen.uci ?? "");
+	});
+
 	it("never ponders or premoves for the opponent while the colour is unknown", async () => {
 		h = await createGameHarness({ manualStart: true, myColor: "b" });
 		await h.drive(() => h.site.hello());
@@ -94,6 +132,9 @@ describe("game session: an unknown colour holds (it is never guessed)", () => {
 		// `go infinite` is the ponder: with the colour unknown the session cannot know whose turn it
 		// is, so it must not start one — it was the "not my turn ⇒ ponder" branch that ran here.
 		expect(h.transport.goLines).toEqual([]);
-		expect(h.session().currentState()).toBe("live:opponent-turn");
+		// §3.3 has no "colour unknown" state, so the label is `live:opponent-turn` even though this is
+		// in fact the owner's move. `myColor` is the truthful signal and the panel reads that.
+		expect(h.session().view().myColor).toBeNull();
+		expect(h.session().recommendation()).toBeNull();
 	});
 });

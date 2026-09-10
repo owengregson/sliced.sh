@@ -379,14 +379,18 @@ export class RecommendationPipeline {
 		}
 		const pool = shallow ? lines.slice(0, SEARCH_BUDGET.shallowLines) : lines;
 		if (pool.length === 0) return book;
+		// `run()` has already refused a position whose colour is unknown; reading it again here keeps
+		// that the only place the question is answered, rather than defaulting to white's clock.
+		const myColor = input.snapshot.myColor;
+		if (myColor === null) return book;
 		const ctx: SelectionContext = {
 			fen: input.snapshot.fen,
 			targetElo: input.targetElo,
 			form: input.form,
 			ply: input.snapshot.ply,
 			phase: phaseOf(input.snapshot.fen, input.snapshot.ply) ?? "middlegame",
-			myClockMs: input.snapshot.clocks[input.snapshot.myColor ?? "w"].ms,
-			oppClockMs: input.snapshot.clocks[input.snapshot.myColor === "w" ? "b" : "w"].ms,
+			myClockMs: input.snapshot.clocks[myColor].ms,
+			oppClockMs: input.snapshot.clocks[myColor === "w" ? "b" : "w"].ms,
 			selectionMode: input.settings.strength.selectionMode,
 			blunderScale: input.settings.strength.blunderScale,
 			rng: input.rng,

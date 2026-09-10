@@ -261,6 +261,15 @@ interface PlannedGeometry {
 	flipped: boolean;
 }
 
+/** The per-point reflow check for a touch planned in `planned`, or nothing when there is no geometry. */
+function guardOf(
+	planned: PlannedGeometry | null,
+	check: (planned: Rect) => void
+): (() => void) | undefined {
+	if (!planned) return undefined;
+	return () => check(planned.board);
+}
+
 const sameRect = (a: Rect, b: Rect): boolean =>
 	a.left === b.left && a.top === b.top && a.width === b.width && a.height === b.height;
 
@@ -370,7 +379,7 @@ export class HandController {
 					ok: false,
 					outcome: "aborted",
 					reason: EXECUTOR.reasons.boardMoved,
-					attempts: 1,
+					attempts,
 					...base(),
 				};
 			}
@@ -470,7 +479,19 @@ export class HandController {
 		this.setState("approaching");
 		// The coordinate space the rest of this touch is committed to.
 		const planned = reply !== null ? { board: reply.boardRect, flipped: reply.flipped } : null;
-		await this.travel(touch.approach);
+		if (planned && this.board && this.board.rect(plan.tabId) === null)
+			log.debug("hand: no board rect reported for this tab — the reflow guard is inert", {
+				tabId: plan.tabId,
+			});
+		// The approach is ~`window.approachMs` of travel *after* the geometry re-read and before the
+		// committed press. A reflow landing there would press a point that is a different square in
+		// the new layout, and the escape release on the origin would then read as a drag from that
+		// wrong square — a wrong move, submitted. Nothing is committed yet, so the guard here simply
+		// ends the execution with nothing dispatched.
+		await this.travel(
+			touch.approach,
+			guardOf(planned, (r) => this.guardBoard(r))
+		);
 		if (touch.kind === "drag") await this.drag(touch, rects, m, tl, plan, planned);
 		else await this.clickClick(touch, tl, planned);
 
@@ -691,10 +712,12 @@ export class HandController {
 		plan: ExecutionPlan,
 		planned: PlannedGeometry | null
 	): Promise<void> {
-		const guard = planned ? (): void => this.guardBoard(planned.board) : undefined;
+		const guard = guardOf(planned, (r) => this.guardBoard(r));
 		tl.begin("grab");
 		this.setState("grabbing");
-		await this.pause(t.preGrabMs);
+		// Still outside the `try`: nothing is committed until the press, so a reflow caught here needs
+		// no escape release — it ends the execution with `pressed: false`.
+		await this.pause(t.preGrabMs, guard);
 		await this.press(t.pressAt, true);
 		try {
 			await this.pause(t.grabDelayMs, guard);
@@ -731,10 +754,10 @@ export class HandController {
 		tl: Timeline,
 		planned: PlannedGeometry | null
 	): Promise<void> {
-		const guard = planned ? (): void => this.guardBoard(planned.board) : undefined;
+		const guard = guardOf(planned, (r) => this.guardBoard(r));
 		tl.begin("grab");
 		this.setState("grabbing");
-		await this.pause(t.prePressMs);
+		await this.pause(t.prePressMs, guard);
 		await this.press(t.pressAt, true);
 		await this.pause(t.holdMs);
 		await this.release(t.releaseAt);

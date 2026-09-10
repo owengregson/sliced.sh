@@ -230,6 +230,38 @@ describe("ChessComAdapter — orientation on a canvas board", () => {
 		});
 	}
 
+	/**
+	 * `getFEN`, `getPlayingAs` and `getOptions().flipped` are three *independent* `safe(...)` reads of
+	 * the same page object in the bridge, and `safe` answers `null` when one throws. So
+	 * `getOptions()` failing while `getPlayingAs()` answers is a real shape: the colour is known and
+	 * `flipped` is absent. Deriving the orientation from "white at the bottom" there mirrors every
+	 * square — for the mark and for the hand — on exactly the side that is playing black.
+	 */
+	it("derives the orientation from the colour when the bridge reports no flipped flag", async () => {
+		const dom = loadFixture("chesscom-webgl");
+		for (const clock of dom.document.querySelectorAll(".clock-component")) clock.remove();
+		cleanups.push(installWindowGlobals(dom.window));
+		const bridge = new FakeBridge();
+		bridge.responses.set("getState", () => ({ fen: WEBGL_FEN, mode: "playing", playingAs: 2 }));
+		const adapter = createChesscomAdapter({
+			document: pageDocument(dom),
+			window: pageWindow(dom),
+			bridge,
+		});
+		cleanups.push(() => adapter.destroy());
+		dom.layout("wc-chess-board", WEBGL_RECT);
+		await waitFor(() => adapter.getMyColor() === "b");
+		expect(adapter.isFlipped()).toBe(true);
+		// black at the bottom ⇒ a1 is top-right
+		expect(adapter.squareRect("a1")).toMatchObject({
+			x: WEBGL_RECT.x + 7 * SQ,
+			y: WEBGL_RECT.y,
+		});
+		expect(
+			adapter.pointToSquare({ x: WEBGL_RECT.x + 7 * SQ + SQ / 2, y: WEBGL_RECT.y + SQ / 2 })
+		).toBe("a1");
+	});
+
 	it("falls back to the bottom clock's colour: the live panels carry none, the board no class", () => {
 		const dom = loadFixture("chesscom-webgl");
 		cleanups.push(installWindowGlobals(dom.window));

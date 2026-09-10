@@ -110,6 +110,21 @@ exercised down here. Play 1+0 against a bot.
 | B3.4 | Armed: cancel a countdown with `Esc`, then let the next move run | Cancel is honoured; the following move executes normally | |
 | B3.5 | Armed: interrupt a drag by moving the real mouse over the board | The hand keeps a continuous trace; no jump. (§13.5 hand ownership) | |
 
+### B4. The board moving under the hand (§9.5)
+
+The only thing the simulator cannot answer here is **whether the infobar's appearance fires the
+board element's own `ResizeObserver`**, as opposed to only the viewport's. The content script
+observes the board, `document.documentElement`, and the window's `resize` / `scroll`, precisely
+because that could not be verified offline — B4.1 is what decides which of those carried it.
+
+| # | Do | Expect | Observed |
+|---|---|---|---|
+| B4.1 | Arm **mid-game** with the side panel open (the infobar appears and the panel reflows the page at the same moment) | The service-worker console logs `executor: waited for the layout to settle after the attach` with a **non-zero** `waitedMs` before the first move. A zero or missing line means the board-rect reports never arrived and the whole guard is inert — that is a finding, not a pass | |
+| B4.2 | Same, but watch the board through that first move | No half-finished drag: either the move plays normally on the new geometry, or the piece is put back on its origin square and the move is skipped (`hand: releasing on the origin square after a reflow` / `aborted: board-moved`). A piece dropped on a square that is not the recommended destination is a critical finding | |
+| B4.3 | Armed on a live game, scroll the page during a move window | Board-rect reports are coalesced on animation frames, not one per scroll event; the move still lands on the right squares | |
+| B4.4 | Armed, click **Cancel** on the infobar (layout shifts back) then Reattach | The settle wait runs again on the next execution; the move after the reattach lands on the right squares | |
+| B4.5 | Page console on a live game: `new ResizeObserver(() => console.log("board resized")).observe(document.querySelector("wc-chess-board"))`, then arm | Record whether the board element itself reports, or only the viewport did. This is the answer B4.1 needs | |
+
 ---
 
 ## C. Focus discipline (`docs/qa/focus-discipline.md`)

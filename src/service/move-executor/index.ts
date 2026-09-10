@@ -31,7 +31,13 @@ import type {
 } from "@core/motor/types";
 import { createRng } from "@core/rng";
 import { errorMessage } from "@core/util/errors";
-import { defaultNow, defaultScheduler, type Scheduler, sleep } from "@core/util/scheduler";
+import {
+	defaultNow,
+	defaultScheduler,
+	isAbortedError,
+	type Scheduler,
+	sleep,
+} from "@core/util/scheduler";
 import type { BoardRectSource } from "@service/board-watch";
 import type { ReplyFor, RequestInput, RequestKind } from "@service/content-link";
 import type { DebuggerManager } from "@service/debugger-manager";
@@ -713,12 +719,18 @@ export class MoveExecutor {
 	 */
 	private async settleAfterAttach(signal: AbortSignal): Promise<void> {
 		const since = this.attachedAt;
-		this.attachedAt = null;
 		const board = this.board;
-		if (since === null || !board) return;
+		if (since === null) return;
+		if (!board) {
+			this.attachedAt = null;
+			return;
+		}
 		const giveUpAt = since + EXECUTOR.attachSettleMaxMs;
 		let waited = 0;
-		while (this.now() < giveUpAt && !signal.aborted) {
+		while (this.now() < giveUpAt) {
+			// A cancelled execution never ran, so it must not consume the settle: `attachedAt` is
+			// cleared only once a wait has actually finished, and the next execution waits instead.
+			if (signal.aborted) return;
 			const changedAt = board.changedAt(this.tabId);
 			if (changedAt === null || this.now() - changedAt >= EXECUTOR.attachSettleStableMs) break;
 			const step = Math.min(
@@ -726,9 +738,15 @@ export class MoveExecutor {
 				Math.max(1, giveUpAt - this.now()),
 				Math.max(1, changedAt + EXECUTOR.attachSettleStableMs - this.now())
 			);
-			await sleep(step, this.scheduler, signal);
+			try {
+				await sleep(step, this.scheduler, signal);
+			} catch (error) {
+				if (isAbortedError(error)) return;
+				throw error;
+			}
 			waited += step;
 		}
+		this.attachedAt = null;
 		if (waited > 0)
 			log.debug("executor: waited for the layout to settle after the attach", {
 				tabId: this.tabId,

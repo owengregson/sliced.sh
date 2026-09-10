@@ -28,7 +28,8 @@ export interface BoardRectSource {
 	rect(tabId: number): Rect | null;
 	/**
 	 * When the reported rect last *changed* beyond `EXECUTOR.boardMoveTolerancePx`
-	 * (the first report counts as a change); `null` while nothing has been reported.
+	 * (the first report counts as a change), on **this** clock; `null` while nothing
+	 * has been reported.
 	 */
 	changedAt(tabId: number): number | null;
 }
@@ -74,13 +75,16 @@ export class BoardWatch implements BoardRectSource {
 	private onPortMessage(tabId: number, msg: GamePortMessage): void {
 		if (msg.kind !== "boardRect") return;
 		const previous = this.tabs.get(tabId);
-		// A report that repeats the rect is not a change: the stability window must not be rearmed
-		// by a `scroll` that moved nothing, or an execution after an attach would never start.
-		if (previous && rectShiftPx(previous.rect, msg.rect) <= EXECUTOR.boardMoveTolerancePx) {
-			previous.rect = { ...msg.rect };
-			return;
-		}
-		this.tabs.set(tabId, { rect: { ...msg.rect }, changedAt: msg.at ?? this.now() });
+		// A report that repeats the rect is not a change: the stability window must not be rearmed by
+		// a scroll that moved nothing, or an execution after an attach would never start. The content
+		// script filters those already, but the window is compared against `MoveExecutor`'s clock and
+		// must not depend on the page's, so the stamp is taken here rather than from `msg.at` (which
+		// stays on the wire as the page's own observation time).
+		const moved = !previous || rectShiftPx(previous.rect, msg.rect) > EXECUTOR.boardMoveTolerancePx;
+		this.tabs.set(tabId, {
+			rect: { ...msg.rect },
+			changedAt: moved ? this.now() : previous.changedAt,
+		});
 	}
 }
 

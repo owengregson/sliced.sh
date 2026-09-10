@@ -165,8 +165,11 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 		// `null`, never a guess. `isFlipped()` would have said "white at the bottom" by default and
 		// the session would have predicted, highlighted and played the *opponent's* moves; a
 		// session that holds until the colour is known predicts nothing instead, which is strictly
-		// better. The bridge fills this in a moment later (`getPlayingAs()`), and the reading is
-		// republished then because `myColor` is part of the feed key below.
+		// better. The bridge fills this in a moment later (`getPlayingAs()`); the reading is then
+		// republished because `AdapterBase.apply` treats `null → known` on the game it is already
+		// following as a change worth delivering — the dedupe key below is the position alone — and
+		// `GameSession`'s own feed key carries `myColor` so the republish is not taken for the
+		// reconnect replay.
 		return this.bottomColor();
 	}
 
@@ -221,13 +224,31 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 	 * (it is NOT "the user flipped it by hand", and combining it with
 	 * `playingAs` would mirror every square when playing black).
 	 *
-	 * Without a bridge: the board's own `flipped` class (DOM renderer only — the
+	 * Without that flag: the board's own `flipped` class (DOM renderer only — the
 	 * WebGL board does not carry it even when black is at the bottom), then the
-	 * colour the page shows at the bottom.
+	 * colour *we* are playing, whatever supplied it.
+	 *
+	 * That last rung is not redundant with the first. `getFEN`, `getPlayingAs` and
+	 * `getOptions().flipped` are three independent `safe(...)` reads of the same
+	 * page object in the bridge, so `getOptions()` throwing while `getPlayingAs()`
+	 * answers leaves the colour known and the flag absent — and since chess.com's
+	 * `flipped` already folds the colour in (playing black *is* black at the
+	 * bottom), the colour is the right answer there. Defaulting to white at the
+	 * bottom instead would mirror every square for the side playing black, for the
+	 * mark and for the hand alike.
+	 *
+	 * `false` only when nothing at all is known; nothing is planned, drawn or
+	 * dispatched in that state (`GameSession.mayActOn`).
 	 */
 	isFlipped(): boolean {
 		if (typeof this.bridgeState?.flipped === "boolean") return this.bridgeState.flipped;
 		if (this.boardElement()?.classList.contains(S.boardFlippedClass) === true) return true;
+		// `getMyColor()` never consults `isFlipped()`, so there is no cycle here. Its own last rung is
+		// `bottomColor()`, so this inserts the colour *above* the old bottom-colour rung rather than
+		// replacing it: a page we are not playing on (analysis, spectating) keeps answering from the
+		// colour it shows at the bottom.
+		const mine = this.getMyColor();
+		if (mine !== null) return mine === "b";
 		return this.bottomColor() === "b";
 	}
 
@@ -422,8 +443,14 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 		return { arrows, highlights };
 	}
 
+	/**
+	 * Which markings to remove. The page side reads `(q && q.keys) || keys` — its own record of
+	 * everything it drew — so an **empty** array is a truthy no-op that clears nothing. The key is
+	 * therefore omitted unless we actually have keys to name, which makes a clear with no recorded
+	 * keys mean "everything of ours" rather than "nothing".
+	 */
 	protected clearPayload(): unknown {
-		return { keys: [...this.highlightKeys] };
+		return this.highlightKeys.length > 0 ? { keys: [...this.highlightKeys] } : {};
 	}
 
 	protected boardElement(): Element | null {
