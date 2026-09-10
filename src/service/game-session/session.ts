@@ -336,6 +336,14 @@ export class GameSession implements SessionSource {
 	 * §7.4's fast reply for the rest of the game, `true` = a premove of ours has fired.
 	 */
 	private premoveQueueing: boolean | null = null;
+	/**
+	 * Fix F / §13.2: the from-square of a premove the site **dropped**, after the page had already
+	 * seen the press. The site's move window does not end when our drag does — it ends at the next
+	 * submission — so that press is one of the pieces it counts as selected for the *next* move, and
+	 * our own record of that move has to say so or the export understates the preview rate by
+	 * exactly the premoves that were dropped. Consumed by the next move recorded.
+	 */
+	private droppedPremoveFrom: Square | null = null;
 	private startClockMs = 0;
 	/** A `playNow` issued while the pipeline was still running. */
 	private playWhenReady = false;
@@ -1478,6 +1486,10 @@ export class GameSession implements SessionSource {
 				});
 			return;
 		}
+		// The page saw the press even though the site kept nothing: §13.2 charges it to the *next*
+		// move's window, so the next move's record has to carry it (see `droppedPremoveFrom`).
+		if (result.pressed === true || result.pressedAny === true)
+			this.droppedPremoveFrom = entry.chosen.from;
 		const afterReply = applyMoves(entry.fromFen, [entry.reply]);
 		const predicted = afterReply !== null && boardKeyOf(afterReply) === boardKeyOf(snapshot.fen);
 		if (predicted) {
@@ -1730,6 +1742,7 @@ export class GameSession implements SessionSource {
 		this.premove = null;
 		this.premoveEntry = null;
 		this.premoveQueueing = null;
+		this.droppedPremoveFrom = null;
 		this.moves = [];
 		this.oppThinkMs = [];
 		this.myThinkMs = [];
@@ -1894,6 +1907,10 @@ export class GameSession implements SessionSource {
 		const { rec, result } = report;
 		const snapshot = this.snapshot;
 		const timing = this.timing;
+		// §13.2: a premove the site dropped leaves its press inside the window the *site* closes with
+		// this move, so it is one of the pieces it saw selected (Fix F).
+		const alsoPressed = this.droppedPremoveFrom;
+		this.droppedPremoveFrom = null;
 		if (timing) timing.observe(result.elapsedMs, rec.plan);
 		this.myThinkMs.push(result.elapsedMs);
 		if (snapshot && this.game) {
@@ -1901,7 +1918,9 @@ export class GameSession implements SessionSource {
 			const record = this.window.close({
 				elapsedMs: result.elapsedMs,
 				pointerOffsetPx: result.pointerOffsetPx ?? 0,
-				multiplePieces: selectedMultiplePieces(result, rec.chosen.from),
+				multiplePieces:
+					selectedMultiplePieces(result, rec.chosen.from) ||
+					(alsoPressed !== null && alsoPressed !== rec.chosen.from),
 				orientationMs: rec.plan.orientationMs,
 				multiSelectEligible: this.multiSelectEligible(rec, snapshot),
 				nReasonable: this.recNReasonable,

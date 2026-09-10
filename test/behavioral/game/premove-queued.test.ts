@@ -92,6 +92,11 @@ function dispatched(from = 0): Dispatched[] {
 		});
 }
 
+/** §8.6 rows for a move that was played and carries a §13.6 quality pair (a searched move). */
+function playedRows(): TimingLogEntry[] {
+	return h.timingLog.entries().filter((e) => e.actualMs !== null && e.telemetry?.top1 !== undefined);
+}
+
 function pressCount(from = 0): number {
 	return dispatched(from).filter((d) => d.type === "mousePressed").length;
 }
@@ -205,6 +210,9 @@ describe("game session: a queued premove (Fix F)", () => {
 			// policy must not enter the move a second time.
 			expect(input.filter((d) => d.type === "mousePressed")).toHaveLength(1);
 			expect(h.site.observeRequests()).toHaveLength(1); // our own move's, not the premove's
+			// §13.7 item 3: the gesture is complete and resolved — the page is left with no piece
+			// selected, never a half-drag or a stuck selection.
+			expect(h.site.shadow.pendingSelection()).toBeNull();
 			// Nothing is reported as played, and no §8.6 row claims one.
 			expect(unscoredRows()).toHaveLength(0);
 			const stats = await h.sw.run(
@@ -243,6 +251,17 @@ describe("game session: a queued premove (Fix F)", () => {
 			expect(row?.telemetry?.ac.TotalFocusTime).toBeGreaterThanOrEqual(
 				row?.telemetry?.ac.MoveHoldTime ?? 0
 			);
+			// What the *site* computes for that ply is a different window from ours: it opens when the
+			// reply lands and closes a few ms later, when the premove goes out. That near-zero hold is
+			// what every human premove looks like, and §13.2's hold-time floor exempts the mode.
+			const theirs = h.site.shadow.observations.at(-1);
+			expect(theirs?.diag.from).toBe(scenario.from);
+			expect(theirs?.diag.to).toBe(scenario.to);
+			expect(theirs?.ac.EventTrusted).toBe(true);
+			expect(theirs?.ac.BlurCount).toBe(0);
+			// One piece selected in their window (ours), so no multi-select is charged to it.
+			expect(theirs?.ac.DidSelectMultiplePieces).toBe(false);
+			expect(h.site.shadow.pendingSelection()).toBeNull();
 			const stats = await h.sw.run(
 				() => chromeLocalGet(LOCAL_KEYS.sessionStats) as Promise<SessionStats | undefined>
 			);
@@ -273,6 +292,16 @@ describe("game session: a queued premove (Fix F)", () => {
 				() => chromeLocalGet(LOCAL_KEYS.sessionStats) as Promise<SessionStats | undefined>
 			);
 			expect(stats?.moves).toBe(1);
+			// §13.2: the page saw the dropped premove's press, and the site's move window does not end
+			// when our drag does — it ends at our next submission. So the *next* move's blob counts
+			// two pieces selected, and our own record of that move says the same thing (it would
+			// otherwise understate the preview rate by exactly the premoves the site drops).
+			expect(await h.until(() => h.site.board.ply() === 3, 30_000)).toBe(true);
+			const theirs = h.site.shadow.observations.at(-1);
+			expect(theirs?.diag.selections).toEqual([ONE_CAPTURER.from, theirs?.diag.from ?? "a1"]);
+			expect(theirs?.ac.DidSelectMultiplePieces).toBe(true);
+			expect(await h.until(() => unscoredRows().length + playedRows().length === 2, 5_000)).toBe(true);
+			expect(playedRows().at(-1)?.telemetry?.ac.DidSelectMultiplePieces).toBe(true);
 		}
 		expect(dropped).toBe(true);
 	}, 180_000);
