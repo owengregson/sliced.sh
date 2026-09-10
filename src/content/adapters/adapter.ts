@@ -187,7 +187,7 @@ export interface PageBridge {
 	isAvailable(): boolean;
 }
 
-/** Bridge message kinds the adapters use (Task 21 maps them onto the spoofed wire format). */
+/** Bridge message kinds the adapter uses (Task 21 maps them onto the spoofed wire format). */
 export const BRIDGE_KINDS = {
 	// content → page
 	getState: "getState",

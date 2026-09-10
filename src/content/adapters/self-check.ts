@@ -1,6 +1,6 @@
 /**
  * Runtime self-checks and the selector probe (Appendix C §5). Pure
- * functions over readings the adapters supply; the adapters assemble the
+ * functions over readings the adapter supplies; the adapter assembles the
  * `ProbeReport` and log `adapter.selectorMiss` for required concerns.
  */
 

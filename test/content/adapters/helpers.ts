@@ -132,7 +132,7 @@ const POLL_MS = 4;
 /**
  * happy-dom 16.8 delivers MutationObserver records only for mutations made
  * before the first macrotask hop after load; everything later is dropped.
- * The adapters take `MutationObserver` from their `window`, so tests swap in
+ * The adapter takes `MutationObserver` from its `window`, so tests swap in
  * this polling shim: it snapshots the observed subtree every few ms and
  * reports one `childList` record (with the real added/removed elements) or
  * one `attributes` record when only markup changed. Chrome needs none of this.
@@ -188,7 +188,7 @@ export function installPollingObserver(dom: TabDom): void {
 	(dom.window as unknown as { MutationObserver: unknown }).MutationObserver = PollingObserver;
 }
 
-/** The tab's happy-dom `Document` / `Window` typed as the DOM lib types the adapters take. */
+/** The tab's happy-dom `Document` / `Window` typed as the DOM lib types the adapter takes. */
 export function pageDocument(dom: TabDom): Document {
 	return dom.document as unknown as Document;
 }

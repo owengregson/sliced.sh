@@ -8,7 +8,7 @@ preload involved). Chrome is unaffected.
 Consequences for what these suites prove:
 
 - `loadFixture()` installs a **polling shim** (`installPollingObserver` in
-  `helpers.ts`) on the tab window. The adapters take `MutationObserver` from their
+  `helpers.ts`) on the tab window. The adapter takes `MutationObserver` from its
   `window`, so shipped code is untouched. The shim ignores `init`, snapshots the
   observed subtree every 4 ms and delivers one synthetic `childList` record (with
   the real added/removed elements) or one `attributes` record. Everything that
