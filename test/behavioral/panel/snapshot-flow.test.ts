@@ -257,6 +257,7 @@ describe("panel ↔ service worker: snapshot flow", () => {
 			disarm: () => {},
 			schedule: () => {},
 			cancel: () => {},
+			whenIdle: async () => {},
 			playNow: async (r, p) => {
 				played.push({ uci: r?.chosen.uci ?? null, deadlineMs: p?.deadlineMs ?? null });
 				return null;

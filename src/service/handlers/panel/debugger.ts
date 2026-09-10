@@ -2,7 +2,8 @@
  * The debugger pair (§9.7, Task 28 ruling): `PANEL_REATTACH_DEBUGGER { tabId }` re-arms the
  * tab's executor (attach + pointer ownership; "Auto-play back on"), or attaches bare when the
  * tab has no executor — refused while `Settings.enabled` is off (§4.4);
- * `PANEL_DETACH_DEBUGGER { tabId }` disarms and releases the debugger.
+ * `PANEL_DETACH_DEBUGGER { tabId }` disarms, waits for the hand to let go, and releases the
+ * debugger.
  */
 
 import { PANEL_COMMAND_ERRORS } from "@core/constants/cdp";
@@ -36,6 +37,9 @@ export function registerDebuggerHandlers(
 		if (!executor && !hand) throw new Error(PANEL_COMMAND_ERRORS.noExecutor);
 		try {
 			executor?.disarm();
+			// The abort has to reach the hand's release before the transport goes away, or the page
+			// keeps a held mouse button with a piece stuck to the cursor (`MoveExecutor.whenIdle`).
+			await executor?.whenIdle();
 			await hand?.debugger.detach(msg.tabId);
 		} finally {
 			deps.broadcaster.notify();

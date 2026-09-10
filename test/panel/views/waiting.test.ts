@@ -129,6 +129,28 @@ describe("waitingView", () => {
 		expect(store.dispatched).toHaveLength(1);
 	});
 
+	it("the assistant off: the status says so, and the arm toggle is locked rather than refused (§4.4)", async () => {
+		await mountWaiting(makeSnapshot({ settings: { enabled: false } }));
+		expect(text(".sl-waiting__status-text")).toBe(COPY.move.disabled);
+		expect(container.querySelector<HTMLElement>(".sl-waiting__dot")?.dataset.state).toBe("warn");
+		const el = toggle();
+		expect(el.classList.contains("sl-toggle--locked")).toBe(true);
+		expect(el.getAttribute("aria-disabled")).toBe("true");
+		expect(el.querySelector(".sl-toggle__hint")?.textContent).toBe(COPY.waiting.autoplayOff);
+
+		// Holding it arms nothing: the service worker would refuse, so the view never asks.
+		pointer(el, "pointerdown", { pointerId: 1, isPrimary: true });
+		await dom.tick(UI_TIMINGS.armHoldMs);
+		expect(store.dispatched).toEqual([]);
+		expect(currentBannerKind()).toBeNull();
+
+		// Turned back on: the control opens up again with its own copy.
+		store.emit(makeSnapshot());
+		expect(text(".sl-waiting__status-text")).toBe(COPY.waiting.watching);
+		expect(el.classList.contains("sl-toggle--locked")).toBe(false);
+		expect(el.querySelector(".sl-toggle__hint")?.textContent).toBe(COPY.waiting.autoplayTooltip);
+	});
+
 	it("pre-armed on mount: Armed for next game, locked, tooltip copy; the banner shows once per session", async () => {
 		await mountWaiting(makeSnapshot({ armed: true }));
 		const el = toggle();

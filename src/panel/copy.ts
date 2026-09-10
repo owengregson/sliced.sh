@@ -51,6 +51,8 @@ export const COPY = {
 		reading: "Reading the board…",
 		autoplayTooltip: "Turns on when a game starts",
 		preArmed: "Armed for next game",
+		/** §4.4: the master switch is off, so there is nothing to arm (`COPY.move.disabled` names it). */
+		autoplayOff: "Turn the assistant on in Settings first",
 	},
 	move: {
 		headerYours: (color: string): string => `Your move · ${color}`,
@@ -420,7 +422,8 @@ export const SETTINGS_COPY = {
 	rows: {
 		enabled: {
 			label: "Assistant",
-			help: "Off stops analysis, recommendations and auto-play until you turn it back on.",
+			help:
+				"Off stops analysis, recommendations and auto-play until you turn it back on; auto-play needs arming again.",
 		},
 		"strength.targetElo": { label: "Target rating" },
 		"strength.matchOpponentRating": {

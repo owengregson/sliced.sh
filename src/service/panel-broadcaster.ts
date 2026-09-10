@@ -88,6 +88,7 @@ export type ExecutorHandle = Pick<
 	| "schedule"
 	| "playNow"
 	| "cancel"
+	| "whenIdle"
 >;
 
 /** The shared hand stack (one per service worker; Task 18's singletons). */

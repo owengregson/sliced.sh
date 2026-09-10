@@ -4,6 +4,9 @@
  * (§13.6), the hold-to-arm auto-play toggle, a Settings link, the last-session strip and the
  * new-game link (only without auto-queue).
  *
+ * `Settings.enabled` off (§4.4) locks the toggle with its own hint and the status reads "Assistant
+ * off": the service worker refuses to arm while the switch is off, so the view must not offer it.
+ *
  * Arming dispatches `PANEL_SET_AUTO_MOVE { tabId, armed: true }` at once — the SW attaches the
  * debugger now, before the game, so the infobar's layout shift never lands inside a move window —
  * and shows the §7.3 infobar explanation once per panel session. A pre-armed snapshot shows
@@ -150,9 +153,17 @@ export function createWaitingView(options: WaitingViewOptions = {}): View {
 				const site = snapshot.site ?? snapshot.session.site;
 				meta.hidden = site === null;
 				if (site) meta.textContent = COPY.waiting.meta(engineText(snapshot));
+				// §4.4: with the master switch off this tab is not being watched and nothing can be
+				// armed (the service worker refuses), so the view says so instead of offering a
+				// control that snaps back.
+				const assistantOff = !snapshot.settings.enabled;
 				const reading = snapshot.session.state === "idle";
-				dot.dataset.state = reading ? "warn" : "ok";
-				statusText.textContent = reading ? COPY.waiting.reading : COPY.waiting.watching;
+				dot.dataset.state = assistantOff || reading ? "warn" : "ok";
+				statusText.textContent = assistantOff
+					? COPY.move.disabled
+					: reading
+						? COPY.waiting.reading
+						: COPY.waiting.watching;
 
 				const opponent = snapshot.opponent;
 				opponentName.textContent = opponent ? opponent.name : COPY.waitingView.noOpponent;
@@ -168,13 +179,18 @@ export function createWaitingView(options: WaitingViewOptions = {}): View {
 				// Patch only what differs from the toggle's own state: a snapshot that agrees with it
 				// must not touch the component (an update would cancel a hold in progress).
 				const armed = snapshot.autoMove.armed;
-				const hint = armed ? COPY.waiting.preArmed : COPY.waiting.autoplayTooltip;
+				const locked = armed || assistantOff;
+				const hint = assistantOff
+					? COPY.waiting.autoplayOff
+					: armed
+						? COPY.waiting.preArmed
+						: COPY.waiting.autoplayTooltip;
 				const patch: ToggleUpdate = {};
 				if (toggle.checked !== armed) patch.checked = armed;
-				if (renderedLocked !== armed) patch.locked = armed;
+				if (renderedLocked !== locked) patch.locked = locked;
 				if (renderedHint !== hint) patch.hint = hint;
 				if (Object.keys(patch).length > 0) toggle.update(patch);
-				renderedLocked = armed;
+				renderedLocked = locked;
 				renderedHint = hint;
 
 				const stats = snapshot.stats;

@@ -53,7 +53,10 @@ export interface GameHarnessOptions {
 	seed?: string;
 	/** Game id the page reports (part of the per-game seed). */
 	gameId?: string;
-	/** Pre-seed `chrome.storage.local` of the harness's own simulator. */
+	/**
+	 * Pre-seed `chrome.storage.local` of the harness's own simulator. A `LOCAL_KEYS.settings` entry
+	 * here replaces the seeded `{ enabled: true }` wholesale (`settings` below merges instead).
+	 */
 	storage?: Record<string, unknown>;
 }
 
@@ -115,7 +118,7 @@ export async function createGameHarness(options: GameHarnessOptions = {}): Promi
 	// up. A test about the switch itself passes `settings: { enabled: false }`, which wins below.
 	const sim = createSimulator({
 		startAt: START_AT,
-		storageLocal: { [LOCAL_KEYS.settings]: { enabled: true } },
+		storageLocal: { [LOCAL_KEYS.settings]: { enabled: true }, ...options.storage },
 	});
 	sim.time.install();
 	const tabId = sim.openTab("https://www.chess.com/game/live/1", { active: true }).tabId;
@@ -268,8 +271,14 @@ export async function createGameHarness(options: GameHarnessOptions = {}): Promi
 		executor: () => registry.sessionFor(tabId)?.executor() ?? null,
 		settings: () => settings,
 		async patch(patch) {
+			// The drain happens *inside* the worker context, like `drive`: a settings write fans out
+			// synchronously (`registry.settingsChanged`) and what it starts — an executor abort
+			// winding down through the hand's release, say — continues in microtasks that must still
+			// see the worker's `chrome`. Draining them outside the activation would fail every
+			// `chrome.debugger` call and fake a bug the browser does not have.
 			await sw.run(async () => {
 				settings = await setSettings(patch);
+				await sim.time.runMicrotasks();
 			});
 			await sim.time.runMicrotasks();
 		},

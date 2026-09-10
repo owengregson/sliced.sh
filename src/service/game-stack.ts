@@ -147,11 +147,17 @@ export function createGameStack(options: GameStackOptions): GameStack {
 	// engine with `pendingOptions` must not be starved by a running ponder (Task 13), so every
 	// session's `go infinite` is stopped when one is waiting.
 	const applySettings = (next: Settings): void => {
-		const first = settings === DEFAULT_SETTINGS;
 		settings = next;
 		// The registry owns the whole reaction (content re-push + the `pendingOptions` stop), so
 		// this path and any harness driving the registry directly cannot drift apart.
-		if (!first) registry.settingsChanged();
+		//
+		// The *first* read fans out too, even though it is not a write: on a cold MV3 wake the
+		// queued port connect — and the first `position` behind it — can beat this read, so a
+		// `GameSession` can be built, and a ply arrive, while `settings` is still
+		// `DEFAULT_SETTINGS`. That ply is then gated on the wrong value of `Settings.enabled`
+		// (§4.4) and nothing retries it: the content script's replay is swallowed by the feed
+		// dedupe. Fanning out hands the session its real settings, which is what makes it resume.
+		registry.settingsChanged();
 	};
 	const offSettings = onSettingsChanged(applySettings);
 	void getSettings().then(applySettings, (error: unknown) =>

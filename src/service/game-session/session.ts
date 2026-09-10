@@ -423,18 +423,33 @@ export class GameSession implements SessionSource {
 		this.deps.autoQueue.cancel(this.deps.tabId);
 		this.rec = null;
 		this.premove = null;
-		this.executorHandle?.disarm();
-		void this.deps.debugger
-			.detach(this.deps.tabId)
-			.catch((error: unknown) =>
-				log.debug("game-session: debugger not released", { error: errorMessage(error) })
-			);
+		const executor = this.executorHandle;
+		executor?.disarm();
+		void this.releaseDebugger(executor);
 		this.deps.link.post(this.deps.tabId, { kind: "clearHighlight" });
 		log.info("game-session: the assistant was turned off — nothing is analysed or played", {
 			tabId: this.deps.tabId,
 			state: this.state,
 		});
 		this.deps.notify();
+	}
+
+	/**
+	 * Give the debugger back — but never while the hand is still winding down. `disarm()`'s abort
+	 * needs several hops to reach the hand's release, and a detach that overtakes it leaves the page
+	 * with a held mouse button and a piece stuck to the cursor, so the release is awaited first
+	 * (`MoveExecutor.whenIdle`). A flip back on while waiting cancels the release: the hand is
+	 * disarmed either way, and an attachment the user is about to re-arm is worth keeping.
+	 */
+	private async releaseDebugger(executor: MoveExecutor | null): Promise<void> {
+		try {
+			await executor?.whenIdle();
+			if (this.disposed || this.assistantEnabled()) return;
+			await this.deps.debugger.detach(this.deps.tabId);
+			this.deps.notify();
+		} catch (error) {
+			log.debug("game-session: debugger not released", { error: errorMessage(error) });
+		}
 	}
 
 	/**
@@ -681,6 +696,9 @@ export class GameSession implements SessionSource {
 		const ponderer = this.ponderer;
 		if (!ponderer) return;
 		await ponderer.start("opponent", snapshot.fen);
+		// §4.4: starting the ponder is an await, so the switch may have gone off inside it — and
+		// `stopDisabled` stopped that ponder. Nothing more is searched for this position.
+		if (!this.assistantEnabled()) return;
 		await this.armPremove(snapshot);
 	}
 
@@ -792,6 +810,9 @@ export class GameSession implements SessionSource {
 		const timing = this.timing;
 		const settings = this.deps.getSettings();
 		const last = this.moves[this.moves.length - 1];
+		// §4.4: `premoveCandidate` issues its own `analyse` at `ponder` priority, so the switch is
+		// checked here too — `settings.enabled` is read from the same snapshot as `autoMoveAllowed`.
+		if (!settings.enabled) return;
 		if (!engine || !timing || last === undefined || !this.autoMoveAllowed(settings)) return;
 		const previous = this.priorFen;
 		if (previous === null) return;
@@ -822,7 +843,10 @@ export class GameSession implements SessionSource {
 					},
 				}
 			);
-			if (!candidate || this.disposed || this.snapshot !== snapshot) return;
+			// The search above is an await: a flip-off inside it already nulled `this.premove`, so a
+			// candidate must not be published over the top of that (§4.4).
+			if (!candidate || this.disposed || this.snapshot !== snapshot || !this.assistantEnabled())
+				return;
 			const chosen: ChosenMove = {
 				uci: candidate.premove,
 				san: candidate.premove,

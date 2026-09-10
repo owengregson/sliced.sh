@@ -273,6 +273,21 @@ export class MoveExecutor {
 		this.ownership.released(this.tabId);
 	}
 
+	/**
+	 * Resolves once nothing is in flight: the execution (if any) has wound down, which means the
+	 * hand's `recover()` has already released whatever button it was holding and the terminal event
+	 * has been emitted. Immediate when nothing is running.
+	 *
+	 * Anyone about to take the hand's transport away — `DebuggerManager.detach` — must await this
+	 * after `cancel()`/`disarm()`: the abort needs several microtask hops to reach the release, and
+	 * a detach that overtakes it leaves the page with a held mouse button and a piece stuck to the
+	 * cursor. A cancelled run can hand over to a parked replacement, so this loops until the
+	 * executor really is idle.
+	 */
+	async whenIdle(): Promise<void> {
+		while (this.running) await this.running.done.catch(() => null);
+	}
+
 	isArmed(): boolean {
 		return this.ownership.isArmed(this.tabId) && this.debugger.isAttached(this.tabId);
 	}

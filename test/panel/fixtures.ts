@@ -32,7 +32,11 @@ export function makeSnapshot(o: SnapshotOverrides = {}): PanelSnapshot {
 		},
 		engine: { state: "ready", variant: "smallnet", threads: 1, nnue: [], version: "18" },
 		executor: { debuggerAttached: false },
-		settings: { ...DEFAULT_SETTINGS, ...o.settings },
+		// §4.4: a user who has the assistant *on* — `DEFAULT_SETTINGS.enabled` is false and the views
+		// project the switch (the move card greys out, the waiting view locks its arm toggle), so a
+		// test about anything else would otherwise be describing a disabled assistant.
+		// `test/panel/views/live-harness.ts` already seeds it the same way.
+		settings: { ...DEFAULT_SETTINGS, enabled: true, ...o.settings },
 		autoMove: { armed: o.armed ?? false },
 		stats: { games: 0, moves: 0, avgThinkMs: 0 },
 		focus: {

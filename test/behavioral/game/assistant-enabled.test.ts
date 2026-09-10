@@ -10,7 +10,10 @@
 //   (b) off mid-think: the scheduled move is cancelled before it lands, the hand is disarmed, the
 //       debugger released and the board cleared;
 //   (c) back on mid-game: the session resumes from the live position without a reload, and with
-//       the hand armed again the next position is recommended and played.
+//       the hand armed again the next position is recommended and played;
+//   (d) off after the press is committed: the hand releases the button before the debugger goes,
+//       and the move in flight may still land (the §13.4 blur-cancel contract) while nothing new
+//       is ever searched, recommended or played.
 import { afterEach, describe, expect, it } from "bun:test";
 import { CDP, PANEL_COMMAND_ERRORS } from "@core/constants/cdp";
 import { MSG } from "@core/constants/messages";
@@ -22,15 +25,16 @@ afterEach(async () => {
 	await h?.dispose();
 });
 
-const [, MAX_QUEUE_DELAY] = TIMINGS.autoQueueDelayRangeMs as unknown as [number, number];
+const [, MAX_QUEUE_DELAY] = TIMINGS.autoQueueDelayRangeMs;
+
+/** The mouse events the hand dispatched over CDP, by `type`. */
+const mouseEvents = (type: string): unknown[] =>
+	h.sim.debugger.commands.filter(
+		(c) => c.method === CDP.inputDispatchMouseEvent && (c.params as { type: string }).type === type
+	);
 
 /** Every `Input.dispatchMouseEvent` the hand committed a press with. */
-const presses = (): unknown[] =>
-	h.sim.debugger.commands.filter(
-		(c) =>
-			c.method === CDP.inputDispatchMouseEvent &&
-			(c.params as { type: string }).type === "mousePressed"
-	);
+const presses = (): unknown[] => mouseEvents("mousePressed");
 
 const commandKinds = (kind: string): unknown[] => h.commands().filter((c) => c.kind === kind);
 
@@ -66,7 +70,9 @@ describe("game session: the assistant switch (Settings.enabled, §4.4)", () => {
 		expect(h.site.board.lastMove()).toBeNull();
 		expect(session.recommendation()).toBeNull();
 		expect(h.transport.goLines).toEqual([]);
-		expect(h.executor()?.pendingMove() ?? null).toBeNull();
+		// The executor exists (it is built on `hello`, §13.4) and holds nothing.
+		expect(h.executor()).not.toBeNull();
+		expect(h.executor()?.pendingMove()).toBeNull();
 		// Arming was refused, so the debugger never attached either (§13.4 attaches at arm time).
 		expect(h.executor()?.isArmed()).toBe(false);
 		expect(h.debuggerManager.isAttached(h.tabId)).toBe(false);
@@ -151,6 +157,44 @@ describe("game session: the assistant switch (Settings.enabled, §4.4)", () => {
 		expect(snapshot.autoMove.armed).toBe(false);
 		expect(snapshot.autoMove.scheduledAt).toBeUndefined();
 		expect(snapshot.recommendation).toBeUndefined();
+	});
+
+	it("turned off with the press committed: the hand never leaves a button held (the move may still land)", async () => {
+		// The §13.4 blur-cancel contract applies here too: a press the board already accepted can
+		// still be confirmed by the re-check and reported `executed`, so a flip-off *after* the
+		// commit point is not a guarantee that the move does not land. What it does guarantee is
+		// that the hand lets go — of the button and then of the debugger — and that nothing further
+		// is searched, recommended or played.
+		h = await createGameHarness({
+			settings: { automation: { autoMove: true }, execution: { style: "drag" } },
+		});
+		await h.sw.run(() => h.session().command("armAutoMove"));
+		await h.arrive();
+		// Inside the drag, with the button down: the press is held for the drag's whole body.
+		expect(await h.until(() => presses().length > 0, 60_000)).toBe(true);
+		expect(h.sim.input.pointer(h.tabId)?.buttons).toBe(1);
+		expect(mouseEvents("mouseReleased")).toHaveLength(0);
+
+		await h.patch({ enabled: false });
+		await h.advance(30_000);
+
+		// §13: never leave a button held — and the release has to go out while the debugger is still
+		// attached, so the page sees the pointer back up rather than a piece stuck to the cursor.
+		expect(h.sim.input.pointer(h.tabId)?.buttons).toBe(0);
+		expect(mouseEvents("mouseReleased")).toHaveLength(presses().length);
+		// Only then is the debugger released.
+		expect(h.debuggerManager.isAttached(h.tabId)).toBe(false);
+		expect(h.executor()?.isArmed()).toBe(false);
+
+		// Whatever happened to the move in flight, nothing new is searched, recommended or played.
+		const pressesAfterFlip = presses().length;
+		const searches = h.transport.goLines.length;
+		await h.arrive();
+		await h.advance(30_000);
+		expect(presses()).toHaveLength(pressesAfterFlip);
+		expect(h.transport.goLines).toHaveLength(searches);
+		expect(h.session().recommendation()).toBeNull();
+		expect(h.executor()?.pendingMove()).toBeNull();
 	});
 
 	it("turned back on: the live position is picked up again and the next position is played", async () => {
