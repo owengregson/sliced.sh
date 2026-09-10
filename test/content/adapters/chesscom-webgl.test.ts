@@ -350,4 +350,19 @@ describe("ChessComAdapter — the colour is never guessed", () => {
 		expect(adapter.getMyColor()).toBe("b");
 		expect(adapter.isFlipped()).toBe(true);
 	});
+
+	it("prefers the rendered bottom colour over our own colour, so a hand flip is not mirrored", async () => {
+		// Partial bridge failure: `playingAs` answers, `flipped` does not. The owner has then turned
+		// the board round by hand, so the page shows WHITE at the bottom while we play black.
+		// Answering the orientation from the colour would mirror every square, for the mark and for
+		// the hand alike, so the render has to win.
+		const { dom, adapter } = boot(() => ({ fen: WEBGL_FEN, mode: "playing", playingAs: 2 }));
+		await waitFor(() => adapter.getMyColor() === "b");
+		const bottom = dom.document.querySelector(".clock-component.clock-bottom");
+		bottom?.classList.remove("clock-black");
+		bottom?.classList.add("clock-white");
+		// The colour is still ours; the orientation now follows the page, not the colour.
+		expect(adapter.getMyColor()).toBe("b");
+		expect(adapter.isFlipped()).toBe(false);
+	});
 });

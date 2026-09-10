@@ -243,13 +243,18 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 	isFlipped(): boolean {
 		if (typeof this.bridgeState?.flipped === "boolean") return this.bridgeState.flipped;
 		if (this.boardElement()?.classList.contains(S.boardFlippedClass) === true) return true;
-		// `getMyColor()` never consults `isFlipped()`, so there is no cycle here. Its own last rung is
-		// `bottomColor()`, so this inserts the colour *above* the old bottom-colour rung rather than
-		// replacing it: a page we are not playing on (analysis, spectating) keeps answering from the
-		// colour it shows at the bottom.
+		// `bottomColor()` is render-truthful — it reads whichever colour the page actually shows at
+		// the bottom (the player block, else the bottom clock), so it tracks a board the owner has
+		// turned round by hand. The colour does not: `playingAs` says which side we are, not which
+		// way the board faces. So ask the render first and fall back to the colour only when the
+		// page shows nothing, otherwise a hand flip during a partial bridge failure (no `flipped`
+		// flag, and on a WebGL board no `flipped` class either) would mirror every square.
+		// `getMyColor()` never consults `isFlipped()`, so there is no cycle. It returns null early
+		// for analysis and spectated pages, which is why it is a fallback and not the answer.
+		const shown = this.bottomColor();
+		if (shown !== null) return shown === "b";
 		const mine = this.getMyColor();
-		if (mine !== null) return mine === "b";
-		return this.bottomColor() === "b";
+		return mine !== null && mine === "b";
 	}
 
 	getPromotionTargetRect(dest: Square, piece: PromoPiece): Rect | null {
