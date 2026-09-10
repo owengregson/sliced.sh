@@ -50,6 +50,12 @@ export const SEARCH_BUDGET = {
 	multiPvMedium: 6,
 	multiPvMediumMs: 1_500,
 	multiPvLarge: 8,
+	/**
+	 * Appendix E §4.5: a cached result within this many plies of the requested `depthCap` skips the
+	 * search. Requiring the cap exactly meant nothing ever hit — a `movetime` search stops where it
+	 * stops, so a pondered position was re-searched from scratch however deep it already was.
+	 */
+	cacheDepthSlack: 2,
 	/** Quality guard: a result shallower than this is retried once with `retryExtraMs` more. */
 	retryDepth: 8,
 	retryExtraMs: 300,

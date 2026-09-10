@@ -47,6 +47,7 @@ import type { GamePortCommand, GamePortMessage } from "@core/constants/messages"
 import { LOCAL_KEYS } from "@core/constants/storage-keys";
 import { TELEMETRY_BANDS } from "@core/constants/telemetry";
 import type { TimingProfile } from "@core/constants/timings";
+import type { AnalysisRequest } from "@core/engine/types";
 import { log } from "@core/logger";
 import type { TimeControlClass } from "@core/motor/types";
 import { createRng, type Rng } from "@core/rng";
@@ -935,14 +936,20 @@ export class GameSession implements SessionSource {
 				},
 				{
 					analyseAfter: async (fen, moves, opts) => {
-						const handle = engine.analyse({
+						const request: AnalysisRequest = {
 							id: `${this.deps.tabId}-premove-${this.now()}`,
 							fen,
 							moves: [...moves],
 							multiPv: opts.multiPv,
 							limit: { movetimeMs: opts.movetimeMs },
 							priority: "ponder",
-						});
+						};
+						// The same strength as every other search this session issues (the ponder sets
+						// it too). Without it these results are keyed at a different strength from the
+						// own-move search that would reuse them, so they could never be a cache hit.
+						const elo = engine.engineElo();
+						if (elo !== undefined) request.elo = elo;
+						const handle = engine.analyse(request);
 						const result = await handle.result;
 						return result.final.lines;
 					},

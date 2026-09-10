@@ -19,6 +19,10 @@ import type {
 const START = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 const START_LATER = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 7 12";
 const OTHER = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1";
+/** The same position as `OTHER`, spelled by a chess.js replay: no pawn can take on e3. */
+const EP_UNUSABLE = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
+/** A *different* position: the pawn on d4 can take on e3, so the square belongs to it. */
+const EP_USABLE = "rnbqkbnr/pppp1ppp/8/8/3pP3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1";
 
 function result(
 	fen: string,
@@ -64,6 +68,26 @@ describe("keys", () => {
 		expect(fenKey(START)).toBe("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -");
 		expect(fenKey(START_LATER)).toBe(fenKey(START));
 		expect(fenKey("  a b c d 1 2 ")).toBe("a b c d");
+	});
+	// Three sources spell the same position differently: chess.com's `getFEN()` names the
+	// en-passant square after any double push, a chess.js replay only when a pawn can capture
+	// there, and a DOM reconstruction only when it can infer the last move. Keyed raw, the
+	// ponder → own-move handoff missed on every double push.
+	it("fenKey normalises an en-passant square no pawn can use", () => {
+		// OTHER is chess.com's spelling of `applyMoves(START, ["e2e4"])`; EP_UNUSABLE is chess.js's.
+		expect(fenKey(OTHER)).toBe(fenKey(EP_UNUSABLE));
+		expect(fenKey(OTHER)).not.toContain("e3");
+	});
+	it("…and keeps one a pawn can: those are different positions", () => {
+		// a black pawn on d4 really can take on e3, so the ep square is part of the position
+		expect(fenKey(EP_USABLE)).toContain("e3");
+		expect(fenKey(EP_USABLE)).not.toBe(fenKey(EP_USABLE.replace(" e3 ", " - ")));
+	});
+	it("a result stored under one spelling is found under the other", () => {
+		const cache = new AnalysisCache();
+		cache.set(result(EP_UNUSABLE, 14));
+		expect(cache.get(OTHER, 4, 12)).toBeDefined();
+		expect(cache.get(OTHER, 4, 12)?.request.fen).toBe(EP_UNUSABLE);
 	});
 	it("limitKey encodes each limit shape", () => {
 		expect(limitKey({ infinite: true })).toBe("inf");

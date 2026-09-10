@@ -12,6 +12,7 @@
  */
 
 import { applyMoves } from "@core/chess/san";
+import { SEARCH_BUDGET } from "@core/constants/search";
 import type { AnalysisCache } from "@core/engine/analysis-cache";
 import { type EngineOptions, type OptionsEnv, optionsForSettings } from "@core/engine/options";
 import type {
@@ -265,9 +266,18 @@ export class EngineController {
 		return req.moves && req.moves.length > 0 ? applyMoves(req.fen, req.moves) : req.fen;
 	}
 
+	/**
+	 * Appendix E §4.5: "a hit with depth ≥ requested depthCap − 2 skips the search". The slack is
+	 * the point — an own-move request carries `depth: depthCap` as a *stop* condition on a
+	 * `movetime` search, so a cached result is essentially never exactly that deep and requiring it
+	 * made the cache unreachable for the one path it exists for (a position already analysed during
+	 * the opponent's turn). Never below `cacheMinDepth`: the timing features need `D_f`.
+	 */
 	private minDepthFor(req: AnalysisRequest): number {
 		if (req.limit.infinite) return this.settings?.engine.depthCap ?? this.cacheMinDepth;
-		return req.limit.depth ?? this.cacheMinDepth;
+		const depth = req.limit.depth;
+		if (depth === undefined) return this.cacheMinDepth;
+		return Math.max(this.cacheMinDepth, depth - SEARCH_BUDGET.cacheDepthSlack);
 	}
 
 	private lookup(req: AnalysisRequest): AnalysisResult | undefined {

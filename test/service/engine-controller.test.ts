@@ -253,6 +253,50 @@ describe("EngineController analyse / cache", () => {
 		expect(t.sent).toEqual([]);
 		expect(r.bestmove).toBe("e7e5");
 	});
+	it("a result keyed by a chess.js replay answers an own-move search spelled by the bridge", async () => {
+		// The production handoff: the §7.4 premove policy analyses `m r` during the opponent's turn
+		// and the controller keys it under `applyMoves(...)` — chess.js's spelling, with no
+		// en-passant square. When the opponent plays that reply, the own-move search asks with
+		// chess.com's own `getFEN()`, which *does* name the square. Keyed raw those are different
+		// positions and the search ran again; the move could never come back instantly.
+		const { t, ctrl } = await setup();
+		const ponder = ctrl.analyse(
+			req({ id: "p", fen: START, moves: ["e2e4"], multiPv: 3, limit: { movetimeMs: 500 } })
+		);
+		finish(t, 3, 14, "e7e5 g1f3");
+		await ponder.result;
+		t.sent.length = 0;
+
+		// the own-move shape: `go movetime X depth <cap>`, the bridge's spelling of the same position
+		const own = ctrl.analyse(
+			req({ id: "o", fen: AFTER_E4, multiPv: 3, limit: { movetimeMs: 400, depth: 14 } })
+		);
+		// asserted before the await: a hit is a settled handle, a miss has already sent `position`/`go`
+		expect(t.sent).toEqual([]);
+		const r = await own.result;
+		expect(r.bestmove).toBe("e7e5");
+		expect(r.final.depth).toBe(14);
+	});
+	it("Appendix E §4.5: a hit within two plies of the requested depth cap skips the search", async () => {
+		const { t, ctrl } = await setup();
+		const first = ctrl.analyse(req({ id: "a", fen: START, multiPv: 2, limit: { movetimeMs: 500 } }));
+		finish(t, 2, 12);
+		await first.result;
+		t.sent.length = 0;
+		// depth 12 cached, cap 14 requested: inside the slack, no search
+		const hit = ctrl.analyse(
+			req({ id: "b", fen: START, multiPv: 2, limit: { movetimeMs: 400, depth: 14 } })
+		);
+		expect(t.sent).toEqual([]);
+		await hit.result;
+		// cap 18: outside the slack, the engine is asked
+		const miss = ctrl.analyse(
+			req({ id: "c", fen: START, multiPv: 2, limit: { movetimeMs: 400, depth: 18 } })
+		);
+		expect(t.sent.some((l) => l.startsWith("go "))).toBe(true);
+		finish(t, 2, 18);
+		await miss.result;
+	});
 	it("does not use the cache for an infinite search below the depth cap", async () => {
 		const { t, ctrl } = await setup();
 		const first = ctrl.analyse(req({ id: "a", fen: START, limit: { movetimeMs: 500 } }));
