@@ -7,6 +7,7 @@ import {
 	CHESSMIMIC_BANDS,
 	ChessMimicHead,
 	type InferResult,
+	instantShareCap,
 	selectBand,
 } from "@core/timing/chessmimic-head";
 import { encodeRecentMoves, tokenizeFen } from "@core/timing/chessmimic-tokeniser";
@@ -159,9 +160,15 @@ describe("ChessMimicHead", () => {
 				expect(s.why.join(" ")).toContain("bucket 3");
 			}
 		}
-		// The model's own bucket-0 mass reaches the plan instead of being redistributed: 0.9 here, and
-		// never a premove, because this position cannot carry one.
-		expect(instant / N).toBeGreaterThan(0.8);
+		// The model's bucket-0 mass reaches the plan instead of being redistributed wholesale. How much
+		// of it gets through is `instantShareCap` (round 3, chessmimic-instant-cap.test.ts): this
+		// fixture puts 0.9 on bucket 0, far above what humans do, so the share is thinned to the cap.
+		// The load-bearing assertion is that it is the cap and not zero — zero is what the branch this
+		// case replaced produced, at every speed and every clock.
+		const cap = instantShareCap(f, "1500_1600");
+		expect(cap).toBeLessThan(0.9);
+		expect(instant / N).toBeGreaterThan(cap * 0.6);
+		expect(instant / N).toBeLessThanOrEqual(cap * 1.25);
 		expect(instant).toBeLessThan(N);
 	});
 	it("labels the top buckets long and adds s_game + AR(1) on top", async () => {

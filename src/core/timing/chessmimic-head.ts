@@ -21,7 +21,9 @@ import { clamp } from "@core/util/clamp";
 import {
 	bucketMask,
 	CHESSMIMIC_BUCKETS,
+	CLOCK_BUCKET_BOUNDARIES,
 	distributionMedianSec,
+	maskedBucketShare,
 	sampleBucket,
 	sampleWithinBucket,
 } from "./chessmimic-buckets";
@@ -30,7 +32,7 @@ import { encodeRecentMoves, tokenizeFen } from "./chessmimic-tokeniser";
 import { TIMING_CONSTANTS } from "./constants";
 import { sigmoid } from "./distributions";
 import { tcClass } from "./features";
-import { premoveLogit } from "./pressure";
+import { premoveLogit, urgencyFactor } from "./pressure";
 import type {
 	DistributionHead,
 	Features,
@@ -92,6 +94,47 @@ export function buildInputs(ctx: TimingContext): ChessMimicInputs {
 		opponentClockS: untimed ? UNTIMED.clockS : Math.max(0, ctx.oppClockMs / 1000),
 		incrementS: untimed ? UNTIMED.incS : ctx.incSec,
 	};
+}
+
+// ---------------------------------------------------------------------------
+// How often the head may answer `instant`
+// ---------------------------------------------------------------------------
+
+/**
+ * The share of *real* human moves fast enough to count as `instant`, read off the band's own
+ * empirical prior: `buckets.json` `bucket_probabilities` over 1 000 000 human blitz moves a band,
+ * summed across every bucket whose upper edge is at or below `instantShareBucketMaxS`. 17.8 % at
+ * 1200–1300, 21.3 % at 1500–1600, 24.7 % at 1800–1900 — stronger players snap more often, and the
+ * cap follows the data rather than a guess.
+ */
+export function humanFastShare(band: ChessMimicBand): number {
+	const prior = CHESSMIMIC_BUCKETS[band]?.bucket_probabilities ?? [];
+	let share = 0;
+	for (let b = 0; b < prior.length; b++) {
+		const upper = CLOCK_BUCKET_BOUNDARIES[b + 1] ?? Number.POSITIVE_INFINITY;
+		if (upper <= CM.instantShareBucketMaxS) share += prior[b] ?? 0;
+	}
+	return share;
+}
+
+/**
+ * Ceiling on the share of plans that may come back `instant`: `1 − urgency · (1 − humanFastShare)`.
+ *
+ * On a full clock that is exactly the human rate. It then widens as the clock falls, on the same
+ * relative-clock basis as `urgencyFactor`, because a player with a tenth of their clock left really
+ * does play most moves in under two seconds.
+ *
+ * The cap exists because the model's clock feature is partly a game-phase proxy and it has no
+ * base-clock input: a 10+0 game at 480 s reads to it like a 5+3 opening, and it puts 85 % of its mass
+ * on bucket 0. Measured on a realistic 10+0 trajectory, plies 10–24 came out 50–85 % instant — four
+ * opening moves in five fired off without a pause, which is a mechanical tell.
+ *
+ * Why the relative clock and not the phase: a 10+0 at 480 s and a 3+0 at 18 s are both middlegames,
+ * and 85 % instant is wrong in the first and right in the second. Phase cannot separate those two;
+ * the fraction of the game's own clock still on the board can.
+ */
+export function instantShareCap(f: Features, band: ChessMimicBand): number {
+	return 1 - urgencyFactor(f) * (1 - humanFastShare(band));
 }
 
 // ---------------------------------------------------------------------------
@@ -225,7 +268,7 @@ export class ChessMimicHead implements DistributionHead {
 			return s;
 		}
 		const mask = bucketMask(c.inputs.playerClockS, c.inputs.incrementS);
-		const bucket = sampleBucket(c.probs, mask, this.temperature, rng);
+		let bucket = sampleBucket(c.probs, mask, this.temperature, rng);
 		const why = [`chessmimic band=${c.band} bucket ${bucket} p=${(c.probs[bucket] ?? 0).toFixed(3)}`];
 		// Bucket 0 is the model saying "this move took under a second". That is a statement about the
 		// *pace*, so it answers `instant` whatever the position is; only the premove branch on top of it
@@ -248,12 +291,41 @@ export class ChessMimicHead implements DistributionHead {
 						mode: "premove",
 						why: [...why, `bucket 0 → premove p=${pPre.toFixed(2)}`],
 					};
+				// §7.4-eligible and the premove draw missed: still instant, and deliberately NOT capped.
+				// A book move, a recapture, a ponder hit or the only legal move is the case where playing
+				// at once is most clearly right — the first move of a game is all of these — so the cap,
+				// which exists to stop the model's bucket-0 mass dominating *ordinary* positions, has no
+				// business here. Without this the owner's "we should make first move really quickly" fell
+				// to 62 % fast at bullet instead of the 90 % the model asked for.
+				return {
+					tSec: this.instantSec(c.band, rng),
+					mode: "instant",
+					why: [...why, "bucket 0 → instant (premove-eligible, uncapped)"],
+				};
 			}
-			return {
-				tSec: this.instantSec(c.band, rng),
-				mode: "instant",
-				why: [...why, "bucket 0 → instant"],
-			};
+			// Thinned to `instantShareCap`, so the realised instant share is the cap rather than
+			// whatever mass the model happened to put on bucket 0. Over the cap the draw falls back to
+			// the next affordable bucket — which is what this branch did for *every* draw until
+			// 2026-09-10, so a capped game is never slower than the build before this lane, only less
+			// often instant than an uncapped one.
+			const share = maskedBucketShare(c.probs, mask, this.temperature, 0);
+			const cap = instantShareCap(f, c.band);
+			if (share <= cap || rng.next() * share < cap)
+				return {
+					tSec: this.instantSec(c.band, rng),
+					mode: "instant",
+					why: [...why, `bucket 0 → instant (share ${share.toFixed(2)} cap ${cap.toFixed(2)})`],
+				};
+			const rest = mask.map((m, b) => m && b > 0);
+			const again = sampleBucket(c.probs, rest, this.temperature, rng);
+			if (again === 0)
+				return {
+					tSec: this.instantSec(c.band, rng),
+					mode: "instant",
+					why: [...why, "bucket 0 over the instant cap; nothing else affordable → instant"],
+				};
+			bucket = again;
+			why.push(`bucket 0 over the instant cap (${cap.toFixed(2)}) → re-sampled bucket ${bucket}`);
 		}
 		let t = sampleWithinBucket(c.band, bucket, rng);
 		if (!st.freezeEps) {

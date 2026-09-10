@@ -323,6 +323,16 @@ export const TIMING_CONSTANTS = {
 		 * and the bound is 2e-3 (measurements in docs/models.md).
 		 */
 		fixtureProbTolerance: 2e-3,
+		/**
+		 * How fast a move has to be, in seconds, to count towards the `instant` share the head is
+		 * allowed (`instantShareCap`). A plan in `instant` mode is `orientation + motor + U(0.05,
+		 * 0.25) s`, so it reaches the page as a 0.7–1.1 s move — a bucket-0-or-1 move in the model's
+		 * own terms. The cap is therefore anchored on the share of *real* moves under this bound in
+		 * the bands' empirical priors (`buckets.json`, 1 000 000 human blitz moves a band): 17.8 %
+		 * at 1200–1300, 21.3 % at 1500–1600, 24.7 % at 1800–1900. Buckets are selected by their
+		 * upper edge against this value, never by index.
+		 */
+		instantShareBucketMaxS: 2,
 		/** The top 4 buckets (≥ 26 s, §3b.1) or `t > longMedianMultiple·median` label the sample `long`. */
 		longBucketFrom: 26,
 		longMedianMultiple: 6,

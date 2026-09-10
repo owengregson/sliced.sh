@@ -104,6 +104,29 @@ export function sampleBucket(
 	return rng.weighted(items, weights);
 }
 
+/**
+ * Normalised weight `sampleBucket` gives `bucket` under the same mask and temperature — i.e. the
+ * probability that this draw lands there. 0 when the bucket is masked out or carries no mass.
+ */
+export function maskedBucketShare(
+	probs: readonly number[],
+	mask: readonly boolean[],
+	temperature: number,
+	bucket: number
+): number {
+	const T = Math.max(1e-3, temperature);
+	let total = 0;
+	let wanted = 0;
+	for (let b = 0; b < CM.nBuckets; b++) {
+		const p = probs[b] ?? 0;
+		if (!mask[b] || !(p > 0)) continue;
+		const w = p ** (1 / T);
+		total += w;
+		if (b === bucket) wanted = w;
+	}
+	return total > 0 ? wanted / total : 0;
+}
+
 interface BucketTable {
 	seconds: number[];
 	weights: number[];
