@@ -1,5 +1,5 @@
 // test/scripts/check-constants.test.ts
-import { expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -11,6 +11,7 @@ import {
 	findForbiddenPageApis,
 	findForbiddenProgramSubstrings,
 	findForbiddenSubstrings,
+	findUrlLiterals,
 } from "../../scripts/check-constants";
 
 it("flags a registry literal re-declared outside the registry", () => {
@@ -145,4 +146,34 @@ it("checkEmittedPrograms fails closed when the generated directory exists but is
 	} finally {
 		rmSync(empty, { recursive: true, force: true });
 	}
+});
+
+describe("findUrlLiterals (C1: every absolute URL lives in the registry)", () => {
+	it("flags a URL written outside the registry, with its file and line", () => {
+		const hits = findUrlLiterals({
+			"src/content/leak.ts": 'const a = 1;\nconst u = "https://sliced.sh/models/";\n',
+		});
+		expect(hits).toHaveLength(1);
+		expect(hits[0]).toEqual({
+			file: "src/content/leak.ts",
+			line: 2,
+			url: "https://sliced.sh/models/",
+		});
+	});
+
+	it("allows the registry itself, generated page programs and XML namespaces", () => {
+		expect(
+			findUrlLiterals({
+				"src/core/constants/urls.ts": 'export const U = "https://sliced.sh";',
+				"src/page/generated/chesscom-bridge.ts": 'export const code = "http://example.com";',
+				"src/page/highlight-overlay.ts": 'const SVG_NS = "http://www.w3.org/2000/svg";',
+			})
+		).toEqual([]);
+	});
+
+	it("does not flag a bare URL in a doc comment, which is not a shipped literal", () => {
+		expect(
+			findUrlLiterals({ "src/content/a.ts": "// see https://example.com/spec for the rule\n" })
+		).toEqual([]);
+	});
 });

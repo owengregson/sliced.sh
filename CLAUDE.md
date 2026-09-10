@@ -56,10 +56,12 @@ Ports: `sl-panel` (SW ↔ panel), `sl-engine` (SW ↔ offscreen), `sl-game` (SW 
 ## Conventions
 
 These are the plan's §1.3 global constraints, numbered so briefs and reviews can cite them.
-Most are machine-enforced, and each entry names what enforces it. Two are **not**, and are worth
-knowing as such: "templates live in `*.html`, imported `?raw`" (C3) and "every module that owns
-listeners or timers exposes a dispose" (C6) rest on review, not on a lint. Everything else fails
-a check if you break it.
+Most are machine-enforced, and the entries that are name what enforces them. Four rest on review
+rather than on a lint, and are worth knowing as such: "templates live in `*.html`, imported
+`?raw`" (C3); "every module that owns listeners or timers exposes a dispose" (C6); the brand
+assets being byte-unchanged and "all user-facing strings live once in `src/panel/copy.ts`" (C5,
+which has no `*Enforced by:*` line at all); and C4's animation-timing mirror. Treat an entry
+without an `*Enforced by:*` line as review-only.
 
 **C1 — one definition per constant.** Every storage key, alarm name, port name, message type,
 URL, limit, timing and selector lives in a registry: `src/core/constants/*.ts`,
@@ -96,7 +98,8 @@ name `sliced`, accent `#ffa71f`, dark-first. All user-facing strings live once i
 `chrome.runtime.lastError`, so core modules run against the simulator in `test/sim/` instead of
 a browser. Every module that owns a listener, timer, RAF or observer returns a
 cleanup/dispose function, and panel views return theirs from `mount()`.
-No `any` (outside `*.d.ts` shims), no non-null `!`, no `console.*` outside `src/core/logger.ts`
+No `any` (outside `*.d.ts` shims), no non-null `!` in `src/**` (both allowed under `test/**`),
+no `console.*` outside `src/core/logger.ts`
 — use `log` from `@core/logger`.
 *Enforced by:* `biome.json`'s `src/**` override (`noExplicitAny` and `noNonNullAssertion` are
 errors there and off elsewhere, because scripts and tests legitimately use both), `noConsole`,
@@ -159,7 +162,9 @@ corresponding source. Regenerate the notice with `bun run vendor:engine`; **neve
 
 **The licence gate is forced open.** `LICENSE_FORCE_VALID = !__SL_LICENSE_ENFORCE__` and
 `build.config.json` sets `licenseEnforce: false`, so every key validates as `valid` while the
-real verdict is kept in `rawStatus` for diagnostics. Flip the build flag to test real gating.
+real verdict is kept in `rawStatus` for diagnostics. There are no locks right now and that is
+deliberate: leave the flag, `src/service/license-gate.ts` and the login view's force-valid path
+alone unless the owner asks otherwise.
 
 **A bundler inlines an object literal whole, and that is a §13.3 problem.** Importing one member
 of `URLS` shipped *every* URL in it — including `sliced.sh`, which names the product — into

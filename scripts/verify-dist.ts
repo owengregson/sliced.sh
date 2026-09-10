@@ -242,7 +242,12 @@ export function checkWebAccessibleResources(manifest: unknown): string[] {
 	const declared = manifest.web_accessible_resources;
 	if (declared === undefined) return [];
 	const entries = asArray(declared);
-	if (entries.length === 0) return [];
+	// A present-but-unreadable declaration is not a pass. Chrome rejects such a manifest at load,
+	// but this rule must not be the thing that waved it through.
+	if (entries.length === 0)
+		return [
+			"web_accessible_resources is present but is not a non-empty array — it must be absent, or an array whose every entry sets `use_dynamic_url: true` (§13.3)",
+		];
 	const problems: string[] = [];
 	for (let i = 0; i < entries.length; i += 1) {
 		const entry = entries[i];

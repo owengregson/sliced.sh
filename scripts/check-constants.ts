@@ -154,6 +154,45 @@ function markedNumbers(
 	}
 }
 
+/**
+ * C1 for URLs. Every absolute URL belongs in the registry, so `verify-dist`'s host rule (which
+ * derives its host list from `src/core/constants/`) can classify it and keep it out of the page
+ * realm. A URL written straight into, say, `src/content/foo.ts` is invisible to that rule and
+ * would ship into `content.js` unnoticed — the §13.3 leak class this exists to close.
+ *
+ * Generated page programs are excluded: they are emitted, not authored, and their contents are
+ * already policed by `findForbiddenProgramSubstrings`.
+ */
+const URL_LITERAL_RE = /(["'`])(https?:\/\/[^"'`\s]+)\1/g;
+const URL_EXEMPT_DIRS = [...REGISTRY_DIRS, GENERATED_PAGE_DIR];
+/** XML namespaces are identifiers, not endpoints: every SVG-using page on the web carries them. */
+const URL_EXEMPT = new Set(["http://www.w3.org/2000/svg", "http://www.w3.org/1999/xhtml"]);
+
+export interface UrlLiteralHit {
+	file: string;
+	line: number;
+	url: string;
+}
+
+export function findUrlLiterals(files: Record<string, string>): UrlLiteralHit[] {
+	const hits: UrlLiteralHit[] = [];
+	for (const [file, text] of Object.entries(files)) {
+		if (URL_EXEMPT_DIRS.some((d) => file.startsWith(d))) continue;
+		const lines = text.split("\n");
+		for (let i = 0; i < lines.length; i += 1) {
+			const line = lines[i] ?? "";
+			URL_LITERAL_RE.lastIndex = 0;
+			let m = URL_LITERAL_RE.exec(line);
+			while (m) {
+				const url = m[2] ?? "";
+				if (!URL_EXEMPT.has(url)) hits.push({ file, line: i + 1, url });
+				m = URL_LITERAL_RE.exec(line);
+			}
+		}
+	}
+	return hits;
+}
+
 export function findDuplicateLiterals(files: Record<string, string>): Duplicate[] {
 	const entries = Object.entries(files);
 	const registries = entries.filter(([f]) => isRegistryFile(f));
@@ -228,6 +267,14 @@ export function checkConstants(root = "src"): void {
 		for (const h of hits)
 			console.error(`forbidden page API "${h.api}" in ${h.file}:${h.line} (§13.3 rule 2)`);
 		throw new Error(`${hits.length} forbidden page API use(s)`);
+	}
+	const urls = findUrlLiterals(files);
+	if (urls.length) {
+		for (const u of urls)
+			console.error(
+				`URL literal "${u.url}" in ${u.file}:${u.line} — register it in src/core/constants/ (C1)`
+			);
+		throw new Error(`${urls.length} unregistered URL literal(s)`);
 	}
 	checkEmittedPrograms();
 }

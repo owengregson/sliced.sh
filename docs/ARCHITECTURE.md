@@ -92,7 +92,8 @@ in `src/content/adapters/selectors.ts` (C1), and `self-check.ts` re-validates th
 a site redesign degrades loudly instead of silently.
 
 > The fixtures were hand-built from Appendix C's DOM descriptions rather than live captures, but
-> the selectors themselves were checked against live chess.com and lichess on 2026-09-09 and the
+> the selectors themselves were checked against live chess.com and lichess on 2026-09-09
+> (`docs/qa/2026-09-live-selector-verification.md`) and the
 > first ladder entry hit in every case. What is still unconfirmed is the markup behind game
 > states a read-only pass cannot reach — promotion pickers, game-over modals, follow-up controls
 > — which `docs/qa-checklist.md` §F tracks.

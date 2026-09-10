@@ -203,8 +203,16 @@ describe("checkReferenceGraph", () => {
 describe("checkWebAccessibleResources (§13.3: the fixed extension id is a probe target)", () => {
 	it("passes a manifest that declares none — v2 needs none", () => {
 		expect(checkWebAccessibleResources(MANIFEST)).toEqual([]);
-		expect(checkWebAccessibleResources({ web_accessible_resources: [] })).toEqual([]);
 		expect(checkWebAccessibleResources(null)).toEqual([]);
+	});
+
+	it("fails a present-but-unreadable declaration instead of waving it through", () => {
+		// Chrome rejects these at load, but this rule must not be what let them past.
+		for (const declared of [[], {}, "assets/engine/*", 0]) {
+			const problems = checkWebAccessibleResources({ web_accessible_resources: declared });
+			expect(problems).toHaveLength(1);
+			expect(problems[0]).toContain("not a non-empty array");
+		}
 	});
 
 	it("fails the v1-shaped block that exposed the engine and the sounds to both sites", () => {

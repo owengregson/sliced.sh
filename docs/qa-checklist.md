@@ -169,7 +169,8 @@ Open the offscreen document's console (`chrome://extensions` → Inspect views: 
 ## F. Adapter selectors vs the live DOM (deferred from Task 20)
 
 The adapters were built against fixtures hand-written from Appendix C's DOM descriptions rather
-than live captures. **Most of that gap is now closed.** On 2026-09-09 every board, piece,
+than live captures. **Most of that gap is now closed** (evidence:
+`docs/qa/2026-09-live-selector-verification.md`). On 2026-09-09 every board, piece,
 coordinate, clock, player and move-list selector was checked against live chess.com and lichess
 in a real browser, and the first ladder entry hit in every case — including the obfuscated lila
 tags (`aPp` 1, `Z7yx` 28, `qZM` 14, `.a1t` 1) and chess.com's move list (`wc-simple-move-list` 1,
