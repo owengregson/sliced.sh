@@ -2,7 +2,8 @@
  * `PANEL_PLAY_NOW { tabId }` → the pending move (else the session's current recommendation)
  * plays at once with an instant plan (§8.5 manual path). The reply does not wait for the hand:
  * the outcome reaches the panel through the broadcaster (`lastExecution` + toast). Refused when
- * the hand is not armed — the debugger attaches at arm time only (§13.4).
+ * the hand is not armed — the debugger attaches at arm time only (§13.4) — and while
+ * `Settings.enabled` is off (§4.4).
  */
 
 import { PANEL_COMMAND_ERRORS } from "@core/constants/cdp";
@@ -14,9 +15,10 @@ import type { PanelHandlerDeps } from "@service/handlers/panel";
 
 export function registerPlayNowHandler(
 	router: MessageRouter,
-	deps: Pick<PanelHandlerDeps, "broadcaster" | "sources">
+	deps: Pick<PanelHandlerDeps, "broadcaster" | "sources" | "getSettings">
 ): void {
 	router.on(MSG.PANEL_PLAY_NOW, (msg) => {
+		if (!deps.getSettings().enabled) throw new Error(PANEL_COMMAND_ERRORS.assistantOff);
 		const executor = deps.sources.executor(msg.tabId);
 		if (!executor) throw new Error(PANEL_COMMAND_ERRORS.noExecutor);
 		if (!executor.isArmed()) throw new Error(PANEL_COMMAND_ERRORS.notArmed);

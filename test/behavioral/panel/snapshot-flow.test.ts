@@ -20,7 +20,14 @@ import {
 import { createSimulator, type Simulator } from "@test/sim";
 import { bootPanelContext, type PanelContext } from "@test/sim/contexts/panel-context";
 import { bootSwContext, type SwContext } from "@test/sim/contexts/sw-context";
+import type { Settings } from "@typedefs/settings";
 import { FakeSession, fakeSources, makePlan, makeRecommendation } from "./harness";
+
+/**
+ * §4.4: these tests are a user who has the assistant *on* — `DEFAULT_SETTINGS.enabled` is false
+ * and the acting panel commands (arm, play, re-attach) refuse while the switch is off.
+ */
+const SETTINGS: Settings = { ...DEFAULT_SETTINGS, enabled: true };
 
 const START = 1_000_000;
 const GOLD = "SL-GOLD-KEY";
@@ -63,7 +70,7 @@ beforeEach(async () => {
 			gate = new LicenseGate({ client, forceValid: false, now: sim.now });
 			sources = fakeSources({ sessions, executors, license: () => gate.getState() });
 			broadcaster = new PanelBroadcaster(sources, { scheduler: defaultScheduler, now: sim.now });
-			registerPanelHandlers(router, { broadcaster, sources, link: null });
+			registerPanelHandlers(router, { broadcaster, sources, link: null, getSettings: () => SETTINGS });
 			registerLicenseHandlers(router, { license: gate });
 			router.install();
 			await gate.ensure();

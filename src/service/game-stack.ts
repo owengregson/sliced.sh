@@ -46,6 +46,8 @@ export interface GameStack {
 	controller: EngineController;
 	registry: SessionRegistry;
 	timingLog: TimingLogWriter;
+	/** The worker's one fresh `Settings` snapshot (what every consumer here reads). */
+	getSettings(): Settings;
 	dispose(): void;
 }
 
@@ -169,6 +171,7 @@ export function createGameStack(options: GameStackOptions): GameStack {
 		controller,
 		registry,
 		timingLog,
+		getSettings: readSettings,
 		dispose(): void {
 			offSettings();
 			detachEngineHandlers();

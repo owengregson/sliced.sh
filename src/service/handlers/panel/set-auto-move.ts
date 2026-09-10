@@ -3,7 +3,8 @@
  * mid-game, §13.4 — and hand the pointer to the virtual hand) or disarm the tab's executor.
  * Arming while the session already holds a recommendation for my turn schedules it for
  * `plan.deadlineMs` (§3.2 step 5); later recommendations are the session's to schedule. An
- * attach failure rejects with the registry's user-facing reason (the panel reverts its toggle).
+ * attach failure — or `Settings.enabled` being off (§4.4) — rejects with the user-facing reason
+ * (the panel reverts its toggle).
  */
 
 import { PANEL_COMMAND_ERRORS } from "@core/constants/cdp";
@@ -13,7 +14,7 @@ import type { PanelHandlerDeps } from "@service/handlers/panel";
 
 export function registerSetAutoMoveHandler(
 	router: MessageRouter,
-	deps: Pick<PanelHandlerDeps, "broadcaster" | "sources">
+	deps: Pick<PanelHandlerDeps, "broadcaster" | "sources" | "getSettings">
 ): void {
 	router.on(MSG.PANEL_SET_AUTO_MOVE, async (msg) => {
 		const executor = deps.sources.executor(msg.tabId);
@@ -23,6 +24,8 @@ export function registerSetAutoMoveHandler(
 				executor.disarm();
 				return;
 			}
+			// §4.4: disarming is always allowed; arming is not, while the assistant is off.
+			if (!deps.getSettings().enabled) throw new Error(PANEL_COMMAND_ERRORS.assistantOff);
 			await executor.arm();
 			const session = deps.sources.session(msg.tabId);
 			const rec = session?.recommendation() ?? null;

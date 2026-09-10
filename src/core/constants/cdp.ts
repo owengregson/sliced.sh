@@ -61,6 +61,8 @@ export const PANEL_COMMAND_ERRORS = {
 	/** `playNow` needs the hand armed (the debugger attaches at arm time, never mid-game, §13.4). */
 	notArmed: "auto-play is not armed",
 	noRecommendation: "no move to play yet",
+	/** §4.4: `Settings.enabled` is off, so nothing may arm, attach or play (the panel reverts). */
+	assistantOff: "the assistant is off",
 } as const;
 
 /** Detach reasons Chrome reports on `onDetach` plus the manager's own. */

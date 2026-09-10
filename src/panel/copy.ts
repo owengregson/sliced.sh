@@ -420,7 +420,7 @@ export const SETTINGS_COPY = {
 	rows: {
 		enabled: {
 			label: "Assistant",
-			help: "Off stops analysis and recommendations until you turn it back on.",
+			help: "Off stops analysis, recommendations and auto-play until you turn it back on.",
 		},
 		"strength.targetElo": { label: "Target rating" },
 		"strength.matchOpponentRating": {

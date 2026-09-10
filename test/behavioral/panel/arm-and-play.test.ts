@@ -14,6 +14,7 @@ import {
 	TIMINGS,
 	TOAST_KEYS,
 } from "@core/constants";
+import { DEFAULT_SETTINGS } from "@core/constants/defaults";
 import { type ConnectedPort, connectPort } from "@core/messaging/ports";
 import { installMessageRouter, type MessageRouter } from "@core/messaging/router";
 import type { Occupancy, Rect } from "@core/motor/types";
@@ -32,9 +33,15 @@ import { bootContentContext, type ContentContext } from "@test/sim/contexts/cont
 import { bootPanelContext, type PanelContext } from "@test/sim/contexts/panel-context";
 import { bootSwContext, type SwContext } from "@test/sim/contexts/sw-context";
 import type { Square } from "@typedefs/game";
-import type { LicenseState } from "@typedefs/settings";
+import type { LicenseState, Settings } from "@typedefs/settings";
 import { ALL_SQUARES, BOARD, inside, squareRect } from "../../core/motor/fixtures";
 import { FakeSession, fakeSources, makePlan, makeRecommendation } from "./harness";
+
+/**
+ * §4.4: these tests are a user who has the assistant *on* — `DEFAULT_SETTINGS.enabled` is false
+ * and the acting panel commands (arm, play, re-attach) refuse while the switch is off.
+ */
+const SETTINGS: Settings = { ...DEFAULT_SETTINGS, enabled: true };
 
 const START = 1_000_000;
 const MS = 1000;
@@ -176,7 +183,7 @@ beforeEach(async () => {
 			});
 			broadcaster = new PanelBroadcaster(sources, { scheduler: defaultScheduler, now: sim.now });
 			broadcaster.observeExecutor(tabId, executor);
-			registerPanelHandlers(router, { broadcaster, sources, link });
+			registerPanelHandlers(router, { broadcaster, sources, link, getSettings: () => SETTINGS });
 			router.install();
 		},
 	});

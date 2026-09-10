@@ -54,7 +54,13 @@ const settle = async (): Promise<void> => {
 };
 
 beforeEach(async () => {
-	sim = createSimulator({ startAt: START });
+	// §4.4: `DEFAULT_SETTINGS.enabled` is false and the session gates every acting path (and the
+	// content-side `highlightMoves` gate) on it, so the stored fixture is a user who has turned the
+	// assistant on — the same fixture `test/behavioral/game/harness.ts` seeds.
+	sim = createSimulator({
+		startAt: START,
+		storageLocal: { [LOCAL_KEYS.settings]: { enabled: true } },
+	});
 	sim.time.install();
 	tabId = sim.openTab("https://www.chess.com/game/174252022572", { active: true }).tabId;
 	await bootOffscreen();

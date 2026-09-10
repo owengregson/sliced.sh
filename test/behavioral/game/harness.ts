@@ -3,10 +3,10 @@
 // `UciEngine` + `EngineController` (over `ScriptedEngineTransport`, the fake offscreen), real
 // `TimingModel`, real `SessionRegistry` / `GameSession`, real panel handlers and broadcaster.
 // The page half is `createSimulatedSite` — the same one Task 33's telemetry harness drives.
-
 import { onCommand } from "@core/chrome/commands";
 import { DEFAULT_SETTINGS } from "@core/constants/defaults";
 import type { GamePortCommand, PanelPortMessage, PanelSnapshot } from "@core/constants/messages";
+import { LOCAL_KEYS } from "@core/constants/storage-keys";
 import { AnalysisCache } from "@core/engine/analysis-cache";
 import { UciEngine } from "@core/engine/uci-client";
 import { installMessageRouter, type MessageRouter } from "@core/messaging/router";
@@ -109,7 +109,14 @@ export interface GameHarness {
 const DEFAULT_TC = { baseMs: 300_000, incMs: 2_000 };
 
 export async function createGameHarness(options: GameHarnessOptions = {}): Promise<GameHarness> {
-	const sim = createSimulator({ startAt: START_AT });
+	// `DEFAULT_SETTINGS.enabled` is false (§4.4: a fresh install does nothing until the user turns
+	// the assistant on), and every session path is gated on it — so the fixture is a user who has
+	// turned it on, seeded as stored settings so no settings-write event fires before the stack is
+	// up. A test about the switch itself passes `settings: { enabled: false }`, which wins below.
+	const sim = createSimulator({
+		startAt: START_AT,
+		storageLocal: { [LOCAL_KEYS.settings]: { enabled: true } },
+	});
 	sim.time.install();
 	const tabId = sim.openTab("https://www.chess.com/game/live/1", { active: true }).tabId;
 	const timeControl = options.timeControl ?? DEFAULT_TC;
@@ -189,7 +196,12 @@ export async function createGameHarness(options: GameHarnessOptions = {}): Promi
 				seed: options.seed ?? "harness",
 			});
 			broadcaster = new PanelBroadcaster(registry, { scheduler: defaultScheduler, now: sim.now });
-			registerPanelHandlers(router, { broadcaster, sources: registry, link });
+			registerPanelHandlers(router, {
+				broadcaster,
+				sources: registry,
+				link,
+				getSettings: () => settings,
+			});
 			registerContentHandlers(router, {
 				getSettings: () => settings,
 				session: (id) => registry.sessionFor(id),

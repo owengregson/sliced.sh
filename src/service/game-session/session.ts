@@ -18,6 +18,16 @@
  * active tab or window, raises a notification or calls `Page.bringToFront`; a
  * move that cannot run because the page is not focused *waits* for the next
  * position instead.
+ *
+ * `Settings.enabled` (§4.4) is the master switch and it is enforced *here*,
+ * because this is the only place that asks the engine for anything, draws on
+ * the board or hands a move to the hand. While it is off the session still
+ * follows the game — positions, clocks, the move list, the state machine — so
+ * the panel stays truthful and a flip back on resumes from the live position,
+ * but nothing is analysed, pondered, recommended, highlighted, scheduled,
+ * played or queued, and the hand is neither armed nor left armed (the
+ * debugger is released with it: §13.4 forbids a mid-game attach, so keeping it
+ * attached while the switch is off buys nothing and only leaves the infobar).
  */
 
 import { legalMoves, uciToSan } from "@core/chess/san";
@@ -138,7 +148,7 @@ export interface GameSessionDeps {
 	book: BookPolicy | null;
 	/** Shared timing head (ChessMimic with the v1 fallback); one per service worker. */
 	head: DistributionHead;
-	debugger: Pick<DebuggerManager, "isAttached">;
+	debugger: Pick<DebuggerManager, "isAttached" | "detach">;
 	focus: Pick<FocusGate, "positionArrived" | "onEdge" | "snapshot">;
 	ownership: Pick<HandOwnership, "realPointerCount">;
 	timingLog: Pick<TimingLogWriter, "append" | "upsert" | "markActual" | "attachTelemetry">;
@@ -256,9 +266,12 @@ export class GameSession implements SessionSource {
 	/** A `playNow` issued while the pipeline was still running. */
 	private playWhenReady = false;
 	private disposed = false;
+	/** `Settings.enabled` as of the last settings write this session saw (§4.4 flip detection). */
+	private assistantOn: boolean;
 
 	constructor(deps: GameSessionDeps) {
 		this.deps = deps;
+		this.assistantOn = deps.getSettings().enabled;
 		this.now = deps.now ?? defaultNow;
 		this.scheduler = deps.scheduler ?? defaultScheduler;
 		this.seed = deps.seed ?? `tab-${deps.tabId}`;
@@ -376,10 +389,75 @@ export class GameSession implements SessionSource {
 
 	/**
 	 * The settings changed: re-send what the content script acts on (`highlightMoves`, the
-	 * keybinds — §13.3 rule 4 keeps both off/default until the worker says otherwise).
+	 * keybinds — §13.3 rule 4 keeps both off/default until the worker says otherwise), and act on
+	 * `Settings.enabled` (§4.4) when *that* is what changed — off stops everything this session
+	 * could still do to the page, on picks the live position back up.
 	 */
 	onSettingsChanged(): void {
+		const on = this.assistantEnabled();
+		const flipped = on !== this.assistantOn;
+		this.assistantOn = on;
+		// Sent first either way: `highlightMoves` is reported as `enabled && highlightMoves`, so
+		// this is also what clears a mark the content script has already drawn.
 		this.pushContentSettings();
+		if (!flipped) return;
+		if (on) void this.resumeEnabled();
+		else this.stopDisabled();
+	}
+
+	/** §4.4: the master switch, as every acting path in this file reads it. */
+	private assistantEnabled(): boolean {
+		return this.deps.getSettings().enabled;
+	}
+
+	/**
+	 * `Settings.enabled` went off mid-session (§4.4): the search in flight is aborted, the ponder
+	 * stopped, the scheduled (or running) move cancelled, the auto-queue dropped, the board
+	 * cleared, and the hand disarmed — with the debugger released, because §13.4 forbids the
+	 * re-attach that would let it act again mid-game, so holding it would only keep the infobar.
+	 * The state machine is left alone: the game on the page is still the game, and the panel's
+	 * own `settings.enabled` projection is what greys the move card (Appendix F §5.6).
+	 */
+	private stopDisabled(): void {
+		this.cancelInFlight();
+		this.deps.autoQueue.cancel(this.deps.tabId);
+		this.rec = null;
+		this.premove = null;
+		this.executorHandle?.disarm();
+		void this.deps.debugger
+			.detach(this.deps.tabId)
+			.catch((error: unknown) =>
+				log.debug("game-session: debugger not released", { error: errorMessage(error) })
+			);
+		this.deps.link.post(this.deps.tabId, { kind: "clearHighlight" });
+		log.info("game-session: the assistant was turned off — nothing is analysed or played", {
+			tabId: this.deps.tabId,
+			state: this.state,
+		});
+		this.deps.notify();
+	}
+
+	/**
+	 * `Settings.enabled` came back on (§4.4): resume from the position the session is sitting on
+	 * instead of waiting for the next one. The hand is *not* re-armed — that would attach the
+	 * debugger mid-game (§13.4) — so an armed hand is the user's to ask for again, in the waiting
+	 * view; until then this is panel-only mode (§7.5).
+	 */
+	private async resumeEnabled(): Promise<void> {
+		const snapshot = this.snapshot;
+		log.info("game-session: the assistant was turned back on", {
+			tabId: this.deps.tabId,
+			state: this.state,
+			resumed: snapshot !== null && isLiveState(this.state),
+		});
+		if (this.disposed || !snapshot || !isLiveState(this.state)) return;
+		// A search already in flight (or a recommendation already standing) for this position is the
+		// resume: the worker's first settings read can land after the session was built, so "on"
+		// is not always a transition from a stopped session.
+		if (this.pipelineAc !== null || this.rec !== null) return;
+		const myTurn = snapshot.myColor !== null && snapshot.sideToMove === snapshot.myColor;
+		if (myTurn) await this.runPipeline(snapshot);
+		else await this.onOpponentTurn(snapshot);
 	}
 
 	/** Stop a running ponder / panel search (Task 13's `pendingOptions`, §6.4). */
@@ -533,6 +611,16 @@ export class GameSession implements SessionSource {
 		this.trackMove(previous, snapshot);
 		if (!this.apply("positionChanged", { myTurn })) return;
 		this.deps.notify();
+		if (!this.assistantEnabled()) {
+			// §4.4: everything above is bookkeeping the panel reads and a resume needs (the ply, the
+			// clocks, the move list, the focus gate's window). Nothing below it runs while the
+			// switch is off: no `go`, no ponder, no premove, no recommendation, no schedule.
+			log.debug("game-session: position ignored — the assistant is off", {
+				tabId: this.deps.tabId,
+				ply: snapshot.ply,
+			});
+			return;
+		}
 		if (!myTurn) {
 			await this.onOpponentTurn(snapshot);
 			return;
@@ -837,6 +925,11 @@ export class GameSession implements SessionSource {
 			log.info("game-session: nothing to arm (no game on this tab)", { tabId: this.deps.tabId });
 			return;
 		}
+		if (!this.assistantEnabled()) {
+			// §4.4: an armed hand with nothing to play is a promise the switch says is off.
+			log.info("game-session: arm refused — the assistant is off", { tabId: this.deps.tabId });
+			return;
+		}
 		this.apply("armAutoMove");
 		try {
 			await executor.arm();
@@ -873,6 +966,10 @@ export class GameSession implements SessionSource {
 	private async playNow(): Promise<void> {
 		const executor = this.executorHandle;
 		if (!executor) return;
+		if (!this.assistantEnabled()) {
+			log.info("game-session: playNow refused — the assistant is off", { tabId: this.deps.tabId });
+			return;
+		}
 		if (!executor.isArmed()) {
 			log.info("game-session: playNow ignored — the hand is not armed (§13.4)", {
 				tabId: this.deps.tabId,
@@ -955,7 +1052,8 @@ export class GameSession implements SessionSource {
 			site: meta.site,
 			gameId: meta.gameId,
 		});
-		this.deps.warmTiming?.(targetElo);
+		// §4.4: with the switch off nothing will search, so nothing is pre-warmed either.
+		if (this.assistantEnabled()) this.deps.warmTiming?.(targetElo);
 
 		const engine = this.deps.engine;
 		if (engine) {
@@ -994,7 +1092,9 @@ export class GameSession implements SessionSource {
 	private async finishGame(result: GameResult): Promise<void> {
 		await this.updateStats((stats) => foldGame(stats, this.targetElo()));
 		const settings = this.deps.getSettings();
-		if (settings.automation.autoQueue) this.deps.autoQueue.schedule(this.deps.tabId);
+		// §4.4: the auto-queue asks the *page* for a new game, so the switch gates it like the rest.
+		if (settings.enabled && settings.automation.autoQueue)
+			this.deps.autoQueue.schedule(this.deps.tabId);
 		log.info("game-session: game over", { tabId: this.deps.tabId, result });
 	}
 
@@ -1022,7 +1122,8 @@ export class GameSession implements SessionSource {
 		// `Settings.automation.autoMove` is the stored "arm me" default. Either way the attach
 		// happens here — before the first position of the game, i.e. outside every move window
 		// (§13.4) — never once a move is due.
-		if (wasArmed || this.deps.getSettings().automation.autoMove)
+		// §4.4: neither default arms anything while the assistant is off.
+		if (this.assistantEnabled() && (wasArmed || this.deps.getSettings().automation.autoMove))
 			void executor.arm().catch((error: unknown) => log.warn("game-session: re-arm failed", error));
 	}
 
@@ -1164,7 +1265,9 @@ export class GameSession implements SessionSource {
 	private pushContentSettings(): void {
 		const settings = this.deps.getSettings();
 		const commands: GamePortCommand[] = [
-			{ kind: "settings", highlightMoves: settings.automation.highlightMoves },
+			// §4.4: the master switch gates the board marks too — and because the content script
+			// clears what it has drawn the moment this turns off, this is also the clear.
+			{ kind: "settings", highlightMoves: settings.enabled && settings.automation.highlightMoves },
 			{ kind: "keybinds", keybinds: settings.keybinds },
 		];
 		for (const cmd of commands) this.deps.link.post(this.deps.tabId, cmd);
@@ -1172,7 +1275,7 @@ export class GameSession implements SessionSource {
 
 	private postHighlight(rec: Recommendation): void {
 		const settings = this.deps.getSettings();
-		if (!settings.automation.highlightMoves) return;
+		if (!settings.enabled || !settings.automation.highlightMoves) return;
 		this.deps.link.post(this.deps.tabId, {
 			kind: "highlight",
 			from: rec.chosen.from,
