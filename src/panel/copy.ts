@@ -11,12 +11,12 @@ export const COPY = {
 	brand: {
 		name: "sliced",
 		product: "sliced.gg",
-		tagline: "Chess assistant for chess.com and lichess",
+		tagline: "Chess assistant for chess.com",
 	},
 	nav: { game: "Game", settings: "Settings", engine: "Engine", viewSwitch: "View" },
 	login: {
 		title: "sliced",
-		subtitle: "Chess assistant for chess.com and lichess",
+		subtitle: "Chess assistant for chess.com",
 		fieldLabel: "License key",
 		hint: "Keys look like SL-XXXX-XXXX-XXXX.",
 		button: "Continue",
@@ -32,8 +32,7 @@ export const COPY = {
 	},
 	unsupported: {
 		title: "Open a game to get started",
-		body:
-			"sliced works on chess.com and lichess. Open one of them in this tab and the panel will follow along.",
+		body: "sliced works on chess.com. Open a game in this tab and the panel will follow along.",
 		note: "Auto-play stays off until a game starts.",
 	},
 	nonGame: {

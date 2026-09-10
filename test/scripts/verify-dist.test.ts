@@ -215,12 +215,12 @@ describe("checkWebAccessibleResources (§13.3: the fixed extension id is a probe
 		}
 	});
 
-	it("fails the v1-shaped block that exposed the engine and the sounds to both sites", () => {
+	it("fails the v1-shaped block that exposed the engine and the sounds to the site", () => {
 		const problems = checkWebAccessibleResources({
 			web_accessible_resources: [
 				{
 					resources: ["assets/engine/*", "assets/sounds/*"],
-					matches: ["*://*.chess.com/*", "*://*.lichess.org/*"],
+					matches: ["*://*.chess.com/*"],
 				},
 			],
 		});
@@ -251,12 +251,12 @@ describe("registry hosts", () => {
 		const hosts = registryHosts(
 			{
 				"urls.ts":
-					'const W = "https://sliced.sh";\nexport const U = { e: "https://explorer.lichess.ovh/x" };',
+					'const W = "https://sliced.sh";\nexport const U = { e: "https://mirror.example/x" };',
 				"models.ts": '"https://1e4.ai"',
 			},
 			"https://phantom.ac/slicedgg/index.php"
 		);
-		expect(hosts).toEqual(["1e4.ai", "explorer.lichess.ovh", "phantom.ac", "sliced.sh"]);
+		expect(hosts).toEqual(["1e4.ai", "mirror.example", "phantom.ac", "sliced.sh"]);
 	});
 
 	it("tolerates a licence URL that is not absolute", () => {
@@ -271,7 +271,7 @@ describe("registry hosts", () => {
 });
 
 describe("scanBundle", () => {
-	const hosts = ["phantom.ac", "sliced.sh", "lichess.org"];
+	const hosts = ["phantom.ac", "sliced.sh", "www.chess.com"];
 
 	it("flags a stray console call in a production bundle and names the line", () => {
 		const problems = scanBundle("js/panel.js", "let a=1;\nconsole.warn(a);\n", {
@@ -309,13 +309,13 @@ describe("scanBundle", () => {
 		expect(scanBundle("js/page/chesscom-bridge.js", text, { dev: false, hosts })).toHaveLength(1);
 	});
 
-	it("does not mistake a match pattern for a URL — content carries both site patterns", () => {
-		const patterns = `["*://*.chess.com/*","*://*.lichess.org/*"]`;
+	it("does not mistake a match pattern for a URL — content carries the site pattern", () => {
+		const patterns = `["*://*.chess.com/*"]`;
 		expect(scanBundle(BUNDLES.content, patterns, { dev: false, hosts })).toEqual([]);
-		// …but a real lichess URL in the content bundle still fails.
-		expect(scanBundle(BUNDLES.content, `"https://lichess.org/"`, { dev: false, hosts })).toHaveLength(
-			1
-		);
+		// …but a real chess.com URL in the content bundle still fails.
+		expect(
+			scanBundle(BUNDLES.content, `"https://www.chess.com/"`, { dev: false, hosts })
+		).toHaveLength(1);
 	});
 
 	it("ignores a host it cannot classify (reported once by unclassifiedHosts instead)", () => {

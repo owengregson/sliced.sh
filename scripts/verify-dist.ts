@@ -75,9 +75,8 @@ export const HOST_OWNERS: Readonly<Record<string, readonly string[]>> = {
 	"tests.stockfishchess.org": SW_AND_PANEL,
 
 	"data.stockfishchess.org": SW_AND_PANEL,
-	// The two sites, as navigable links in the panel's Not-supported view.
+	// The site, as a navigable link in the panel's Not-supported view.
 	"www.chess.com": SW_AND_PANEL,
-	"lichess.org": SW_AND_PANEL,
 	// Upstream metadata for the vendored components (licence notices, not requests).
 	"github.com": SW_AND_PANEL,
 	"raw.githubusercontent.com": SW_AND_PANEL,
@@ -373,8 +372,8 @@ export function registryHosts(
 }
 
 /**
- * A host is looked for as `//<host>`, not bare: `*://*.lichess.org/*` is a match pattern, not a
- * URL, and the content script legitimately carries both site patterns. Only a real absolute URL
+ * A host is looked for as `//<host>`, not bare: `*://*.chess.com/*` is a match pattern, not a
+ * URL, and the content script legitimately carries the site pattern. Only a real absolute URL
  * literal has the `//` in front of the host.
  */
 export function hostNeedle(host: string): string {
