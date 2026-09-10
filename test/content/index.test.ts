@@ -302,6 +302,9 @@ describe("content entry — commands", () => {
 				{ square: "d4", color: expect.any(String) },
 			],
 			arrows: [{ from: "d2", to: "d4", color: expect.any(String) }],
+			// The overlay branch draws from screen coordinates, so every draw carries the
+			// orientation; nothing sent it before and an overlay mark was mirrored for black.
+			orientation: "white",
 		});
 		// a second mark replaces the first rather than stacking on it: native `game.markings` only
 		// ever *adds*, so a redraw without this clear left the old squares on the board for good
@@ -332,6 +335,45 @@ describe("content entry — commands", () => {
 		expect(bridge.callsOf("draw")).toHaveLength(2);
 		feed.command({ kind: "clearHighlight" }); // nothing drawn: no extra bridge call
 		expect(bridge.callsOf("clear")).toHaveLength(2);
+	});
+	// Fix A (the owner's live report, 2026-09-10): the mark of the move the hand is playing must be
+	// ours, not one of the site's markings, so it survives the presses the action is made of.
+	it("a highlight command carrying `overlay` asks the bridge for a forced-overlay draw", async () => {
+		const { feed, bridge } = boot("chesscom-live");
+		await waitFor(() => bridge.callsOf("getState").length > 0);
+		feed.command({ kind: "settings", highlightMoves: true });
+		feed.command({ kind: "highlight", from: "d2", to: "d4", style: "both" });
+		await sleep(10);
+		// The ordinary recommendation mark is unchanged: native markings, no flag on the wire.
+		expect(bridge.callsOf("draw")).toHaveLength(1);
+		expect(bridge.callsOf("draw")[0]?.payload).not.toHaveProperty("forceOverlay");
+
+		feed.command({ kind: "highlight", from: "d2", to: "d4", style: "both", overlay: true });
+		await sleep(10);
+		expect(bridge.callsOf("draw")).toHaveLength(2);
+		expect(bridge.callsOf("draw")[1]?.payload).toMatchObject({
+			forceOverlay: true,
+			orientation: "white",
+			highlights: [
+				{ square: "d2", color: expect.any(String) },
+				{ square: "d4", color: expect.any(String) },
+			],
+		});
+		// Still one mark on the board: the re-draw clears the native one it replaces.
+		expect(bridge.calls.at(-2)?.kind).toBe("clear");
+	});
+	it("the forced-overlay draw reports the orientation the board is actually in", async () => {
+		const bridge = new FakeBridge();
+		bridge.responses.set("getState", () => ({ flipped: true, playingAs: "b", turn: "w" }));
+		const { feed } = boot("chesscom-live", { bridge });
+		await waitFor(() => bridge.callsOf("getState").length > 0);
+		feed.command({ kind: "settings", highlightMoves: true });
+		feed.command({ kind: "highlight", from: "d2", to: "d4", style: "both", overlay: true });
+		await sleep(10);
+		expect(bridge.callsOf("draw").at(-1)?.payload).toMatchObject({
+			forceOverlay: true,
+			orientation: "black",
+		});
 	});
 	it("observeMove waits for the page side to acknowledge the clear before watching the board", async () => {
 		const { feed, bridge, dom } = boot("chesscom-live");

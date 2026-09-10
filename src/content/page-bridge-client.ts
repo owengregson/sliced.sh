@@ -151,6 +151,8 @@ interface DrawPayload {
 	orientation?: "white" | "black";
 	highlights?: Array<{ square: Square; color: string }>;
 	arrows?: Array<{ from: Square; to: Square; color: string }>;
+	/** Draw through the bridge's own SVG overlay even where native markings exist. */
+	forceOverlay?: boolean;
 }
 
 /** Content → page payload by kind (adapter shapes → wire letters). */
@@ -167,6 +169,9 @@ export function encodePayload(kind: string, payload: unknown): unknown {
 					[W.to]: a.to,
 					[W.color]: a.color,
 				})),
+				// Omitted unless asked for: the page reads `!q[forceOverlay]`, so an absent field is
+				// the native-markings default and nothing extra is put on the wire.
+				...(d.forceOverlay === true ? { [W.forceOverlay]: true } : {}),
 			};
 		}
 		case BRIDGE_KINDS.clear: {

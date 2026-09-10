@@ -97,6 +97,20 @@ export interface ArrowLine {
 	weight: number;
 }
 
+/** How a draw is to be rendered, where the page offers a choice. */
+export interface DrawOptions {
+	/**
+	 * Draw through the bridge's own SVG overlay instead of the site's native markings. The mark
+	 * for a move the hand is about to play has to survive the whole action — the approach, every
+	 * preview touch, the press, the drag, the release — and a native marking belongs to the site,
+	 * which clears its user markings on a left press on the board (the owner's live report,
+	 * 2026-09-10: "the move highlight disappears when the mouse starts its action"). Native
+	 * markings stay the default for an ordinary recommendation mark: they are the site's own
+	 * rendering and they need no DOM of ours.
+	 */
+	forceOverlay?: boolean;
+}
+
 export interface ProbeMatch {
 	concern: string;
 	index: number;
@@ -179,7 +193,7 @@ export interface SiteAdapter {
 	onGameEnd(cb: (result: GameResult) => void): () => void;
 
 	/** Draw the recommendation; only when asked — the adapter never draws on its own (§13.3). */
-	highlight(from: Square, to: Square, style: HighlightStyle): void;
+	highlight(from: Square, to: Square, style: HighlightStyle, options?: DrawOptions): void;
 	arrows(lines: ArrowLine[]): void;
 	/** Resolves once the page side has answered (or the bridge call timed out / failed). */
 	clearHighlights(): Promise<void>;
@@ -422,7 +436,8 @@ export abstract class AdapterBase implements SiteAdapter {
 	protected abstract watchMove(): MoveWatch;
 	protected abstract drawPayload(
 		highlights: Array<{ square: Square; color: string }>,
-		arrows: Array<{ from: Square; to: Square; color: string }>
+		arrows: Array<{ from: Square; to: Square; color: string }>,
+		options: DrawOptions
 	): unknown;
 	protected abstract clearPayload(): unknown;
 	/** The 8×8 board element (`wc-chess-board`). */
@@ -521,7 +536,7 @@ export abstract class AdapterBase implements SiteAdapter {
 		return () => this.endCbs.delete(cb);
 	}
 
-	highlight(from: Square, to: Square, style: HighlightStyle): void {
+	highlight(from: Square, to: Square, style: HighlightStyle, options: DrawOptions = {}): void {
 		const colors = this.colors();
 		const highlights =
 			style === "arrows"
@@ -531,7 +546,7 @@ export abstract class AdapterBase implements SiteAdapter {
 						{ square: to, color: colors.hlTo },
 					];
 		const arrows = style === "squares" ? [] : [{ from, to, color: colors.hlArrow }];
-		this.draw(highlights, arrows);
+		this.draw(highlights, arrows, options);
 	}
 
 	arrows(lines: ArrowLine[]): void {
@@ -1014,14 +1029,15 @@ export abstract class AdapterBase implements SiteAdapter {
 
 	private draw(
 		highlights: Array<{ square: Square; color: string }>,
-		arrows: Array<{ from: Square; to: Square; color: string }>
+		arrows: Array<{ from: Square; to: Square; color: string }>,
+		options: DrawOptions = {}
 	): void {
 		const bridge = this.readyBridge();
 		if (!bridge) return; // no DOM insertion from the adapter (§13.3)
 		bridge
 			.call<{ keys?: string[] } | undefined>(
 				BRIDGE_KINDS.draw,
-				this.drawPayload(highlights, arrows),
+				this.drawPayload(highlights, arrows, options),
 				BRIDGE_CALL_TIMEOUT_MS
 			)
 			.then((res) => {

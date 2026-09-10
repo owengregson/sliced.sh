@@ -7,8 +7,13 @@
  * service worker sends `settings`, whatever the stored default says).
  * `clearForExecution()` runs before every `observeMove` and
  * resolves only once the page side has acknowledged the clear (bounded by
- * the bridge call timeout, `TIMINGS.adapterBridgeTimeoutMs`), so no mark is
- * present at move-submission time.
+ * the bridge call timeout, `TIMINGS.adapterBridgeTimeoutMs`). `observeMove` is
+ * the *verifier*: the executor issues it after the hand has released, so that
+ * clear lands at the end of the action, not at its start — which is where the
+ * owner wants it (2026-09-10). §13.3 rule 4's "no mark at move-submission
+ * time" is overruled for the mark of the move being submitted, and for that
+ * mark alone: a `highlight` carrying `overlay` draws through the bridge's own
+ * SVG so the site's own press cannot take it away mid-action.
  *
  * A mark never stacks on a mark: a `highlight` / `arrow` while something of ours
  * is already drawn clears it first. The generic SVG overlay happens to redraw
@@ -20,14 +25,14 @@
  * that order.
  */
 
-import type { ArrowLine, SiteAdapter } from "@content/adapters/adapter";
+import type { ArrowLine, DrawOptions, SiteAdapter } from "@content/adapters/adapter";
 import type { GamePortCommand } from "@core/constants/messages";
 import type { HighlightStyle, Square } from "@typedefs/game";
 
 export interface Highlights {
 	enabled(): boolean;
 	setEnabled(on: boolean): void;
-	highlight(from: Square, to: Square, style: HighlightStyle): void;
+	highlight(from: Square, to: Square, style: HighlightStyle, options?: DrawOptions): void;
 	arrows(lines: ArrowLine[]): void;
 	/** Resolves once the page side acknowledged (a no-op when nothing was drawn). */
 	clear(): Promise<void>;
@@ -53,11 +58,11 @@ export function createHighlights(adapter: SiteAdapter, initiallyEnabled = false)
 			enabled = on;
 			if (!on) void clear();
 		},
-		highlight(from, to, style) {
+		highlight(from, to, style, options = {}) {
 			if (!enabled) return;
 			void clear();
 			drawn = true;
-			adapter.highlight(from, to, style);
+			adapter.highlight(from, to, style, options);
 		},
 		arrows(lines) {
 			if (!enabled || lines.length === 0) return;
@@ -70,7 +75,7 @@ export function createHighlights(adapter: SiteAdapter, initiallyEnabled = false)
 		apply(cmd) {
 			switch (cmd.kind) {
 				case "highlight":
-					api.highlight(cmd.from, cmd.to, cmd.style);
+					api.highlight(cmd.from, cmd.to, cmd.style, { forceOverlay: cmd.overlay === true });
 					return true;
 				case "arrow":
 					api.arrows(cmd.lines);

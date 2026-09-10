@@ -172,8 +172,14 @@ export const chesscomBridge = defineProgram({
 						kind: KINDS.draw,
 						body: [
 							js.const_("out", js.arr()),
+							// Native markings are the default; `forceOverlay` takes the overlay branch even
+							// when they exist, because a mark the site owns does not survive the board's own
+							// left press and the hand's action is nothing but presses.
 							js.if_(
-								js.and(game, js.and(js.member(game, "markings"), q)),
+								js.and(
+									game,
+									js.and(js.member(game, "markings"), js.and(q, js.not(js.member(q, W.forceOverlay))))
+								),
 								[
 									js.let_("n", js.num(0)),
 									js.forOf("h", orEmpty(js.member(q, W.highlights)), [

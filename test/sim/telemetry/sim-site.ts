@@ -55,6 +55,13 @@ export interface SimulatedSiteOptions {
 	 * `setTimeControl` to deliver it later, the way the page does.
 	 */
 	timeControl?: { baseMs: number; incMs: number } | null;
+	/**
+	 * Called for every command the service worker sends down the game port, in order, as it
+	 * arrives. `commands()` is the same stream sampled after the fact; this hook is for a test that
+	 * has to know *when* a command landed relative to what the page was doing (Fix A: is the board
+	 * still marked at the moment the hand presses?).
+	 */
+	onCommand?: (cmd: GamePortCommand) => void;
 }
 
 export interface SimulatedSite {
@@ -157,6 +164,7 @@ export async function createSimulatedSite(
 
 	const onCommand = (cmd: GamePortCommand): void => {
 		received.push(cmd);
+		options.onCommand?.(cmd);
 		if (!port) return;
 		if (cmd.kind === "geometry") {
 			if (cmd.promotion !== undefined) {

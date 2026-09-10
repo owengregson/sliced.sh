@@ -176,6 +176,22 @@ quirk here and fix the simulator — never bend the test to the simulator.
   `[{ frameId: 0, documentId: "sim-doc", result: undefined }]` unless
   `sim.scripting.respond` scripts it; nothing is injected.
 
+## The simulated chess site (`test/sim/telemetry/sim-site.ts`)
+
+- **A left press on the board clears the site's own user markings.** Modelled by
+  `boardMarks()` in `test/behavioral/game/mark-survives-the-hand.test.ts`,
+  which is the only place that assumes it: a `mousedown` removes a *native*
+  mark and leaves an overlay mark alone. chess.com is the only authority on
+  whether it is true — `docs/qa-checklist.md` B0.8–B0.9 is the row that
+  answers it. The production fix does not rest on it: the mark of a move the
+  hand is playing is drawn through the bridge's own `<svg>` either way, and if
+  the site turns out never to clear anything the overlay mark simply sits
+  there as the native one would have.
+- **The simulated site has no `.piece` elements**, so it cannot produce the
+  DOM renderer's mid-drag reading at all. The test that covers it posts the
+  reading the real adapter was measured to publish (same game, same ply, an
+  approximate FEN with the mover missing) straight down the game port.
+
 ## DOM (happy-dom)
 
 - happy-dom skips capture-phase listeners when an event is dispatched on the

@@ -249,6 +249,13 @@ export class GameSession implements SessionSource {
 	private snapshot: PositionSnapshot | null = null;
 	private rec: Recommendation | null = null;
 	private recNReasonable = 1;
+	/**
+	 * The recommendation whose mark is currently drawn through the bridge's own SVG overlay
+	 * (`markForExecution`), so the re-post happens once per mark and not on every hand-state
+	 * change. Reset by `clearBoardMarks` — after a clear there is no mark of ours at all — and by
+	 * any ordinary `postHighlight`.
+	 */
+	private markedOverlayFor: Recommendation | null = null;
 	private opponentInfo: { isBot: boolean; name: string; ratingEstimate: number | null } | null =
 		null;
 
@@ -1366,7 +1373,10 @@ export class GameSession implements SessionSource {
 			executor.on("aborted", (report) => this.onNotExecuted(report, "aborted")),
 			executor.on("skipped", (report) => this.onNotExecuted(report, "skipped")),
 			executor.on("hand", (hand) => {
-				if (hand !== "rest") this.apply("handStarted");
+				if (hand === "rest") return;
+				this.apply("handStarted");
+				// The hand is acting: the mark must now be one the site cannot take away.
+				this.markForExecution();
 			}),
 		];
 		// A game that follows an armed one keeps the hand armed (the debugger stays attached), and
@@ -1532,15 +1542,42 @@ export class GameSession implements SessionSource {
 		for (const cmd of commands) this.deps.link.post(this.deps.tabId, cmd);
 	}
 
-	private postHighlight(rec: Recommendation): void {
+	private postHighlight(rec: Recommendation, overlay = false): void {
 		const settings = this.deps.getSettings();
 		if (!this.mayAct() || !settings.automation.highlightMoves) return;
+		this.markedOverlayFor = overlay ? rec : null;
 		this.deps.link.post(this.deps.tabId, {
 			kind: "highlight",
 			from: rec.chosen.from,
 			to: rec.chosen.to,
 			style: settings.automation.highlightStyle,
+			...(overlay ? { overlay: true as const } : {}),
 		});
+	}
+
+	/**
+	 * The hand has started acting on `rec`: redraw its mark as *ours* before the first press.
+	 *
+	 * The owner's report of 2026-09-10 is that the mark vanishes "when the mouse starts its
+	 * action ... rather than when it finishes it". No clear of ours runs there (the only clear in
+	 * the execution path is `clearForExecution`, which the *verifier* issues after the hand has
+	 * released), which leaves the site: chess.com clears its own user markings on a left press on
+	 * the board, and the hand's action is a sequence of presses — each preview touch of another
+	 * piece is one, which is exactly the "even if its going to touch other pieces" detail. That is
+	 * site behaviour and cannot be proved from this repository, so the fix does not depend on it:
+	 * an overlay mark is an `<svg>` the bridge owns, so nothing the site does to *its* markings can
+	 * reach it, and if the overlay turns out not to render on the live canvas board the result is
+	 * exactly today's behaviour and nothing else changes.
+	 *
+	 * Once per mark: the re-post is a clear plus a draw on the page, so it must not repeat on every
+	 * hand-state change, and a retry of the same recommendation already has its overlay mark drawn.
+	 */
+	private markForExecution(): void {
+		const rec = this.rec;
+		const executor = this.executorHandle;
+		if (!rec || !executor || this.markedOverlayFor === rec) return;
+		if (executor.runningMove()?.rec !== rec) return;
+		this.postHighlight(rec, true);
 	}
 
 	/**
@@ -1555,6 +1592,7 @@ export class GameSession implements SessionSource {
 	 * replacing it (owner's live test, 2026-09-09: "old move highlights are not erased").
 	 */
 	private clearBoardMarks(): void {
+		this.markedOverlayFor = null;
 		this.deps.link.post(this.deps.tabId, { kind: "clearHighlight" });
 	}
 

@@ -190,7 +190,13 @@ export type GamePortMessage =
 
 /** SW → content */
 export type GamePortCommand =
-	| { kind: "highlight"; from: Square; to: Square; style: HighlightStyle }
+	/**
+	 * `overlay` asks the content script to draw through the bridge's own SVG overlay instead of
+	 * the site's native markings — the mark of a move the hand is acting on, which has to outlive
+	 * every press of that action (§13.3 rule 4's exception, the owner's ruling of 2026-09-10).
+	 * Absent: native markings, the default for an ordinary recommendation mark.
+	 */
+	| { kind: "highlight"; from: Square; to: Square; style: HighlightStyle; overlay?: true }
 	| { kind: "clearHighlight" }
 	| { kind: "arrow"; lines: Array<{ from: Square; to: Square; weight: number }> }
 	| { kind: "keybinds"; keybinds: Keybinds }
