@@ -39,7 +39,6 @@ export const BOOK = {
 export const PREMOVE = {
 	/** Premoves only in these §8.4b time-control classes. */
 	speeds: ["bullet", "blitz"] as const satisfies readonly TcClass[],
-
 	minElo: 1200,
 	/** `p = probBase + probRange·clamp((E − minElo)/probSpan, 0, 1)`. */
 	probBase: 0.35,

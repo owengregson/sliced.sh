@@ -1,7 +1,6 @@
 // test/content/adapters/geometry.test.ts
 import { describe, expect, it } from "bun:test";
 import { pointToSquare, squareRect, squareToPoint } from "@content/adapters/geometry";
-
 import type { Square } from "@typedefs/game";
 import { BOARD_RECT } from "./helpers";
 

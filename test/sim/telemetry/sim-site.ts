@@ -42,7 +42,6 @@ import type {
 
 export interface SimulatedSiteOptions {
 	myColor?: Color;
-
 	fen?: string;
 	gameId?: string;
 	pageKind?: PageKind;
@@ -100,7 +99,6 @@ export async function createSimulatedSite(
 	if (!tabDom) throw new Error("createSimulatedSite: the tab has no DOM (use sim.openTab)");
 	const dom: TabDom = tabDom;
 	const site: Site = "chesscom";
-
 	const myColor: Color = options.myColor ?? "w";
 	const gameId = options.gameId ?? "sim-game";
 	const pageKind: PageKind = options.pageKind ?? "live-game";

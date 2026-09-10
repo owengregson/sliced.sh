@@ -152,9 +152,9 @@ export const TIMING_CONSTANTS = {
 		lnNReasonable: -0.6,
 		swingBad: -0.3,
 		eloBullet: 0.6,
-		/** `t_premove ~ U(0, maxS)`; chess.com adds its fixed penalty. */
+		/** `t_premove ~ U(0, maxS)` plus the site's fixed submit penalty. */
 		maxS: 0.12,
-		chesscomPenaltyS: 0.1,
+		penaltyS: 0.1,
 	},
 	/** Appendix D §3a.5 instant reply. */
 	instant: {

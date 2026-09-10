@@ -25,7 +25,6 @@ describe("registry", () => {
 	it("lists the five §5.5 programs, the bridge as an entry with seed-derived entry args, and every program is clean", () => {
 		expect(programs.map((p) => [p.name, p.entry])).toEqual([
 			["chesscom-bridge", true],
-
 			["highlight-overlay", false],
 			["cursor-probe", false],
 			["focus-probe", false],

@@ -7,16 +7,19 @@
 
 import type { PersonaId } from "@typedefs/settings";
 
+/** The one supported site, as the panel names it — defined once, like every other string here. */
+const SITE = "chess.com";
+
 export const COPY = {
 	brand: {
 		name: "sliced",
 		product: "sliced.gg",
-		tagline: "Chess assistant for chess.com",
+		tagline: `Chess assistant for ${SITE}`,
 	},
 	nav: { game: "Game", settings: "Settings", engine: "Engine", viewSwitch: "View" },
 	login: {
 		title: "sliced",
-		subtitle: "Chess assistant for chess.com",
+		subtitle: `Chess assistant for ${SITE}`,
 		fieldLabel: "License key",
 		hint: "Keys look like SL-XXXX-XXXX-XXXX.",
 		button: "Continue",
@@ -32,7 +35,7 @@ export const COPY = {
 	},
 	unsupported: {
 		title: "Open a game to get started",
-		body: "sliced works on chess.com. Open a game in this tab and the panel will follow along.",
+		body: `sliced works on ${SITE}. Open a game in this tab and the panel will follow along.`,
 		note: "Auto-play stays off until a game starts.",
 	},
 	nonGame: {
@@ -41,7 +44,7 @@ export const COPY = {
 	},
 	waiting: {
 		title: "Waiting for a game",
-		meta: (site: string, engine: string): string => `On ${site} · ${engine}`,
+		meta: (engine: string): string => `On ${SITE} · ${engine}`,
 		engineReady: "engine ready",
 		engineLoading: "engine loading",
 		watching: "Watching this tab",
@@ -279,9 +282,8 @@ export const COPY = {
 			last: "Last action",
 			license: "License",
 		},
-		site: "chess.com",
-		target: (site: string, gameId: string): string => `${site} · game ${gameId}`,
-
+		site: SITE,
+		target: (gameId: string): string => `${SITE} · game ${gameId}`,
 		styleAuto: "auto",
 		profiles: {
 			manual: "Manual",
@@ -343,10 +345,8 @@ export const COPY = {
 		recheck: "Check again",
 		signedIn: (maskedKey: string): string => `Signed in with ${maskedKey}`,
 	},
-	unsupportedView: { chesscom: "chess.com", play: "Play" },
+	unsupportedView: { chesscom: SITE, play: "Play" },
 	waitingView: {
-		site: "chess.com",
-
 		engineStopped: "engine stopped",
 		opponent: "Opponent",
 		noOpponent: "No opponent yet",

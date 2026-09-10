@@ -73,7 +73,6 @@ export const HOST_OWNERS: Readonly<Record<string, readonly string[]>> = {
 	"sliced.sh": SW_AND_PANEL,
 	// NNUE mirror and its redirect target — both fetched by the SW.
 	"tests.stockfishchess.org": SW_AND_PANEL,
-
 	"data.stockfishchess.org": SW_AND_PANEL,
 	// The site, as a navigable link in the panel's Not-supported view.
 	"www.chess.com": SW_AND_PANEL,

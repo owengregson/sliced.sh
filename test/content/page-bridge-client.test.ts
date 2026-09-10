@@ -180,7 +180,6 @@ describe("PageBridgeClient — wire", () => {
 	it("codec helpers: decodeState rejects non-objects; encodePayload passes unknown kinds through", () => {
 		expect(decodeState(null)).toBeNull();
 		expect(decodeState("x")).toBeNull();
-
 		expect(encodePayload("cursor", undefined)).toBeUndefined();
 		expect(encodePayload("clear", undefined)).toBeUndefined();
 		expect(encodePayload("other", { a: 1 })).toEqual({ a: 1 });

@@ -19,13 +19,11 @@ export const TIMINGS = {
 	executorRetryDelayMs: [250, 600],
 	debuggerIdleDetachMs: 180_000,
 	licenseValidateTimeoutMs: 8_000,
-
 	autoQueueDelayRangeMs: [900, 2_600],
 	keybindDebounceMs: 150,
 	/** MAIN-world bridge: board retry, doubling up to the cap (Task 21). */
 	bridgeRetryMs: 250,
 	bridgeRetryMaxMs: 2_000,
-
 	/** Content cursor tracker: minimum spacing of `pointermove` samples posted on the game port (Task 21). */
 	cursorReportIntervalMs: 200,
 	/** Content entry: readiness poll while a live page has no readable board yet (Task 21). */

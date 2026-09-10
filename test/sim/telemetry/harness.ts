@@ -90,7 +90,6 @@ export interface SimulatedGameOptions {
 	seed: string;
 	moves: number;
 	persona?: PersonaId;
-
 	tcClass?: ExecutorGameConfig["tcClass"];
 	style?: ExecutorGameConfig["style"];
 	previewScale?: number;
@@ -256,7 +255,6 @@ export function fakeLines(legal: string[], nReasonable: number, rng: Rng): EvalL
 export async function runSimulatedGame(options: SimulatedGameOptions): Promise<SimulatedGame> {
 	const site: Site = "chesscom";
 	const persona = options.persona ?? SIM_TELEMETRY.game.persona;
-
 	const tcClass = options.tcClass ?? SIM_TELEMETRY.game.tcClass;
 	const targetElo = options.targetElo ?? SIM_TELEMETRY.game.targetElo;
 	const baseSec = options.clock?.baseSec ?? SIM_TELEMETRY.game.baseSec;
@@ -267,7 +265,6 @@ export async function runSimulatedGame(options: SimulatedGameOptions): Promise<S
 	const sim = createSimulator({ startAt: SIM_TELEMETRY.startAt });
 	sim.time.install();
 	const tabId = sim.openTab("https://www.chess.com/play/computer").tabId;
-
 	const focusApiCalls = { tabsUpdate: 0, windowsUpdate: 0, bringToFront: 0 };
 	const realTabsUpdate = sim.chrome.tabs.update;
 	sim.chrome.tabs.update = ((...args: unknown[]) => {
@@ -315,7 +312,6 @@ export async function runSimulatedGame(options: SimulatedGameOptions): Promise<S
 	if (!booted) throw new Error("harness: the service worker did not boot");
 	const swHandle: TelemetrySw = { context, ...booted };
 	const page = await createSimulatedSite(sim, tabId, { myColor: "w" });
-
 	await sim.time.runMicrotasks();
 
 	// Arm in the waiting view (§13.4): the debugger attaches before any move window.

@@ -28,7 +28,7 @@
  * exists. `startContent()` then returns a deferred handle — page kind from
  * the URL, no adapter, nothing sent — and completes the boot once the body
  * appears (`DOMContentLoaded` / `readystatechange` / a poll), so the
- * adapters never see a body-less document.
+ * adapter never sees a body-less document.
  *
  * Every listener / timer is released by `dispose()`. No page storage, no
  * synthetic events, no DOM insertion from this world (§13.3).
@@ -45,7 +45,6 @@ import {
 } from "@content/adapters/adapter";
 import { createChesscomAdapter } from "@content/adapters/chesscom";
 import { pageKindFromPath } from "@content/adapters/page-kind";
-
 import { occupancyOf, waitForPromotionRect } from "@content/board-state";
 import { createCursorTracker } from "@content/cursor-tracker";
 import { createFeedPort, type FeedPort } from "@content/feed-port";
@@ -105,7 +104,7 @@ export function startContent(options: ContentOptions = {}): ContentHandle | null
 	return deferUntilBody(site, win, doc, options);
 }
 
-/** `document_start` path: wait for `<body>` before touching the adapters. */
+/** `document_start` path: wait for `<body>` before touching the adapter. */
 function deferUntilBody(
 	site: Site,
 	win: Window,
@@ -132,7 +131,6 @@ function deferUntilBody(
 	return {
 		site,
 		pageKind: () => inner?.pageKind() ?? pageKindFromPath(win.location.pathname),
-
 		adapter: () => inner?.adapter() ?? null,
 		dispose() {
 			stop();
@@ -151,7 +149,6 @@ function bootContent(
 	const ownBridge = options.bridge === undefined;
 	const bridge = options.bridge ?? createPageBridgeClient({ window: win });
 	const adapter = createChesscomAdapter({ document: doc, window: win, bridge });
-
 	const highlights = createHighlights(adapter, false);
 	let keybinds: Keybinds = { ...DEFAULT_KEYBINDS, global: false };
 	let pageKind = adapter.detectPageKind();

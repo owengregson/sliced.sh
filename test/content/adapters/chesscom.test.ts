@@ -474,6 +474,36 @@ describe("ChessComAdapter — game start keying (fix round 1)", () => {
 		await sleep(SETTLE);
 		expect(starts.length).toBe(1);
 	});
+	it("fires once on a rematch that reuses the board element (ply reset, same <wc-chess-board>)", async () => {
+		// `/play/computer` and `/play/online` have no URL game id, and chess.com's rematch reuses the
+		// board element — so the only signal is `gameIdentity`'s ply-reset branch (ply 0 after ≥ 2).
+		const dom = loadFixture("chesscom-computer");
+		cleanups.push(installWindowGlobals(dom.window));
+		resetToStart(dom);
+		const adapter = createChesscomAdapter({ document: pageDocument(dom), window: pageWindow(dom) });
+		cleanups.push(() => adapter.destroy());
+		const board = dom.query("wc-chess-board");
+		const starts: number[] = [];
+		const positions: AdapterPositionSnapshot[] = [];
+		adapter.onGameStart(() => starts.push(1));
+		adapter.onPositionChange((sn) => positions.push(sn));
+		pushMove(dom, "52", "54", "e4", 1);
+		await sleep(SETTLE);
+		pushMove(dom, "57", "55", "e5", 2);
+		await sleep(SETTLE);
+		expect(adapter.getPly()).toBe(2);
+		expect(starts.length).toBe(0);
+		const firstGameId = positions.at(-1)?.gameId;
+		// the rematch: back to the start position with an empty move list, same board element
+		resetToStart(dom);
+		await sleep(SETTLE);
+		expect(dom.query("wc-chess-board")).toBe(board); // the element really was not replaced
+		expect(adapter.getPly()).toBe(0);
+		expect(starts.length).toBe(1);
+		expect(positions.at(-1)?.gameId).not.toBe(firstGameId);
+		await sleep(SETTLE);
+		expect(starts.length).toBe(1);
+	});
 	it("with a URL game id, plies never start a game; a new id does", async () => {
 		const { dom, adapter } = boot("chesscom-live");
 		const starts: number[] = [];

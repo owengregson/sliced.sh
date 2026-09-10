@@ -41,7 +41,6 @@ describe("updateView", () => {
 		const view = createUpdateView({
 			version: "2.1",
 			notes: "Auto-play now verifies each move on the live board.",
-
 			onUpdate: () => updates.push("update"),
 		});
 		cleanup = await view.mount(makeContext(container, store));

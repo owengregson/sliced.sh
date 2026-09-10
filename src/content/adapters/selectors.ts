@@ -2,7 +2,6 @@
  * chess.com selector registry (C1 registry file; Appendix C §5 transcribed once).
  *
  * Every selector string used under `src/content/**` lives here. Arrays are
-
  * ordered candidate ladders (newest markup first) consumed through
  * `queryFirst` / `queryAllFirst`; `probe()` reports which index matched per
  * concern. Single strings are stable structural anchors or class names.

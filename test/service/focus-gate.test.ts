@@ -19,7 +19,6 @@ beforeEach(() => {
 	sim = createSimulator({ startAt: 1_000_000 });
 	tabId = sim.openTab("https://www.chess.com/game/live/1").tabId;
 	other = sim.openTab("https://www.chess.com/play/online", { active: false }).tabId;
-
 	(globalThis as Record<string, unknown>).chrome = sim.chrome;
 	link = fakeLink({ [tabId]: 1, [other]: 1 });
 	gate = new FocusGate(link);

@@ -118,7 +118,6 @@ describe("site-detect", () => {
 		expect(detectSite("CHESS.com")).toBe("chesscom");
 		expect(detectSite("notchess.com")).toBeNull();
 		expect(detectSite("lichess.org")).toBeNull();
-
 		expect(detectSite("example.test")).toBeNull();
 	});
 	it("startContent returns null off-site and boots nothing", () => {
@@ -487,7 +486,6 @@ describe("content entry — document_start (no <body> yet)", () => {
 	});
 	it("completes the deferred boot from the readiness poll when no DOMContentLoaded arrives", async () => {
 		const dom = createTabDom("https://www.chess.com/game/174252022572");
-
 		cleanups.push(installWindowGlobals(dom.window));
 		dom.document.documentElement.innerHTML = "<head></head>";
 		dom.document.body?.remove();

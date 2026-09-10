@@ -1,7 +1,6 @@
 // test/content/adapters/clocks.test.ts
 import { describe, expect, it } from "bun:test";
 import { activeClockColor, parseClockText, readClock } from "@content/adapters/clocks";
-
 import { loadFixture, pageDocument } from "./helpers";
 
 describe("parseClockText", () => {

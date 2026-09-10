@@ -8,7 +8,6 @@ import type { TimingPlan } from "@typedefs/timing";
 
 /** The one supported site. Kept as a named type so snapshots stay self-describing. */
 export type Site = "chesscom";
-
 export type PageKind =
 	| "live-game"
 	| "live-spectate"

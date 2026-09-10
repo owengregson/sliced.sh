@@ -11,8 +11,8 @@
  * (overlay fallback), no window listener before the board exists,
  * single-letter wire fields (`BRIDGE_WIRE`), no literal
  * selector / colour / token (all bound from `SELECTORS`, `TOKENS`,
- * `deriveToken` by the generator). Both manifest bridges load on both sites;
- * this one stays silent until the chess.com board element exists.
+ * `deriveToken` by the generator). The manifest injects this program on every
+ * chess.com page; it stays silent until the board element exists.
  */
 
 import { BRIDGE_WIRE as W } from "@core/constants/bridge";

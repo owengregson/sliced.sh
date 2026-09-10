@@ -1,6 +1,11 @@
 // test/content/adapters/move-list.test.ts
 import { describe, expect, it } from "bun:test";
-import { normalizeSan, readMoveList, sanFromMoveNode } from "@content/adapters/move-list";
+import {
+	normalizeSan,
+	parseResultText,
+	readMoveList,
+	sanFromMoveNode,
+} from "@content/adapters/move-list";
 import { createTabDom } from "@test/sim/dom/tab-dom";
 import { loadFixture, pageDocument, q } from "./helpers";
 
@@ -18,6 +23,21 @@ describe("chess.com move list", () => {
 		expect(list.sans).toEqual(["e4", "e5", "Bc4", "Nc6", "Qh5", "Nf6", "Qxf7#"]);
 		expect(list.selectedIndex).toBe(6);
 		expect(list.result).toBe("1-0");
+	});
+	it("reads a drawn result row, which chess.com writes with the ½-½ glyph", () => {
+		const dom = loadFixture("chesscom-gameover");
+		q(dom, ".result-row .game-result").textContent = "½-½ ";
+		expect(readMoveList(pageDocument(dom)).result).toBe("1/2-1/2");
+	});
+	it("parseResultText accepts both draw spellings and rejects anything else", () => {
+		expect(parseResultText("1-0")).toBe("1-0");
+		expect(parseResultText("0-1")).toBe("0-1");
+		expect(parseResultText("1/2-1/2")).toBe("1/2-1/2");
+		expect(parseResultText(" ½-½ ")).toBe("1/2-1/2");
+		expect(parseResultText("*")).toBeNull();
+		expect(parseResultText("")).toBeNull();
+		expect(parseResultText(null)).toBeNull();
+		expect(parseResultText(undefined)).toBeNull();
 	});
 	it("maps unicode figurines and strips annotations", () => {
 		expect(normalizeSan("♘f3 ")).toBe("Nf3");

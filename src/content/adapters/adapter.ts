@@ -206,7 +206,6 @@ export const BRIDGE_KINDS = {
 } as const;
 
 /** Normalised `getState` / `move` / `state` payload from the bridge. */
-
 export interface BridgeState {
 	fen?: string;
 	turn?: Color | 1 | 2;
@@ -216,7 +215,6 @@ export interface BridgeState {
 	lastMove?: { from: Square; to: Square; san?: string };
 	result?: string;
 	gameOver?: boolean;
-
 	/** chess.com `timeControl.get()` / `timestamps.get()` as the site reports them (opaque). */
 	timeControl?: unknown;
 	timestamps?: unknown;
@@ -384,7 +382,6 @@ export abstract class AdapterBase implements SiteAdapter {
 	): unknown;
 	protected abstract clearPayload(): unknown;
 	/** The 8×8 board element (`wc-chess-board`). */
-
 	protected abstract boardElement(): Element | null;
 	/** Whether the page renders a move list at all (parity is meaningless without one). */
 	protected abstract hasMoveList(): boolean;

@@ -5,7 +5,6 @@
  */
 
 import { LOCAL_KEYS, SESSION_KEYS } from "@core/constants/storage-keys";
-
 import type { SessionStats } from "@typedefs/game";
 import type { LicenseState, PersonaId, Settings } from "@typedefs/settings";
 import type { TimingLogEntry } from "@typedefs/timing";

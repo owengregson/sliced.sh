@@ -20,7 +20,6 @@ import type { Rng } from "@core/rng";
 import { clamp } from "@core/util/clamp";
 import type { EvalLine } from "@typedefs/engine";
 import type { ChosenMove } from "@typedefs/game";
-
 import { cpEffective, winProb } from "../elo-map";
 import { type BookMove, loadBook, type PolyglotBook } from "./polyglot";
 
@@ -62,7 +61,6 @@ export interface BookContext {
 	/** Effective Elo `E` (§7.2 step 1). */
 	targetElo: number;
 	/** `Settings.strength.useOpeningBook`. */
-
 	useOpeningBook: boolean;
 	rng: Rng;
 	/** The engine's current MultiPV lines (side-to-move POV), when available, for the trap check. */
@@ -142,7 +140,6 @@ function fmt(n: number): string {
 
 export function createBookPolicy(deps: BookPolicyDeps = {}): BookPolicy {
 	const load = deps.loadBook ?? fetchBundledBook;
-
 	/** Loaded books (or `null` after a failed load, so it is not retried every move). */
 	const books = new Map<BookName, Promise<PolyglotBook | null>>();
 	let disposed = false;
@@ -186,10 +183,15 @@ export function createBookPolicy(deps: BookPolicyDeps = {}): BookPolicy {
 		return chosen;
 	}
 
-	async function fromPolyglot(ctx: BookContext, rationale: string[]): Promise<ChosenMove | null> {
+	/**
+	 * A refusal (leaving the book early, or the §7.3 trap check) ends the book path and returns
+	 * `null`, so its reason cannot ride along on a `ChosenMove.rationale` the way the accepted
+	 * pick's does — it is logged instead of being dropped.
+	 */
+	async function fromPolyglot(ctx: BookContext): Promise<ChosenMove | null> {
 		const E = ctx.targetElo;
 		if (E < BOOK.weakElo && ctx.rng.chance(BOOK.weakLeaveProb)) {
-			rationale.push("polyglot: left book early (weak target)");
+			log.debug("book: left book early (weak target)", E);
 			return null;
 		}
 		const name = bookNameFor(E);
@@ -207,20 +209,18 @@ export function createBookPolicy(deps: BookPolicyDeps = {}): BookPolicy {
 		if (!pick) return null;
 		const facts = lineFacts(pick.uci, ctx.lines);
 		if (isTrap(E, facts)) {
-			rationale.push(`polyglot: ${pick.uci} is a trap, loss ≥ ${fmt(facts.lossLowerBound)}`);
+			log.debug("book: refused a trap", pick.uci, fmt(facts.lossLowerBound));
 			return null;
 		}
 		const total = entries.reduce((sum, m) => sum + m.weight, 0);
-		rationale.push(`polyglot ${BOOKS[name]}: weight ${pick.weight}/${total}`);
-		return finish(pick.uci, ctx, facts, rationale);
+		return finish(pick.uci, ctx, facts, [`polyglot ${BOOKS[name]}: weight ${pick.weight}/${total}`]);
 	}
 
 	return {
 		async bookMove(ctx) {
 			if (disposed || !ctx.useOpeningBook || ctx.ply > BOOK.maxPly) return null;
-			return fromPolyglot(ctx, []);
+			return fromPolyglot(ctx);
 		},
-
 		dispose() {
 			disposed = true;
 			books.clear();

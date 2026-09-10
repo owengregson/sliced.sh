@@ -17,7 +17,6 @@ const S = 1000;
 const M = 60 * S;
 
 /** One time control per `tcClass` band (Lichess's `base + 40 × inc`, seconds). */
-
 const BULLET: TimeControl = { baseMs: 60 * S, incMs: 0 }; // 60 s → bullet
 const BLITZ: TimeControl = { baseMs: 3 * M, incMs: 0 }; // 180 s → blitz
 const RAPID: TimeControl = { baseMs: 10 * M, incMs: 0 }; // 600 s → rapid

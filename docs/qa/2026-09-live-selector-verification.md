@@ -8,7 +8,6 @@ class strings / style attributes to check the regexes.
 > supported site), so the lichess section below no longer describes any shipped selector. It is
 > kept verbatim as the dated evidence of what was verified on the day.
 
-
 ## lichess.org — https://lichess.org/tv (live game, round app)
 | selector | result |
 |---|---|

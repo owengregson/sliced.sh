@@ -223,7 +223,6 @@ describe("trap check for moves outside the engine lines", () => {
 describe("gammaFor / sampleByFrequency (Appendix E §2.3)", () => {
 	const weighted = (uci: string, weight: number) => ({ uci, weight });
 	const keepOnePercent = (w: number, total: number) => w >= BOOK.minWeightShare * total;
-
 	it("γ(E) = 0.75 + 0.25·clamp((E − 1200)/1200, 0, 1)", () => {
 		expect(gammaFor(800)).toBeCloseTo(0.75);
 		expect(gammaFor(1200)).toBeCloseTo(0.75);
@@ -231,7 +230,6 @@ describe("gammaFor / sampleByFrequency (Appendix E §2.3)", () => {
 		expect(gammaFor(2400)).toBeCloseTo(1);
 		expect(gammaFor(3000)).toBeCloseTo(1);
 	});
-
 	it("drops items that fail `keep`", () => {
 		const items = [weighted("e2e4", 900), weighted("d2d4", 80), weighted("h2h4", 4)];
 		const rng = createRng(1);
@@ -244,7 +242,6 @@ describe("gammaFor / sampleByFrequency (Appendix E §2.3)", () => {
 		expect(seen.has("d2d4")).toBe(true);
 		expect(seen.has("h2h4")).toBe(false); // 4 < 0.01·984
 	});
-
 	it("samples p ∝ n^γ: flatter for weak E, near-proportional for strong E", () => {
 		const items = [weighted("e2e4", 800), weighted("d2d4", 200)];
 		const share = (E: number) => {
@@ -261,7 +258,6 @@ describe("gammaFor / sampleByFrequency (Appendix E §2.3)", () => {
 		expect(share(800)).toBeGreaterThan(0.71);
 		expect(share(800)).toBeLessThan(0.77);
 	});
-
 	it("returns null when nothing survives the filter", () => {
 		expect(
 			sampleByFrequency([], (x: { weight: number }) => x.weight, keepOnePercent, 1500, createRng(1))

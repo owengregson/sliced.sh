@@ -9,7 +9,6 @@
  * tokens / overlay class from `deriveToken(seed, SPOOF_PURPOSES.*)` — the same
  * derivation `src/content/page-bridge-client.ts` performs at runtime with
  * `__SL_SPOOF_SEED__`.
-
  *
  * Delivery of the §5.5 `cursor-probe` (for Task 18, the executor): the
  * canonical path is the **bridge** — each bridge keeps the last trusted

@@ -36,7 +36,6 @@
 			"run_at": "document_start"
 		}
 	],
-
 	"commands": {
 		"play-best-move": {
 			"suggested_key": {
@@ -69,7 +68,6 @@
 	"host_permissions": [
 		"*://*.chess.com/*",
 		"https://tests.stockfishchess.org/*",
-
 		"https://data.stockfishchess.org/*",
 		"https://sliced.sh/*"
 	],

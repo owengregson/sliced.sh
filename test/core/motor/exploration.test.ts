@@ -216,7 +216,6 @@ describe("ExplorationPlanner.plan", () => {
 
 describe("second previews with a castling position", () => {
 	// King e1 may be moved onto rook h1 (castling expressed as king-onto-rook); a switch-resolved
-
 	// king preview leaves e1 selected, so a second preview must never press h1/f1/g1.
 	const DESTS2: Partial<Record<Square, Square[]>> = {
 		e1: ["f1", "g1", "h1"],

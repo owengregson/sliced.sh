@@ -6,7 +6,6 @@
 
 import type { GameResult } from "@typedefs/game";
 import { queryAllFirst, queryFirst } from "./query";
-
 import { SELECTORS } from "./selectors";
 
 const FIGURINES: Record<string, string> = {

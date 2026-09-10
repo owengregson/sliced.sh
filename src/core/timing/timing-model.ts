@@ -234,7 +234,7 @@ export class TimingModel {
 		if (mode !== "premove") tSec *= this.settings.speedScale;
 		const median = this.head.median(f, this._persona, st, alloc) * comp;
 		if (f.opp_is_bot && mode !== "premove") why.push("bot opponent: mirror coefficient floored");
-		if (mode === "premove" && ctx.site === "chesscom") tSec += C.premove.chesscomPenaltyS;
+		if (mode === "premove") tSec += C.premove.penaltyS;
 
 		const motor = this.motorFor(f, ctx, mode);
 		const orientationMs = mode === "premove" ? 0 : sampleOrientationMs(f, this.rng);

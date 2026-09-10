@@ -209,7 +209,6 @@ flag, the gate and the login view's force-valid path alone.
    report in the build log.
 4. Work through `docs/qa-checklist.md` on a real browser and a real chess.com game; record the
    results.
-
 5. Publish the zip, and update the `version` in the manifest served at `URLS.websiteManifest` —
    that file is what every installed copy polls to decide whether an update exists.
 6. Note the Chrome version and OS you tested on in the release notes.

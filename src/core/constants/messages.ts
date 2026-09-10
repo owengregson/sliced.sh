@@ -191,7 +191,7 @@ export type GamePortCommand =
 	/**
 	 * Task 18: square/board/promotion rects on demand. `promotion` asks the adapter to wait
 	 * for that picker (up to `timeoutMs`) and answer with its rect; `to` is the destination
-	 * square the picker belongs to, which both adapters need to place it.
+	 * square the picker belongs to, which the adapter needs to place it.
 	 */
 	| { kind: "geometry"; id: string; promotion?: PromoPiece; to?: Square; timeoutMs?: number }
 	/** Ask for the last known trusted pointer position; answered by `cursorProbeResult`. */

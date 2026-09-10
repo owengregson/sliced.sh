@@ -58,9 +58,7 @@ describe("manifest host_permissions", () => {
 	it("declare no host permission that nothing in the registry asks for", () => {
 		const known = [
 			SITE_MATCHES.chesscom,
-
 			...URLS.nnueMirrorHosts,
-
 			`${new URL(URLS.website).origin}/*`,
 		];
 		for (const pattern of manifest.host_permissions) expect(known).toContain(pattern);

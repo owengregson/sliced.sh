@@ -1,6 +1,6 @@
 /**
  * `PageBridgeClient` — the ISOLATED-world end of the MAIN ⇄ ISOLATED bridge
- * (Task 21), implementing the adapters' `PageBridge`.
+ * (Task 21), implementing the adapter's `PageBridge`.
  *
  * Wire (§13.3 rule 5): `window.postMessage({ [key]: token, k, i?, p? },
  * location.origin)` both ways, where `key = deriveToken(seed,
@@ -8,7 +8,7 @@
  * pageToken)`, this side posts `deriveToken(seed, contentToken)`, and each
  * side accepts only the other's value — no direction field, no product
  * name. Payload fields are the single letters of `BRIDGE_WIRE`; this module
- * is the codec between them and the adapters' `BridgeState` / draw shapes.
+ * is the codec between them and the adapter's `BridgeState` / draw shapes.
  *
  * `call` correlates replies by `i` and rejects on timeout; `on` subscribes
  * to unsolicited page events; `isAvailable()` turns true once the page side
@@ -91,7 +91,6 @@ export function decodeState(p: unknown): BridgeState | null {
 	const result = str(p[W.result]);
 	if (result !== undefined) out.result = result;
 	if (typeof p[W.gameOver] === "boolean") out.gameOver = p[W.gameOver] as boolean;
-
 	if (p[W.timeControl] !== undefined && p[W.timeControl] !== null)
 		out.timeControl = p[W.timeControl];
 	if (p[W.timestamps] !== undefined && p[W.timestamps] !== null) out.timestamps = p[W.timestamps];

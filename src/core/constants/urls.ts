@@ -22,7 +22,6 @@ export const URLS = {
 	 */
 	websiteManifest: `${WEBSITE}/manifest.json`,
 	nnueMirror: "https://tests.stockfishchess.org/api/nn/",
-
 	/**
 	 * Match patterns the manifest's `host_permissions` must contain for the SW's net
 	 * download (Task 12): the mirror answers `302 → data.stockfishchess.org` without

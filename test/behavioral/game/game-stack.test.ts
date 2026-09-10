@@ -85,7 +85,6 @@ beforeEach(async () => {
 		},
 	});
 	site = await createSimulatedSite(sim, tabId, { myColor: "w" });
-
 	await settle();
 });
 

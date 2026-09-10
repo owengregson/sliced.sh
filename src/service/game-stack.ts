@@ -20,7 +20,6 @@ import { log } from "@core/logger";
 import type { MessageRouter } from "@core/messaging/router";
 import { getSettings, onSettingsChanged } from "@core/storage/settings-storage";
 import { createBookPolicy } from "@core/strength/book/book-policy";
-
 import { ChessMimicHead, selectBand } from "@core/timing/chessmimic-head";
 import { TimingLogWriter } from "@core/timing/timing-log";
 import { V1ParametricHead } from "@core/timing/v1-head";
@@ -178,7 +177,6 @@ export function createGameStack(options: GameStackOptions): GameStack {
 			timingLog.dispose();
 			inferPort.dispose();
 			book.dispose();
-
 			focus.dispose();
 			ownership.dispose();
 			debuggerManager.dispose();

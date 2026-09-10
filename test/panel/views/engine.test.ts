@@ -322,7 +322,7 @@ describe("engine view — executor", () => {
 		};
 		const root = await mountView(s);
 		expect(value(root, "debugger")).toBe(COPY.executor.attached);
-		expect(value(root, "target")).toBe(COPY.engineView.target("chess.com", "abc123"));
+		expect(value(root, "target")).toBe(COPY.engineView.target("abc123"));
 		expect(value(root, "input")).toBe(
 			COPY.engineView.inputMode(COPY.execution.drag, COPY.engineView.profiles.natural)
 		);
