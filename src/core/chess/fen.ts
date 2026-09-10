@@ -63,6 +63,22 @@ export function sideToMove(fen: string): Color | null {
 	return parseFen(fen)?.turn ?? null;
 }
 
+/**
+ * The turn field alone, read leniently: field 2 of the string, without asking chess.js whether the
+ * rest of the position is legal.
+ *
+ * `sideToMove` goes through `validateFen`, which needs all six fields well formed. A site that
+ * answers a position chess.js rejects — or a five-field FEN, or one with a malformed castling field
+ * — therefore yields `null` there, and a *guard* built on that reads as "we cannot tell whose move
+ * it is" and holds the position. Whose move it is does not depend on the legality of the rest, so
+ * the guards read the one field the turn actually lives in, and reserve `null` for a FEN that does
+ * not state a turn at all.
+ */
+export function turnFieldOf(fen: string): Color | null {
+	const field = fen.trim().split(/\s+/)[1];
+	return field === "w" || field === "b" ? field : null;
+}
+
 /** Ply index (0 at the start position) implied by the FEN's move counters. */
 export function plyOf(parts: Pick<FenParts, "turn" | "fullmove">): number {
 	return (parts.fullmove - 1) * 2 + (parts.turn === "b" ? 1 : 0);

@@ -21,6 +21,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import type { AdapterPositionSnapshot } from "@content/adapters/adapter";
 import { createChesscomAdapter } from "@content/adapters/chesscom";
 import { sideToMove } from "@core/chess/fen";
+import { LIMITS } from "@core/constants/limits";
 import { installWindowGlobals, type LayoutRect, type TabDom } from "@test/sim/dom/tab-dom";
 import { FakeBridge, loadFixture, pageDocument, pageWindow, sleep, waitFor } from "./helpers";
 
@@ -179,5 +180,136 @@ describe("ChessComAdapter — sideToMove never contradicts its own FEN", () => {
 		expect(snapshot.approximate).toBe(true);
 		expect(sideToMove(snapshot.fen)).not.toBeNull();
 		expect(snapshot.sideToMove).toBe(sideToMove(snapshot.fen) ?? "w");
+	});
+});
+
+describe("ChessComAdapter — a mode the adapter cannot read never yields a spectator's colour", () => {
+	/**
+	 * `getPlayingAs()` is the one reading only a player has. Once the bridge has answered a mode at
+	 * all, the ladder must end there: falling through to the render hands the owner the *bottom
+	 * player's* colour for a game they are only watching, and the snapshot is then internally
+	 * consistent, so every session guard passes and the assistant recommends, marks and schedules a
+	 * move in someone else's game.
+	 */
+	it("an unrecognised mode with no playingAs answers null, not the bottom clock's colour", async () => {
+		const { dom, adapter } = boot(() => ({ fen: START, mode: "spectating" }), {
+			ply0: true,
+			bottom: "w",
+			active: "w",
+		});
+		await waitFor(() => adapter.readSnapshot() !== null);
+		// the clocks are right there and say white is at the bottom…
+		expect(dom.query(".clock-bottom").classList.contains("clock-white")).toBe(true);
+		// …and it is not ours to take
+		expect(adapter.getMyColor()).toBeNull();
+		expect(adapter.readSnapshot()?.myColor).toBeNull();
+	});
+
+	it("an unrecognised mode WITH playingAs still answers the site's own colour", async () => {
+		// The other half: a renamed mode must not strand a live game colourless for its whole length
+		// either, because `GameSession.mayActOn` holds on a null colour with nothing to release it.
+		const { adapter } = boot(() => ({ fen: START, mode: "spectating", playingAs: 2 }), {
+			ply0: true,
+			bottom: "b",
+			active: "w",
+		});
+		await waitFor(() => adapter.getMyColor() === "b");
+		expect(adapter.readSnapshot()?.myColor).toBe("b");
+	});
+
+	it("mode 'observing' during a game of our own no longer strands the session colourless", async () => {
+		// The case the brief names. `detectPageKind()` answers `live-spectate` here, so the old rung 1
+		// returned `null` for the whole game; `getPlayingAs()` still names our colour.
+		const { adapter } = boot(() => ({ fen: START, mode: "observing", playingAs: 2 }), {
+			ply0: true,
+			bottom: "b",
+			active: "w",
+		});
+		await waitFor(() => adapter.getMyColor() === "b");
+		expect(adapter.detectPageKind()).toBe("live-spectate");
+		expect(adapter.readSnapshot()?.myColor).toBe("b");
+	});
+
+	it("a real spectator is still colourless: mode 'observing' with no playingAs", async () => {
+		const { adapter } = boot(() => ({ fen: START, mode: "observing" }), {
+			ply0: true,
+			bottom: "w",
+			active: "w",
+		});
+		await waitFor(() => adapter.readSnapshot() !== null);
+		expect(adapter.getMyColor()).toBeNull();
+		expect(adapter.readSnapshot()?.myColor).toBeNull();
+	});
+});
+
+describe("ChessComAdapter — only the site may correct a colour we already know", () => {
+	it("a board flip cannot invert a known colour: the render may introduce one, never overturn it", async () => {
+		// Mid-game canvas board with the move list present (the replay supplies the FEN) and the bridge
+		// answering nothing, so the colour is render-sourced: the bottom clock. The owner then presses
+		// "flip board" — or the clocks re-render — and the bottom colour swaps on an unmoved position.
+		// Delivering that would make the session recommend and draw the opponent's moves for the rest
+		// of the game, which is the very defect this lane closes, entered from the other end.
+		const { dom, adapter } = boot(() => ({}), { bottom: "w", active: "w" });
+		await waitFor(() => adapter.readSnapshot() !== null);
+		expect(adapter.readSnapshot()?.myColor).toBe("w");
+		const seen: AdapterPositionSnapshot[] = [];
+		adapter.onPositionChange((s) => seen.push(s));
+
+		setClocks(dom, "b", "w");
+		await waitFor(() => adapter.getMyColor() === "b");
+		await sleep(SETTLE);
+		// the adapter's own reading follows the render (it is the orientation source), the session is
+		// never told
+		expect(seen).toEqual([]);
+	});
+
+	it("the site's own getPlayingAs() does correct it, and a bounded number of times", async () => {
+		// Each alternation is an authoritative answer, so each is a legitimate correction — until the
+		// per-game cap, which exists because this is the only republish trigger that is not
+		// structurally one-shot.
+		let as: 1 | 2 = 1;
+		const { adapter, bridge } = boot(() => ({ fen: START, mode: "playing", playingAs: as }), {
+			ply0: true,
+			bottom: "w",
+			active: "w",
+		});
+		await waitFor(() => adapter.getMyColor() === "w");
+		const seen: AdapterPositionSnapshot[] = [];
+		adapter.onPositionChange((s) => seen.push(s));
+		for (let i = 0; i < LIMITS.colourCorrectionsPerGame + 3; i++) {
+			as = as === 1 ? 2 : 1;
+			bridge.emit("state", {});
+			await sleep(SETTLE);
+		}
+		expect(seen.length).toBeGreaterThan(0);
+		expect(seen.length).toBe(LIMITS.colourCorrectionsPerGame);
+	});
+});
+
+describe("ChessComAdapter — reconciling as it reads keeps the dedupe key stable", () => {
+	it("a flapping active-clock class republishes nothing while the position stands still", async () => {
+		// Why the reconcile belongs in `read()` and not only in `AdapterBase`: the dedupe key is
+		// `placement|sideToMove`, built from the same value the snapshot publishes. Settling the
+		// disagreement before the key is built keeps one position keyed one way; settling it afterwards
+		// leaves the key naming the turn that was *rejected*, so the class moving back and forth
+		// between the clocks republishes an unmoved position every time.
+		//
+		// Mid-game canvas board, bridge silent, so the replay supplies a FEN that is white to move
+		// throughout. Only the clocks' turn class moves.
+		const { dom, adapter } = boot(() => ({}), { bottom: "b", active: "b" });
+		await waitFor(() => adapter.readSnapshot() !== null);
+		const fen = adapter.readSnapshot()?.fen ?? "";
+		expect(sideToMove(fen)).toBe("w");
+		const seen: AdapterPositionSnapshot[] = [];
+		adapter.onPositionChange((s) => seen.push(s));
+
+		for (const active of ["w", "b", "w", "b"] as const) {
+			setClocks(dom, "b", active);
+			await sleep(SETTLE);
+		}
+		// the position never moved, and the turn it publishes never moved either
+		expect(adapter.readSnapshot()?.fen).toBe(fen);
+		expect(adapter.readSnapshot()?.sideToMove).toBe("w");
+		expect(seen).toEqual([]);
 	});
 });

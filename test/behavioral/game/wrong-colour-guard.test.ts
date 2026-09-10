@@ -42,6 +42,16 @@ function position(over: Partial<PositionSnapshot> = {}): PositionSnapshot {
 }
 
 const highlights = (): GamePortCommand[] => h.commands().filter((c) => c.kind === "highlight");
+const clears = (): GamePortCommand[] => h.commands().filter((c) => c.kind === "clearHighlight");
+
+/**
+ * `GameMeta.myColor` — the session's per-game copy of the colour, which `view()` falls back to only
+ * when there is no snapshot. Nothing else reads it today, so there is no public surface to assert it
+ * through; this reaches the private field deliberately, because the alternative is leaving the
+ * field's staleness untested (see the report's Fix round 1 notes).
+ */
+const gameMetaColor = (): Color | null | undefined =>
+	(h.session() as unknown as { game: { myColor: Color | null } | null }).game?.myColor;
 
 async function boot(myColor: Color): Promise<void> {
 	h = await createGameHarness({
@@ -110,5 +120,98 @@ describe("game session: a recommendation is only ever for the side we are playin
 		expect(h.session().recommendation()).toBeNull();
 		expect(h.transport.goLines).toEqual([]);
 		expect(highlights()).toEqual([]);
+	});
+});
+
+describe("game session: a colour correction withdraws what the wrong colour produced", () => {
+	it("withdraws the standing recommendation and its mark when the corrected colour arrives", async () => {
+		// The owner's bug, end to end from the session's side: the adapter's first reading of the live
+		// page answered WHITE (the clocks before the board was turned round), so the session planned
+		// white's first move and marked it. The bridge then answers `getPlayingAs() → 2` and the
+		// adapter republishes the *same* ply with the colour corrected — the only thing that can
+		// release this, because as black the position cannot move until white plays.
+		await boot("b");
+		await h.drive(() => h.site.post({ kind: "position", snapshot: position({ myColor: "w" }) }));
+		expect(await h.until(() => h.session().recommendation() !== null, 10_000)).toBe(true);
+		const wrong = h.session().recommendation();
+		if (!wrong) throw new Error("no recommendation to withdraw");
+		// a move for WHITE, on the snapshot's own FEN — `rec.fen === snapshot.fen` is the invariant
+		// `postHighlight` used to re-test for itself
+		expect(legalMoves(START_POSITION)).toContain(wrong.chosen.uci);
+		expect(wrong.fen).toBe(START_POSITION);
+		expect(highlights().length).toBe(1);
+		expect(h.session().view().myColor).toBe("w");
+		expect(gameMetaColor()).toBe("w");
+		const marks = highlights().length;
+		const clearsBefore = clears().length;
+
+		// The correction: same game, same ply, same FEN, only the colour is new.
+		await h.drive(() => h.site.post({ kind: "position", snapshot: position({ myColor: "b" }) }));
+		await h.advance(5_000);
+		expect(h.session().recommendation()).toBeNull();
+		expect(h.session().view().myColor).toBe("b");
+		// the game's own copy is corrected too, so nothing downstream reads the colour we are not playing
+		expect(gameMetaColor()).toBe("b");
+		// the mark is erased and no new one is drawn
+		expect(clears().length).toBeGreaterThan(clearsBefore);
+		expect(highlights().length).toBe(marks);
+		expect(h.executor()?.pendingMove()).toBeNull();
+		expect(h.site.board.lastMove()).toBeNull();
+	});
+});
+
+describe("game session: the contradiction hold is symmetric", () => {
+	it("does not ponder or arm a premove when the FEN says it is our turn and sideToMove says otherwise", async () => {
+		// The mirror of the owner's case, and the direction the first round let through: `myTurn` is
+		// false (`sideToMove "b"` ≠ `myColor "w"`) while the FEN says white. That reached
+		// `onOpponentTurn`, which starts `go infinite` on our *own* position and arms a premove
+		// conditioned on one of our own moves as if it were the opponent's reply.
+		await boot("w");
+		await h.drive(() =>
+			h.site.post({ kind: "position", snapshot: position({ myColor: "w", sideToMove: "b" }) })
+		);
+		await h.advance(10_000);
+		expect(h.session().view().ply).toBe(0);
+		// no ponder, no premove gate search — nothing was searched at all
+		expect(h.transport.goLines).toEqual([]);
+		expect(h.session().recommendation()).toBeNull();
+		expect(highlights()).toEqual([]);
+		expect(h.executor()?.pendingMove()).toBeNull();
+	});
+
+	it("holds on resume too: the switch coming back on is not new evidence about whose turn it is", async () => {
+		// `resumeEnabled` resumes the stored position directly, so it needs the same invariant: the
+		// position was already held once, and turning the assistant off and on again must not talk the
+		// session into answering for the other side.
+		await boot("b");
+		await h.patch({ enabled: false });
+		await h.drive(() => h.site.post({ kind: "position", snapshot: position({ sideToMove: "b" }) }));
+		await h.advance(2_000);
+		expect(h.session().recommendation()).toBeNull();
+
+		await h.patch({ enabled: true });
+		await h.advance(10_000);
+		expect(h.session().recommendation()).toBeNull();
+		expect(h.transport.goLines).toEqual([]);
+		expect(highlights()).toEqual([]);
+	});
+
+	it("a FEN with no turn field is not a hold: the position is still played from sideToMove", async () => {
+		// `turnFieldOf` is lenient, so reaching this means the site answered something with no turn
+		// field at all. A permanent, open-ended hold is the wrong answer to that — it would silently
+		// stop the assistant for the whole game — so the adapter's own reading decides, and the
+		// recommendation is still for our colour.
+		await boot("b");
+		const placementOnly = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR";
+		await h.drive(() =>
+			h.site.post({
+				kind: "position",
+				snapshot: position({ fen: placementOnly, ply: 1, sideToMove: "b", myColor: "b" }),
+			})
+		);
+		await h.advance(10_000);
+		// the engine cannot use a FEN like this, so what matters is that the session did not hold: it
+		// ran the pipeline for the side the snapshot says is to move
+		expect(h.transport.goLines.length).toBeGreaterThan(0);
 	});
 });

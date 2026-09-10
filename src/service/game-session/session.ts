@@ -38,7 +38,7 @@
  * attached while the switch is off buys nothing and only leaves the infobar).
  */
 
-import { sideToMove as turnOfFen } from "@core/chess/fen";
+import { turnFieldOf } from "@core/chess/fen";
 import { applyMoves, legalMoves, uciToSan } from "@core/chess/san";
 import { sanToSpeech } from "@core/chess/san-speech";
 import { isSquare } from "@core/chess/squares";
@@ -455,21 +455,26 @@ export class GameSession implements SessionSource {
 	}
 
 	/**
-	 * Is the side to move in this position's **own FEN** the side we are playing?
+	 * Does the snapshot agree with itself about whose move it is?
 	 *
-	 * `myTurn` is `snapshot.sideToMove === snapshot.myColor`, and the adapter builds `sideToMove` on a
-	 * different ladder from the FEN it publishes beside it (bridge → clock → move-list parity against
-	 * bridge → replay → DOM). Everything downstream of here — the `go`, the selection, the plan, the
-	 * mark, the hand — is for whoever the **FEN** says is to move, so the two disagreeing is not a
-	 * cosmetic inconsistency: it makes the assistant recommend, draw and play the *opponent's* move
-	 * and present it as ours (owner's live game, 2026-09-10: white's first move shown while the owner
-	 * was black, white's clock ticking).
+	 * `sideToMove` and the turn field of the `fen` beside it come from different ladders in the
+	 * adapter, and they drive different halves of this class: `myTurn` (hence which branch runs) from
+	 * the first, every search, plan and mark from the second. When they disagree one of them is wrong
+	 * and nothing here can tell which, so the position is held — in **either** direction. Answering
+	 * `myTurn` would recommend the opponent's move as ours (the owner's live game, 2026-09-10);
+	 * answering `!myTurn` would ponder our own position and arm a premove conditioned on one of *our*
+	 * moves as if it were the opponent's reply.
 	 *
-	 * A recommendation for the wrong colour is strictly worse than no recommendation, so a position
-	 * that cannot prove the turn is ours is held exactly as a colourless one is (`mayActOn`).
+	 * `turnFieldOf`, not `sideToMove`, is the read: whose move it is does not depend on chess.js
+	 * accepting the rest of the position, and a strict parse would answer `null` for a FEN with one
+	 * malformed field — turning "I could not validate this position" into "hold every position of
+	 * this game". A FEN that states no turn at all contradicts nothing and is not held: the adapter's
+	 * own `sideToMove` is then the best evidence there is, and `MoveSelector` and the engine reject an
+	 * unusable FEN on their own.
 	 */
-	private fenTurnIsMine(snapshot: PositionSnapshot): boolean {
-		return snapshot.myColor !== null && turnOfFen(snapshot.fen) === snapshot.myColor;
+	private selfConsistent(snapshot: PositionSnapshot): boolean {
+		const fenTurn = turnFieldOf(snapshot.fen);
+		return fenTurn === null || fenTurn === snapshot.sideToMove;
 	}
 
 	/**
@@ -533,8 +538,10 @@ export class GameSession implements SessionSource {
 		// is not always a transition from a stopped session.
 		if (this.pipelineAc !== null || this.rec !== null) return;
 		// The colour is its own hold (`mayActOn`): releasing the switch does not release a position
-		// whose side we still do not know. The adapter republishes it once the bridge answers.
-		if (!this.mayActOn(snapshot)) return;
+		// whose side we still do not know. The adapter republishes it once the bridge answers. Same
+		// for a snapshot that contradicts itself — the switch coming back on is not new evidence
+		// about whose move it is, so the resume holds exactly as `onPosition` did.
+		if (!this.mayActOn(snapshot) || !this.selfConsistent(snapshot)) return;
 		const myTurn = snapshot.sideToMove === snapshot.myColor;
 		if (myTurn) await this.runPipeline(snapshot);
 		else await this.onOpponentTurn(snapshot);
@@ -707,7 +714,12 @@ export class GameSession implements SessionSource {
 		this.site = snapshot.site;
 		// The colour can arrive after `gameStarted` did (the bridge answers `getPlayingAs()` a moment
 		// after the board appears), and the panel reads the game's copy when the snapshot has none.
-		if (this.game && this.game.myColor === null && snapshot.myColor !== null)
+		// …and it can arrive *wrong* and be corrected later (`AdapterBase.apply` republishes an
+		// authoritative correction on an unmoved position), so this tracks the snapshot rather than
+		// filling a blank once: a `"w" → "b"` correction that left `GameMeta.myColor` at `"w"` would
+		// leave the panel's fallback, the game-over attribution and anything else that reads the
+		// game's copy stating the colour the owner is not playing.
+		if (this.game && snapshot.myColor !== null && this.game.myColor !== snapshot.myColor)
 			this.game = { ...this.game, myColor: snapshot.myColor };
 		this.cancelInFlight();
 		const previous = this.snapshot;
@@ -738,23 +750,21 @@ export class GameSession implements SessionSource {
 			});
 			return;
 		}
-		if (!myTurn) {
-			await this.onOpponentTurn(snapshot);
-			return;
-		}
-		// `myTurn` said ours; the FEN the engine would actually be given says otherwise. Hold the
-		// position rather than answer for the other side (`fenTurnIsMine`) — no go, no premove, no
-		// recommendation, no mark, nothing scheduled. The adapter reconciles the two as it reads them,
-		// so this is the second layer: it also covers a snapshot that reached the worker some other
-		// way, and a colour the page later corrects.
-		if (!this.fenTurnIsMine(snapshot)) {
-			log.warn("game-session: position held — the FEN's side to move is not our colour", {
+		// A snapshot that contradicts itself is held before the branch, so the hold is symmetric
+		// (`selfConsistent`). The adapter settles this as it reads (`AdapterBase.reading`); this is the
+		// second layer, for a snapshot that reached the worker some other way.
+		if (!this.selfConsistent(snapshot)) {
+			log.warn("game-session: position held — its sideToMove contradicts its own FEN", {
 				tabId: this.deps.tabId,
 				ply: snapshot.ply,
 				myColor: snapshot.myColor,
 				sideToMove: snapshot.sideToMove,
-				fenTurn: turnOfFen(snapshot.fen),
+				fenTurn: turnFieldOf(snapshot.fen),
 			});
+			return;
+		}
+		if (!myTurn) {
+			await this.onOpponentTurn(snapshot);
 			return;
 		}
 		if (await this.tryPremove(snapshot)) return;
@@ -956,24 +966,23 @@ export class GameSession implements SessionSource {
 		await ponderer.start("opponent", snapshot.fen);
 	}
 
-	/** §3.2 steps 1–5 for the current position. */
+	/**
+	 * §3.2 steps 1–5 for the current position.
+	 *
+	 * **Precondition — the side to move in `snapshot.fen` is `snapshot.myColor`.** The pipeline
+	 * searches, selects, plans, marks and (armed) plays for whoever the FEN says is to move, so
+	 * running it on the opponent's turn is the defect this lane exists to close (owner's live game,
+	 * 2026-09-10). Both call sites establish it by composition rather than by a fourth test here that
+	 * nothing could reach: `selfConsistent(snapshot)` gives `turnFieldOf(fen) === sideToMove`, and
+	 * `myTurn` gives `sideToMove === myColor`, so together they give `turnFieldOf(fen) === myColor`.
+	 * A new caller owes the same two. `test/behavioral/game/wrong-colour-guard.test.ts` pins the
+	 * consequence — every move this produces is a legal move for `myColor` — and pins each of the two
+	 * conjuncts with its own failing case.
+	 */
 	private async runPipeline(snapshot: PositionSnapshot): Promise<void> {
 		const pipeline = this.pipeline;
 		const timing = this.timing;
 		if (!pipeline || !timing) return;
-		// The invariant at its own door, so no caller can get round it (`onPosition` holds before it
-		// reaches here; `resumeEnabled` resumes a stored position that may predate a colour
-		// correction). The pipeline answers for the FEN's side to move, so it runs only when that
-		// side is ours.
-		if (!this.fenTurnIsMine(snapshot)) {
-			log.warn("game-session: no recommendation — the FEN's side to move is not our colour", {
-				tabId: this.deps.tabId,
-				ply: snapshot.ply,
-				myColor: snapshot.myColor,
-				fenTurn: turnOfFen(snapshot.fen),
-			});
-			return;
-		}
 		const ac = new AbortController();
 		this.pipelineAc = ac;
 		// Appendix E §4.4 rule 1 + Task 13: never issue a `position`/`go` while a ponder is live,
@@ -1582,18 +1591,15 @@ export class GameSession implements SessionSource {
 	private postHighlight(rec: Recommendation): void {
 		const settings = this.deps.getSettings();
 		if (!this.mayAct() || !settings.automation.highlightMoves) return;
-		// The mark is the most visible half of the defect this guards (the owner saw it on the board
-		// and in the panel), so the check is repeated at the point of drawing rather than trusted from
-		// the caller: a move for the side we are not playing is never marked on the page.
-		const myColor = this.snapshot?.myColor ?? this.game?.myColor ?? null;
-		if (myColor === null || turnOfFen(rec.fen) !== myColor) {
-			log.warn("game-session: mark withheld — the move is not for the colour we are playing", {
-				tabId: this.deps.tabId,
-				myColor,
-				fenTurn: turnOfFen(rec.fen),
-			});
-			return;
-		}
+		// No colour check of its own. `runPipeline` is the only caller (and re-checks
+		// `this.snapshot !== snapshot` before getting here), every `Recommendation` carries the
+		// snapshot's own `fen` (`recommendation.ts`), and `runPipeline` has already required that
+		// FEN's turn to be our colour — so a third test could only ever differ from the second by
+		// reading a *different* colour source, and the only other source is the game's copy, which
+		// the session fills from the snapshot. A guard that cannot catch anything the one above it
+		// misses is a guard with nothing to test it: `test/behavioral/game/wrong-colour-guard.test.ts`
+		// pins the two properties it would have rested on instead — that the mark is withdrawn when a
+		// correction lands, and that `rec.fen` is the snapshot's FEN.
 		this.deps.link.post(this.deps.tabId, {
 			kind: "highlight",
 			from: rec.chosen.from,

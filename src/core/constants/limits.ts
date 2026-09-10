@@ -44,6 +44,15 @@ export const LIMITS = {
 	engineMemoryMaxPages: 8192,
 	/** Task 23: devices one key may be active on (Appendix F §7.2 "already active on 2 devices"). */
 	licenseMaxDevices: 2,
+	/**
+	 * How many times one game may republish an unmoved position because the colour it answers
+	 * *changed* (`AdapterBase.apply`). A correction is rare and authoritative — the site's own
+	 * `getPlayingAs()` overturning an earlier reading — so a handful is generous; the cap exists
+	 * because every other republish trigger is structurally one-shot and this one is not, and an
+	 * alternating answer would otherwise start and abort a pipeline (and flood the game port with
+	 * marks) once per reading, for ever.
+	 */
+	colourCorrectionsPerGame: 3,
 } as const;
 
 /**
