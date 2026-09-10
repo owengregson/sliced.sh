@@ -1,6 +1,11 @@
 // test/core/motor/motor-profile.test.ts — Appendix G §8 modulation.
 import { describe, expect, it } from "bun:test";
-import { MOTOR_DEFAULTS, PREVIEW, PROMOTION_LOOK_DELAY_MS } from "@core/motor/constants";
+import {
+	MOTOR_DEFAULTS,
+	PREVIEW,
+	PROMOTION_LOOK_DELAY_MS,
+	TC_EXPLORATION,
+} from "@core/motor/constants";
 import {
 	chooseStyle,
 	perGameProfile,
@@ -8,6 +13,7 @@ import {
 	profileFor,
 	sampleRange,
 } from "@core/motor/motor-profile";
+import type { TimeControlClass } from "@core/motor/types";
 import { createRng } from "@core/rng";
 
 describe("profileFor", () => {
@@ -37,6 +43,28 @@ describe("profileFor", () => {
 			6
 		);
 		expect(profileFor("balanced", "rapid", "capture").travelSpeedScale).toBe(normal.travelSpeedScale);
+	});
+	it("scales the hover appetite by the time control: a fast hand browses less", () => {
+		// The owner's live 3+0 game read as "it always touches pieces before it moves": the hover
+		// rate is the one exploration behaviour that puts the cursor on a piece the hand is not
+		// moving and holds it there. `TC_EXPLORATION` is the modulation; rapid is the unscaled model.
+		const hover = (tc: TimeControlClass): number =>
+			profileFor("balanced", tc, "normal").exploration.hoverProb;
+		expect(hover("rapid")).toBeCloseTo(MOTOR_DEFAULTS.exploration.hoverProb, 6);
+		expect(hover("classical")).toBeCloseTo(hover("rapid"), 6);
+		expect(hover("blitz")).toBeLessThan(hover("rapid"));
+		expect(hover("bullet")).toBeLessThan(hover("blitz"));
+		for (const tc of ["bullet", "blitz", "rapid", "classical"] as const)
+			expect(hover(tc)).toBeCloseTo(
+				MOTOR_DEFAULTS.exploration.hoverProb * TC_EXPLORATION[tc].hoverProb,
+				6
+			);
+		// nothing else in the exploration block is modulated by the class
+		for (const tc of ["bullet", "blitz", "rapid", "classical"] as const) {
+			const e = profileFor("balanced", tc, "normal").exploration;
+			expect(e.feintProb).toBe(MOTOR_DEFAULTS.exploration.feintProb);
+			expect(e.restStyle).toBe(MOTOR_DEFAULTS.exploration.restStyle);
+		}
 	});
 	it("sets the persona preview base and keeps persona modulation mild", () => {
 		for (const persona of ["cautious", "balanced", "aggressive", "blitz"] as const) {

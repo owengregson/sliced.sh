@@ -118,6 +118,37 @@ describe("telemetry: timing shape over 200 simulated moves (Step 2f)", () => {
 				bins.set(bin, (bins.get(bin) ?? 0) + 1);
 			}
 			expect(Math.max(...bins.values()) / acs.length).toBeLessThan(0.25);
+			// The owner's live game: "the mouse minimum move time causes it to almost always move in
+			// around 4 seconds". It does not: the hand's own motor span — the approach through the
+			// release — is a minority of a normal move and is not a constant. Measured over 420 moves
+			// of a simulated 3+0 game: floor 354 ms, median 558 ms, q90 729 ms, max 1172 ms, against a
+			// mean planned think of 3.9 s. What holds a move at seconds is the think budget, not
+			// `MOTOR`/`EXECUTOR`; this pins the split so a motor change cannot quietly become one.
+			const spans = moves.map((m) => {
+				const approach = m.result.timeline.find((t) => t.phase === "approach");
+				return approach === undefined ? null : m.result.elapsedMs - approach.startMs;
+			});
+			expect(spans.every((x) => x !== null)).toBe(true);
+			for (const span of spans) {
+				expect(span ?? 0).toBeGreaterThan(0);
+				expect(span ?? 0).toBeLessThanOrEqual(SIM_TELEMETRY.maxTouchMs);
+			}
+			// not a constant: the spans spread over several 100 ms bins and none of them dominates
+			const spanBins = new Map<number, number>();
+			for (const span of spans) {
+				const bin = Math.floor((span ?? 0) / 100);
+				spanBins.set(bin, (spanBins.get(bin) ?? 0) + 1);
+			}
+			expect(spanBins.size).toBeGreaterThan(3);
+			expect(Math.max(...spanBins.values()) / spans.length).toBeLessThan(0.5);
+			// and on the moves that have a real think budget the hand is a small part of the move
+			const ratios = moves
+				.map((m, i) => ({ m, span: spans[i] ?? 0 }))
+				.filter(({ m }) => m.plan.mode === "normal" || m.plan.mode === "long")
+				.map(({ m, span }) => span / m.plan.thinkMs)
+				.sort((a, b) => a - b);
+			expect(ratios.length).toBeGreaterThan(TELEMETRY_BANDS.holdTime.cvAfterMoves);
+			expect(ratios[Math.floor(ratios.length / 2)] ?? 1).toBeLessThan(0.5);
 			// and the summary is what the conformance report prints
 			expect(summarizeAc(acs, meta)).toEqual(summary);
 		},

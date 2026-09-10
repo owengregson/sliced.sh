@@ -208,6 +208,25 @@ export const TC_MODULATION: Readonly<Record<TimeControlClass, Partial<MotorProfi
 	classical: { travelSpeedScale: 1.3, hesitationProb: 0.2, releaseSettleMs: [30, 110] },
 };
 
+/**
+ * Appendix G §8 modulation of the *exploration* rates by time-control class. `TC_MODULATION` is a
+ * shallow override of the profile, so the nested `exploration` block cannot be modulated there
+ * without repeating every field of it; this table scales the rates instead, once (C1).
+ *
+ * The hover appetite is the behaviour that reads as the hand "touching pieces before it moves"
+ * (the owner's live 3+0 game): measured over 420 moves of a simulated 3+0 game, the hand hovered
+ * a candidate piece on 75 % of the moves whose pre-touch window was long enough to explore at all
+ * — on the slow, conspicuous moves, which are the ones a watcher notices. A blitz or bullet hand
+ * does not browse the board with its mouse; it goes for the piece. Rapid and classical keep the
+ * modelled rate, where a 4 s think is a small part of the clock and browsing is plausible.
+ */
+export const TC_EXPLORATION: Readonly<Record<TimeControlClass, { hoverProb: number }>> = {
+	bullet: { hoverProb: 0.35 },
+	blitz: { hoverProb: 0.5 },
+	rapid: { hoverProb: 1 },
+	classical: { hoverProb: 1 },
+};
+
 /** Mild persona modulation (Elo affects think time far more than motor time). */
 export const PERSONA_MOTOR: Readonly<
 	Record<

@@ -199,12 +199,17 @@ export class ExplorationPlanner {
 		}
 
 		// Surplus (budget − spent − pause) lengthens hover dwells, then the orientation drift,
-		// so the decision pause stays inside its 15–40 % band.
+		// so the decision pause stays inside its 15–40 % band. Each hover is topped up toward a
+		// *fresh draw* from `hoverDwellMs` rather than filled to the range's ceiling: filling it
+		// meant every hover on a window with time to spare dwelled exactly `hoverDwellMs[1]` —
+		// measured at 63 % of hovers over a simulated 3+0 game and 84 % over a 10+0 one, which is
+		// a hand that pauses on a piece for the same 0.9 s every single time. Whatever the hovers
+		// do not take goes to the orientation drift below, which is idle tremor and not a pose.
 		let surplus = budget - b.spent - b.pauseMs;
 		for (const a of actions) {
 			if (surplus <= 0) break;
 			if (a.kind !== "hover") continue;
-			const add = Math.min(surplus, EXPLORATION.hoverDwellMs[1] - a.dwellMs);
+			const add = Math.min(surplus, sampleRange(EXPLORATION.hoverDwellMs, rng) - a.dwellMs);
 			if (add <= 0) continue;
 			a.dwellMs += add;
 			surplus -= add;
