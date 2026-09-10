@@ -29,6 +29,12 @@ export interface SelectionContext {
 	phase: Phase;
 	myClockMs: number;
 	oppClockMs: number;
+	/**
+	 * The game's starting clock in ms, when the page has answered its time control. It is what makes
+	 * the §7.2 step 6 clock-pressure term mean the same thing in a 1+0 and a 10+0 game; absent (an
+	 * untimed game, or a control that has not arrived yet) the absolute ramp applies alone.
+	 */
+	baseMs?: number;
 	/** The opponent's last move (UCI); enables the recapture row. */
 	lastMove?: string;
 	selectionMode: SelectionMode;
