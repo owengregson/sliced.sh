@@ -979,7 +979,7 @@ export class GameSession implements SessionSource {
 	 * turn-less FEN, and `myTurn` gives `sideToMove === myColor`. The second disjunct is not an
 	 * oversight — it is the bounded answer to a site that states no turn at all, which would otherwise
 	 * stop the assistant for a whole game (`selfConsistent`'s own note), and
-	 * `wrong-colour-guard.test.ts:199` asserts it on purpose. A new caller owes the same two.
+	 * `wrong-colour-guard.test.ts:200` asserts it on purpose. A new caller owes the same two.
 	 * `test/behavioral/game/wrong-colour-guard.test.ts` pins the consequence — every move this produces
 	 * is a legal move for `myColor` — and pins each conjunct with its own failing case.
 	 */
