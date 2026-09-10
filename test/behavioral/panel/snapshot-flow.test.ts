@@ -53,8 +53,8 @@ beforeEach(async () => {
 	validations.length = 0;
 	sim = createSimulator({ startAt: START });
 	sim.time.install();
-	tabId = sim.openTab("https://lichess.org/abcd1234", { active: true }).tabId;
-	session = new FakeSession("lichess");
+	tabId = sim.openTab("https://www.chess.com/game/174252022572", { active: true }).tabId;
+	session = new FakeSession("chesscom");
 	sessions = new Map([[tabId, session]]);
 	executors = new Map();
 	sw = await bootSwContext(sim, {
@@ -100,7 +100,7 @@ describe("panel ↔ service worker: snapshot flow", () => {
 		expect(seen.length).toBeGreaterThanOrEqual(1);
 		const snap = store?.snapshot;
 		expect(snap).not.toBeNull();
-		expect(snap?.site).toBe("lichess");
+		expect(snap?.site).toBe("chesscom");
 		expect(snap?.pageKind).toBe("live-lobby");
 		expect(snap?.session.state).toBe("waiting-for-game");
 		expect(snap?.session.hand).toBe("detached");
@@ -313,7 +313,7 @@ describe("panel ↔ service worker: snapshot flow", () => {
 		// The broadcaster keeps working for the next panel.
 		await connectPanel();
 		await sim.time.advance(0);
-		expect(currentStore()?.snapshot?.site).toBe("lichess");
+		expect(currentStore()?.snapshot?.site).toBe("chesscom");
 		expect(broadcaster.connections()).toBe(1);
 	});
 });

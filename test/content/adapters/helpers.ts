@@ -18,10 +18,6 @@ export const FIXTURE_URLS = {
 	"chesscom-gameover": "https://www.chess.com/game/live/173765478165",
 	/** The owner's real live game: WebGL board, no DOM pieces, `/game/<digits>`. */
 	"chesscom-webgl": "https://www.chess.com/game/174252022572",
-	"lichess-round-white": "https://lichess.org/abcdefgh1234",
-	"lichess-round-black": "https://lichess.org/ijklmnop5678",
-	"lichess-promotion": "https://lichess.org/qrstuvwx9012",
-	"lichess-tv": "https://lichess.org/tv",
 } as const;
 
 export type FixtureName = keyof typeof FIXTURE_URLS;
@@ -190,15 +186,6 @@ export function installPollingObserver(dom: TabDom): void {
 		}
 	}
 	(dom.window as unknown as { MutationObserver: unknown }).MutationObserver = PollingObserver;
-}
-
-/** The `cg-board` piece rendered at chessground translate (x, y) px. */
-export function lichessPiece(dom: TabDom, x: number, y: number): Element {
-	const want = `translate(${x}px, ${y}px)`;
-	for (const p of pageDocument(dom).querySelectorAll("cg-board piece")) {
-		if ((p.getAttribute("style") ?? "").replace(/\s+/g, " ").includes(want)) return p;
-	}
-	throw new Error(`no piece at ${want}`);
 }
 
 /** The tab's happy-dom `Document` / `Window` typed as the DOM lib types the adapters take. */

@@ -25,8 +25,7 @@ export const BRIDGE_WIRE = {
 	timestamps: "s",
 	gameOver: "g",
 	result: "r",
-	hasApi: "h",
-	apiPosition: "n",
+
 	// moves (`lastMove`, `legalMoves` entries)
 	from: "f",
 	to: "t",

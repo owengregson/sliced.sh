@@ -9,7 +9,7 @@ afterEach(() => {
 });
 
 function setup(minIntervalMs = 100) {
-	const win = new HappyWindow({ url: "https://lichess.org/abcdefgh" });
+	const win = new HappyWindow({ url: "https://www.chess.com/game/174252011111" });
 	cleanups.push(() => win.happyDOM.close());
 	let now = 5_000;
 	const samples: CursorSample[] = [];

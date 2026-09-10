@@ -23,10 +23,10 @@ import {
 	type SiteAdapter,
 	toRect,
 } from "./adapter";
-import { chesscomActiveClockColor, chesscomBottomClockColor, readChesscomClock } from "./clocks";
-import { approximateFen, chesscomPlacementFromDom, placementOf, replayMoves } from "./dom-fen";
-import { type ChesscomMoveList, readChesscomMoveList } from "./move-list";
-import { detectChesscomPageKind } from "./page-kind";
+import { activeClockColor, bottomClockColor, readClock } from "./clocks";
+import { approximateFen, placementFromDom, placementOf, replayMoves } from "./dom-fen";
+import { type MoveList, readMoveList } from "./move-list";
+import { pageKindFromPath } from "./page-kind";
 import { queryAllSafe, queryFirst, queryFirstElement, querySafe } from "./query";
 import { PROMOTION_ORDER, SELECTORS } from "./selectors";
 import {
@@ -37,7 +37,7 @@ import {
 	probeLadders,
 } from "./self-check";
 
-const C = SELECTORS.chesscom;
+const S = SELECTORS;
 const SITE: Site = "chesscom";
 /**
  * Game id in a live game URL. chess.com serves live games at `/game/<digits>`
@@ -52,36 +52,36 @@ const RATING_RE = /(\d{3,4})/;
 const REQUIRED: ReadonlySet<string> = new Set(["board", "moveList", "playerBottom"]);
 
 const LADDERS: Record<string, readonly string[]> = {
-	board: C.board,
-	moveList: C.moveList,
-	moveNode: C.moveNode,
-	moveText: C.moveText,
-	moveSelected: C.moveSelected,
-	result: C.result,
-	clockTime: C.clockTime,
-	playerTop: C.playerTop,
-	playerBottom: C.playerBottom,
-	username: C.username,
-	rating: C.rating,
-	gameOver: C.gameOver,
-	newGame: C.newGame,
-	rematch: C.rematch,
-	promotionWindow: C.promotionWindow,
-	botCard: C.botCard,
+	board: S.board,
+	moveList: S.moveList,
+	moveNode: S.moveNode,
+	moveText: S.moveText,
+	moveSelected: S.moveSelected,
+	result: S.result,
+	clockTime: S.clockTime,
+	playerTop: S.playerTop,
+	playerBottom: S.playerBottom,
+	username: S.username,
+	rating: S.rating,
+	gameOver: S.gameOver,
+	newGame: S.newGame,
+	rematch: S.rematch,
+	promotionWindow: S.promotionWindow,
+	botCard: S.botCard,
 };
 
 /** Body-observer interest: board replacement, game-over modal, result row, promotion window. */
 const RELEVANT = [
-	...C.board,
+	...S.board,
 	// the live page has no `wc-simple-move-list` until the first move is played
-	...C.moveList,
-	...C.gameOver,
-	...C.result,
-	...C.promotionWindow,
+	...S.moveList,
+	...S.gameOver,
+	...S.result,
+	...S.promotionWindow,
 ].join(",");
 
 function squareFromClass(el: Element): Square | null {
-	const m = C.squareRe.exec(el.getAttribute("class") ?? "");
+	const m = S.squareRe.exec(el.getAttribute("class") ?? "");
 	if (!m) return null;
 	return squareOf(Number(m[1]) - 1, Number(m[2]) - 1);
 }
@@ -98,10 +98,10 @@ function ratingFrom(text: string | null | undefined): number | null {
  * `board-webgl-2d` is a name chess.com may change, "no piece element" is not.
  */
 function hasDomPieces(board: Element): boolean {
-	return querySafe(board, C.piece) !== null;
+	return querySafe(board, S.piece) !== null;
 }
 
-function plyOf(list: ChesscomMoveList): number {
+function plyOf(list: MoveList): number {
 	return list.selectedIndex >= 0 ? list.selectedIndex + 1 : list.sans.length;
 }
 
@@ -118,7 +118,7 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 	// ---- page / players ------------------------------------------------------------
 
 	detectPageKind(): PageKind {
-		const kind = detectChesscomPageKind(this.win.location.pathname);
+		const kind = pageKindFromPath(this.win.location.pathname);
 		const mode = this.bridgeState?.mode;
 		// The bridge mode only refines the live pages; puzzles/analysis/daily keep their URL kind.
 		if (!mode || (kind !== "live-lobby" && kind !== "live-game")) return kind;
@@ -131,15 +131,15 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 
 	getOpponent(): Opponent | null {
 		const kind = this.detectPageKind();
-		const top = queryFirstElement(C.playerTop, this.doc);
-		const topName = top ? queryFirstElement(C.username, top)?.textContent?.trim() : undefined;
-		const topRating = top ? ratingFrom(queryFirstElement(C.rating, top)?.textContent) : null;
-		const card = queryFirstElement(C.botCard, this.doc);
+		const top = queryFirstElement(S.playerTop, this.doc);
+		const topName = top ? queryFirstElement(S.username, top)?.textContent?.trim() : undefined;
+		const topRating = top ? ratingFrom(queryFirstElement(S.rating, top)?.textContent) : null;
+		const card = queryFirstElement(S.botCard, this.doc);
 		const isBot = kind === "vs-computer" || card !== null;
 		const name =
-			topName || (card ? queryFirstElement(C.botName, card)?.textContent?.trim() : undefined) || "";
+			topName || (card ? queryFirstElement(S.botName, card)?.textContent?.trim() : undefined) || "";
 		const rating =
-			topRating ?? (card ? ratingFrom(queryFirstElement(C.botRating, card)?.textContent) : null);
+			topRating ?? (card ? ratingFrom(queryFirstElement(S.botRating, card)?.textContent) : null);
 		if (!name && rating === null) return null;
 		return { isBot, name, ratingEstimate: rating };
 	}
@@ -166,36 +166,36 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 
 	getPlacement(): string | null {
 		const board = this.boardElement();
-		return board ? chesscomPlacementFromDom(board) : null;
+		return board ? placementFromDom(board) : null;
 	}
 
 	getPositionInfo(): PositionInfo | null {
-		return this.positionInfoFor(this.getPlacement(), readChesscomMoveList(this.doc));
+		return this.positionInfoFor(this.getPlacement(), readMoveList(this.doc));
 	}
 
 	getSideToMove(): Color | null {
-		return this.sideToMoveFor(this.getPlacement(), readChesscomMoveList(this.doc));
+		return this.sideToMoveFor(this.getPlacement(), readMoveList(this.doc));
 	}
 
 	getClock(side: Color): ClockReading | null {
-		return readChesscomClock(this.doc, side);
+		return readClock(this.doc, side);
 	}
 
 	getMoveList(): string[] {
-		return readChesscomMoveList(this.doc).sans;
+		return readMoveList(this.doc).sans;
 	}
 
 	getPly(): number {
-		return plyOf(readChesscomMoveList(this.doc));
+		return plyOf(readMoveList(this.doc));
 	}
 
 	isAtLivePosition(): boolean {
-		const list = readChesscomMoveList(this.doc);
+		const list = readMoveList(this.doc);
 		return list.selectedIndex === -1 || list.selectedIndex === list.sans.length - 1;
 	}
 
 	isGameOver(): boolean {
-		return this.gameResultFor(readChesscomMoveList(this.doc)) !== null;
+		return this.gameResultFor(readMoveList(this.doc)) !== null;
 	}
 
 	// ---- geometry -----------------------------------------------------------------
@@ -219,17 +219,17 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 	 */
 	isFlipped(): boolean {
 		if (typeof this.bridgeState?.flipped === "boolean") return this.bridgeState.flipped;
-		if (this.boardElement()?.classList.contains(C.boardFlippedClass) === true) return true;
+		if (this.boardElement()?.classList.contains(S.boardFlippedClass) === true) return true;
 		return this.bottomColor() === "b";
 	}
 
 	getPromotionTargetRect(dest: Square, piece: PromoPiece): Rect | null {
-		const win = queryFirstElement(C.promotionWindow, this.doc);
+		const win = queryFirstElement(S.promotionWindow, this.doc);
 		if (!win) return null;
 		const color: Color = this.getMyColor() ?? (dest.charAt(1) === "8" ? "w" : "b");
 		const el =
-			querySafe(win, C.promotionPiece(color, piece)) ??
-			queryAllSafe(win, C.promotionPieceAny)[PROMOTION_ORDER.indexOf(piece)] ??
+			querySafe(win, S.promotionPiece(color, piece)) ??
+			queryAllSafe(win, S.promotionPieceAny)[PROMOTION_ORDER.indexOf(piece)] ??
 			null;
 		if (!el) return null;
 		const r = toRect(el.getBoundingClientRect());
@@ -244,13 +244,13 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 	 * and the one permitted synthetic action in the content script (§9.1, §13).
 	 */
 	tryStartNewGame(mode: NewGameMode): boolean {
-		const ladder = mode === "rematch" ? C.rematch : C.newGame;
+		const ladder = mode === "rematch" ? S.rematch : S.newGame;
 		for (const selector of ladder) {
 			for (const el of queryAllSafe(this.doc, selector)) {
 				const textOk =
 					mode === "rematch" ||
 					selector.includes("new-game") ||
-					C.newGameTextRe.test(el.textContent ?? "");
+					S.newGameTextRe.test(el.textContent ?? "");
 				if (!textOk) continue;
 				(el as HTMLElement).click();
 				return true;
@@ -263,7 +263,7 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 		const ladder = probeLadders(LADDERS, this.doc);
 		const board = this.boardElement();
 		const placement = this.getPlacement();
-		const list = readChesscomMoveList(this.doc);
+		const list = readMoveList(this.doc);
 		const replay = replayMoves(list.sans.slice(0, plyOf(list)));
 		const bottom = this.bottomColor();
 		const canvas = board !== null && !hasDomPieces(board);
@@ -275,14 +275,14 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 				: checkPlacementConsistency(replay ? placementOf(replay.fen) : null, placement),
 			checkTurnConsistency([
 				{ name: "bridge", turn: this.bridgeTurn() },
-				{ name: "clock", turn: chesscomActiveClockColor(this.doc) },
+				{ name: "clock", turn: activeClockColor(this.doc) },
 				{ name: "parity", turn: this.parityTurn() },
 			]),
 			checkOrientation([
 				{
 					// the WebGL board never carries the class, so it is no evidence there
 					name: "class",
-					flipped: canvas ? null : (board?.classList.contains(C.boardFlippedClass) ?? null),
+					flipped: canvas ? null : (board?.classList.contains(S.boardFlippedClass) ?? null),
 				},
 				{
 					name: "bridge",
@@ -325,7 +325,7 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 			attributes: true,
 			attributeFilter: ["class"],
 		});
-		for (const clock of queryAllSafe(this.doc, C.clock))
+		for (const clock of queryAllSafe(this.doc, S.clock))
 			this.observe(clock, { attributes: true, attributeFilter: ["class"] });
 		// SPA: board replacement, game-over modal, result row (filtered to those subtrees)
 		this.observe(this.doc.body, { childList: true, subtree: true }, (records) =>
@@ -345,9 +345,9 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 		const domPieces = hasDomPieces(board);
 		// DOM renderer only: a `.piece.dragging` means the markup is mid-gesture. The WebGL board
 		// has no piece element to drag, and `game.getFEN()` moves only on a completed move.
-		if (domPieces && querySafe(board, C.dragging)) return null;
+		if (domPieces && querySafe(board, S.dragging)) return null;
 		const placement = this.getPlacement();
-		const list = readChesscomMoveList(this.doc);
+		const list = readMoveList(this.doc);
 		const info = this.positionInfoFor(placement, list);
 		// `positionInfoFor` is the position source (bridge → replay → DOM); the DOM placement is
 		// only one of its inputs, and a WebGL board never has one.
@@ -390,7 +390,7 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 	 * board, so confirmation there rests on the move count.
 	 */
 	protected watchMove(): MoveWatch {
-		const list = readChesscomMoveList(this.doc);
+		const list = readMoveList(this.doc);
 		const dom = this.getPlacement();
 		return {
 			placement: dom ?? this.placementWithoutPieces(list),
@@ -400,7 +400,7 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 	}
 
 	/** Placement of a board that renders no pieces: the move list's replay, else the bridge FEN. */
-	private placementWithoutPieces(list: ChesscomMoveList): string | null {
+	private placementWithoutPieces(list: MoveList): string | null {
 		const replay = this.hasMoveList() ? replayMoves(list.sans.slice(0, plyOf(list))) : null;
 		if (replay) return placementOf(replay.fen);
 		const fen = this.bridgeFen();
@@ -419,7 +419,7 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 	}
 
 	protected boardElement(): Element | null {
-		return queryFirstElement(C.board, this.doc);
+		return queryFirstElement(S.board, this.doc);
 	}
 
 	protected hasMoveList(): boolean {
@@ -427,7 +427,7 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 	}
 
 	private moveListElement(): Element | null {
-		return queryFirstElement(C.moveList, this.doc);
+		return queryFirstElement(S.moveList, this.doc);
 	}
 
 	protected urlGameId(): string | null {
@@ -441,7 +441,7 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 	 * `approximate`. A WebGL board has no DOM placement at all, which is exactly
 	 * what the first two sources are for.
 	 */
-	private positionInfoFor(placement: string | null, list: ChesscomMoveList): PositionInfo | null {
+	private positionInfoFor(placement: string | null, list: MoveList): PositionInfo | null {
 		const fromBridge = this.bridgeFen();
 		if (fromBridge && (placement === null || placementOf(fromBridge) === placement))
 			return { fen: fromBridge, approximate: false, source: "bridge" };
@@ -465,13 +465,13 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 	}
 
 	/** Bridge FEN (when consistent with the DOM) → active clock → move-list parity. */
-	private sideToMoveFor(placement: string | null, list: ChesscomMoveList): Color | null {
+	private sideToMoveFor(placement: string | null, list: MoveList): Color | null {
 		const fromBridge = this.bridgeFen();
 		if (fromBridge && (placement === null || placementOf(fromBridge) === placement)) {
 			const turn = fromBridge.split(" ")[1];
 			if (turn === "w" || turn === "b") return turn;
 		}
-		const clock = chesscomActiveClockColor(this.doc);
+		const clock = activeClockColor(this.doc);
 		if (clock) return clock;
 		if (!this.hasMoveList()) return null;
 		return plyOf(list) % 2 === 0 ? "w" : "b";
@@ -483,12 +483,12 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 	 * carries no colour class — its clocks do (owner's capture, 2026-09-09).
 	 */
 	private bottomColor(): Color | null {
-		const bottom = queryFirstElement(C.playerBottom, this.doc);
+		const bottom = queryFirstElement(S.playerBottom, this.doc);
 		if (bottom) {
-			if (querySafe(bottom, C.bottomColorClass.w)) return "w";
-			if (querySafe(bottom, C.bottomColorClass.b)) return "b";
+			if (querySafe(bottom, S.bottomColorClass.w)) return "w";
+			if (querySafe(bottom, S.bottomColorClass.b)) return "b";
 		}
-		return chesscomBottomClockColor(this.doc);
+		return bottomClockColor(this.doc);
 	}
 
 	private bridgeTurn(): Color | null {
@@ -507,20 +507,20 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 	private highlightSquares(): Square[] {
 		const board = this.boardElement();
 		if (!board) return [];
-		return queryAllSafe(board, C.highlight)
+		return queryAllSafe(board, S.highlight)
 			.map(squareFromClass)
 			.filter((s): s is Square => s !== null);
 	}
 
-	private gameResultFor(list: ChesscomMoveList): GameResult | null {
+	private gameResultFor(list: MoveList): GameResult | null {
 		const s = this.bridgeState;
 		if (s?.result && s.result !== "*") return this.parseResult(s.result);
 		if (s?.gameOver) return this.parseResult(s.result) ?? "*";
 		if (list.result) return list.result;
-		const over = queryFirst(C.gameOver, this.doc)?.element;
+		const over = queryFirst(S.gameOver, this.doc)?.element;
 		if (!over) return null;
-		const header = querySafe(this.doc, C.gameOverHeader);
-		const m = C.gameOverHeaderClassRe.exec(header?.getAttribute("class") ?? "");
+		const header = querySafe(this.doc, S.gameOverHeader);
+		const m = S.gameOverHeaderClassRe.exec(header?.getAttribute("class") ?? "");
 		const me = this.getMyColor();
 		switch (m?.[1]) {
 			case "userWon":

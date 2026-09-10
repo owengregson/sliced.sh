@@ -66,7 +66,7 @@ const provider: GeometryProvider = {
 beforeEach(async () => {
 	sim = createSimulator({ startAt: START });
 	sim.time.install();
-	tabId = sim.openTab("https://lichess.org/abcd1234").tabId;
+	tabId = sim.openTab("https://www.chess.com/game/174252022572").tabId;
 	(globalThis as Record<string, unknown>).chrome = sim.chrome;
 	await debuggerAttach(tabId, CDP.protocolVersion);
 	ownership = new HandOwnership();
@@ -108,7 +108,7 @@ function makePlan(over: Partial<ExecutionPlan> = {}, previewScale = 0): Executio
 	const to = squareRect("e4");
 	return {
 		tabId,
-		site: "lichess",
+		site: "chesscom",
 		from: { x: from.left + from.width / 2, y: from.top + from.height / 2, rect: from, square: "e2" },
 		to: { x: to.left + to.width / 2, y: to.top + to.height / 2, rect: to, square: "e4" },
 		style: "drag",

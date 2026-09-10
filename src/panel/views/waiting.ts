@@ -15,7 +15,9 @@ import { tabsQuery } from "@core/chrome/tabs";
 import type { PanelSnapshot } from "@core/constants/messages";
 import { MSG } from "@core/constants/messages";
 import { log } from "@core/logger";
+import { PLAY_URL } from "../actions";
 import { showBanner } from "../components/banner";
+
 import { createButton } from "../components/button";
 import { createEvalBar } from "../components/eval-bar";
 import { createPill } from "../components/pill";
@@ -25,7 +27,7 @@ import { COPY } from "../copy";
 import { formatSeconds } from "../format";
 import { instantiate, part } from "../template";
 import type { View } from "../view";
-import { PLAY_URL } from "./play-url";
+
 import html from "./templates/waiting.html?raw";
 
 export interface WaitingViewOptions {
@@ -149,8 +151,8 @@ export function createWaitingView(options: WaitingViewOptions = {}): View {
 			function render(snapshot: PanelSnapshot): void {
 				const site = snapshot.site ?? snapshot.session.site;
 				meta.hidden = site === null;
-				if (site)
-					meta.textContent = COPY.waiting.meta(COPY.waitingView.sites[site], engineText(snapshot));
+				if (site) meta.textContent = COPY.waiting.meta(COPY.waitingView.site, engineText(snapshot));
+
 				const reading = snapshot.session.state === "idle";
 				dot.dataset.state = reading ? "warn" : "ok";
 				statusText.textContent = reading ? COPY.waiting.reading : COPY.waiting.watching;
@@ -186,7 +188,7 @@ export function createWaitingView(options: WaitingViewOptions = {}): View {
 					formatSeconds(stats.avgThinkMs)
 				);
 				newGameHost.hidden = snapshot.settings.automation.autoQueue || site === null;
-				if (site) newGame.el.dataset.url = PLAY_URL[site];
+				if (site) newGame.el.dataset.url = PLAY_URL;
 			}
 
 			const unsubscribe = ctx.store.subscribe(render);

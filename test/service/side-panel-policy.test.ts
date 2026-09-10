@@ -17,11 +17,11 @@ beforeEach(() => {
 const settle = () => sim.time.runMicrotasks();
 
 describe("isChessHost", () => {
-	it("derives the host test from SITE_MATCHES.chesscom / lichess", () => {
+	it("derives the host test from SITE_MATCHES.chesscom", () => {
 		expect(isChessHost("https://www.chess.com/play/online")).toBe(true);
 		expect(isChessHost("https://chess.com/")).toBe(true);
-		expect(isChessHost("https://lichess.org/abc123")).toBe(true);
-		expect(isChessHost("http://sub.lichess.org/")).toBe(true);
+		expect(isChessHost("http://sub.chess.com/")).toBe(true);
+		expect(isChessHost("https://lichess.org/abc123")).toBe(false);
 		expect(isChessHost("https://example.com/chess.com")).toBe(false);
 		expect(isChessHost("https://notchess.com/")).toBe(false);
 		expect(isChessHost("https://chess.com.evil.io/")).toBe(false);
@@ -33,8 +33,8 @@ describe("isChessHost", () => {
 		expect(hostTestFromMatchPattern("garbage")("chess.com")).toBe(false);
 		expect(hostTestFromMatchPattern("")("chess.com")).toBe(false);
 		expect(hostTestFromMatchPattern("*://*/*")("anything.example")).toBe(true);
-		expect(hostTestFromMatchPattern("https://lichess.org/*")("lichess.org")).toBe(true);
-		expect(hostTestFromMatchPattern("https://lichess.org/*")("www.lichess.org")).toBe(false);
+		expect(hostTestFromMatchPattern("https://example.test/*")("example.test")).toBe(true);
+		expect(hostTestFromMatchPattern("https://example.test/*")("www.example.test")).toBe(false);
 		expect(hostTestFromMatchPattern("*://*.chess.com/*")("chess.com")).toBe(true);
 		expect(hostTestFromMatchPattern("*://*.chess.com/*")("www.chess.com")).toBe(true);
 	});
@@ -62,7 +62,7 @@ describe("SidePanelPolicy", () => {
 		const tab = sim.openTab("https://example.com/");
 		await settle();
 		expect(sim.sidePanel.optionsFor(tab.tabId).enabled).toBe(false);
-		sim.tabs.navigate(tab.tabId, "https://lichess.org/");
+		sim.tabs.navigate(tab.tabId, "https://www.chess.com/");
 		await settle();
 		expect(sim.sidePanel.optionsFor(tab.tabId)).toMatchObject({
 			enabled: true,
@@ -82,7 +82,7 @@ describe("SidePanelPolicy", () => {
 		expect(sim.sidePanel.state.global.enabled).toBe(false);
 	});
 	it("reconciles tabs that already exist at install time", async () => {
-		const chess = sim.openTab("https://lichess.org/");
+		const chess = sim.openTab("https://www.chess.com/");
 		const other = sim.openTab("https://example.com/");
 		const policy = new SidePanelPolicy();
 		policy.install();

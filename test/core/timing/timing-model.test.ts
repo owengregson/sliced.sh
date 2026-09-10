@@ -14,7 +14,7 @@ const meta: GameMeta = {
 	profile: "balanced",
 	baseSec: 180,
 	incSec: 0,
-	site: "lichess",
+	site: "chesscom",
 	gameId: "game-A",
 };
 

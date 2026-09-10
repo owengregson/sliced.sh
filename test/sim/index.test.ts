@@ -39,7 +39,7 @@ describe("simulator façade", () => {
 	});
 
 	it("openTab creates a loaded tab with a DOM registered for CDP input; closeTab removes everything", async () => {
-		const { tabId, tab, dom } = sim.openTab("https://lichess.org/abc", { active: false });
+		const { tabId, tab, dom } = sim.openTab("https://www.chess.com/abc", { active: false });
 		expect(tab.status).toBe("complete");
 		expect(tab.active).toBe(false);
 		expect(sim.getTabDom(tabId)).toBe(dom);

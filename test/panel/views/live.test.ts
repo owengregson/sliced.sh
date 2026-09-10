@@ -94,7 +94,7 @@ describe("hands-off mode (§13.4 / §10.4)", () => {
 	});
 
 	it("through the shell: banner with the three keybinds, view switch disabled, controls locked", async () => {
-		dom.sim.openTab("https://lichess.org/abcdefgh", { active: true });
+		dom.sim.openTab("https://www.chess.com/game/174252011111", { active: true });
 		const app = document.getElementById("app");
 		if (!app) throw new Error("no #app");
 		const store = fakeStore(null);

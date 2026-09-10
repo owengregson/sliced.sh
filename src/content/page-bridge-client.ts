@@ -91,9 +91,7 @@ export function decodeState(p: unknown): BridgeState | null {
 	const result = str(p[W.result]);
 	if (result !== undefined) out.result = result;
 	if (typeof p[W.gameOver] === "boolean") out.gameOver = p[W.gameOver] as boolean;
-	if (typeof p[W.hasApi] === "boolean") out.hasLichessApi = p[W.hasApi] as boolean;
-	const apiFen = str(p[W.apiPosition]);
-	if (apiFen !== undefined) out.analysisFen = apiFen;
+
 	if (p[W.timeControl] !== undefined && p[W.timeControl] !== null)
 		out.timeControl = p[W.timeControl];
 	if (p[W.timestamps] !== undefined && p[W.timestamps] !== null) out.timestamps = p[W.timestamps];

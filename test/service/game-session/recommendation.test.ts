@@ -35,7 +35,7 @@ function settings(
 
 function snapshot(overrides: Partial<PositionSnapshot> = {}): PositionSnapshot {
 	return {
-		site: "lichess",
+		site: "chesscom",
 		gameId: "g1",
 		fen: START,
 		ply: 0,
@@ -142,7 +142,7 @@ function model(): TimingModel {
 		profile: "balanced",
 		baseSec: 180,
 		incSec: 2,
-		site: "lichess",
+		site: "chesscom",
 		gameId: "g1",
 	});
 	return m;

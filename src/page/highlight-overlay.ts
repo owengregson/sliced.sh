@@ -1,18 +1,18 @@
 // src/page/highlight-overlay.ts
 /**
- * `highlight-overlay` (§5.5, Appendix C §2.7): the generic from/to-square +
- * arrow overlay used when native drawing is unavailable — lichess round
- * pages always, chess.com only when `game.markings` is missing.
+ * `highlight-overlay` (§5.5): the generic from/to-square + arrow overlay used
+ * when native drawing is unavailable — i.e. when the board does not expose
+ * `game.markings`, which is the live WebGL board's open question (see
+ * `docs/qa-checklist.md` §B0.4).
  *
  * Presence rules (§13.3 rule 3): the overlay inserts nothing until a `draw`
  * command arrives; the one `<svg viewBox="0 0 8 8">` it appends goes to the
- * host (`cg-container`, or `wc-chess-board`) with `pointer-events: none`,
- * never inside `svg.cg-shapes`; it is idempotent by looking its own
+ * board host with `pointer-events: none`; it is idempotent by looking its own
  * per-build class up in the DOM (no `window` property); it carries no `id`,
  * `data-*` or text. Colours come from the payload (the adapter reads
  * `TOKENS`), with the bound `colors` (also from `TOKENS`) as the fallback.
  *
- * `overlayStatements` is the reusable builder the two bridges embed; the
+ * `overlayStatements` is the reusable builder the bridge embeds; the
  * standalone program below is the same overlay driven by its own message
  * listener (non-entry: generated as a module only).
  */

@@ -99,7 +99,7 @@ describe("chrome.debugger fake", () => {
 	});
 
 	it("getTargets lists tabs with their attachment flag; onDetach fires for user/tab-closed detaches only", async () => {
-		const other = sim.openTab("https://lichess.org/", { active: false }).tabId;
+		const other = sim.openTab("https://www.chess.com/play/online", { active: false }).tabId;
 		await debuggerAttach(tabId, "1.3");
 		const targets = await sim.chrome.debugger.getTargets();
 		expect(targets.map((t) => [t.tabId, t.attached])).toEqual([
@@ -120,7 +120,7 @@ describe("chrome.debugger fake", () => {
 		await sim.chrome.tabs.remove(other); // plain tabs.remove, not sim.closeTab
 		expect(detaches).toEqual([`${tabId}:canceled_by_user`, `${other}:target_closed`]);
 		expect(sim.debugger.isAttached(other)).toBe(false);
-		const third = sim.openTab("https://lichess.org/3", { active: false }).tabId;
+		const third = sim.openTab("https://www.chess.com/puzzles", { active: false }).tabId;
 		await debuggerAttach(third, "1.3");
 		sim.closeTab(third);
 		expect(detaches.at(-1)).toBe(`${third}:target_closed`);

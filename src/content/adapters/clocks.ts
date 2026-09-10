@@ -1,7 +1,6 @@
 /**
- * Clock parsing (Appendix C §1.4, §2.4). Both sites render `m:ss`, `m:ss.t`
- * or `h:mm:ss`; lichess splits the text over `<sep>` / `<tenths>` children
- * but `textContent` yields the same string.
+ * Clock parsing (Appendix C §1.4). chess.com renders `m:ss`, `m:ss.t` or
+ * `h:mm:ss`.
  */
 
 import type { Color } from "@typedefs/game";
@@ -30,28 +29,26 @@ function hasAnyClass(el: Element, selectors: readonly string[]): boolean {
 	});
 }
 
-export function readChesscomClock(root: ParentNode, side: Color): ClockReading | null {
-	const C = SELECTORS.chesscom;
-	const clock = querySafe(root, `${C.clock}${C.clockColor[side]}`);
+export function readClock(root: ParentNode, side: Color): ClockReading | null {
+	const clock = querySafe(root, `${SELECTORS.clock}${SELECTORS.clockColor[side]}`);
 	if (!clock) return null;
-	const time = queryFirst(C.clockTime, clock)?.element;
+	const time = queryFirst(SELECTORS.clockTime, clock)?.element;
 	const text = time?.textContent ?? "";
 	const ms = parseClockText(text);
 	if (Number.isNaN(ms)) return null;
 	return {
 		ms,
-		running: hasAnyClass(clock, C.clockActive),
+		running: hasAnyClass(clock, SELECTORS.clockActive),
 		hasTenths: /\.\d\s*$/.test(text),
 	};
 }
 
-export function chesscomActiveClockColor(root: ParentNode): Color | null {
-	const C = SELECTORS.chesscom;
-	for (const active of C.clockActive) {
-		const el = querySafe(root, `${C.clock}${active}`);
+export function activeClockColor(root: ParentNode): Color | null {
+	for (const active of SELECTORS.clockActive) {
+		const el = querySafe(root, `${SELECTORS.clock}${active}`);
 		if (!el) continue;
-		if (el.matches(C.clockColor.w)) return "w";
-		if (el.matches(C.clockColor.b)) return "b";
+		if (el.matches(SELECTORS.clockColor.w)) return "w";
+		if (el.matches(SELECTORS.clockColor.b)) return "b";
 	}
 	return null;
 }
@@ -62,35 +59,10 @@ export function chesscomActiveClockColor(root: ParentNode): Color | null {
  * where the player panel has none (owner's live capture, 2026-09-09:
  * `clock-component clock-bottom clock-black clock-player-turn`).
  */
-export function chesscomBottomClockColor(root: ParentNode): Color | null {
-	const C = SELECTORS.chesscom;
-	const el = querySafe(root, C.clockBottom);
+export function bottomClockColor(root: ParentNode): Color | null {
+	const el = querySafe(root, SELECTORS.clockBottom);
 	if (!el) return null;
-	if (hasAnyClass(el, [C.clockColor.w])) return "w";
-	if (hasAnyClass(el, [C.clockColor.b])) return "b";
-	return null;
-}
-
-export function readLichessClock(root: ParentNode, side: Color): ClockReading | null {
-	const L = SELECTORS.lichess;
-	const clock = querySafe(root, `${L.clock}${L.clockColor[side]}`);
-	if (!clock) return null;
-	const time = querySafe(clock, L.clockTime);
-	if (!time) return null;
-	const ms = parseClockText(time.textContent ?? "");
-	if (Number.isNaN(ms)) return null;
-	return {
-		ms,
-		running: clock.classList.contains(L.clockRunningClass),
-		hasTenths: time.querySelector(L.clockTenths) !== null,
-	};
-}
-
-export function lichessRunningClockColor(root: ParentNode): Color | null {
-	const L = SELECTORS.lichess;
-	const el = querySafe(root, L.clockRunning);
-	if (!el) return null;
-	if (el.matches(L.clockColor.w)) return "w";
-	if (el.matches(L.clockColor.b)) return "b";
+	if (hasAnyClass(el, [SELECTORS.clockColor.w])) return "w";
+	if (hasAnyClass(el, [SELECTORS.clockColor.b])) return "b";
 	return null;
 }

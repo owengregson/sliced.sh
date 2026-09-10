@@ -1251,7 +1251,8 @@ export class GameSession implements SessionSource {
 			incSec,
 			oppThinkMsHistory: [...this.oppThinkMs],
 			myThinkMsHistory: [...this.myThinkMs],
-			site: this.site ?? "lichess",
+			site: this.site ?? "chesscom",
+
 			targetElo: this.targetElo(),
 			profile: settings.strength.persona,
 			engineReady: this.deps.engine !== null,

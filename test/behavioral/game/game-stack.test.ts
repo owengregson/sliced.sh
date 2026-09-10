@@ -56,7 +56,7 @@ const settle = async (): Promise<void> => {
 beforeEach(async () => {
 	sim = createSimulator({ startAt: START });
 	sim.time.install();
-	tabId = sim.openTab("https://lichess.org/abcd1234", { active: true }).tabId;
+	tabId = sim.openTab("https://www.chess.com/game/174252022572", { active: true }).tabId;
 	await bootOffscreen();
 	sw = await bootSwContext(sim, {
 		entry: () => {
@@ -84,7 +84,8 @@ beforeEach(async () => {
 			router.install();
 		},
 	});
-	site = await createSimulatedSite(sim, tabId, { site: "lichess", myColor: "w" });
+	site = await createSimulatedSite(sim, tabId, { myColor: "w" });
+
 	await settle();
 });
 
@@ -123,7 +124,7 @@ describe("createGameStack: the real service-worker stack", () => {
 			(broadcaster as PanelBroadcaster).snapshotFor(null)
 		);
 		expect(snapshot.session.state).toBe("waiting-for-game");
-		expect(snapshot.site).toBe("lichess");
+		expect(snapshot.site).toBe("chesscom");
 		expect(snapshot.executor.debuggerAttached).toBe(false);
 	});
 

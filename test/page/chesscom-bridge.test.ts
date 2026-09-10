@@ -69,8 +69,8 @@ describe("chesscom-bridge — emitted code (§13.3)", () => {
 	it("contains no forbidden substring, no literal selector, no window property write", () => {
 		expect(forbiddenIn(emitted.code)).toEqual([]);
 		expect(forbiddenIn(bound)).toEqual([]);
-		for (const sel of SELECTORS.chesscom.board) expect(emitted.code).not.toContain(sel);
-		expect(emitted.code).not.toContain(SELECTORS.chesscom.boardTag);
+		for (const sel of SELECTORS.board) expect(emitted.code).not.toContain(sel);
+		expect(emitted.code).not.toContain(SELECTORS.boardTag);
 		expect(emitted.code).not.toMatch(/window\.\w+\s*=|window\[[^\]]+\]\s*=/);
 		expect(emitted.code).not.toContain("defineProperty");
 		expect(emitted.code).not.toMatch(/localStorage|sessionStorage|indexedDB|cookie/);

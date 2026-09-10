@@ -1,6 +1,6 @@
 /**
- * DOM → piece placement and the hybrid FEN strategy (Appendix C §1.2, §2.2, §3).
- * Placement readers return `null` while the board is unstable (duplicate
+ * DOM → piece placement and the hybrid FEN strategy (Appendix C §1.2, §3).
+ * `placementFromDom` returns `null` while the board is unstable (duplicate
  * square, animation, too few pieces) so callers retry on the next mutation.
  */
 
@@ -65,14 +65,13 @@ export function pieceAt(placement: string, sq: Square): string | null {
 }
 
 /** chess.com: `.piece` elements with `[wb][prnbqk]` + `square-XY` classes in any order. */
-export function chesscomPlacementFromDom(board: Element): string | null {
-	const C = SELECTORS.chesscom;
+export function placementFromDom(board: Element): string | null {
 	const grid = emptyGrid();
 	let count = 0;
-	for (const el of board.querySelectorAll(C.piece)) {
+	for (const el of board.querySelectorAll(SELECTORS.piece)) {
 		const cls = el.getAttribute("class") ?? "";
-		const p = C.pieceCodeRe.exec(cls);
-		const s = C.squareRe.exec(cls);
+		const p = SELECTORS.pieceCodeRe.exec(cls);
+		const s = SELECTORS.squareRe.exec(cls);
 		if (!p || !s) continue;
 		const file = Number(s[1]) - 1;
 		const rank = Number(s[2]) - 1;
@@ -82,55 +81,6 @@ export function chesscomPlacementFromDom(board: Element): string | null {
 		if (!row) continue;
 		if (row[file]) return null; // duplicate square ⇒ mid-animation / pool; retry
 		row[file] = ch;
-		count++;
-	}
-	return count < 2 ? null : gridToPlacement(grid);
-}
-
-const ROLE_LETTER: Record<string, string> = {
-	king: "k",
-	queen: "q",
-	rook: "r",
-	bishop: "b",
-	knight: "n",
-	pawn: "p",
-};
-
-/**
- * lichess: direct `piece` children of `cg-board`, positioned purely by
- * `transform: translate(x, y)`; orientation from the enclosing `.cg-wrap`.
- * `boardSize` overrides `getBoundingClientRect().width` (no layout in tests).
- */
-export function lichessPlacementFromDom(board: Element, boardSize?: number): string | null {
-	const L = SELECTORS.lichess;
-	const wrap = board.closest(`.${L.wrapClass}`);
-	const asWhite = !wrap?.classList.contains(L.orientationBlack);
-	const size = boardSize ?? board.getBoundingClientRect().width;
-	if (!(size > 0)) return null;
-	const sq = size / 8;
-	const grid = emptyGrid();
-	let count = 0;
-	for (const el of Array.from(board.children)) {
-		if (el.tagName.toLowerCase() !== L.pieceTag) continue;
-		if (el.classList.contains(L.fadingClass) || el.classList.contains(L.ghostClass)) continue;
-		if (el.classList.contains(L.animClass)) return null; // interpolated transform
-		const style = (el as HTMLElement).style?.transform || el.getAttribute("style") || "";
-		const m = L.translateRe.exec(style);
-		if (!m) return null;
-		let file = Math.round(Number(m[1]) / sq);
-		let row = Math.round(Number(m[2]) / sq);
-		if (!asWhite) {
-			file = 7 - file;
-			row = 7 - row;
-		}
-		if (file < 0 || file > 7 || row < 0 || row > 7) return null;
-		const role = L.pieceRoles.find((r) => el.classList.contains(r));
-		if (!role) continue;
-		const letter = ROLE_LETTER[role] ?? "";
-		const line = grid[row];
-		if (!line) continue;
-		if (line[file]) return null;
-		line[file] = el.classList.contains(L.whiteClass) ? letter.toUpperCase() : letter;
 		count++;
 	}
 	return count < 2 ? null : gridToPlacement(grid);

@@ -25,17 +25,18 @@
 	},
 	"content_scripts": [
 		{
-			"matches": ["*://*.chess.com/*", "*://*.lichess.org/*"],
-			"js": ["js/page/chesscom-bridge.js", "js/page/lichess-bridge.js"],
+			"matches": ["*://*.chess.com/*"],
+			"js": ["js/page/chesscom-bridge.js"],
 			"run_at": "document_start",
 			"world": "MAIN"
 		},
 		{
-			"matches": ["*://*.chess.com/*", "*://*.lichess.org/*"],
+			"matches": ["*://*.chess.com/*"],
 			"js": ["js/content.js"],
 			"run_at": "document_start"
 		}
 	],
+
 	"commands": {
 		"play-best-move": {
 			"suggested_key": {
@@ -67,9 +68,8 @@
 	],
 	"host_permissions": [
 		"*://*.chess.com/*",
-		"*://*.lichess.org/*",
-
 		"https://tests.stockfishchess.org/*",
+
 		"https://data.stockfishchess.org/*",
 		"https://sliced.sh/*"
 	],

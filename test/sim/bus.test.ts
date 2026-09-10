@@ -87,7 +87,7 @@ describe("bus: one-shot messages", () => {
 
 	it("tabs.sendMessage targets exactly the content context of that tab", async () => {
 		const a = sim.openTab("https://www.chess.com/a").tabId;
-		const b = sim.openTab("https://lichess.org/b").tabId;
+		const b = sim.openTab("https://www.chess.com/b").tabId;
 		const contentA = runtimeFor(sim, "content", a);
 		const contentB = runtimeFor(sim, "content", b);
 		const seen: string[] = [];

@@ -19,7 +19,7 @@ const received: GamePortCommand[] = [];
 beforeEach(async () => {
 	sim = createSimulator({ startAt: 1_000_000 });
 	sim.time.install();
-	tabId = sim.openTab("https://lichess.org/abcd1234").tabId;
+	tabId = sim.openTab("https://www.chess.com/game/174252022572").tabId;
 	received.length = 0;
 	sw = await bootSwContext(sim, {
 		entry: () => {

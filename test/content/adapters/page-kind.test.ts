@@ -1,11 +1,9 @@
 // test/content/adapters/page-kind.test.ts
 import { describe, expect, it } from "bun:test";
-import { detectChesscomPageKind, detectLichessPageKind } from "@content/adapters/page-kind";
-import { createTabDom } from "@test/sim/dom/tab-dom";
+import { pageKindFromPath } from "@content/adapters/page-kind";
 import type { PageKind } from "@typedefs/game";
-import { loadFixture, pageDocument } from "./helpers";
 
-describe("detectChesscomPageKind (Appendix C §1.1)", () => {
+describe("pageKindFromPath (Appendix C §1.1)", () => {
 	const table: Array<[string, PageKind]> = [
 		["/game/live/173765478164", "live-game"],
 		// the URL a real live game actually has (owner's capture, 2026-09-09)
@@ -38,48 +36,7 @@ describe("detectChesscomPageKind (Appendix C §1.1)", () => {
 	];
 	for (const [p, kind] of table) {
 		it(`${p} → ${kind}`, () => {
-			expect(detectChesscomPageKind(p)).toBe(kind);
+			expect(pageKindFromPath(p)).toBe(kind);
 		});
 	}
-});
-
-describe("detectLichessPageKind (Appendix C §2.1)", () => {
-	const urlTable: Array<[string, PageKind]> = [
-		["/abcdefgh1234", "live-game"],
-		["/abcdefgh", "live-game"],
-		["/abcdefgh/white", "live-game"],
-		["/abcdefgh/black", "live-game"],
-		["/analysis", "analysis"],
-		["/analysis/chess960", "analysis"],
-		["/abcdefgh/white/analysis", "analysis"],
-		["/study/AbCdEfGh", "analysis"],
-		["/training", "puzzles"],
-		["/training/mateIn2", "puzzles"],
-		["/training/AbCdE", "puzzles"],
-		["/storm", "puzzles"],
-		["/racer", "puzzles"],
-		["/streak", "puzzles"],
-		["/@/thibault", "other"],
-		["/games", "other"],
-		["/tournament/AbCdEfGh", "other"],
-		["/", "other"],
-	];
-	for (const [p, kind] of urlTable) {
-		it(`${p} (no DOM) → ${kind}`, () => {
-			expect(detectLichessPageKind(p, null)).toBe(kind);
-		});
-	}
-
-	it("uses main.round + body.playing when the DOM is available", () => {
-		const player = loadFixture("lichess-round-white");
-		expect(detectLichessPageKind("/abcdefgh1234", pageDocument(player))).toBe("live-game");
-		const tv = loadFixture("lichess-tv");
-		expect(detectLichessPageKind("/tv", pageDocument(tv))).toBe("live-spectate");
-		const spectate = createTabDom("https://lichess.org/abcdefgh");
-		spectate.setHTML('<main class="round"><div class="round__app"></div></main>');
-		expect(detectLichessPageKind("/abcdefgh", pageDocument(spectate))).toBe("live-spectate");
-		const analyse = createTabDom("https://lichess.org/abcdefgh/white/analysis");
-		analyse.setHTML('<main class="analyse"></main>');
-		expect(detectLichessPageKind("/abcdefgh/white/analysis", pageDocument(analyse))).toBe("analysis");
-	});
 });

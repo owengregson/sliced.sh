@@ -12,7 +12,8 @@ export interface SnapshotOverrides {
 }
 
 export function makeSnapshot(o: SnapshotOverrides = {}): PanelSnapshot {
-	const site = o.site === undefined ? "lichess" : o.site;
+	const site = o.site === undefined ? "chesscom" : o.site;
+
 	const state = o.state ?? "waiting-for-game";
 	const live = state.startsWith("live:");
 	return {

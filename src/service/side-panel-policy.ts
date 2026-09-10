@@ -1,10 +1,10 @@
 /**
  * Per-tab side-panel policy (Appendix B §2): the panel is enabled on
- * chess.com / lichess tabs and disabled elsewhere, unless the user opened it
- * globally. `install()` sets `openPanelOnActionClick` once, disables the
- * global default, reconciles existing tabs, and follows
- * `tabs.onUpdated` / `onActivated` / `onRemoved`. The host test is derived
- * from `SITE_MATCHES.chesscom` / `SITE_MATCHES.lichess` (no second literal).
+ * chess.com tabs and disabled elsewhere, unless the user opened it globally.
+ * `install()` sets `openPanelOnActionClick` once, disables the global default,
+ * reconciles existing tabs, and follows `tabs.onUpdated` / `onActivated` /
+ * `onRemoved`. The host test is derived from `SITE_MATCHES.chesscom` (no
+ * second literal).
  */
 
 import { sidePanelSetBehavior, sidePanelSetOptions } from "@core/chrome/side-panel";
@@ -31,7 +31,7 @@ export function hostTestFromMatchPattern(pattern: string): (hostname: string) =>
 	return (host) => host === exact;
 }
 
-const HOST_TESTS = [SITE_MATCHES.chesscom, SITE_MATCHES.lichess].map(hostTestFromMatchPattern);
+const IS_SITE_HOST = hostTestFromMatchPattern(SITE_MATCHES.chesscom);
 
 export function isChessHost(url: string | undefined): boolean {
 	if (!url) return false;
@@ -43,8 +43,7 @@ export function isChessHost(url: string | undefined): boolean {
 		return false;
 	}
 	if (protocol !== "http:" && protocol !== "https:") return false;
-	const host = hostname.toLowerCase();
-	return HOST_TESTS.some((test) => test(host));
+	return IS_SITE_HOST(hostname.toLowerCase());
 }
 
 export class SidePanelPolicy {

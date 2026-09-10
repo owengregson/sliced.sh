@@ -44,8 +44,8 @@ import {
 	toRect,
 } from "@content/adapters/adapter";
 import { createChesscomAdapter } from "@content/adapters/chesscom";
-import { createLichessAdapter } from "@content/adapters/lichess";
-import { detectChesscomPageKind, detectLichessPageKind } from "@content/adapters/page-kind";
+import { pageKindFromPath } from "@content/adapters/page-kind";
+
 import { occupancyOf, waitForPromotionRect } from "@content/board-state";
 import { createCursorTracker } from "@content/cursor-tracker";
 import { createFeedPort, type FeedPort } from "@content/feed-port";
@@ -95,12 +95,6 @@ function stripApproximate(s: AdapterPositionSnapshot): PositionSnapshot {
 	return snapshot;
 }
 
-function urlPageKind(site: Site, win: Window): PageKind {
-	return site === "chesscom"
-		? detectChesscomPageKind(win.location.pathname)
-		: detectLichessPageKind(win.location.pathname, null);
-}
-
 /** Boot the content script for the current page; `null` when the host is not a supported site. */
 export function startContent(options: ContentOptions = {}): ContentHandle | null {
 	const win = options.window ?? window;
@@ -137,7 +131,8 @@ function deferUntilBody(
 	const timer = setInterval(tryBoot, TIMINGS.contentReadyPollMs);
 	return {
 		site,
-		pageKind: () => inner?.pageKind() ?? urlPageKind(site, win),
+		pageKind: () => inner?.pageKind() ?? pageKindFromPath(win.location.pathname),
+
 		adapter: () => inner?.adapter() ?? null,
 		dispose() {
 			stop();
@@ -155,10 +150,8 @@ function bootContent(
 	const adapterVersion = options.adapterVersion ?? __SL_VERSION__;
 	const ownBridge = options.bridge === undefined;
 	const bridge = options.bridge ?? createPageBridgeClient({ window: win });
-	const adapter =
-		site === "chesscom"
-			? createChesscomAdapter({ document: doc, window: win, bridge })
-			: createLichessAdapter({ document: doc, window: win, bridge });
+	const adapter = createChesscomAdapter({ document: doc, window: win, bridge });
+
 	const highlights = createHighlights(adapter, false);
 	let keybinds: Keybinds = { ...DEFAULT_KEYBINDS, global: false };
 	let pageKind = adapter.detectPageKind();

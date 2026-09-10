@@ -15,7 +15,8 @@ Consequences for what these suites prove:
   drives `onPositionChange` / `onGameEnd` / `observeMove` through mutations runs on
   this shim, so those tests verify the *evaluation pipeline* (debounce, dedupe,
   unstable-state skips, hybrid FEN), not the browser's observer semantics.
-- The **genuine happy-dom observer** is exercised once per adapter for the one
+- The **genuine happy-dom observer** is exercised once for the one
+
   case it supports (`loadFixture(name, undefined, { observer: "native" })`): a single
   attribute flip on the board made synchronously after construction fires
   `onPositionChange` exactly once.
@@ -27,7 +28,8 @@ Consequences for what these suites prove:
   active-observer count stays bounded).
 
 Not verified by any test here and to be confirmed on the live sites in Task 31:
-`attributeFilter` sufficiency against real chess.com/lichess mutation streams,
+`attributeFilter` sufficiency against real chess.com mutation streams,
+
 `characterData` deliveries from the chess.com move list, the body observer's
 added/removed-node filter on real SPA re-renders, and `observeMove`'s body
 observer under real drag/animation timing.

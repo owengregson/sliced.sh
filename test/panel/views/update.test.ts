@@ -40,7 +40,8 @@ describe("updateView", () => {
 		const updates: string[] = [];
 		const view = createUpdateView({
 			version: "2.1",
-			notes: "Auto-play now verifies each move on lichess.",
+			notes: "Auto-play now verifies each move on the live board.",
+
 			onUpdate: () => updates.push("update"),
 		});
 		cleanup = await view.mount(makeContext(container, store));
@@ -49,7 +50,7 @@ describe("updateView", () => {
 		expect(mark?.getAttribute("src")).toContain(IMAGES.mark);
 		expect(container.querySelector(".sl-empty__title")?.textContent).toBe(COPY.update.title("2.1"));
 		expect(container.querySelector(".sl-empty__body")?.textContent).toBe(
-			"Auto-play now verifies each move on lichess."
+			"Auto-play now verifies each move on the live board."
 		);
 		const [primary, later] = [
 			...container.querySelectorAll<HTMLButtonElement>(".sl-empty__actions .sl-button"),

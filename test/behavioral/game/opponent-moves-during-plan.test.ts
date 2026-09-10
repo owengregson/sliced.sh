@@ -36,7 +36,7 @@ describe("game session: the opponent moves while our plan is pending (Step 2b)",
 			h.site.post({
 				kind: "position",
 				snapshot: {
-					site: "lichess",
+					site: "chesscom",
 					gameId: h.site.gameId,
 					fen: moved as string,
 					ply: 2,
@@ -93,7 +93,7 @@ describe("game session: the opponent moves while our plan is pending (Step 2b)",
 			h.site.post({
 				kind: "position",
 				snapshot: {
-					site: "lichess",
+					site: "chesscom",
 					gameId: h.site.gameId,
 					fen: moved,
 					ply: 2,
@@ -112,7 +112,7 @@ describe("game session: the opponent moves while our plan is pending (Step 2b)",
 			h.site.post({
 				kind: "position",
 				snapshot: {
-					site: "lichess",
+					site: "chesscom",
 					gameId: h.site.gameId,
 					fen: start,
 					ply: 0,

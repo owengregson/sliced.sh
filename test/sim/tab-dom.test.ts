@@ -39,14 +39,14 @@ describe("tab DOM", () => {
 	});
 
 	it("installWindowGlobals exposes window/document/constructors and restores them", () => {
-		const dom = createTabDom("https://lichess.org/");
+		const dom = createTabDom("https://www.chess.com/");
 		const g = globalThis as Record<string, unknown>;
 		const hadWindow = "window" in g;
 		const restore = installWindowGlobals(dom.window);
 		expect(g.window).toBe(dom.window);
 		expect(g.document).toBe(dom.document);
 		expect(g.Element).toBe(dom.window.Element);
-		expect((g.location as { href: string }).href).toBe("https://lichess.org/");
+		expect((g.location as { href: string }).href).toBe("https://www.chess.com/");
 		restore();
 		expect("window" in g).toBe(hadWindow);
 	});

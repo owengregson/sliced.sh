@@ -31,7 +31,8 @@ import { PanelBroadcaster } from "@service/panel-broadcaster";
 import { createSimulator, type Simulator } from "@test/sim";
 import { bootSwContext, type SwContext } from "@test/sim/contexts/sw-context";
 import { createSimulatedSite, type SimulatedSite } from "@test/sim/telemetry/sim-site";
-import type { Color, Site } from "@typedefs/game";
+import type { Color } from "@typedefs/game";
+
 import type { LicenseState, Settings } from "@typedefs/settings";
 import { ScriptedEngineTransport, type ScriptOptions } from "./scripted-engine";
 
@@ -40,8 +41,8 @@ const LICENSE: LicenseState = { status: "valid", checkedAt: START_AT };
 
 export interface GameHarnessOptions {
 	settings?: SettingsPatch;
-	site?: Site;
 	myColor?: Color;
+
 	fen?: string;
 	timeControl?: { baseMs: number; incMs: number };
 	/** Forward in-page keybinds to the service worker as `CONTENT_KEYBIND`. */
@@ -112,10 +113,8 @@ const DEFAULT_TC = { baseMs: 300_000, incMs: 2_000 };
 export async function createGameHarness(options: GameHarnessOptions = {}): Promise<GameHarness> {
 	const sim = createSimulator({ startAt: START_AT });
 	sim.time.install();
-	const site: Site = options.site ?? "lichess";
-	const url =
-		site === "lichess" ? "https://lichess.org/abcd1234" : "https://www.chess.com/game/live/1";
-	const tabId = sim.openTab(url, { active: true }).tabId;
+	const tabId = sim.openTab("https://www.chess.com/game/live/1", { active: true }).tabId;
+
 	const timeControl = options.timeControl ?? DEFAULT_TC;
 	const spoken: string[] = [];
 	const toasts: Array<Extract<PanelPortMessage, { kind: "toast" }>> = [];
@@ -216,8 +215,8 @@ export async function createGameHarness(options: GameHarnessOptions = {}): Promi
 	}
 
 	const page = await createSimulatedSite(sim, tabId, {
-		site,
 		myColor: options.myColor ?? "w",
+
 		gameId: options.gameId ?? "harness-game",
 		timeControl,
 		...(options.fen ? { fen: options.fen } : {}),

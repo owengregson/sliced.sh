@@ -125,7 +125,7 @@ let tabId: number;
 
 beforeEach(async () => {
 	dom = await bootPanelDom();
-	tabId = dom.sim.openTab("https://lichess.org/abcdefgh", { active: true }).tabId;
+	tabId = dom.sim.openTab("https://www.chess.com/game/174252011111", { active: true }).tabId;
 	store = fakeStore();
 	logging = null;
 	copied = [];

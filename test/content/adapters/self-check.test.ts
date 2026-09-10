@@ -21,7 +21,7 @@ describe("probeLadders", () => {
 	it("reports the matched index per concern and lists the misses", () => {
 		const dom = loadFixture("chesscom-computer");
 		const report = probeLadders(
-			{ board: SELECTORS.chesscom.board, clockTime: SELECTORS.chesscom.clockTime },
+			{ board: SELECTORS.board, clockTime: SELECTORS.clockTime },
 			pageDocument(dom)
 		);
 		expect(report.matched).toEqual([

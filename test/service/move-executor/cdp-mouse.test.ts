@@ -15,7 +15,7 @@ const prevChrome = (globalThis as Record<string, unknown>).chrome;
 beforeEach(async () => {
 	sim = createSimulator({ startAt: START });
 	sim.time.install();
-	tabId = sim.openTab("https://lichess.org/abcd1234").tabId;
+	tabId = sim.openTab("https://www.chess.com/game/174252022572").tabId;
 	(globalThis as Record<string, unknown>).chrome = sim.chrome;
 	await debuggerAttach(tabId, CDP.protocolVersion);
 });

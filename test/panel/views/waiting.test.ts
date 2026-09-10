@@ -20,7 +20,8 @@ let tabId: number;
 beforeEach(async () => {
 	dom = await bootPanelDom();
 	resetWaitingSession();
-	tabId = dom.sim.openTab("https://lichess.org/", { active: true }).tabId;
+	tabId = dom.sim.openTab("https://www.chess.com/", { active: true }).tabId;
+
 	container = mount(document.createElement("main"));
 	bannerSlot = mount(document.createElement("div"));
 	mountBannerSlot(bannerSlot);
@@ -62,7 +63,7 @@ describe("waitingView", () => {
 		expect(container.querySelector("[data-view=waiting]")).not.toBeNull();
 		expect(text(".sl-view__title")).toBe(COPY.waiting.title);
 		expect(text(".sl-waiting__meta")).toBe(
-			COPY.waiting.meta(COPY.waitingView.sites.lichess, COPY.waiting.engineReady)
+			COPY.waiting.meta(COPY.waitingView.site, COPY.waiting.engineReady)
 		);
 		expect(text(".sl-waiting__status-text")).toBe(COPY.waiting.watching);
 		expect(container.querySelector<HTMLElement>(".sl-waiting__dot")?.dataset.state).toBe("ok");
@@ -186,7 +187,8 @@ describe("waitingView", () => {
 		const newGame = container.querySelector<HTMLElement>(".sl-waiting__newgame .sl-button");
 		expect(newGame?.textContent?.trim()).toBe(COPY.waitingView.newGame);
 		expect(newGame?.dataset.action).toBe("open-url");
-		expect(newGame?.dataset.url).toBe("lichessLobby");
+		expect(newGame?.dataset.url).toBe("chesscomPlay");
+
 		expect(container.querySelector<HTMLElement>(".sl-waiting__newgame")?.hidden).toBe(false);
 
 		const queued = makeSnapshot({
@@ -197,7 +199,7 @@ describe("waitingView", () => {
 		expect(container.querySelector<HTMLElement>(".sl-waiting__newgame")?.hidden).toBe(true);
 		expect(container.querySelector<HTMLElement>(".sl-waiting__session")?.hidden).toBe(true);
 		expect(text(".sl-waiting__meta")).toBe(
-			COPY.waiting.meta(COPY.waitingView.sites.chesscom, COPY.waiting.engineReady)
+			COPY.waiting.meta(COPY.waitingView.site, COPY.waiting.engineReady)
 		);
 		// Without a site (session ended off-site) the meta line is hidden rather than "On sliced".
 		store.emit(makeSnapshot({ site: null }));

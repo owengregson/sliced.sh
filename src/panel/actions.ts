@@ -25,6 +25,9 @@ export interface ActionHost {
 
 export type UrlKey = keyof typeof URLS;
 
+/** Where "Play" / "Start a new game" deep-link (Appendix F §4.2 / §4.3), as a `URLS` key. */
+export const PLAY_URL: UrlKey = "chesscomPlay";
+
 /** Media type of the Engine view's timing-log export (the only `data:` URL the panel opens). */
 export const JSON_DATA_URL_PREFIX = "data:application/json";
 

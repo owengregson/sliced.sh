@@ -58,7 +58,7 @@ describe("manifest host_permissions", () => {
 	it("declare no host permission that nothing in the registry asks for", () => {
 		const known = [
 			SITE_MATCHES.chesscom,
-			SITE_MATCHES.lichess,
+
 			...URLS.nnueMirrorHosts,
 
 			`${new URL(URLS.website).origin}/*`,

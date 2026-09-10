@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import type { AdapterPositionSnapshot, SiteAdapter } from "@content/adapters/adapter";
 import { createChesscomAdapter } from "@content/adapters/chesscom";
-import { chesscomSquareToPoint } from "@content/adapters/geometry";
+import { squareToPoint } from "@content/adapters/geometry";
 import { TIMINGS } from "@core/constants";
 import { TOKENS } from "@design/tokens.generated";
 import { installWindowGlobals, type TabDom } from "@test/sim/dom/tab-dom";
@@ -178,12 +178,12 @@ describe("ChessComAdapter — geometry", () => {
 		const { dom, adapter } = boot("chesscom-live");
 		dom.layout("wc-chess-board", BOARD_RECT);
 		expect(adapter.getBoardRect()).toMatchObject(BOARD_RECT);
-		expect(adapter.squareToPoint("e2")).toEqual(chesscomSquareToPoint("e2", BOARD_RECT, false));
+		expect(adapter.squareToPoint("e2")).toEqual(squareToPoint("e2", BOARD_RECT, false));
 		expect(adapter.pointToSquare({ x: 397, y: 529 })).toBe("e2");
 		expect(adapter.squareRect("a8")).toMatchObject({ x: 100, y: 100, width: 66, height: 66 });
 		dom.query("wc-chess-board").classList.add("flipped");
 		expect(adapter.isFlipped()).toBe(true);
-		expect(adapter.squareToPoint("e2")).toEqual(chesscomSquareToPoint("e2", BOARD_RECT, true));
+		expect(adapter.squareToPoint("e2")).toEqual(squareToPoint("e2", BOARD_RECT, true));
 	});
 	it("returns the promotion piece rect from the promotion window", () => {
 		const { dom, adapter } = boot("chesscom-live");

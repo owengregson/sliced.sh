@@ -164,7 +164,7 @@ function bootFakeAdapter(): void {
 beforeEach(async () => {
 	sim = createSimulator({ startAt: START });
 	sim.time.install();
-	tabId = sim.openTab("https://lichess.org/abcd1234").tabId;
+	tabId = sim.openTab("https://www.chess.com/game/174252022572").tabId;
 	buildBoard();
 	adapter = {
 		observeRequests: [],
@@ -216,7 +216,7 @@ beforeEach(async () => {
 			ownership = new HandOwnership(link, { now: sim.now });
 			executor = new MoveExecutor({
 				tabId,
-				site: "lichess",
+				site: "chesscom",
 				debugger: dbg,
 				link,
 				focus,

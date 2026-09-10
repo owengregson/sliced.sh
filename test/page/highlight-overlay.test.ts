@@ -31,7 +31,7 @@ afterEach(() => {
 });
 
 function boot(html: string) {
-	const win = makeWindow("https://lichess.org/abcdefgh");
+	const win = makeWindow("https://www.chess.com/game/174252011111");
 	cleanups.push(() => win.happyDOM.close());
 	win.document.body.innerHTML = html;
 	const rec = recordPosts(win);

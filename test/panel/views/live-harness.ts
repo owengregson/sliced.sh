@@ -100,7 +100,7 @@ export function liveSnapshot(o: LiveOverrides = {}): PanelSnapshot {
 	const session: PanelSnapshot["session"] = {
 		state,
 		gameId: live ? "g1" : null,
-		site: "lichess",
+		site: "chesscom",
 		pageKind: "live-game",
 		myColor,
 		sideToMove: o.sideToMove ?? myColor,
@@ -114,7 +114,7 @@ export function liveSnapshot(o: LiveOverrides = {}): PanelSnapshot {
 	if (o.lastExecution) session.lastExecution = o.lastExecution;
 	const snap: PanelSnapshot = {
 		license: { status: "valid", checkedAt: 1 },
-		site: "lichess",
+		site: "chesscom",
 		pageKind: "live-game",
 		session,
 		engine: {
@@ -229,7 +229,9 @@ export async function mountLive(
 	options: { tab?: boolean } = {}
 ): Promise<LiveHarness> {
 	const tab =
-		options.tab === false ? null : sim.openTab("https://lichess.org/abcdefgh", { active: true });
+		options.tab === false
+			? null
+			: sim.openTab("https://www.chess.com/game/174252011111", { active: true });
 	const app = mount(document.createElement("main"));
 	app.className = "sl-app";
 	const topbar = document.createElement("header");

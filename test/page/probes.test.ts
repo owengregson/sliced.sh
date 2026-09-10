@@ -19,13 +19,13 @@ function win(url = "https://www.chess.com/game/live/1") {
 	return w;
 }
 
-const boardSelectors = [...SELECTORS.chesscom.board];
+const boardSelectors = [...SELECTORS.board];
 
 describe("registry", () => {
-	it("lists the six §5.5 programs, the two bridges as entries with seed-derived entry args, and every program is clean", () => {
+	it("lists the five §5.5 programs, the bridge as an entry with seed-derived entry args, and every program is clean", () => {
 		expect(programs.map((p) => [p.name, p.entry])).toEqual([
 			["chesscom-bridge", true],
-			["lichess-bridge", true],
+
 			["highlight-overlay", false],
 			["cursor-probe", false],
 			["focus-probe", false],

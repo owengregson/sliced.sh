@@ -1,7 +1,7 @@
 /**
- * Square ⇄ viewport geometry (Appendix C §1.9, §2.9). Both sites' boards
- * are exactly the 8×8 playing area, so `rect.width / 8` is the square
- * size; "flipped" (chess.com) and "!asWhite" (lichess) are the same mirror.
+ * Square ⇄ viewport geometry (Appendix C §1.9). chess.com's board element is
+ * exactly the 8×8 playing area, so `rect.width / 8` is the square size;
+ * `flipped` means black is at the bottom (`.flipped` / `getOptions().flipped`).
  */
 
 import { fileOf, rankOf, squareOf } from "@core/chess/squares";
@@ -33,16 +33,6 @@ export function squareToPoint(sq: Square, rect: RectLike, flipped: boolean): Poi
 	const s = rect.width / 8;
 	const { col, row } = screenCell(sq, flipped);
 	return { x: left + col * s + s / 2, y: top + row * s + s / 2 };
-}
-
-/** chess.com: `flipped` = black at the bottom (`.flipped` / `getOptions().flipped`). */
-export function chesscomSquareToPoint(sq: Square, rect: RectLike, flipped: boolean): Point {
-	return squareToPoint(sq, rect, flipped);
-}
-
-/** lichess: `asWhite` = `.cg-wrap` lacks `orientation-black`. */
-export function lichessSquareToPoint(sq: Square, rect: RectLike, asWhite: boolean): Point {
-	return squareToPoint(sq, rect, !asWhite);
 }
 
 /** Inverse of `squareToPoint`; `null` outside the board. Mirrors chessground `getKeyAtDomPos`. */

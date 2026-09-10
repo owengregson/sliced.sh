@@ -138,12 +138,12 @@ function bootFakeAdapter(): void {
 beforeEach(async () => {
 	sim = createSimulator({ startAt: START });
 	sim.time.install();
-	tabId = sim.openTab("https://lichess.org/abcd1234", { active: true }).tabId;
+	tabId = sim.openTab("https://www.chess.com/game/174252022572", { active: true }).tabId;
 	buildBoard();
 	boardCommands = [];
 	toasts = [];
 	snapshots = [];
-	session = new FakeSession("lichess");
+	session = new FakeSession("chesscom");
 	sw = await bootSwContext(sim, {
 		entry: async () => {
 			keepalive = new Keepalive();
@@ -154,7 +154,7 @@ beforeEach(async () => {
 			ownership = new HandOwnership(link, { now: sim.now });
 			executor = new MoveExecutor({
 				tabId,
-				site: "lichess",
+				site: "chesscom",
 				debugger: dbg,
 				link,
 				focus,
@@ -400,7 +400,7 @@ describe("panel ↔ service worker: arm and play", () => {
 	});
 
 	it("commands for a tab without an executor are refused with the registered reason; cancel is idempotent", async () => {
-		const other = sim.openTab("https://lichess.org/zzzz9999", { active: false }).tabId;
+		const other = sim.openTab("https://www.chess.com/game/174252099999", { active: false }).tabId;
 		await expect(
 			dispatch({ type: MSG.PANEL_SET_AUTO_MOVE, tabId: other, armed: true })
 		).rejects.toThrow(PANEL_COMMAND_ERRORS.noExecutor);
@@ -442,7 +442,10 @@ describe("panel ↔ service worker: arm and play", () => {
 
 	it("a second window's panel is served its own tab and none of the first tab's toasts", async () => {
 		// A second browser window whose active tab has no session at all.
-		const otherTab = sim.openTab("https://lichess.org/zzzz9999", { active: true, windowId: 2 }).tabId;
+		const otherTab = sim.openTab("https://www.chess.com/game/174252099999", {
+			active: true,
+			windowId: 2,
+		}).tabId;
 		const otherPanel = await bootPanelContext(sim);
 		sim.windows.setCurrent(otherPanel.id, 2); // what this panel's `windows.getCurrent()` reports
 		const otherSnapshots: PanelSnapshot[] = [];

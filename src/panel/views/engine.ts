@@ -420,10 +420,11 @@ export function createEngineView(deps: EngineViewDeps = {}): View {
 				const gameId = snapshot.session.gameId;
 				valueCell("target").textContent =
 					site && gameId
-						? COPY.engineView.target(COPY.engineView.sites[site], gameId)
+						? COPY.engineView.target(COPY.engineView.site, gameId)
 						: site
-							? COPY.engineView.sites[site]
+							? COPY.engineView.site
 							: COPY.engineView.none;
+
 				const execution = snapshot.session.lastExecution;
 				const style = settings.execution.style;
 				const styleLabel =

@@ -38,15 +38,12 @@ describe("chrome.tabs fake", () => {
 
 	it("query filters by active, status, and match patterns", async () => {
 		sim.openTab("https://www.chess.com/play/online");
-		sim.openTab("https://lichess.org/abc", { active: false });
+		sim.openTab("https://example.org/abc", { active: false });
 		sim.chrome.tabs.create({ url: "https://example.com/", active: false });
 		const active = await sim.chrome.tabs.query({ active: true });
 		expect(active.map((t) => t.url)).toEqual(["https://www.chess.com/play/online"]);
-		const chess = await sim.chrome.tabs.query({ url: ["*://*.chess.com/*", "*://*.lichess.org/*"] });
-		expect(chess.map((t) => t.url)).toEqual([
-			"https://www.chess.com/play/online",
-			"https://lichess.org/abc",
-		]);
+		const chess = await sim.chrome.tabs.query({ url: ["*://*.chess.com/*"] });
+		expect(chess.map((t) => t.url)).toEqual(["https://www.chess.com/play/online"]);
 		expect((await sim.chrome.tabs.query({ status: "loading" })).map((t) => t.url)).toEqual([
 			"https://example.com/",
 		]);

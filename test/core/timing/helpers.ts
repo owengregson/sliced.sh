@@ -40,7 +40,7 @@ export function ctx(over: Partial<TimingContext> = {}): TimingContext {
 		incSec: 0,
 		oppThinkMsHistory: [3000, 4000, 2500],
 		myThinkMsHistory: [],
-		site: "lichess",
+		site: "chesscom",
 		targetElo: 1650,
 		profile: "balanced",
 		engineReady: true,

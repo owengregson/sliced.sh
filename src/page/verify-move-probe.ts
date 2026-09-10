@@ -6,10 +6,9 @@
  * returning `{ lastMove: { from, to, san } | null, ply: number | null,
  * position: string | null }`.
  *
- * chess.com: `board.game.getLastMove()` / `getHistorySANs().length` /
- * `getFEN()` from the first board in the bound ladder that carries the API.
- * lichess round pages expose no move API, so the probe returns the null
- * shape there and the executor falls back to the port.
+ * `board.game.getLastMove()` / `getHistorySANs().length` / `getFEN()` from the
+ * first board in the bound ladder that carries the API; when no board does,
+ * the probe returns the null shape and the executor falls back to the port.
  */
 
 import { defineProgram, js } from "@pagescript";

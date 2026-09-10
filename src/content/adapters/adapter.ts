@@ -1,12 +1,14 @@
 /**
  * `SiteAdapter` — the ISOLATED-world board adapter contract (§3.4, §3.4a,
- * Appendix C §4) implemented by `chesscom.ts` and `lichess.ts`, plus the
- * `PageBridge` the adapters consume for MAIN-world state and drawing
- * (Task 21 implements `PageBridgeClient`; tests use a fake).
+ * Appendix C §4) implemented by `chesscom.ts`, plus the `PageBridge` the
+ * adapter consumes for MAIN-world state and drawing (Task 21 implements
+ * `PageBridgeClient`; tests use a fake).
  *
- * Shared runtime helpers that both adapters need live here too: the
- * debounced trigger and the focus-edge listener installer. No adapter
- * method reads or writes page storage (§13.3).
+ * `AdapterBase` holds the board-watching runtime that is independent of any
+ * markup — debounced re-evaluation, observer bookkeeping, the bridge-state
+ * cache, `observeMove`, game identity, probe reporting — so `chesscom.ts`
+ * contains only the DOM/bridge reading. It is the seam the adapter tests
+ * drive. No adapter method reads or writes page storage (§13.3).
  */
 
 import type { UciParts } from "@core/chess/san";
@@ -203,7 +205,8 @@ export const BRIDGE_KINDS = {
 	cursor: "cursor",
 } as const;
 
-/** Normalised `getState` / `move` / `state` payload from either bridge. */
+/** Normalised `getState` / `move` / `state` payload from the bridge. */
+
 export interface BridgeState {
 	fen?: string;
 	turn?: Color | 1 | 2;
@@ -213,8 +216,7 @@ export interface BridgeState {
 	lastMove?: { from: Square; to: Square; san?: string };
 	result?: string;
 	gameOver?: boolean;
-	hasLichessApi?: boolean;
-	analysisFen?: string;
+
 	/** chess.com `timeControl.get()` / `timestamps.get()` as the site reports them (opaque). */
 	timeControl?: unknown;
 	timestamps?: unknown;
@@ -381,7 +383,8 @@ export abstract class AdapterBase implements SiteAdapter {
 		arrows: Array<{ from: Square; to: Square; color: string }>
 	): unknown;
 	protected abstract clearPayload(): unknown;
-	/** The 8×8 board element (chess.com `wc-chess-board`, lichess `cg-board`). */
+	/** The 8×8 board element (`wc-chess-board`). */
+
 	protected abstract boardElement(): Element | null;
 	/** Whether the page renders a move list at all (parity is meaningless without one). */
 	protected abstract hasMoveList(): boolean;
@@ -642,8 +645,7 @@ export abstract class AdapterBase implements SiteAdapter {
 	}
 
 	protected bridgeFen(): string | null {
-		const s = this.bridgeState;
-		return s?.fen ?? s?.analysisFen ?? null;
+		return this.bridgeState?.fen ?? null;
 	}
 
 	/** Side to move from the move-list parity; `null` without a move list. */

@@ -280,8 +280,9 @@ export const COPY = {
 			last: "Last action",
 			license: "License",
 		},
-		sites: { chesscom: "chess.com", lichess: "lichess" },
+		site: "chess.com",
 		target: (site: string, gameId: string): string => `${site} · game ${gameId}`,
+
 		styleAuto: "auto",
 		profiles: {
 			manual: "Manual",
@@ -343,9 +344,10 @@ export const COPY = {
 		recheck: "Check again",
 		signedIn: (maskedKey: string): string => `Signed in with ${maskedKey}`,
 	},
-	unsupportedView: { chesscom: "chess.com", lichess: "lichess.org", play: "Play" },
+	unsupportedView: { chesscom: "chess.com", play: "Play" },
 	waitingView: {
-		sites: { chesscom: "chess.com", lichess: "lichess" },
+		site: "chess.com",
+
 		engineStopped: "engine stopped",
 		opponent: "Opponent",
 		noOpponent: "No opponent yet",

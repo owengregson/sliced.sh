@@ -115,9 +115,10 @@ describe("site-detect", () => {
 		expect(hostOfMatchPattern("nonsense")).toBeNull();
 		expect(detectSite("www.chess.com")).toBe("chesscom");
 		expect(detectSite("chess.com")).toBe("chesscom");
-		expect(detectSite("LICHESS.org")).toBe("lichess");
-		expect(detectSite("lichess.org")).toBe("lichess");
+		expect(detectSite("CHESS.com")).toBe("chesscom");
 		expect(detectSite("notchess.com")).toBeNull();
+		expect(detectSite("lichess.org")).toBeNull();
+
 		expect(detectSite("example.test")).toBeNull();
 	});
 	it("startContent returns null off-site and boots nothing", () => {
@@ -485,7 +486,8 @@ describe("content entry — document_start (no <body> yet)", () => {
 		expect(feed.of("position")[0]?.snapshot.ply).toBe(6);
 	});
 	it("completes the deferred boot from the readiness poll when no DOMContentLoaded arrives", async () => {
-		const dom = createTabDom("https://lichess.org/abcdefgh1234");
+		const dom = createTabDom("https://www.chess.com/game/174252022572");
+
 		cleanups.push(installWindowGlobals(dom.window));
 		dom.document.documentElement.innerHTML = "<head></head>";
 		dom.document.body?.remove();
@@ -499,9 +501,9 @@ describe("content entry — document_start (no <body> yet)", () => {
 		if (!handle) throw new Error("null handle");
 		cleanups.push(() => handle.dispose());
 		expect(handle.adapter()).toBeNull();
-		loadFixtureInto(dom, "lichess-round-white");
+		loadFixtureInto(dom, "chesscom-live");
 		await waitFor(() => handle.adapter() !== null, TIMINGS.contentReadyPollMs * 4);
-		expect(feed.posts[0]).toMatchObject({ kind: "hello", site: "lichess" });
+		expect(feed.posts[0]).toMatchObject({ kind: "hello", site: "chesscom" });
 	});
 });
 
