@@ -1593,13 +1593,13 @@ export class GameSession implements SessionSource {
 		if (!this.mayAct() || !settings.automation.highlightMoves) return;
 		// No colour check of its own. `runPipeline` is the only caller (and re-checks
 		// `this.snapshot !== snapshot` before getting here), every `Recommendation` carries the
-		// snapshot's own `fen` (`recommendation.ts`), and `runPipeline` has already required that
-		// FEN's turn to be our colour — so a third test could only ever differ from the second by
-		// reading a *different* colour source, and the only other source is the game's copy, which
-		// the session fills from the snapshot. A guard that cannot catch anything the one above it
-		// misses is a guard with nothing to test it: `test/behavioral/game/wrong-colour-guard.test.ts`
-		// pins the two properties it would have rested on instead — that the mark is withdrawn when a
-		// correction lands, and that `rec.fen` is the snapshot's FEN.
+		// snapshot's own `fen` (`recommendation.ts`), and `runPipeline`'s precondition is already that
+		// that FEN's turn is our colour — so a check here could only ever differ from the one above by
+		// reading a *different* colour source, and the only other source is the game's own copy of it.
+		// A guard that cannot catch anything its caller misses is a guard nothing can test, so the
+		// properties it would have rested on are asserted instead
+		// (`test/behavioral/game/wrong-colour-guard.test.ts`): the mark is withdrawn when a correction
+		// lands, and `rec.fen` is the snapshot's own FEN.
 		this.deps.link.post(this.deps.tabId, {
 			kind: "highlight",
 			from: rec.chosen.from,
