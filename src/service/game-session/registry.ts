@@ -23,6 +23,7 @@ import type { DistributionHead } from "@core/timing/types";
 import { errorMessage } from "@core/util/errors";
 import { defaultNow, defaultScheduler, type Scheduler } from "@core/util/scheduler";
 import { AutoQueue } from "@service/auto-queue";
+import type { BoardRectSource } from "@service/board-watch";
 import type { GameSessionHandle, GameSessionRegistry } from "@service/bootstrap";
 import type { ContentLink } from "@service/content-link";
 import type { DebuggerManager } from "@service/debugger-manager";
@@ -50,6 +51,8 @@ export interface SessionRegistryDeps {
 	debugger: DebuggerManager;
 	focus: FocusGate;
 	ownership: HandOwnership;
+	/** §9.5: the board's last reported rect per tab (the hand's reflow guard and the settle wait). */
+	board?: BoardRectSource | undefined;
 	keepalive: Keepalive;
 	timingLog: TimingLogWriter;
 	/** The latest settings; the service worker keeps it fresh from storage. */
@@ -255,6 +258,7 @@ export class SessionRegistry implements GameSessionRegistry, SnapshotSources {
 			link: this.deps.link,
 			focus: this.deps.focus,
 			ownership: this.deps.ownership,
+			...(this.deps.board ? { board: this.deps.board } : {}),
 			now: this.now,
 			scheduler: this.scheduler,
 			persona: config.persona,

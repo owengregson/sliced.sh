@@ -32,6 +32,7 @@ import type {
 import { createRng } from "@core/rng";
 import { errorMessage } from "@core/util/errors";
 import { defaultNow, defaultScheduler, type Scheduler, sleep } from "@core/util/scheduler";
+import type { BoardRectSource } from "@service/board-watch";
 import type { ReplyFor, RequestInput, RequestKind } from "@service/content-link";
 import type { DebuggerManager } from "@service/debugger-manager";
 import type { HandOwnership } from "@service/hand-ownership";
@@ -81,6 +82,11 @@ export interface MoveExecutorDeps extends ExecutorGameConfig {
 	link: ExecutorLink;
 	focus: FocusSource;
 	ownership: HandOwnership;
+	/**
+	 * §9.5: the board's rect as the page last reported it. Used for the post-attach settle wait and
+	 * handed to the hand as its reflow guard. Omitted: neither runs (the pre-v2.6 behaviour).
+	 */
+	board?: BoardRectSource;
 	now?: () => number;
 	scheduler?: Scheduler;
 }
@@ -206,6 +212,7 @@ export class MoveExecutor {
 	private readonly link: ExecutorLink;
 	private readonly focus: FocusSource;
 	private readonly ownership: HandOwnership;
+	private readonly board: BoardRectSource | null;
 	private readonly now: () => number;
 	private readonly scheduler: Scheduler;
 	private readonly config: ExecutorGameConfig;
@@ -220,6 +227,13 @@ export class MoveExecutor {
 	private checkAc: AbortController | null = null;
 	private hand: HandState = "rest";
 	private lastSkipReason: string | null = null;
+	/**
+	 * When `arm()` actually attached the debugger, until the first execution after it has waited for
+	 * the layout to settle; `null` the rest of the time. §13.4: the attach makes Chrome show its
+	 * infobar, which reflows the page and moves the board, so the first execution must plan on
+	 * geometry that has stopped moving.
+	 */
+	private attachedAt: number | null = null;
 	private disposed = false;
 
 	constructor(deps: MoveExecutorDeps) {
@@ -229,6 +243,7 @@ export class MoveExecutor {
 		this.link = deps.link;
 		this.focus = deps.focus;
 		this.ownership = deps.ownership;
+		this.board = deps.board ?? null;
 		this.now = deps.now ?? defaultNow;
 		this.scheduler = deps.scheduler ?? defaultScheduler;
 		this.config = {
@@ -259,7 +274,10 @@ export class MoveExecutor {
 	 * hand from the last real position / previous rest point.
 	 */
 	async arm(startPoint?: Pt): Promise<void> {
+		const wasAttached = this.debugger.isAttached(this.tabId);
 		await this.debugger.ensureAttached(this.tabId);
+		// A *fresh* attach is the one that brings the infobar; re-arming an attached tab shifts nothing.
+		if (!wasAttached) this.attachedAt = this.now();
 		this.ownership.armed(
 			this.tabId,
 			startPoint ?? this.ownership.lastRealPosition(this.tabId) ?? undefined
@@ -540,6 +558,7 @@ export class MoveExecutor {
 		};
 		let result: ExecutionResult;
 		try {
+			await this.settleAfterAttach(signal);
 			if (!this.debugger.isAttached(this.tabId)) {
 				log.warn("executor: debugger not attached at execution time (arm first)", {
 					tabId: this.tabId,
@@ -620,6 +639,7 @@ export class MoveExecutor {
 			focus: this.focus,
 			ownership: this.ownership,
 			geometry: this.geometry,
+			...(this.board ? { board: this.board } : {}),
 			rng: moveRng,
 			now: this.now,
 			scheduler: this.scheduler,
@@ -678,6 +698,42 @@ export class MoveExecutor {
 			this.checkAc = null;
 			backend.dispose();
 		}
+	}
+
+	/**
+	 * §13.4: arming attaches the debugger, Chrome shows its "is debugging this browser" infobar and
+	 * the page reflows — which moves and resizes the board. The spec's intent is that arming happens
+	 * in the waiting view, before a game, precisely so that shift lands outside every move window;
+	 * arming mid-game is allowed, so the first execution after an attach waits for the board's rect
+	 * to have been unchanged for `EXECUTOR.attachSettleStableMs` before reading geometry.
+	 *
+	 * Evidence-driven and bounded: with no reported movement there is nothing to settle and the wait
+	 * is zero, and a page that never stops moving is given up on after
+	 * `EXECUTOR.attachSettleMaxMs` (the hand's own reflow guard covers what is left).
+	 */
+	private async settleAfterAttach(signal: AbortSignal): Promise<void> {
+		const since = this.attachedAt;
+		this.attachedAt = null;
+		const board = this.board;
+		if (since === null || !board) return;
+		const giveUpAt = since + EXECUTOR.attachSettleMaxMs;
+		let waited = 0;
+		while (this.now() < giveUpAt && !signal.aborted) {
+			const changedAt = board.changedAt(this.tabId);
+			if (changedAt === null || this.now() - changedAt >= EXECUTOR.attachSettleStableMs) break;
+			const step = Math.min(
+				EXECUTOR.attachSettlePollMs,
+				Math.max(1, giveUpAt - this.now()),
+				Math.max(1, changedAt + EXECUTOR.attachSettleStableMs - this.now())
+			);
+			await sleep(step, this.scheduler, signal);
+			waited += step;
+		}
+		if (waited > 0)
+			log.debug("executor: waited for the layout to settle after the attach", {
+				tabId: this.tabId,
+				waitedMs: waited,
+			});
 	}
 
 	/** A board-check signal that only a cancel arriving from now on aborts. */

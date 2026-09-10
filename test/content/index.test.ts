@@ -184,6 +184,32 @@ describe("content entry — feed", () => {
 		expect(g?.occupancy?.e4).toBe("enemy");
 		expect(g?.occupancy?.d5).toBe("empty");
 	});
+	it("reports the board rect when the page moves it, and not when it has not moved (§9.5)", async () => {
+		const { dom, feed } = boot("chesscom-live");
+		dom.layout("wc-chess-board", BOARD_RECT);
+		fire(dom, "window", "resize");
+		await waitFor(() => feed.of("boardRect").length > 0, 2_000);
+		expect(feed.of("boardRect").at(-1)?.rect).toEqual({
+			left: BOARD_RECT.x,
+			top: BOARD_RECT.y,
+			width: BOARD_RECT.width,
+			height: BOARD_RECT.height,
+		});
+		const reported = feed.of("boardRect").length;
+
+		// a resize that moved nothing is not a change: it must not rearm the settle window the
+		// executor waits on after an attach
+		fire(dom, "window", "resize");
+		fire(dom, "window", "scroll");
+		await sleep(20);
+		expect(feed.of("boardRect")).toHaveLength(reported);
+
+		// the debugger's infobar: the page — and the board with it — shifts down
+		dom.layout("wc-chess-board", { ...BOARD_RECT, y: BOARD_RECT.y + 48 });
+		fire(dom, "window", "resize");
+		await waitFor(() => feed.of("boardRect").length > reported, 2_000);
+		expect(feed.of("boardRect").at(-1)?.rect.top).toBe(BOARD_RECT.y + 48);
+	});
 	it("does not start a session on a non-live page, and re-detects the page kind on popstate", async () => {
 		const { feed, handle, dom } = boot("chesscom-live");
 		dom.window.history.pushState({}, "", "/analysis/game/live/1");

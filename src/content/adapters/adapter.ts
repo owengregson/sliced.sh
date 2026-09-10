@@ -12,8 +12,10 @@
  */
 
 import type { UciParts } from "@core/chess/san";
+import { EXECUTOR } from "@core/constants/cdp";
 import { TIMINGS } from "@core/constants/timings";
 import { log } from "@core/logger";
+import { rectShiftPx } from "@core/motor/geometry";
 import { TOKENS } from "@design/tokens.generated";
 import type {
 	ClockState,
@@ -144,6 +146,12 @@ export interface SiteAdapter {
 
 	/** 8×8 playing area only. */
 	getBoardRect(): Rect | null;
+	/**
+	 * §9.5: the board's viewport rect, whenever it moves or resizes by more than
+	 * `EXECUTOR.boardMoveTolerancePx` (never the no-op reports). Passive reads only
+	 * — a `ResizeObserver` plus the window's own `resize` / `scroll` (§13.3).
+	 */
+	onBoardRect(cb: (rect: Rect) => void): () => void;
 	/** Black at the bottom. */
 	isFlipped(): boolean;
 	squareToPoint(sq: Square): Point | null;
@@ -360,6 +368,12 @@ export abstract class AdapterBase implements SiteAdapter {
 	private selfCheckTimer: ReturnType<typeof setInterval> | null = null;
 	private destroyed = false;
 	private primed = false;
+	private readonly boardRectCbs = new Set<(rect: Rect) => void>();
+	/** The board-rect watch is installed on the first `onBoardRect` subscription, once. */
+	private rectWatch = false;
+	private rectObserver: ResizeObserver | null = null;
+	private rectTarget: Element | null = null;
+	private lastBoardRect: Rect | null = null;
 
 	constructor(options: AdapterOptions, debounceMs: number, selfCheckMs: number) {
 		this.doc = options.document ?? document;
@@ -446,6 +460,25 @@ export abstract class AdapterBase implements SiteAdapter {
 		const off = installFocusEdges(this.win, this.doc, cb);
 		this.disposers.push(off);
 		return off;
+	}
+
+	/**
+	 * §9.5: report the board's rect whenever the page moves or resizes it. The hand plans a whole
+	 * drag from one geometry read, so a reflow mid-drag — which is exactly what the debugger's
+	 * infobar causes when the user arms during a game (owner's live test, 2026-09-09) — leaves every
+	 * remaining path point in the old coordinate space and drops the piece on the wrong square.
+	 *
+	 * A `ResizeObserver` on the board catches the board being resized, one on the document element
+	 * catches the viewport changing height (the infobar) even when the board keeps its size, and the
+	 * window's `resize` / `scroll` catch the rest — the rect is viewport-relative, so a scroll moves
+	 * it. All passive reads: nothing is dispatched, stored or defined on the page (§13.3).
+	 */
+	onBoardRect(cb: (rect: Rect) => void): () => void {
+		this.boardRectCbs.add(cb);
+		this.installRectWatch();
+		return () => {
+			this.boardRectCbs.delete(cb);
+		};
 	}
 
 	readSnapshot(): AdapterPositionSnapshot | null {
@@ -583,6 +616,7 @@ export abstract class AdapterBase implements SiteAdapter {
 		this.positionCbs.clear();
 		this.startCbs.clear();
 		this.endCbs.clear();
+		this.boardRectCbs.clear();
 	}
 
 	// ---- helpers for subclasses --------------------------------------------------
@@ -611,6 +645,66 @@ export abstract class AdapterBase implements SiteAdapter {
 	protected reinstallObservers(): void {
 		this.disconnectObservers();
 		this.installObservers();
+		this.retargetRectObserver();
+	}
+
+	private installRectWatch(): void {
+		if (this.rectWatch || this.destroyed) return;
+		this.rectWatch = true;
+		const report = (): void => this.reportBoardRect();
+		const opts: AddEventListenerOptions = { capture: true, passive: true };
+		this.win.addEventListener("resize", report, opts);
+		this.win.addEventListener("scroll", report, opts);
+		this.disposers.push(() => {
+			this.win.removeEventListener("resize", report, opts);
+			this.win.removeEventListener("scroll", report, opts);
+		});
+		const Observer = this.resizeObserverCtor();
+		if (Observer) {
+			const observer = new Observer(report);
+			this.rectObserver = observer;
+			this.disposers.push(() => {
+				observer.disconnect();
+				this.rectObserver = null;
+				this.rectTarget = null;
+			});
+			this.retargetRectObserver();
+		}
+		// The baseline: the service worker needs one rect before it can tell a change from a first look.
+		this.reportBoardRect();
+	}
+
+	/** Point the rect observer at the current board (and the document element) after a replacement. */
+	private retargetRectObserver(): void {
+		const observer = this.rectObserver;
+		if (!observer) return;
+		const board = this.boardElement();
+		if (board !== null && board === this.rectTarget) return;
+		observer.disconnect();
+		this.rectTarget = board;
+		if (board) observer.observe(board);
+		// The infobar changes the viewport's height without necessarily resizing the board element.
+		const root = this.doc.documentElement;
+		if (root) observer.observe(root);
+	}
+
+	private reportBoardRect(): void {
+		if (this.destroyed || this.boardRectCbs.size === 0) return;
+		const rect = this.getBoardRect();
+		if (!rect || !(rect.width > 0)) return;
+		const last = this.lastBoardRect;
+		// Only real movement: a `scroll` that moved nothing must not rearm the settle window the
+		// executor waits on after an attach.
+		if (last && rectShiftPx(last, rect) <= EXECUTOR.boardMoveTolerancePx) return;
+		this.lastBoardRect = rect;
+		for (const cb of [...this.boardRectCbs]) cb(rect);
+	}
+
+	/** The page's `ResizeObserver` (absent in an old engine or a stripped test window). */
+	private resizeObserverCtor(): typeof ResizeObserver | null {
+		const w = this.win as unknown as { ResizeObserver?: typeof ResizeObserver };
+		const ctor = w.ResizeObserver ?? (typeof ResizeObserver === "function" ? ResizeObserver : null);
+		return typeof ctor === "function" ? ctor : null;
 	}
 
 	/** Does any added/removed element of `records` match (or contain) `selector`? */

@@ -18,6 +18,7 @@ import {
 import { type ConnectedPort, connectPort } from "@core/messaging/ports";
 import type { Occupancy, Pt, Rect } from "@core/motor/types";
 import { defaultScheduler } from "@core/util/scheduler";
+import { BoardWatch } from "@service/board-watch";
 import { ContentLink } from "@service/content-link";
 import { DebuggerManager } from "@service/debugger-manager";
 import { FocusGate } from "@service/focus-gate";
@@ -49,6 +50,7 @@ let dbg: DebuggerManager;
 let link: ContentLink;
 let focus: FocusGate;
 let ownership: HandOwnership;
+let boardWatch: BoardWatch;
 let executor: MoveExecutor;
 let port: ConnectedPort<GamePortMessage>;
 let shadow: AcShadow;
@@ -59,6 +61,8 @@ let windowsUpdateCalls: number;
 /** What the fake adapter saw / answered. */
 let adapter: {
 	observeRequests: Array<{ from: Square; to: Square }>;
+	/** The board rect every `geometry` answer reports (a reflow moves it). */
+	boardRect: Rect;
 	/** Squares each `boardCheck` asked about. */
 	boardChecks: Square[][];
 	/** What `boardCheck` answers (defaults to the start position from White's side). */
@@ -127,14 +131,14 @@ function bootFakeAdapter(): void {
 					port.post({
 						kind: "geometryResult",
 						id: cmd.id,
-						boardRect: BOARD,
+						boardRect: adapter.boardRect,
 						flipped: false,
 						promotion: adapter.promotionRect,
 					});
 					return;
 				}
 				if (!adapter.onGeometry()) return;
-				port.post({ kind: "geometryResult", id: cmd.id, boardRect: BOARD, flipped: false });
+				port.post({ kind: "geometryResult", id: cmd.id, boardRect: adapter.boardRect, flipped: false });
 			} else if (cmd.kind === "boardCheck") {
 				adapter.boardChecks.push(cmd.squares);
 				if (!adapter.onBoardCheck()) return;
@@ -168,6 +172,7 @@ beforeEach(async () => {
 	buildBoard();
 	adapter = {
 		observeRequests: [],
+		boardRect: BOARD,
 		boardChecks: [],
 		occupancy: startOccupancy(),
 		onBoardCheck: () => true,
@@ -214,6 +219,7 @@ beforeEach(async () => {
 			link = new ContentLink({ scheduler: defaultScheduler, now: sim.now });
 			focus = new FocusGate(link, { now: sim.now });
 			ownership = new HandOwnership(link, { now: sim.now });
+			boardWatch = new BoardWatch(link, { now: sim.now });
 			executor = new MoveExecutor({
 				tabId,
 				site: "chesscom",
@@ -221,6 +227,7 @@ beforeEach(async () => {
 				link,
 				focus,
 				ownership,
+				board: boardWatch,
 				now: sim.now,
 				scheduler: defaultScheduler,
 				persona: "balanced",
@@ -240,6 +247,7 @@ afterEach(async () => {
 		executor.dispose();
 		focus.dispose();
 		ownership.dispose();
+		boardWatch.dispose();
 		link.dispose();
 		dbg.dispose();
 	});
@@ -903,5 +911,132 @@ describe("executor: a scheduled drag move end to end", () => {
 		expect(link.tabs()).toEqual([tabId]);
 		expect(executor.isRunning()).toBe(false);
 		expect(executor.pendingMove()).toBeNull();
+	});
+});
+
+/**
+ * §9.5 / the owner's live test (2026-09-09): arming mid-game attaches the debugger, Chrome shows
+ * its "is debugging this browser" infobar, and the page — board included — reflows underneath a
+ * drag that is already in flight. Every remaining path point is then in the old coordinate space,
+ * so the release lands on whatever square the stale path ends over: the owner saw the piece let go
+ * halfway and drop on the wrong square.
+ *
+ * A clean no-move is always better than a move to the wrong square, so a board that moves mid-drag
+ * puts the piece back on its origin square and reports an abort with its own reason; the executor's
+ * existing re-check then decides, truthfully, that nothing landed.
+ */
+const MOVED_BOARD: Rect = { left: BOARD.left + 24, top: BOARD.top + 64, width: 640, height: 640 };
+
+/** Relayout the page and the fake adapter onto `rect` (what a reflow does). */
+function reflowBoard(rect: Rect): void {
+	const dom = sim.getTabDom(tabId);
+	if (!dom) throw new Error("no dom");
+	const asLayout = (r: Rect) => ({ x: r.left, y: r.top, width: r.width, height: r.height });
+	dom.layout("#board", asLayout(rect));
+	for (const sq of ALL) dom.layout(`#${sq}`, asLayout(squareRect(sq, false, rect)));
+	adapter.boardRect = rect;
+}
+
+describe("executor: the board moves under the hand", () => {
+	it("a reflow mid-drag releases on the origin square, submits nothing and reports `board-moved`", async () => {
+		const reports: Array<[string, ExecutionReport]> = [];
+		await sw.run(async () => {
+			for (const ev of ["executed", "aborted", "skipped", "failed"] as const)
+				executor.on(ev, (r) => reports.push([ev, r]));
+			await executor.arm();
+			focus.positionArrived(tabId, sim.now());
+			const plan = plan1200();
+			executor.schedule(recommendation(plan), plan);
+		});
+		let held = 0;
+		let reflowAt = 0;
+		sim.debugger.respond(CDP.inputDispatchMouseEvent, (params, id) => {
+			const p = params as { type: string; buttons: number };
+			// two drag moves in: the piece is held and travelling towards e4
+			if (p.type === "mouseMoved" && p.buttons === 1 && ++held === 2) {
+				reflowAt = sim.now();
+				reflowBoard(MOVED_BOARD);
+				port.post({ kind: "boardRect", rect: MOVED_BOARD, at: sim.now() });
+			}
+			return sim.input.send(id, CDP.inputDispatchMouseEvent, params);
+		});
+		await sw.run(() => sim.time.advanceUntilIdle({ maxAdvanceMs: 30_000 }));
+
+		expect(reflowAt).toBeGreaterThan(0);
+		expect(reports.map(([ev]) => ev)).toEqual(["aborted"]);
+		const result = (reports[0] as [string, ExecutionReport])[1].result;
+		expect(result).toMatchObject({
+			ok: false,
+			outcome: "aborted",
+			reason: EXECUTOR.reasons.boardMoved,
+			pressed: true,
+		});
+
+		const cmds = commands();
+		const presses = cmds.filter((c) => c.type === "mousePressed");
+		const releases = cmds.filter((c) => c.type === "mouseReleased");
+		// the button is never left held and never pressed twice
+		expect(presses).toHaveLength(1);
+		expect(releases).toHaveLength(1);
+		expect(sim.input.pointer(tabId)?.buttons).toBe(0);
+		expect(executor.isRunning()).toBe(false);
+
+		// the release is on the origin square *as it now stands*, never on the destination
+		const release = releases[0] as Cmd;
+		expect(inside(release, squareRect("e2", false, MOVED_BOARD))).toBe(true);
+		expect(inside(release, squareRect("e4", false, MOVED_BOARD))).toBe(false);
+		expect(inside(release, squareRect("e4"))).toBe(false);
+		// what the page itself saw: down on e2, up on e2, and no move submitted at all
+		const domEvents = sim.input.events;
+		expect(domEvents.find((e) => e.type === "mousedown")?.target).toBe("e2");
+		expect(domEvents.filter((e) => e.type === "mouseup").at(-1)?.target).toBe("e2");
+		expect(submitted).toEqual([]);
+		expect(shadow.pendingSelection()).toBe("e2");
+
+		// §13.5: the escape is a path, not a jump — no step exceeds the profile's cap
+		let prev: Pt = { x: 900, y: 400 };
+		for (const c of cmds) {
+			expect(Math.hypot(c.x - prev.x, c.y - prev.y)).toBeLessThanOrEqual(30);
+			prev = c;
+		}
+	});
+
+	it("after an arm-time attach the first execution waits for the layout to settle, then plays on the new geometry", async () => {
+		const geometryAt: number[] = [];
+		adapter.onGeometry = () => {
+			geometryAt.push(sim.now());
+			return true;
+		};
+		await sw.run(async () => {
+			await executor.arm();
+			focus.positionArrived(tabId, sim.now());
+		});
+		// the infobar appears and the page settles over two frames
+		await sw.run(async () => {
+			port.post({ kind: "boardRect", rect: BOARD, at: sim.now() });
+			await sim.time.advance(40);
+			reflowBoard(MOVED_BOARD);
+			port.post({ kind: "boardRect", rect: MOVED_BOARD, at: sim.now() });
+			await sim.time.runMicrotasks();
+		});
+		const settledAt = sim.now();
+		await sw.run(() => {
+			const plan = plan1200();
+			executor.schedule(recommendation(plan), plan);
+		});
+		await sw.run(() => sim.time.advanceUntilIdle({ maxAdvanceMs: 30_000 }));
+
+		// geometry was not read until the rect had been still for the stability window
+		expect(geometryAt.length).toBeGreaterThan(0);
+		expect((geometryAt[0] as number) - settledAt).toBeGreaterThanOrEqual(
+			EXECUTOR.attachSettleStableMs
+		);
+		// and the move then played on the geometry that is actually on the page
+		const cmds = commands();
+		const press = cmds.find((c) => c.type === "mousePressed") as Cmd;
+		const release = cmds.filter((c) => c.type === "mouseReleased").at(-1) as Cmd;
+		expect(inside(press, squareRect("e2", false, MOVED_BOARD))).toBe(true);
+		expect(inside(release, squareRect("e4", false, MOVED_BOARD))).toBe(true);
+		expect(submitted).toEqual([["e2", "e4"]]);
 	});
 });

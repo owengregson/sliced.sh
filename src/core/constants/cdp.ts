@@ -79,6 +79,22 @@ export const EXECUTOR = {
 	geometryTimeoutMs: 400,
 	/** A geometry read older than this is re-read before the approach (§9.5). */
 	geometryFreshMs: 250,
+	/**
+	 * A board rect that differs from the planned one by more than this is a reflow, not rounding
+	 * (§9.5): the page moved the board under the hand. Below it the difference cannot put the
+	 * release on a different square — a square is an eighth of the board.
+	 */
+	boardMoveTolerancePx: 4,
+	/**
+	 * §13.4: attaching the debugger makes Chrome show its infobar, which reflows the page and moves
+	 * the board. Before the first execution after an attach the board rect must have been unchanged
+	 * for this long — the stability check — so the hand plans on geometry that has stopped moving.
+	 */
+	attachSettleStableMs: 150,
+	/** Whole settle wait after an attach, bounded: a page that never stops moving must not wedge the hand. */
+	attachSettleMaxMs: 900,
+	/** Poll step of the settle wait. */
+	attachSettlePollMs: 25,
 	/** How long the content adapter waits for the promotion picker before reporting `null`. */
 	promotionPickerTimeoutMs: 1500,
 	/** Board re-check before a retry (never double-move): short, both boards update optimistically. */
@@ -129,9 +145,17 @@ export const EXECUTOR = {
 		positionChanged: "position-changed",
 		/** A parked replacement was dropped by `cancel()` / `disarm()` / `dispose()`. */
 		dropped: "dropped",
+		/**
+		 * The board moved (or resized) while the piece was held, so every remaining path point was
+		 * in the old coordinate space: the hand put the piece back on its origin square and
+		 * submitted nothing rather than dropping it wherever the stale path ended (§9.5).
+		 */
+		boardMoved: "board-moved",
 	},
 	/** Zero-length `ExecutionResult.timeline` entries that annotate an execution. */
 	timelineNotes: {
 		promotionGeometryUnavailable: "promotion-geometry-unavailable",
+		/** The board moved while the piece was held; the hand put it back on its origin square. */
+		boardMoved: "board-moved",
 	},
 } as const;

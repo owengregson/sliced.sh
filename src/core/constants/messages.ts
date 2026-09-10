@@ -156,6 +156,14 @@ export type GamePortMessage =
 	| { kind: "focus"; hasFocus: boolean; visibility: "visible" | "hidden"; at: number }
 	/** V2 §13.6: opponent identity for matchOpponentRating */
 	| { kind: "opponent"; isBot: boolean; name: string; ratingEstimate: number | null }
+	/**
+	 * §9.5: the 8×8 board's viewport rect moved or resized (a `ResizeObserver` on the board plus
+	 * the window's own `resize` / `scroll` — all passive reads, §13.3). Sent only when the rect
+	 * actually changed, so the service worker can tell a board that is still settling after the
+	 * debugger's infobar appeared from one that has stopped, and can abort a drag whose coordinate
+	 * space has moved out from under it rather than drop the piece on the wrong square.
+	 */
+	| { kind: "boardRect"; rect: Rect; at: number }
 	| { kind: "moveObserved"; san: string; ply: number; byMe: boolean; atMs: number }
 	/** Task 18: reply to `observeMove` — `ok` once the board/move list shows the move. */
 	| { kind: "observeMoveResult"; id: string; ok: boolean; reason?: string }

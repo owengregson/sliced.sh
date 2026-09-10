@@ -24,6 +24,7 @@ import { ChessMimicHead, selectBand } from "@core/timing/chessmimic-head";
 import { TimingLogWriter } from "@core/timing/timing-log";
 import { V1ParametricHead } from "@core/timing/v1-head";
 import { errorMessage } from "@core/util/errors";
+import { BoardWatch } from "@service/board-watch";
 import type { ServiceSystems } from "@service/bootstrap";
 import { ContentLink } from "@service/content-link";
 import { DebuggerManager } from "@service/debugger-manager";
@@ -108,6 +109,8 @@ export function createGameStack(options: GameStackOptions): GameStack {
 	const debuggerManager = new DebuggerManager({ keepalive: systems.keepalive });
 	const focus = new FocusGate(link);
 	const ownership = new HandOwnership(link);
+	// §9.5: the board's viewport rect per tab, as the content script reports it.
+	const board = new BoardWatch(link);
 	const timingLog = new TimingLogWriter();
 
 	const inferPort = createTimingInferPort(transport);
@@ -123,6 +126,7 @@ export function createGameStack(options: GameStackOptions): GameStack {
 		debugger: debuggerManager,
 		focus,
 		ownership,
+		board,
 		keepalive: systems.keepalive,
 		timingLog,
 		getSettings: readSettings,
@@ -194,6 +198,7 @@ export function createGameStack(options: GameStackOptions): GameStack {
 			offSettings();
 			detachEngineHandlers();
 			registry.dispose();
+			board.dispose();
 			void timingLog.flush().catch(() => {});
 			timingLog.dispose();
 			inferPort.dispose();

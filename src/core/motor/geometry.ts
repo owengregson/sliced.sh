@@ -41,6 +41,20 @@ export function inRect(p: Pt, r: Rect, pad = 0): boolean {
 	);
 }
 
+/**
+ * How far two rects differ, in px: the largest of the four edge/size deltas. The
+ * board-reflow guard (§9.5) compares the rect the hand planned with against the
+ * one the page reports now, and a single number is what a tolerance applies to.
+ */
+export function rectShiftPx(a: Rect, b: Rect): number {
+	return Math.max(
+		Math.abs(a.left - b.left),
+		Math.abs(a.top - b.top),
+		Math.abs(a.width - b.width),
+		Math.abs(a.height - b.height)
+	);
+}
+
 /** Nearest point to `p` at least `pad` inside `r`. */
 export function clampIntoRect(p: Pt, r: Rect, pad = 0): Pt {
 	return {

@@ -8,6 +8,9 @@
  *     (a readiness poll at `TIMINGS.contentReadyPollMs` until then), then
  *     every position change (with `capturedAt`), `moveObserved`, `gameEnded`;
  *   - forwards every `focus` / `blur` / `visibilitychange` edge as `focus`;
+ *   - reports the board's viewport rect as `boardRect` whenever the page moves
+ *     or resizes it (§9.5), so the service worker never drives the hand into
+ *     coordinates the page has already left behind;
  *   - re-detects the page kind on `popstate`, on the adapter's game start,
  *     and on a `location.href` change (polled at
  *     `TIMINGS.adapterSelfCheckIntervalMs`, `pushState` / `replaceState`
@@ -375,6 +378,17 @@ function bootContent(
 	startSessionIfLive();
 
 	disposers.push(adapter.onPositionChange(publish));
+	// §9.5: the board moving under the hand is a geometry change the service worker must know about
+	// before it commits the rest of a drag to the old coordinate space.
+	disposers.push(
+		adapter.onBoardRect((rect) =>
+			post({
+				kind: "boardRect",
+				rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+				at: Date.now(),
+			})
+		)
+	);
 	disposers.push(adapter.onGameStart(() => redetect()));
 	disposers.push(adapter.onGameEnd((result) => post({ kind: "gameEnded", result })));
 	disposers.push(adapter.onFocusEdge((edge) => post({ kind: "focus", ...edge })));

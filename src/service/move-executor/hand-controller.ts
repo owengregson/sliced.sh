@@ -15,6 +15,15 @@
  * `ExecutionResult.elapsedMs` is the time to the drop (the move-hold time);
  * the promotion click and the post-drop rest follow it in the timeline.
  *
+ * Geometry is re-read and the touch re-planned right before the press, and the
+ * board's rect is then watched for the whole of the held leg (`BoardRectSource`,
+ * fed by the content script's `boardRect` reports): a page that reflows under a
+ * drag — the debugger's infobar appearing when the user arms mid-game — would
+ * otherwise leave every remaining path point in the old coordinate space and drop
+ * the piece on whatever square the stale path ends over. The hand instead travels
+ * back to the *origin* square in the new geometry and releases there, which
+ * submits nothing, and reports `aborted: board-moved`.
+ *
  * V2 gates: the `FocusGate` is consulted before the first dispatch and before
  * every subsequent one — a failing verdict skips the move with nothing (more)
  * sent, releasing a held preview first (§13.4). Real pointer input is never
@@ -29,7 +38,7 @@ import type { BoardGeometryReply } from "@core/constants/messages";
 import { log } from "@core/logger";
 import { CLICK, EXPLORATION, PATH, PROMOTION_LOOK_DELAY_MS, SAMPLING } from "@core/motor/constants";
 import { type ExplorationOptions, ExplorationPlanner } from "@core/motor/exploration";
-import { inRect, lastPoint, pathMs, sampleRange } from "@core/motor/geometry";
+import { inRect, lastPoint, pathMs, rectShiftPx, sampleRange } from "@core/motor/geometry";
 import type { InputBackend } from "@core/motor/input-backend";
 import { generatePath, grabWobble, idleTremor } from "@core/motor/path-generator";
 import { clickReleasePoint, samplePointInRect } from "@core/motor/sampling";
@@ -55,6 +64,7 @@ import {
 	sleep,
 	throwIfAborted,
 } from "@core/util/scheduler";
+import { type BoardRectSource, boardShift } from "@service/board-watch";
 import type { FocusVerdict } from "@service/focus-gate";
 import type { PromoPiece, Square } from "@typedefs/game";
 import type { MoveWindowBudget, TimingPlan } from "@typedefs/timing";
@@ -98,6 +108,11 @@ export interface HandControllerDeps {
 	focus: FocusSource;
 	ownership: OwnershipSink;
 	geometry?: GeometryProvider;
+	/**
+	 * The board's rect as the page last reported it (§9.5). Omitted: the hand cannot notice a
+	 * reflow and behaves exactly as it did before — the press-time re-read is then the only guard.
+	 */
+	board?: BoardRectSource;
 	rng: Rng;
 	now?: () => number;
 	scheduler?: Scheduler;
@@ -165,6 +180,17 @@ class SkipError extends Error {
 	}
 }
 
+/**
+ * Thrown when the board's rect moved out from under a touch already in progress
+ * (§9.5). Carries the rect the page reports *now*, which is what the escape
+ * release is aimed with.
+ */
+class BoardMovedError extends Error {
+	constructor(readonly live: Rect) {
+		super(EXECUTOR.reasons.boardMoved);
+	}
+}
+
 interface Phase {
 	phase: string;
 	startMs: number;
@@ -229,6 +255,12 @@ interface ClickTouch {
 
 type Touch = (DragTouch | ClickTouch) & { approachMs: number; touchMs: number };
 
+/** The coordinate space a touch was planned in: what the board-reflow guard compares against. */
+interface PlannedGeometry {
+	board: Rect;
+	flipped: boolean;
+}
+
 const sameRect = (a: Rect, b: Rect): boolean =>
 	a.left === b.left && a.top === b.top && a.width === b.width && a.height === b.height;
 
@@ -237,6 +269,7 @@ export class HandController {
 	private readonly focus: FocusSource;
 	private readonly ownership: OwnershipSink;
 	private readonly geometry: GeometryProvider | null;
+	private readonly board: BoardRectSource | null;
 	private readonly rng: Rng;
 	private readonly now: () => number;
 	private readonly scheduler: Scheduler;
@@ -257,6 +290,7 @@ export class HandController {
 		this.focus = deps.focus;
 		this.ownership = deps.ownership;
 		this.geometry = deps.geometry ?? null;
+		this.board = deps.board ?? null;
 		this.rng = deps.rng;
 		this.now = deps.now ?? defaultNow;
 		this.scheduler = deps.scheduler ?? defaultScheduler;
@@ -323,6 +357,22 @@ export class HandController {
 			if (error instanceof SkipError) {
 				log.info("hand: skipped mid-window", { tabId: plan.tabId, reason: error.reason });
 				return { ok: false, outcome: "skipped", reason: error.reason, attempts, ...base() };
+			}
+			if (error instanceof BoardMovedError) {
+				// The piece was put back on its origin square (or never pressed a second time), so
+				// nothing was submitted. An abort with its own reason lets the executor's re-check
+				// confirm that truthfully and the session fall back to `recommended`.
+				log.warn("hand: the board moved under the touch; nothing was submitted", {
+					tabId: plan.tabId,
+					live: error.live,
+				});
+				return {
+					ok: false,
+					outcome: "aborted",
+					reason: EXECUTOR.reasons.boardMoved,
+					attempts: 1,
+					...base(),
+				};
 			}
 			if (isAbortedError(error) || signal.aborted) {
 				return {
@@ -393,14 +443,22 @@ export class HandController {
 		);
 		await this.decisionPause(approachStartAt, tail, m);
 
-		// The pause may have been long: re-read once more and re-plan only if the board moved.
-		if (this.geometry && this.now() - readAt > EXECUTOR.geometryFreshMs) {
+		// The pause may have been long, or the page may have moved the board while it ran (the
+		// debugger's infobar): re-read once more and re-plan only if the geometry really changed.
+		// Nothing is committed yet, so re-planning here is free and there is no continuity to break.
+		const movedInPause =
+			reply !== null && boardShift(this.board, plan.tabId, reply.boardRect) !== null;
+		if (this.geometry && (movedInPause || this.now() - readAt > EXECUTOR.geometryFreshMs)) {
 			const again = await this.readGeometry(plan.tabId);
 			if (again) {
 				this.guardPosition(plan, again);
 				const next = this.resolveRects(plan, again);
+				readAt = this.now();
+				reply = again;
 				if (!sameRect(next.from, rects.from) || !sameRect(next.to, rects.to)) {
-					log.debug("hand: geometry changed during the decision pause; re-planning the touch");
+					log.debug("hand: geometry changed before the press; re-planning the touch", {
+						movedInPause,
+					});
 					rects = next;
 					touch = this.planTouch(plan, timing, rects, this.backend.position());
 				}
@@ -410,9 +468,11 @@ export class HandController {
 		this.gate();
 		tl.begin("approach");
 		this.setState("approaching");
+		// The coordinate space the rest of this touch is committed to.
+		const planned = reply !== null ? { board: reply.boardRect, flipped: reply.flipped } : null;
 		await this.travel(touch.approach);
-		if (touch.kind === "drag") await this.drag(touch, rects, m, tl);
-		else await this.clickClick(touch, tl);
+		if (touch.kind === "drag") await this.drag(touch, rects, m, tl, plan, planned);
+		else await this.clickClick(touch, tl, planned);
 
 		if (plan.promotion) await this.promote(plan, timing, plan.promotion, m, tl);
 		await this.postDropRest(m, tl);
@@ -623,32 +683,55 @@ export class HandController {
 		};
 	}
 
-	private async drag(t: DragTouch, rects: Rects, m: MotorProfile, tl: Timeline): Promise<void> {
+	private async drag(
+		t: DragTouch,
+		rects: Rects,
+		m: MotorProfile,
+		tl: Timeline,
+		plan: ExecutionPlan,
+		planned: PlannedGeometry | null
+	): Promise<void> {
+		const guard = planned ? (): void => this.guardBoard(planned.board) : undefined;
 		tl.begin("grab");
 		this.setState("grabbing");
 		await this.pause(t.preGrabMs);
 		await this.press(t.pressAt, true);
-		await this.pause(t.grabDelayMs);
-		await this.travel(t.wobble);
-		tl.begin("drag");
-		this.setState("dragging");
-		await this.travel(t.travel);
-		if (t.hesitate.length > 0) await this.travel(t.hesitate);
-		tl.begin("drop");
-		this.setState("dropping");
-		await this.pause(t.settleMs);
-		if (!inRect(this.backend.position(), rects.to, PATH.targetPadPx)) {
-			tl.begin("correct");
-			this.setState("correcting");
-			await this.travel(generatePath(this.backend.position(), t.drop, rects.to, m, this.rng));
+		try {
+			await this.pause(t.grabDelayMs, guard);
+			await this.travel(t.wobble, guard);
+			tl.begin("drag");
+			this.setState("dragging");
+			await this.travel(t.travel, guard);
+			if (t.hesitate.length > 0) await this.travel(t.hesitate, guard);
 			tl.begin("drop");
 			this.setState("dropping");
+			await this.pause(t.settleMs, guard);
+			if (!inRect(this.backend.position(), rects.to, PATH.targetPadPx)) {
+				tl.begin("correct");
+				this.setState("correcting");
+				await this.travel(generatePath(this.backend.position(), t.drop, rects.to, m, this.rng), guard);
+				tl.begin("drop");
+				this.setState("dropping");
+			}
+			// The last look before the move is submitted: a reflow between the settle and the release
+			// is the one that would drop the piece on the wrong square with nothing else noticing.
+			guard?.();
+		} catch (error) {
+			if (error instanceof BoardMovedError) {
+				await this.releaseOnOrigin(plan, error.live, planned?.flipped ?? false, m, tl);
+			}
+			throw error;
 		}
 		await this.release(this.backend.position());
 		this.dropAt = this.now();
 	}
 
-	private async clickClick(t: ClickTouch, tl: Timeline): Promise<void> {
+	private async clickClick(
+		t: ClickTouch,
+		tl: Timeline,
+		planned: PlannedGeometry | null
+	): Promise<void> {
+		const guard = planned ? (): void => this.guardBoard(planned.board) : undefined;
 		tl.begin("grab");
 		this.setState("grabbing");
 		await this.pause(t.prePressMs);
@@ -657,15 +740,65 @@ export class HandController {
 		await this.release(t.releaseAt);
 		tl.begin("drag");
 		this.setState("approaching");
-		await this.pause(t.gapMs);
-		await this.travel(t.approach2);
+		await this.pause(t.gapMs, guard);
+		await this.travel(t.approach2, guard);
 		tl.begin("drop");
 		this.setState("dropping");
-		await this.pause(t.prePress2Ms);
+		await this.pause(t.prePress2Ms, guard);
+		// Nothing is held between the two clicks: a board that has moved needs no escape release,
+		// only the second press withheld. The piece stays selected and no move is submitted.
+		guard?.();
 		await this.press(t.press2At, true);
 		await this.pause(t.hold2Ms);
 		await this.release(t.release2At);
 		this.dropAt = this.now();
+	}
+
+	/**
+	 * §9.5: has the page moved the board since the touch was planned? A shift beyond
+	 * `EXECUTOR.boardMoveTolerancePx` means every remaining point of the path — and the release
+	 * above all — is in a coordinate space the page has left behind.
+	 */
+	private guardBoard(planned: Rect): void {
+		const live = boardShift(this.board, this.tabId, planned);
+		if (live === null) return;
+		throw new BoardMovedError(live);
+	}
+
+	/**
+	 * Put the held piece back where it came from, in the geometry the page has *now*, and let go
+	 * there: a release on the origin square submits no move on either renderer, which is always
+	 * better than a move to the wrong square. The return leg is a generated path, so §13.5's
+	 * pointer continuity and the profile's peak-speed cap both still hold — the hand never
+	 * teleports. It is deliberately ungated and unsignalled: a focus veto or a cancel arriving now
+	 * would leave the button held over whatever square the stale path reached, which is the very
+	 * outcome this exists to prevent.
+	 */
+	private async releaseOnOrigin(
+		plan: ExecutionPlan,
+		live: Rect,
+		flipped: boolean,
+		m: MotorProfile,
+		tl: Timeline
+	): Promise<void> {
+		tl.note(EXECUTOR.timelineNotes.boardMoved);
+		tl.begin("correct");
+		this.setState("correcting");
+		const origin = boardGeometryOf({ boardRect: live, flipped }).squareRect(plan.from.square);
+		const target = samplePointInRect(
+			origin,
+			SAMPLING.release.sigmaFrac,
+			SAMPLING.release.innerFrac,
+			this.rng
+		);
+		const path = generatePath(this.backend.position(), target, origin, m, this.rng);
+		log.info("hand: releasing on the origin square after a reflow", {
+			tabId: this.tabId,
+			from: plan.from.square,
+			shiftPx: Math.round(rectShiftPx(plan.from.rect, origin)),
+		});
+		await this.escapeTravel(path);
+		await this.release(lastPoint(path, target));
 	}
 
 	/**
@@ -776,10 +909,23 @@ export class HandController {
 		return { from: geo.squareRect(plan.from.square), to: geo.squareRect(plan.to.square) };
 	}
 
-	/** The backend's absolute-time travel; the gate is checked before every point (§9.6a). */
-	private async travel(path: readonly PathPoint[]): Promise<void> {
+	/** The backend's absolute-time travel; the gate (and `guard`, if any) runs before every point (§9.6a). */
+	private async travel(path: readonly PathPoint[], guard?: () => void): Promise<void> {
 		if (path.length === 0) return;
-		await this.backend.travel(path, this.signal ?? undefined, () => this.gate());
+		await this.backend.travel(path, this.signal ?? undefined, () => {
+			this.gate();
+			guard?.();
+		});
+		this.ownership.setPosition(this.tabId, this.backend.position());
+	}
+
+	/**
+	 * The return leg of a reflow escape: no gate, no abort signal. The button is held, so this
+	 * travel must finish and be followed by the release whatever else has happened.
+	 */
+	private async escapeTravel(path: readonly PathPoint[]): Promise<void> {
+		if (path.length === 0) return;
+		await this.backend.travel(path);
 		this.ownership.setPosition(this.tabId, this.backend.position());
 	}
 
@@ -796,10 +942,11 @@ export class HandController {
 		this.ownership.setPosition(this.tabId, this.backend.position());
 	}
 
-	private async pause(ms: number): Promise<void> {
+	private async pause(ms: number, guard?: () => void): Promise<void> {
 		if (ms > 0) await sleep(ms, this.scheduler, this.signal ?? undefined);
 		throwIfAborted(this.signal ?? undefined);
 		this.gate();
+		guard?.();
 	}
 
 	private async sleepUntil(atMs: number): Promise<void> {
