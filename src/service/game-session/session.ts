@@ -474,18 +474,43 @@ export class GameSession implements SessionSource {
 	 *
 	 * A position that genuinely moved on advances the ply — the move list is what `ply` is read from
 	 * — so *same game, same ply, same side to move, while the hand is running the move the board is
-	 * marked for* is our own hand and nothing else. The reading is dropped whole: no cancel, no
-	 * clear, no re-analysis, and `lastPositionKey` is deliberately left alone so a later reading
-	 * that happens to carry this key is still considered. Everything that means the recommendation
-	 * is genuinely dead — the switch, `Shift+X`, game end, the tab navigating, a ply that actually
+	 * marked for* is our own hand and nothing else. Everything that means the recommendation is
+	 * genuinely dead — the switch, `Shift+X`, game end, the tab navigating, a ply that actually
 	 * advanced — runs exactly as before.
+	 *
+	 * **Nothing the dropped reading carried is lost.** There is no position poll in the adapter —
+	 * `AdapterBase.apply` records `lastKey` / `lastColor` / `lastTimeControl` before it decides to
+	 * publish, and the adapter's only interval runs `probe()` — so a dropped reading is never
+	 * re-offered and "the next reading will carry it" is not an argument. Field by field:
+	 *
+	 * - `site`, `gameId`, `ply`, `sideToMove` — identical to the snapshot we are on, by the guard.
+	 * - `fen` — the artefact itself (a piece missing from the board). Discarding it is the point.
+	 * - `myColor` — cannot be new: the guard needs `this.rec`, and a recommendation needs
+	 *   `mayActOn`, which needs a known colour.
+	 * - `lastMove` — the same ply means the same last move.
+	 * - `clocks`, `capturedAt` — newer, and deliberately not taken: they belong to a position the
+	 *   session is not on. They are superseded by the next real reading, one move later at most,
+	 *   and nothing between now and then reads them (the plan in flight is already made).
+	 * - `timeControl` — **the one thing that can be new**, because §4.3's one-shot republish
+	 *   (`AdapterBase.apply`'s `timeControlLearned`) is timed to land in exactly this window: the
+	 *   re-ask runs every `TIMINGS.adapterTimeControlRetryMs` and the hand's action is seconds
+	 *   long. It is therefore applied here, by the same `reprofile` `onPosition` would have
+	 *   called — idempotent (`profiledTimeControl`), and safe in flight for the same reason
+	 *   `MoveExecutor.setTimeControlClass` is: the running move keeps the plan it was given and the
+	 *   new profile is read by the next one.
+	 *
+	 * `lastPositionKey` is left alone as well, so a republish of this very reading after the hand
+	 * stops is still considered rather than deduped away.
 	 */
 	private ownHandsDoing(snapshot: PositionSnapshot): boolean {
 		const current = this.snapshot;
 		const rec = this.rec;
 		if (!current || !rec || this.game?.gameId !== snapshot.gameId) return false;
 		if (snapshot.ply !== current.ply || snapshot.sideToMove !== current.sideToMove) return false;
-		return this.executorHandle?.runningMove()?.rec === rec;
+		if (this.executorHandle?.runningMove()?.rec !== rec) return false;
+		// §4.3's one-shot: take the time control out of the reading before dropping the rest of it.
+		this.reprofile(snapshot);
+		return true;
 	}
 
 	/**
@@ -1453,10 +1478,19 @@ export class GameSession implements SessionSource {
 	 * the move did not land, so `live:my-turn:executing` must fall back to `recommended` rather
 	 * than sit in a state whose hand is at rest. This is the path a §13.4 blur cancel takes
 	 * (`aborted`), as well as the position guard (`skipped`) and a genuine failure.
+	 *
+	 * **The mark goes too.** An attempt that finally failed is the action being complete, so it is
+	 * a clear point exactly as `executed` is. There is no retry left that could want the mark:
+	 * `MoveExecutor.runOne` emits `failed` / `aborted` / `skipped` only after `dispatch()` has
+	 * returned, and `dispatch()` is where `runWithRetry` exhausts every tier. Leaving it drawn
+	 * stranded an overlay `<svg>` for a move that will never be played — and the overlay is ours,
+	 * so unlike the native marking it used to be, nothing on the page ever wipes it (the known
+	 * promotion gap, QA B0.7, reaches this path on every live game).
 	 */
 	private onNotExecuted(report: ExecutionReport, outcome: "aborted" | "skipped" | "failed"): void {
 		this.apply("failed");
 		this.window.discard();
+		this.clearBoardMarks();
 		log.debug("game-session: move did not land", {
 			tabId: this.deps.tabId,
 			outcome,
@@ -1595,18 +1629,27 @@ export class GameSession implements SessionSource {
 	 * The hand has started acting on `rec`: redraw its mark as *ours* before the first press.
 	 *
 	 * The owner's report of 2026-09-10 is that the mark vanishes "when the mouse starts its
-	 * action ... rather than when it finishes it". No clear of ours runs there (the only clear in
-	 * the execution path is `clearForExecution`, which the *verifier* issues after the hand has
-	 * released), which leaves the site: chess.com clears its own user markings on a left press on
-	 * the board, and the hand's action is a sequence of presses — each preview touch of another
-	 * piece is one, which is exactly the "even if its going to touch other pieces" detail. That is
-	 * site behaviour and cannot be proved from this repository, so the fix does not depend on it:
-	 * an overlay mark is an `<svg>` the bridge owns, so nothing the site does to *its* markings can
-	 * reach it, and if the overlay turns out not to render on the live canvas board the result is
-	 * exactly today's behaviour and nothing else changes.
+	 * action ... rather than when it finishes it". Nothing of ours clears there any more — the one
+	 * clear in the execution path, the content script's pre-`observeMove` clear, is gone (§13.3
+	 * rule 4 is overruled for this mark) and completion is the only clear. What is left is the
+	 * site: chess.com clears its own user markings on a left press on the board, and the hand's
+	 * action is a sequence of presses — each preview touch of another piece is one, which is
+	 * exactly the "even if its going to touch other pieces" detail. That is site behaviour and
+	 * cannot be proved from this repository, so the fix does not depend on it: an overlay mark is
+	 * an `<svg>` the bridge owns, so nothing the site does to *its* markings can reach it, and if
+	 * the overlay turns out not to render on the live canvas board the result is exactly today's
+	 * behaviour and nothing else changes.
 	 *
-	 * Once per mark: the re-post is a clear plus a draw on the page, so it must not repeat on every
-	 * hand-state change, and a retry of the same recommendation already has its overlay mark drawn.
+	 * Two conditions, and neither carries correctness on its own any more:
+	 *
+	 * - `markedOverlayFor === rec` keeps this to **one** page round trip per mark rather than one
+	 *   per hand-state change (the hand changes state a dozen times per move). It is safe across a
+	 *   retry tier only because nothing clears the mark between tiers; when something does clear
+	 *   it — `clearBoardMarks` — that field is reset, so the next hand start redraws.
+	 * - `runningMove()?.rec !== rec` keeps the redraw to the recommendation actually being
+	 *   executed. A hand that goes non-rest for anything else (a *different* recommendation the
+	 *   session has already replaced, a cancelled run winding down) must not put a draw on the
+	 *   page for a mark that is not the one on the board.
 	 */
 	private markForExecution(): void {
 		const rec = this.rec;

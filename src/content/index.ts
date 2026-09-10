@@ -15,7 +15,8 @@
  *     and on a `location.href` change (polled at
  *     `TIMINGS.adapterSelfCheckIntervalMs`, `pushState` / `replaceState`
  *     agnostic) and re-sends `hello` when it changes;
- *   - answers `observeMove` (highlights cleared and acknowledged first),
+ *   - answers `observeMove` (the verifier: it never touches the board's marks —
+ *     the mark of the move being submitted belongs to the hand's whole action),
  *     `geometry` (square/board rects plus colour-aware occupancy; with
  *     `promotion` it waits for the picker on `to` and reports its rect),
  *     `boardCheck` (the executor's colour-aware position guard) and
@@ -237,21 +238,31 @@ function bootContent(
 	};
 
 	// ---- responders -------------------------------------------------------------
+	/**
+	 * `observeMove` is the executor's **verifier**, and it must not touch the board's marks.
+	 *
+	 * It used to clear them first, on §13.3 rule 4 ("no mark may be present at move-submission
+	 * time"). The owner has overruled that rule for the mark of the move being submitted
+	 * (2026-09-10), and the clear here was the reason it could not hold: `runWithRetry` issues a
+	 * `verify` after every attempt and a `recheck` before every retry
+	 * (`src/service/move-executor/retry-policy.ts:87,121`), each of which is an `observeMove`, so
+	 * tier 2 — a whole second visible action — ran with nothing on the board. The only clear now is
+	 * completion: `GameSession.onExecuted` for a move that landed, `onNotExecuted` for an attempt
+	 * that finally failed. `highlightMoves` going off still clears, which is a different thing.
+	 */
 	const observeMove = (cmd: ObserveMoveCommand): void => {
-		highlights
-			.clearForExecution()
-			.then(() => {
-				if (disposed) return;
-				cursor.beginHand();
-				return adapter.observeMove(cmd.expected, cmd.timeoutMs).then((ok) => {
-					const real = cursor.endHand();
-					if (real > 0) log.debug("content: real pointer events during hand", real);
-					post(
-						ok
-							? { kind: "observeMoveResult", id: cmd.id, ok }
-							: { kind: "observeMoveResult", id: cmd.id, ok, reason: "not-landed" }
-					);
-				});
+		if (disposed) return;
+		cursor.beginHand();
+		adapter
+			.observeMove(cmd.expected, cmd.timeoutMs)
+			.then((ok) => {
+				const real = cursor.endHand();
+				if (real > 0) log.debug("content: real pointer events during hand", real);
+				post(
+					ok
+						? { kind: "observeMoveResult", id: cmd.id, ok }
+						: { kind: "observeMoveResult", id: cmd.id, ok, reason: "not-landed" }
+				);
 			})
 			.catch((error: unknown) => {
 				cursor.endHand();

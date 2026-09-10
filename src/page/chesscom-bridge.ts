@@ -229,7 +229,19 @@ export const chesscomBridge = defineProgram({
 									]),
 									js.expr(js.call(js.member(keys, "push"), js.spread(js.id("out")))),
 								],
-								[overlay.draw(q)]
+								[
+									// The overlay replaces, in this one call: a mark of ours drawn natively is
+									// removed here rather than by a separate `clear` request, so the board is
+									// never unmarked for a frame — which is the one moment the owner is
+									// watching (the hand is already acting by the time this arrives).
+									js.if_(js.and(game, js.member(game, "markings")), [
+										js.forOf("key", keys, [
+											js.expr(safe(js.call(js.member(game, "markings", "removeOne"), js.id("key")))),
+										]),
+										js.assign(keys, js.arr()),
+									]),
+									overlay.draw(q),
+								]
 							),
 							post(KINDS.draw, i, js.obj({ [W.keys]: js.id("out") })),
 						],

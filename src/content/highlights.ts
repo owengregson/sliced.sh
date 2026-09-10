@@ -5,15 +5,16 @@
  * bridge-embedded overlay program otherwise — and only while
  * `Settings.automation.highlightMoves` is on (nothing is drawn until the
  * service worker sends `settings`, whatever the stored default says).
- * `clearForExecution()` runs before every `observeMove` and
- * resolves only once the page side has acknowledged the clear (bounded by
- * the bridge call timeout, `TIMINGS.adapterBridgeTimeoutMs`). `observeMove` is
- * the *verifier*: the executor issues it after the hand has released, so that
- * clear lands at the end of the action, not at its start — which is where the
- * owner wants it (2026-09-10). §13.3 rule 4's "no mark at move-submission
- * time" is overruled for the mark of the move being submitted, and for that
- * mark alone: a `highlight` carrying `overlay` draws through the bridge's own
- * SVG so the site's own press cannot take it away mid-action.
+ *
+ * **Nothing here clears for an execution.** §13.3 rule 4's "no mark may be
+ * present at move-submission time" is overruled for the mark of the move being
+ * submitted (the owner's ruling, 2026-09-10): that mark belongs to the hand's
+ * whole action and only completion erases it, from the service worker
+ * (`GameSession.onExecuted` / `onNotExecuted`). The clear that used to run
+ * before every `observeMove` is why that could not hold — `observeMove` is the
+ * verifier, and `runWithRetry` issues one after every attempt and before every
+ * retry, so a retry tier ran with nothing on the board.
+ * `highlightMoves` going off still clears, which is a different thing.
  *
  * A mark never stacks on a mark: a `highlight` / `arrow` while something of ours
  * is already drawn clears it first. The generic SVG overlay happens to redraw
@@ -23,6 +24,13 @@
  * on the board for good (owner's live test, 2026-09-09). The clear and the draw
  * are two bridge calls in that order on one channel, so the page applies them in
  * that order.
+ *
+ * The one exception is a **forced-overlay** draw, which is the mark of a move
+ * the hand is already acting on: a separate clear would leave the board
+ * unmarked for a frame at exactly the moment the owner is watching, so the page
+ * program makes that draw a replacement instead (it removes our own native
+ * markings inside the `draw` handler, and `ovDraw` rebuilds the overlay from
+ * scratch). One bridge call, no gap.
  */
 
 import type { ArrowLine, DrawOptions, SiteAdapter } from "@content/adapters/adapter";
@@ -36,8 +44,6 @@ export interface Highlights {
 	arrows(lines: ArrowLine[]): void;
 	/** Resolves once the page side acknowledged (a no-op when nothing was drawn). */
 	clear(): Promise<void>;
-	/** Clear before the hand moves; resolves when the page side acknowledged. */
-	clearForExecution(): Promise<void>;
 	/** Apply a port command; returns whether it was a highlight command. */
 	apply(cmd: GamePortCommand): boolean;
 }
@@ -60,7 +66,8 @@ export function createHighlights(adapter: SiteAdapter, initiallyEnabled = false)
 		},
 		highlight(from, to, style, options = {}) {
 			if (!enabled) return;
-			void clear();
+			// A forced-overlay draw replaces on the page, in one call: see the note above.
+			if (options.forceOverlay !== true) void clear();
 			drawn = true;
 			adapter.highlight(from, to, style, options);
 		},
@@ -71,7 +78,6 @@ export function createHighlights(adapter: SiteAdapter, initiallyEnabled = false)
 			adapter.arrows(lines);
 		},
 		clear,
-		clearForExecution: clear,
 		apply(cmd) {
 			switch (cmd.kind) {
 				case "highlight":

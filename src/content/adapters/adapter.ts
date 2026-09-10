@@ -1034,6 +1034,11 @@ export abstract class AdapterBase implements SiteAdapter {
 	): void {
 		const bridge = this.readyBridge();
 		if (!bridge) return; // no DOM insertion from the adapter (§13.3)
+		// A forced-overlay draw removes our native markings on the page itself (one call, no
+		// unmarked frame), so the keys it replaces are gone and this side must forget them too. A
+		// later `clear` with no keys then means "everything of ours", which is self-healing if the
+		// call above never arrived.
+		if (options.forceOverlay === true) this.highlightKeys = [];
 		bridge
 			.call<{ keys?: string[] } | undefined>(
 				BRIDGE_KINDS.draw,
