@@ -70,7 +70,14 @@ export type GameSessionState =
 /** Result of one virtual-hand execution (Task 18 shape). */
 export interface ExecutionResult {
 	ok: boolean;
-	outcome: "executed" | "skipped" | "paused" | "aborted" | "failed";
+	/**
+	 * `queued` (Fix F) is a **premove entered on the site during the opponent's turn**: the drag
+	 * was dispatched and the page accepted the gesture, but nothing has been played — the site
+	 * fires it, or silently drops it, when the opponent moves. `ok` is true (the hand did its
+	 * work) and it is deliberately *not* `executed`: a queued premove must never be reported as a
+	 * move that landed. The next position is what decides which it was.
+	 */
+	outcome: "executed" | "queued" | "skipped" | "paused" | "aborted" | "failed";
 	reason?: string;
 	tier: "drag" | "click";
 	attempts: number;

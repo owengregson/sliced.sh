@@ -55,4 +55,21 @@ export const PREMOVE = {
 	replyMultiPv: 2,
 	/** Clear-only move: the second line loses at least this win-fraction. */
 	loss2ndMin: 0.25,
+	/**
+	 * Fix F: the reasons a premove may be **entered on the site** during the opponent's turn,
+	 * rather than only played fast once their reply has landed. Both are *self-invalidating*: a
+	 * recapture needs the opponent to have captured on the square (they did not ⇒ our own piece
+	 * still stands there ⇒ the site drops the premove), and the only legal move in the predicted
+	 * position is almost never legal in another one. `loss2nd` is the exception and is deliberately
+	 * absent: a clear-best quiet move stays legal after *any* reply, so queueing it would fire a
+	 * move chosen for a position that never happened.
+	 */
+	queueReasons: ["recapture", "only-move"] as const,
+	/**
+	 * When the premove is entered, measured from the position it is premoved from appearing:
+	 * `U(queueDelayMinMs, queueDelayMaxMs)`. Not instant (a reflex on the opponent's move landing)
+	 * and nowhere near the end of their think — which is where a human enters one.
+	 */
+	queueDelayMinMs: 350,
+	queueDelayMaxMs: 1200,
 } as const;

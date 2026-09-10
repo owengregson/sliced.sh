@@ -55,6 +55,12 @@ export interface SimulatedSiteOptions {
 	 * `setTimeControl` to deliver it later, the way the page does.
 	 */
 	timeControl?: { baseMs: number; incMs: number } | null;
+	/**
+	 * Whether the site holds a move made on the opponent's turn as a **premove** (chess.com's own
+	 * setting, which the extension cannot read). Default `false`: the piece snaps back, which is
+	 * what a player with premoves switched off sees and the fallback §7.4 has to cope with.
+	 */
+	premoves?: boolean;
 }
 
 export interface SimulatedSite {
@@ -80,6 +86,8 @@ export interface SimulatedSite {
 	lastBlurAt(): number | null;
 	/** Every `observeMove` request the executor made. */
 	observeRequests(): Array<{ from: Square; to: Square }>;
+	/** The premove the site is holding, if any (`premoves` must be on for it to hold one). */
+	premoveQueued(): { from: Square; to: Square } | null;
 	/** Every command the service worker sent down the game port, in order (Task 30). */
 	commands(): GamePortCommand[];
 	/** Post a raw feed message (Task 30: reconnect replays, races the board cannot produce). */
@@ -111,7 +119,11 @@ export async function createSimulatedSite(
 	const myColor: Color = options.myColor ?? "w";
 	const gameId = options.gameId ?? "sim-game";
 	const pageKind: PageKind = options.pageKind ?? "live-game";
-	const board = createSimBoard(dom, { myColor, ...(options.fen ? { fen: options.fen } : {}) });
+	const board = createSimBoard(dom, {
+		myColor,
+		...(options.fen ? { fen: options.fen } : {}),
+		...(options.premoves === true ? { premoves: true } : {}),
+	});
 	const shadow = createAcShadow(dom, board, { now: sim.now });
 	const win = dom.window as unknown as Window;
 	const doc = dom.document as unknown as Document;
@@ -271,7 +283,13 @@ export async function createSimulatedSite(
 		gameId,
 		arrive(opponentUci, clocks) {
 			if (opponentUci !== null) board.applyOpponent(opponentUci);
+			// The client's move window for *our* next move opens when the opponent's move lands …
 			shadow.positionArrived(sim.now());
+			// … and a premove the site was holding is submitted inside it, a few ms later, which is
+			// the whole reason a premove's `MoveHoldTime` is near zero.
+			const premove = board.premoveQueued();
+			if (board.firePremove() === "played" && premove)
+				shadow.siteSubmitted(premove.from, premove.to, sim.now());
 			const s = snapshot(clocks);
 			port?.post({ kind: "position", snapshot: s });
 			const last = board.lastMove();
@@ -338,6 +356,7 @@ export async function createSimulatedSite(
 		pageFocusEvents: () => ({ ...focusEvents }),
 		lastBlurAt: () => lastBlurAt,
 		observeRequests: () => [...observeRequests],
+		premoveQueued: () => board.premoveQueued(),
 		commands: () => [...received],
 		post(msg) {
 			port?.post(msg);

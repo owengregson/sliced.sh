@@ -989,7 +989,11 @@ export class HandController {
 
 	/** Skip (never dispatch) when the adapter's occupancy says the piece is no longer on `from`. */
 	private guardPosition(plan: ExecutionPlan, reply: BoardGeometryReply | null): void {
-		if (positionIntact(reply, plan.from.square, plan.to.square)) return;
+		// Fix F: `expected.premove` means the move is being *entered as a premove*, in the position
+		// before the opponent's reply — where its destination is routinely still ours (a recapture
+		// is aimed at the piece they are about to take). The from-square is still guarded.
+		const to = plan.expected.premove ? undefined : plan.to.square;
+		if (positionIntact(reply, plan.from.square, to)) return;
 		log.info("hand: from-square no longer holds our piece; skipping", {
 			tabId: plan.tabId,
 			from: plan.from.square,

@@ -48,6 +48,20 @@ export interface SimBoard {
 	submit(from: Square, to: Square): boolean;
 	/** The opponent's move arriving over the "socket". */
 	applyOpponent(uci: string): void;
+	/**
+	 * A move the page made while it was *not* our turn: chess.com holds it as a premove and fires
+	 * it the instant the opponent moves. `false` when the site would not hold it at all — the
+	 * piece snaps back — which is what a player with premoves switched off sees (`premoves`).
+	 */
+	queuePremove(from: Square, to: Square): boolean;
+	/** The premove the site is holding, if any. */
+	premoveQueued(): { from: Square; to: Square } | null;
+	/**
+	 * Resolve a held premove now that the opponent has moved: played when it is legal in the
+	 * position they left, dropped when it is not (the site validates it at this moment, not when
+	 * it was entered). `null` when nothing was held.
+	 */
+	firePremove(): "played" | "dropped" | null;
 	lastMove(): LastMove | null;
 	onChange(cb: (last: LastMove) => void): () => void;
 	fen(): string;
@@ -55,7 +69,10 @@ export interface SimBoard {
 	isGameOver(): boolean;
 }
 
-export function createSimBoard(dom: TabDom, options: { myColor: Color; fen?: string }): SimBoard {
+export function createSimBoard(
+	dom: TabDom,
+	options: { myColor: Color; fen?: string; premoves?: boolean }
+): SimBoard {
 	const chess = options.fen ? new Chess(options.fen) : new Chess();
 	const { left, top, size } = SIM_TELEMETRY.board;
 	const boardRect: Rect = { left, top, width: size, height: size };
@@ -63,6 +80,7 @@ export function createSimBoard(dom: TabDom, options: { myColor: Color; fen?: str
 	const flipped = options.myColor === "b";
 	const listeners = new Set<(last: LastMove) => void>();
 	let last: LastMove | null = null;
+	let premove: { from: Square; to: Square } | null = null;
 
 	function squareRect(s: Square): Rect {
 		const f = flipped ? 7 - fileOf(s) : fileOf(s);
@@ -90,6 +108,21 @@ export function createSimBoard(dom: TabDom, options: { myColor: Color; fen?: str
 		for (const l of [...listeners]) l(last);
 	}
 
+	/** The page-side move, shared by the pointer gesture and a premove the site fires. */
+	function submitMove(from: Square, to: Square): boolean {
+		if (chess.turn() !== options.myColor) return false;
+		const candidates = chess.moves({ square: from, verbose: true }).filter((m) => m.to === to);
+		const move = candidates.find((m) => m.promotion === "q") ?? candidates[0];
+		if (!move) return false;
+		chess.move({
+			from: move.from,
+			to: move.to,
+			...(move.promotion ? { promotion: move.promotion } : {}),
+		});
+		record(from, to, move.san, `${move.from}${move.to}${move.promotion ?? ""}`, true);
+		return true;
+	}
+
 	return {
 		chess,
 		myColor: options.myColor,
@@ -114,18 +147,23 @@ export function createSimBoard(dom: TabDom, options: { myColor: Color; fen?: str
 		legalMoves() {
 			return chess.moves({ verbose: true }).map((m) => `${m.from}${m.to}${m.promotion ?? ""}`);
 		},
-		submit(from, to) {
-			if (chess.turn() !== options.myColor) return false;
-			const candidates = chess.moves({ square: from, verbose: true }).filter((m) => m.to === to);
-			const move = candidates.find((m) => m.promotion === "q") ?? candidates[0];
-			if (!move) return false;
-			chess.move({
-				from: move.from,
-				to: move.to,
-				...(move.promotion ? { promotion: move.promotion } : {}),
-			});
-			record(from, to, move.san, `${move.from}${move.to}${move.promotion ?? ""}`, true);
+		submit: submitMove,
+		queuePremove(from, to) {
+			// The site accepts the gesture whenever it is the opponent's turn and the piece is ours;
+			// legality is decided when it fires, which is why an unexpected reply can drop it *and*
+			// why a premove that stays legal fires anyway.
+			if (options.premoves !== true) return false;
+			if (chess.turn() === options.myColor) return false;
+			if (occupancy(from) !== "own") return false;
+			premove = { from, to };
 			return true;
+		},
+		premoveQueued: () => (premove ? { ...premove } : null),
+		firePremove() {
+			const held = premove;
+			if (!held) return null;
+			premove = null;
+			return submitMove(held.from, held.to) ? "played" : "dropped";
 		},
 		applyOpponent(uci) {
 			const from = uci.slice(0, 2) as Square;
