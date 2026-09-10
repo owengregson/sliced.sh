@@ -21,8 +21,8 @@ export const URLS = {
 	 * so v2 compares versions itself on the licence alarm (`@service/update-check`).
 	 */
 	websiteManifest: `${WEBSITE}/manifest.json`,
-	lichessExplorer: "https://explorer.lichess.ovh/lichess",
 	nnueMirror: "https://tests.stockfishchess.org/api/nn/",
+
 	/**
 	 * Match patterns the manifest's `host_permissions` must contain for the SW's net
 	 * download (Task 12): the mirror answers `302 → data.stockfishchess.org` without

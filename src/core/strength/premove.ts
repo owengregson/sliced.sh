@@ -11,12 +11,13 @@
 
 import { classifyMove } from "@core/chess/move-classify";
 import { applyMoves, legalMoves, parseUci } from "@core/chess/san";
-import { type ExplorerSpeed, PREMOVE } from "@core/constants/books";
+import { PREMOVE } from "@core/constants/books";
 import type { Rng } from "@core/rng";
+import { tcClass } from "@core/timing/features";
+import type { TcClass } from "@core/timing/types";
 import { clamp } from "@core/util/clamp";
 import type { EvalLine } from "@typedefs/engine";
 import type { Square, TimeControl } from "@typedefs/game";
-import { speedFor } from "./book/explorer";
 import { cpEffective, winProb } from "./elo-map";
 
 export interface PremoveContext {
@@ -83,8 +84,8 @@ export function replyProbability(reply: string, lines: readonly EvalLine[]): num
 
 function isPremoveSpeed(timeControl: TimeControl | undefined): boolean {
 	if (!timeControl) return false;
-	const speed = speedFor(timeControl);
-	return (PREMOVE.speeds as readonly ExplorerSpeed[]).includes(speed);
+	const cls = tcClass(timeControl.baseMs / 1000, timeControl.incMs / 1000);
+	return (PREMOVE.speeds as readonly TcClass[]).includes(cls);
 }
 
 /**

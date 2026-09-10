@@ -20,7 +20,7 @@ import { log } from "@core/logger";
 import type { MessageRouter } from "@core/messaging/router";
 import { getSettings, onSettingsChanged } from "@core/storage/settings-storage";
 import { createBookPolicy } from "@core/strength/book/book-policy";
-import { ExplorerClient } from "@core/strength/book/explorer";
+
 import { ChessMimicHead, selectBand } from "@core/timing/chessmimic-head";
 import { TimingLogWriter } from "@core/timing/timing-log";
 import { V1ParametricHead } from "@core/timing/v1-head";
@@ -103,8 +103,7 @@ export function createGameStack(options: GameStackOptions): GameStack {
 	const inferPort = createTimingInferPort(transport);
 	const head = new ChessMimicHead({ infer: inferPort.infer, fallback: new V1ParametricHead() });
 
-	const explorer = new ExplorerClient();
-	const book = createBookPolicy({ explorer });
+	const book = createBookPolicy();
 
 	const registry = new SessionRegistry({
 		link,
@@ -179,7 +178,7 @@ export function createGameStack(options: GameStackOptions): GameStack {
 			timingLog.dispose();
 			inferPort.dispose();
 			book.dispose();
-			explorer.dispose();
+
 			focus.dispose();
 			ownership.dispose();
 			debuggerManager.dispose();

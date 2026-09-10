@@ -60,7 +60,7 @@ describe("manifest host_permissions", () => {
 			SITE_MATCHES.chesscom,
 			SITE_MATCHES.lichess,
 			...URLS.nnueMirrorHosts,
-			`${new URL(URLS.lichessExplorer).origin}/*`,
+
 			`${new URL(URLS.website).origin}/*`,
 		];
 		for (const pattern of manifest.host_permissions) expect(known).toContain(pattern);

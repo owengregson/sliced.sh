@@ -4,7 +4,8 @@
  * Same bundling reason as `LICENSE_ENDPOINT`: a bundler inlines an object literal whole, so one
  * `URLS.chesscomMatch` in `src/content/site-detect.ts` was enough to ship every product and
  * vendor URL in the registry — `sliced.sh`, `sliced.sh/manifest.json`,
- * `sliced.sh/models/chessmimic/`, `explorer.lichess.ovh`, both Stockfish mirror hosts — inside
+ * `sliced.sh/models/chessmimic/`, both Stockfish mirror hosts — inside
+
  * `content.js`, which runs on chess.com's and lichess's own origin. `sliced.sh` *names this
  * product*, so it is a stronger identifier than the licence host ever was (§13.3 rule 2).
  *

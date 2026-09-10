@@ -1,36 +1,68 @@
 /**
- * Opening-book policy (Task 15, §7.3, Appendix E §2.3): while `ply ≤ 30` and
- * `Settings.strength.useOpeningBook`, try the Lichess explorer, then the
- * bundled Polyglot book for the rating band (`gm2600` from E ≥ 1800, `club`
- * below), else `null` so §7.2 engine selection takes over. From E ≥ 1800 a
- * book move that loses ≥ 0.15 win-fraction against the engine's best line is
- * refused (the "known trap" check); the engine lines are optional input.
+ * Opening-book policy (Task 15, §7.3, Appendix E §2.2–§2.3): while `ply ≤ 30`
+ * and `Settings.strength.useOpeningBook`, play from the bundled Polyglot book
+ * for the rating band (`gm2600` from E ≥ 1800, `club` below), else `null` so
+ * §7.2 engine selection takes over. Moves are sampled `p ∝ weight^γ(E)`, so a
+ * weaker target spreads its probability over the sidelines a strong one would
+ * not touch. From E ≥ 1800 a book move that loses ≥ 0.15 win-fraction against
+ * the engine's best line is refused (the "known trap" check); the engine lines
+ * are optional input.
+ *
+ * The bundled books are the only book source: there is no network request on
+ * this path (§13.3 — one fewer outbound signal).
  */
 
 import { legalMoves, parseUci, uciToSan } from "@core/chess/san";
 import { runtimeGetURL } from "@core/chrome/runtime";
-import { BOOKS, type BookName, EXPLORER } from "@core/constants/books";
+import { BOOK, BOOKS, type BookName } from "@core/constants/books";
 import { log } from "@core/logger";
 import type { Rng } from "@core/rng";
+import { clamp } from "@core/util/clamp";
 import type { EvalLine } from "@typedefs/engine";
-import type { ChosenMove, TimeControl } from "@typedefs/game";
+import type { ChosenMove } from "@typedefs/game";
+
 import { cpEffective, winProb } from "../elo-map";
-import {
-	type ExplorerQuery,
-	gamesOf,
-	gammaFor,
-	sampleBookMove,
-	sampleByFrequency,
-} from "./explorer";
 import { type BookMove, loadBook, type PolyglotBook } from "./polyglot";
+
+/** `γ(E) = 0.75 + 0.25·clamp((E − 1200)/1200, 0, 1)`: weaker targets sample flatter. */
+export function gammaFor(E: number): number {
+	const { base, range, eloFloor, eloSpan } = BOOK.gamma;
+	return base + range * clamp((E - eloFloor) / eloSpan, 0, 1);
+}
+
+/**
+ * Sample one item with `p ∝ n^γ(E)` among those passing `keep`; `null` when
+ * nothing survives (Appendix E §2.3).
+ */
+export function sampleByFrequency<T>(
+	items: readonly T[],
+	countOf: (item: T) => number,
+	keep: (count: number, total: number) => boolean,
+	E: number,
+	rng: Rng
+): T | null {
+	let total = 0;
+	for (const item of items) total += countOf(item);
+	const gamma = gammaFor(E);
+	const kept: T[] = [];
+	const weights: number[] = [];
+	for (const item of items) {
+		const n = countOf(item);
+		if (n <= 0 || !keep(n, total)) continue;
+		kept.push(item);
+		weights.push(n ** gamma);
+	}
+	if (kept.length === 0) return null;
+	return rng.weighted(kept, weights);
+}
 
 export interface BookContext {
 	fen: string;
 	ply: number;
 	/** Effective Elo `E` (§7.2 step 1). */
 	targetElo: number;
-	timeControl?: TimeControl | undefined;
 	/** `Settings.strength.useOpeningBook`. */
+
 	useOpeningBook: boolean;
 	rng: Rng;
 	/** The engine's current MultiPV lines (side-to-move POV), when available, for the trap check. */
@@ -38,8 +70,6 @@ export interface BookContext {
 }
 
 export interface BookPolicyDeps {
-	/** `null` disables the online source (privacy toggle / no host permission). */
-	explorer?: ExplorerQuery | null;
 	/** Bytes of the bundled book `name`; defaults to `fetch(runtimeGetURL(BOOKS.dir + name))`. */
 	loadBook?: (name: string) => Promise<Uint8Array | null>;
 }
@@ -60,9 +90,9 @@ async function fetchBundledBook(name: string): Promise<Uint8Array | null> {
 	}
 }
 
-/** `gm2600` from `EXPLORER.gmBookElo`, `club` below. */
+/** `gm2600` from `BOOK.gmBookElo`, `club` below. */
 export function bookNameFor(E: number): BookName {
-	return E >= EXPLORER.gmBookElo ? "gm2600" : "club";
+	return E >= BOOK.gmBookElo ? "gm2600" : "club";
 }
 
 export interface LineFacts {
@@ -103,7 +133,7 @@ export function lineFacts(uci: string, lines: readonly EvalLine[] | undefined): 
  * as the worst reported line); it is only allowed when that bound stays below the threshold.
  */
 export function isTrap(E: number, facts: LineFacts): boolean {
-	return E >= EXPLORER.trapCheckElo && facts.lossLowerBound >= EXPLORER.trapLoss;
+	return E >= BOOK.trapCheckElo && facts.lossLowerBound >= BOOK.trapLoss;
 }
 
 function fmt(n: number): string {
@@ -111,8 +141,8 @@ function fmt(n: number): string {
 }
 
 export function createBookPolicy(deps: BookPolicyDeps = {}): BookPolicy {
-	const explorer = deps.explorer === undefined ? null : deps.explorer;
 	const load = deps.loadBook ?? fetchBundledBook;
+
 	/** Loaded books (or `null` after a failed load, so it is not retried every move). */
 	const books = new Map<BookName, Promise<PolyglotBook | null>>();
 	let disposed = false;
@@ -156,34 +186,9 @@ export function createBookPolicy(deps: BookPolicyDeps = {}): BookPolicy {
 		return chosen;
 	}
 
-	async function fromExplorer(ctx: BookContext, rationale: string[]): Promise<ChosenMove | null> {
-		if (!explorer) return null;
-		const res = await explorer.query(ctx.fen, ctx.targetElo, ctx.timeControl);
-		if (!res || disposed) return null;
-		const total = res.moves.reduce((sum, m) => sum + gamesOf(m), 0);
-		if (total < EXPLORER.minPositionGames) {
-			rationale.push(`explorer: N=${total} < ${EXPLORER.minPositionGames}`);
-			return null;
-		}
-		const pick = sampleBookMove(res.moves, ctx.targetElo, ctx.rng);
-		if (!pick) return null;
-		const facts = lineFacts(pick.uci, ctx.lines);
-		const share = fmt(gamesOf(pick) / total);
-		if (isTrap(ctx.targetElo, facts)) {
-			rationale.push(
-				`explorer: ${pick.san} (${share}) is a trap, loss ≥ ${fmt(facts.lossLowerBound)}`
-			);
-			return null;
-		}
-		rationale.push(
-			`explorer: ${pick.san} played in ${gamesOf(pick)}/${total} games (${share}), γ=${fmt(gammaFor(ctx.targetElo))}`
-		);
-		return finish(pick.uci, ctx, facts, rationale);
-	}
-
 	async function fromPolyglot(ctx: BookContext, rationale: string[]): Promise<ChosenMove | null> {
 		const E = ctx.targetElo;
-		if (E < EXPLORER.polyglotWeakElo && ctx.rng.chance(EXPLORER.polyglotWeakLeaveProb)) {
+		if (E < BOOK.weakElo && ctx.rng.chance(BOOK.weakLeaveProb)) {
 			rationale.push("polyglot: left book early (weak target)");
 			return null;
 		}
@@ -195,7 +200,7 @@ export function createBookPolicy(deps: BookPolicyDeps = {}): BookPolicy {
 		const pick = sampleByFrequency<BookMove>(
 			entries,
 			(m) => m.weight,
-			(w, total) => w >= EXPLORER.polyglotMinWeightShare * total,
+			(w, total) => w >= BOOK.minWeightShare * total,
 			E,
 			ctx.rng
 		);
@@ -212,12 +217,10 @@ export function createBookPolicy(deps: BookPolicyDeps = {}): BookPolicy {
 
 	return {
 		async bookMove(ctx) {
-			if (disposed || !ctx.useOpeningBook || ctx.ply > EXPLORER.maxPly) return null;
-			const rationale: string[] = [];
-			const online = await fromExplorer(ctx, rationale);
-			if (online) return online;
-			return fromPolyglot(ctx, rationale);
+			if (disposed || !ctx.useOpeningBook || ctx.ply > BOOK.maxPly) return null;
+			return fromPolyglot(ctx, []);
 		},
+
 		dispose() {
 			disposed = true;
 			books.clear();

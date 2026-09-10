@@ -288,8 +288,8 @@ export class RecommendationPipeline {
 			fen: input.snapshot.fen,
 			ply: input.snapshot.ply,
 			targetElo: effectiveElo(input.targetElo, input.form),
-			timeControl: input.snapshot.timeControl,
 			useOpeningBook: true,
+
 			rng: input.rng,
 		};
 		try {

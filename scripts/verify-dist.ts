@@ -71,9 +71,9 @@ export const HOST_OWNERS: Readonly<Record<string, readonly string[]>> = {
 	"phantom.ac": [BUNDLES.serviceWorker],
 	// Product site: the update poll (SW) and the panel's links.
 	"sliced.sh": SW_AND_PANEL,
-	// Opening explorer, NNUE mirror and its redirect target — all fetched by the SW.
-	"explorer.lichess.ovh": SW_AND_PANEL,
+	// NNUE mirror and its redirect target — both fetched by the SW.
 	"tests.stockfishchess.org": SW_AND_PANEL,
+
 	"data.stockfishchess.org": SW_AND_PANEL,
 	// The two sites, as navigable links in the panel's Not-supported view.
 	"www.chess.com": SW_AND_PANEL,

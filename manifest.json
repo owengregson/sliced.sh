@@ -68,7 +68,7 @@
 	"host_permissions": [
 		"*://*.chess.com/*",
 		"*://*.lichess.org/*",
-		"https://explorer.lichess.ovh/*",
+
 		"https://tests.stockfishchess.org/*",
 		"https://data.stockfishchess.org/*",
 		"https://sliced.sh/*"

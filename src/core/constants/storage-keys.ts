@@ -14,7 +14,6 @@ export const LOCAL_KEYS = {
 	installedAt: "sl::installed-at", // number
 	motorTraces: "sl::motor-traces", // MotorTrace chunks (Task 19), ≤ 20 MB total
 	motorProfile: "sl::motor-profile", // fitted MotorProfile (Task 19)
-	explorerCache: "sl::explorer-cache", // opening-explorer LRU (Task 15)
 } as const;
 
 /** Cleared on service-worker restart — only ephemeral coordination flags. */
