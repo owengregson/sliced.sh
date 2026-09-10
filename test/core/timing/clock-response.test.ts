@@ -84,6 +84,16 @@ const MIN_RESOLVABLE_GAP = 0.25;
 
 const PROBES_PER_POINT = 600;
 
+/**
+ * Explicit per-case budget for the sweep-driven cases. `scripts/test-runner.sh` passes a 15 s default
+ * and one sweep is 9 clock points × `PROBES_PER_POINT` real `planMove` calls, twice over for the two
+ * heads and three times over for the speeds: ≈ 18 s for the file on an idle machine and past 30 s on a
+ * loaded one, so the default would make these cases fail on machine load alone. Stated rather than
+ * solved by shrinking the sample — the sample size is what makes the comparisons resolvable at 4σ
+ * (see `MIN_RESOLVABLE_GAP`), and the statistical probes in `timing-model.test.ts` are the same shape.
+ */
+const SWEEP_TIMEOUT_MS = 180_000;
+
 /** Fewest resolvable comparisons before a speed's sweep is treated as a measurement. */
 const MIN_COMPARISONS = 3;
 
@@ -339,44 +349,64 @@ describe("TimingModel.planMove: the plan follows the clock", () => {
 		for (const name of MUST_RESOLVE) expect(resolved, kind).toContain(name);
 	}
 
-	it("a head that ignores the clock and the allocation still produces a falling pace", () => {
-		// This is the production path: `ChessMimicHead.sample()` never reads `allocSec`, and the ONNX
-		// distribution's own clock conditioning is weak (and inverted over part of a 10+0).
-		expectSpeedsFollowClock("clock-blind", 0.8);
-	});
+	it(
+		"a head that ignores the clock and the allocation still produces a falling pace",
+		() => {
+			// This is the production path: `ChessMimicHead.sample()` never reads `allocSec`, and the ONNX
+			// distribution's own clock conditioning is weak (and inverted over part of a 10+0).
+			expectSpeedsFollowClock("clock-blind", 0.8);
+		},
+		SWEEP_TIMEOUT_MS
+	);
 
-	it("the v1 head's own budget response compounds with it rather than replacing it", () => {
-		expectSpeedsFollowClock("v1", 0.7);
-	});
+	it(
+		"the v1 head's own budget response compounds with it rather than replacing it",
+		() => {
+			expectSpeedsFollowClock("v1", 0.7);
+		},
+		SWEEP_TIMEOUT_MS
+	);
 
-	it("the owner's own game: at 1:00 of a 3+0 the plan is visibly quicker than at 3:00", () => {
-		// The reported case, as its own assertion, so a change that satisfies the generic sweeps while
-		// leaving 3+0 flat cannot hide. Bounded on both sides: "quicker" is not "instant".
-		const blind = ratioAt(sweepOf("clock-blind", 180), 180, 60);
-		expect(blind).toBeLessThanOrEqual(0.8);
-		expect(blind).toBeGreaterThanOrEqual(0.3);
-		expect(ratioAt(sweepOf("v1", 180), 180, 60)).toBeLessThanOrEqual(0.6);
-	});
+	it(
+		"the owner's own game: at 1:00 of a 3+0 the plan is visibly quicker than at 3:00",
+		() => {
+			// The reported case, as its own assertion, so a change that satisfies the generic sweeps while
+			// leaving 3+0 flat cannot hide. Bounded on both sides: "quicker" is not "instant".
+			const blind = ratioAt(sweepOf("clock-blind", 180), 180, 60);
+			expect(blind).toBeLessThanOrEqual(0.8);
+			expect(blind).toBeGreaterThanOrEqual(0.3);
+			expect(ratioAt(sweepOf("v1", 180), 180, 60)).toBeLessThanOrEqual(0.6);
+		},
+		SWEEP_TIMEOUT_MS
+	);
 
-	it("a 1+0 game is paced by the hand and the §3a.3 cap, not by this factor", () => {
-		// Said out loud rather than left implicit in a skip: the v1 body median in a bullet game is
-		// already within reach of the hand's own time at a full clock, so there is far less clock-set
-		// range than the same head has in a 3+0. The brief's own note — the hand needs 400–900 ms per
-		// move whatever the plan says — is where bullet's pace actually comes from.
-		expect(clockSetPrefix(sweepOf("v1", 60)).length).toBeLessThan(
-			clockSetPrefix(sweepOf("v1", 180)).length
-		);
-	});
+	it(
+		"a 1+0 game is paced by the hand and the §3a.3 cap, not by this factor",
+		() => {
+			// Said out loud rather than left implicit in a skip: the v1 body median in a bullet game is
+			// already within reach of the hand's own time at a full clock, so there is far less clock-set
+			// range than the same head has in a 3+0. The brief's own note — the hand needs 400–900 ms per
+			// move whatever the plan says — is where bullet's pace actually comes from.
+			expect(clockSetPrefix(sweepOf("v1", 60)).length).toBeLessThan(
+				clockSetPrefix(sweepOf("v1", 180)).length
+			);
+		},
+		SWEEP_TIMEOUT_MS
+	);
 
-	it("the think time stays a distribution, not a pace: the per-clock spread survives", () => {
-		// The owner's second report — "it just seems pretty robotic", a think that reads the same on
-		// every move — is the failure mode a pace multiplier could introduce, so it is gated here.
-		// §8.4a already requires a per-game CV of 0.5; a fixed clock must clear it too, wherever the
-		// hand is not the thing setting the time.
-		for (const [name, baseSec] of SPEEDS)
-			for (const point of clockSetPrefix(sweepOf("v1", baseSec)))
-				expect(point.cv, `${name} at ${point.clockS.toFixed(0)} s`).toBeGreaterThanOrEqual(
-					TIMING_CONSTANTS.cvGuard.minCv
-				);
-	});
+	it(
+		"the think time stays a distribution, not a pace: the per-clock spread survives",
+		() => {
+			// The owner's second report — "it just seems pretty robotic", a think that reads the same on
+			// every move — is the failure mode a pace multiplier could introduce, so it is gated here.
+			// §8.4a already requires a per-game CV of 0.5; a fixed clock must clear it too, wherever the
+			// hand is not the thing setting the time.
+			for (const [name, baseSec] of SPEEDS)
+				for (const point of clockSetPrefix(sweepOf("v1", baseSec)))
+					expect(point.cv, `${name} at ${point.clockS.toFixed(0)} s`).toBeGreaterThanOrEqual(
+						TIMING_CONSTANTS.cvGuard.minCv
+					);
+		},
+		SWEEP_TIMEOUT_MS
+	);
 });
