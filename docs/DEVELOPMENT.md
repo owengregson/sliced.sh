@@ -35,7 +35,7 @@ can fail with `the remote end hung up unexpectedly`. Raise the buffer once:
 2. `chrome://extensions` → Developer mode → **Load unpacked** → select `dist/`.
 3. The extension appears as **sliced.gg (dev)** with `version_name` `<version>-dev+<timestamp>`;
    a release build has neither, which is how you tell two side-by-side installs apart.
-4. Open a game on chess.com or lichess and open the side panel from the toolbar icon.
+4. Open a game on chess.com and open the side panel from the toolbar icon.
 
 The extension ID is pinned by the `key` in `manifest.json` and is the same ID v1 used, so a 1.x
 install upgrades in place (and `src/service/lifecycle.ts` migrates its eleven flat storage keys on
@@ -207,7 +207,9 @@ flag, the gate and the login view's force-valid path alone.
 2. `bun run check` → green.
 3. `bun run build` → `release/sliced-<version>.zip`, with `verify-dist` passing and the size
    report in the build log.
-4. Work through `docs/qa-checklist.md` on a real browser and both sites; record the results.
+4. Work through `docs/qa-checklist.md` on a real browser and a real chess.com game; record the
+   results.
+
 5. Publish the zip, and update the `version` in the manifest served at `URLS.websiteManifest` —
    that file is what every installed copy polls to decide whether an update exists.
 6. Note the Chrome version and OS you tested on in the release notes.

@@ -1,6 +1,6 @@
 # CLAUDE.md — sliced.gg (v2)
 
-Manifest V3 chess assistant for chess.com and lichess. Read this before touching anything;
+Manifest V3 chess assistant for chess.com. Read this before touching anything;
 `docs/ARCHITECTURE.md` has the shape of the system, `docs/DEVELOPMENT.md` the workflow and the
 licensing obligations, `docs/qa-checklist.md` everything that only a real browser can answer.
 
@@ -186,12 +186,12 @@ alone unless the owner asks otherwise.
 **A bundler inlines an object literal whole, and that is a §13.3 problem.** Importing one member
 of `URLS` shipped *every* URL in it — including `sliced.sh`, which names the product — into
 whatever bundle did the importing. `LICENSE_ENDPOINT` and `SITE_MATCHES` are therefore separate
-top-level exports, so the page-realm bundles carry only the two match patterns they need.
+top-level exports, so the page-realm bundles carry only the one match pattern they need.
 `verify-dist` polices this: `HOST_OWNERS` says which bundles may carry each host in the registry,
 and a host it does not classify fails the build.
 
 **The manifest must expose nothing to the page.** `key` is pinned, so the extension id is fixed
-and knowable; a `web_accessible_resources` entry would let any script on chess.com or lichess
+and knowable; a `web_accessible_resources` entry would let any script on chess.com
 `fetch("chrome-extension://<id>/…")` and read success as a definitive "sliced is installed".
 v2 declares none — the engine assets load in the offscreen document and the sounds in the side
 panel, both extension pages — and `verify-dist` fails the build if the block returns without

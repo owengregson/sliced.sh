@@ -4,6 +4,11 @@ Method: navigated a live Chrome to each site and ran `document.querySelectorAll`
 entry of every selector ladder in `src/content/adapters/selectors.ts`, then dumped the real
 class strings / style attributes to check the regexes.
 
+> **Historical record.** lichess support was removed after this pass (chess.com is the only
+> supported site), so the lichess section below no longer describes any shipped selector. It is
+> kept verbatim as the dated evidence of what was verified on the day.
+
+
 ## lichess.org — https://lichess.org/tv (live game, round app)
 | selector | result |
 |---|---|

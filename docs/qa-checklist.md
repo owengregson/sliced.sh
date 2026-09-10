@@ -3,12 +3,12 @@
 Everything the automated suite structurally cannot answer, in the order you should do it. This
 is a script: you should be able to run it end to end without asking anybody a question.
 
-**Scope.** Sections A–L need a real Chrome and, for most of them, a real game on chess.com or
-lichess. Nothing here is covered by `bun run check`; several items exist precisely because a
-simulator, happy-dom or a hand-built fixture cannot establish them (each says which).
+**Scope.** Sections A–L need a real Chrome and, for most of them, a real game on chess.com —
+the only supported site. Nothing here is covered by `bun run check`; several items exist precisely
+because a simulator, happy-dom or a hand-built fixture cannot establish them (each says which).
 
 **Play against bots only.** §12.1 item 5: the real-site QA is performed against computer
-opponents (chess.com "Play computer", lichess "Play with the computer"), never against a human.
+opponents (chess.com "Play computer"), never against a human.
 Export the timing log afterwards and run it through `tools/telemetry-conformance/`.
 
 ---
@@ -40,7 +40,7 @@ not run is `not run`, never a tick.
 | A2 | Click the toolbar icon on a chess.com tab | Side panel opens; Login or Waiting view, never a blank panel | |
 | A3 | Open the service-worker console | `service systems bootstrapped`, `license: validated`, no uncaught errors | |
 | A4 | Open a supported site and wait for the engine | `chrome://extensions` → "Inspect views: offscreen.html" exists | |
-| A5 | Navigate to a non-supported site (e.g. example.com) with the panel open | "Not on a supported site" view with working chess.com / lichess links | |
+| A5 | Navigate to a non-supported site (e.g. example.com) with the panel open | "Not on a supported site" view with a working chess.com link | |
 | A6 | `bun run build` (release), load *that* `dist/` unpacked in a second profile | Card reads **sliced.gg** (no `(dev)`, no `version_name`); everything above still holds | |
 | A7 | On a chess.com tab's page console, run `fetch("chrome-extension://" + "<the extension id from chrome://extensions>" + "/assets/sounds/make_move.wav")` | **Rejects.** v2 declares no `web_accessible_resources`, so a page cannot confirm the extension is installed (§13.3). A success here is a critical finding | |
 | A8 | Same, with the engine: `.../assets/engine/sf_18_smallnet.wasm` | Rejects, same reason | |
@@ -87,17 +87,18 @@ plausible. Play a 3+0 or 5+0 game against a bot.
 | B1.9 | Switch tabs mid-move-window, come back | The move is **skipped** while hidden and played after the next fresh position. Nothing pulls the tab back | |
 | B1.10 | Let the game end | Game-over is detected; panel returns to Waiting; auto-queue (if on) starts a new game after a plausible delay | |
 
-### B2. lichess — bullet vs a bot, including a flag
+### B2. chess.com — bullet vs a bot, including a flag
+
+Bullet is its own regime: the timing floors, the premove path and the flag handling only get
+exercised down here. Play 1+0 against a bot.
 
 | # | Do | Expect | Observed |
 |---|---|---|---|
-| B2.1 | 1+0 vs "Play with the computer" (level 3–5) | Panel reaches Live; opponent shows as "Lichess AI level N" with the mapped Elo | |
-| B2.2 | Play both colours | Board orientation and my colour are correct in both; highlights land on the right squares when flipped | |
+| B2.1 | 1+0 vs a bot | Panel reaches Live; the bot's name and rating are read (`botName` / `botRating`) and the §13.6 target is a real number | |
+| B2.2 | Play both colours | Board orientation and my colour are correct in both; highlights land on the right squares when the board is rotated | |
 | B2.3 | Armed, play into severe time trouble (< 10 s) | Move times compress but stay above the floor; the hand still drags; nothing hangs waiting on a plan | |
 | B2.4 | Let your own clock flag while armed | The extension stops cleanly at flag; no move is dispatched after the game ends; panel shows game over | |
-| B2.5 | Promotion on lichess (`#promotion-choice`) | Correct piece chosen; verified | |
-| B2.6 | Flip the board mid-game (lichess flip button) | Geometry follows within a move; no move is sent at stale coordinates | |
-| B2.7 | Resign / rematch from lichess's own controls | Session ends and restarts cleanly; no stale highlights from the previous game | |
+| B2.5 | Resign / rematch from chess.com's own controls | Session ends and restarts cleanly; no stale highlights from the previous game | |
 
 ### B3. Executor and content-script edge cases (deferred from Tasks 18/20/21)
 
@@ -191,10 +192,10 @@ Open the offscreen document's console (`chrome://extensions` → Inspect views: 
 The adapters were built against fixtures hand-written from Appendix C's DOM descriptions rather
 than live captures. **Most of that gap is now closed** (evidence:
 `docs/qa/2026-09-live-selector-verification.md`). On 2026-09-09 every board, piece,
-coordinate, clock, player and move-list selector was checked against live chess.com and lichess
-in a real browser, and the first ladder entry hit in every case — including the obfuscated lila
-tags (`aPp` 1, `Z7yx` 28, `qZM` 14, `.a1t` 1) and chess.com's move list (`wc-simple-move-list` 1,
-`.node.main-line-ply` 43, `.node-highlight-content.selected` 1). Those rows are struck below.
+coordinate, clock, player and move-list selector was checked against live chess.com in a real
+browser, and the first ladder entry hit in every case — including the move list
+(`wc-simple-move-list` 1, `.node.main-line-ply` 43, `.node-highlight-content.selected` 1). Those
+rows are struck below. (That pass also covered lichess, which is no longer supported.)
 
 What remains needs a game *state* a read-only pass cannot reach: promotion pickers, game-over
 modals, follow-up controls, and anything that needs the extension installed and armed. For each
@@ -206,10 +207,8 @@ against what is actually there.
 | F1 | `chesscom.rating` — `.cc-user-rating-white` / `.cc-user-rating-black` / `.user-tagline-rating` | live chess.com game | One candidate matches and yields the opponent's rating | |
 | F2 | `chesscom.botCard` / `botName` / `botRating` — `.bot-component*` | chess.com "Play computer" bot picker | The bot's name and rating are read; the §13.6 opponent-matched target gets a real number | |
 | F3 | `chesscom.username`, `playerTop`/`playerBottom` | live game | Correct top/bottom assignment in both orientations | |
-| F4 | `lichess.playerName` = `name`, `playerRating` = `rating` (element *children* of `.ruser-*`) | live lichess game | Both resolve; confirm they are really child elements and not attributes on the parent | |
 | F5 | `div.element-pool` pooled pieces | chess.com, after several captures | The pool itself is **already confirmed** (3 on `/play/computer`). What remains: after several captures, confirm it holds recycled `.piece` elements and that the adapter's piece read never picks one up (a stale piece in the panel's position is the symptom) | |
 | ~~F6~~ | ~~chess.com move-list ladders~~ | — | **Struck — verified live 2026-09-09**: `wc-simple-move-list` 1, `.main-line-row` 23, `.node.main-line-ply` 43, `.node-highlight-content` 43, `.node-highlight-content.selected` 1, all first ladder entry | done |
-| ~~F7~~ | ~~lichess move/tag ladders~~ | — | **Struck — verified live 2026-09-09**: `aPp` 1, `Z7yx` 28, `qZM` 14, `.a1t` 1, all first ladder entry. The lila tag rotation the ladder exists to survive has not happened since the research pass | done |
 | F8 | `chesscom.gameOver` ladder + `gameOverHeaderClassRe` | after a win, a loss and a draw | Result is classified correctly in all three | |
 | F9 | Run the content self-check (`self-check.ts` probe output in the SW log) | every selector concern reports a matched index; nothing reports "no candidate" | |
 

@@ -8,7 +8,7 @@ spec — this file is the map, not the territory. Section numbers below are that
 
 ## 1. What it is
 
-sliced.gg is a Manifest V3 Chrome extension that watches a live game on chess.com or lichess,
+sliced.gg is a Manifest V3 Chrome extension that watches a live game on chess.com,
 recommends a move at a chosen strength, and — when the user arms it — plays that move with a
 humanised pointer at a humanly-plausible time. Chrome 128+, side panel UI, no Firefox/Safari
 port, live games only (no puzzles or analysis boards), desktop layouts only (§1.4).
@@ -35,7 +35,7 @@ or the focus rules is there for that reason.
 │  │  (SF, SAB)    │                      └──────────┬───────────┘               │
 │  └───────────────┘                                 │ port "sl-game"            │
 │                                                    ▼                           │
-│  chess.com / lichess tab           ┌──────────────────────────────┐            │
+│  chess.com tab                     ┌──────────────────────────────┐            │
 │  ┌──────────────────────────────┐  │ CONTENT (ISOLATED world)     │            │
 │  │ PAGE BRIDGE (MAIN world)     │◄─┤ SiteAdapter (DOM observers)  │            │
 │  │ generated from pagescript    │  │ Keybinds, CursorTracker      │            │
@@ -82,17 +82,19 @@ panel router picks its view from that state plus the licence state and the updat
 
 ## 4. Subsystems
 
-### 4.1 Site adapters (§3.4, §3.4a; `src/content/adapters/`)
+### 4.1 The site adapter (§3.4, §3.4a; `src/content/adapters/`)
 
-One `SiteAdapter` per site behind a common interface: read the position, the clocks, the move
-list, my colour and the board geometry; observe changes; draw highlights. chess.com exposes
-`wc-chess-board.game`; lichess exposes chessground. Both are reached from the ISOLATED world
-through the MAIN-world bridge, never by touching page globals directly. Every selector lives once
-in `src/content/adapters/selectors.ts` (C1), and `self-check.ts` re-validates them periodically so
-a site redesign degrades loudly instead of silently.
+chess.com is the only supported site. `SiteAdapter` is the interface the rest of the content
+script sees — read the position, the clocks, the move list, my colour and the board geometry;
+observe changes; draw highlights — `AdapterBase` is the markup-independent half (debounced
+re-evaluation, observer bookkeeping, the bridge-state cache, `observeMove`, game identity), and
+`chesscom.ts` is the half that knows the markup. chess.com exposes `wc-chess-board.game`, reached
+from the ISOLATED world through the MAIN-world bridge, never by touching page globals directly.
+Every selector lives once in `src/content/adapters/selectors.ts` (C1), and `self-check.ts`
+re-validates them periodically so a site redesign degrades loudly instead of silently.
 
 > The fixtures were hand-built from Appendix C's DOM descriptions rather than live captures, but
-> the selectors themselves were checked against live chess.com and lichess on 2026-09-09
+> the selectors themselves were checked against live chess.com on 2026-09-09
 > (`docs/qa/2026-09-live-selector-verification.md`) and the
 > first ladder entry hit in every case. What is still unconfirmed is the markup behind game
 > states a read-only pass cannot reach — promotion pickers, game-over modals, follow-up controls
@@ -121,8 +123,8 @@ nets and ChessMimic bands and streams them back over the `sl-engine` port as bas
 `UCI_Elo` alone produces recognisable engine play, so the shipped default is a hybrid: the engine
 supplies MultiPV lines, and `MoveSelector` picks among them with a persona-shaped policy —
 centipawn-loss priors, a blunder model, phase and time-pressure terms, an opening book
-(`book/`, with the lichess explorer as a source) and premove candidates. Every constant is in
-`src/core/strength/constants.ts`.
+(`book/`, the two bundled Polyglot files — there is no network source) and premove candidates.
+Every constant is in `src/core/strength/constants.ts`.
 
 ### 4.5 Timing (§8; `src/core/timing/`)
 

@@ -1,6 +1,6 @@
 # sliced.sh
 
-Manifest V3 chess assistant for chess.com and lichess — the sliced.gg extension, v2.
+Manifest V3 chess assistant for chess.com — the sliced.gg extension, v2.
 
 - **[CLAUDE.md](CLAUDE.md)** — commands, conventions and the gotchas that bite. Start here.
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — the shape of the system.
