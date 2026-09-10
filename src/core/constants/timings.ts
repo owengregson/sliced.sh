@@ -54,6 +54,38 @@ export const TIMINGS = {
 	 */
 	timingBandRetryMs: 30_000,
 	timingBandRetryMaxMs: 900_000,
+	/**
+	 * §4.3: how often the adapter re-asks the site for its time control while the page shows
+	 * clocks and the site has not answered yet (`timeControl.get()` is null until the game
+	 * actually starts). Slow on purpose — one passive bridge round trip per tick, bounded by
+	 * `TIME_CONTROL.maxProbes`.
+	 */
+	adapterTimeControlRetryMs: 1_000,
+} as const;
+
+/**
+ * Reading the site's own time control (§4.3, Appendix C §1.4).
+ *
+ * chess.com's `board.game.timeControl.get()` answers `{baseTime, increment}`. The owner's live
+ * capture on a **3 minute** game was `{"baseTime":180000,"increment":0}`, so `baseTime` is in
+ * MILLISECONDS. The increment was 0 in that sample, so its unit is UNCONFIRMED: it is read as
+ * ms to match, with the implausible case guarded — chess.com's increments are whole seconds, so
+ * a nonzero increment below one second cannot be a millisecond reading, and planning with a 2 ms
+ * increment would be silently wrong in every downstream term (`base_eff`, the class, the premove
+ * gate). A value below the threshold is therefore read as seconds and logged loudly.
+ */
+export const TIME_CONTROL = {
+	/** A nonzero base/increment below this many ms is not a millisecond reading. */
+	minPlausibleMs: 1_000,
+	msPerSecond: 1_000,
+	/** Beyond 24 h the value is not a clock in ms either (nor in seconds). */
+	maxPlausibleMs: 86_400_000,
+	/**
+	 * How many times one game re-asks for a time control it has not been told. At
+	 * `TIMINGS.adapterTimeControlRetryMs` this covers the first half-minute after the board
+	 * appears, which is the window in which a game that was "not yet started" starts.
+	 */
+	maxProbes: 30,
 } as const;
 
 /** Time-control classes a timing preset is keyed by (the timing model's `TcClass` minus untimed). */

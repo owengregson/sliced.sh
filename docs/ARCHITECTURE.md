@@ -135,6 +135,16 @@ is unavailable or too slow. Features are computed from the analysis, the chosen 
 and the persona; the plan that comes out carries an orientation latency, a decision pause, the
 exploration budget and the drop time.
 
+The clocks are two separate readings and both are the page's. Remaining time comes from the DOM
+clock elements (`clocks.ts`, including the sub-minute form with tenths); the *time control* comes
+from the MAIN-world bridge's `board.game.timeControl.get()` → `{baseTime, increment}` in ms
+(`time-control.ts`), because `game.times` / `game.timestamps` are empty on a live game. That object
+is **null until the game actually starts**, after the session has already been created, so the
+adapter republishes the unmoved position when it arrives and `GameSession.reprofile()` re-derives
+the preset, the timing model and the hand's motor class from it. Without it every game conditions
+as `untimed`, which bypasses the compression factor, the hard caps, the §8.5 emergency regime and
+the §7.4 premove gate, and leaves a bullet game with a classical hand.
+
 ### 4.6 Execution (§9; `src/service/move-executor/`, `src/core/motor/`)
 
 The "virtual hand". A move is a continuous pointer trajectory (WindMouse paths, motor profile,

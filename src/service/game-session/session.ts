@@ -640,7 +640,16 @@ export class GameSession implements SessionSource {
 		// the republish is indistinguishable from the reconnect replay and is dropped here, and
 		// nothing else can release the hold: as white the position cannot change until the owner
 		// moves by hand (owner's live test, 2026-09-09).
-		const key = `${snapshot.gameId}|${snapshot.ply}|${snapshot.fen}|${snapshot.myColor ?? "?"}`;
+		// The time control belongs in the key for exactly the same reason as the colour, and it is
+		// the same live game that proved it: the site answers `timeControl.get()` only once the game
+		// has actually *started*, on a position that has not moved (as white it cannot move until
+		// the owner plays). Without it the republish carrying the clock is indistinguishable from
+		// the reconnect replay, is dropped here, and the whole first move is planned `untimed` —
+		// classical motor, no premoves, a 7.5 s think in a 1+0 game.
+		const tc = snapshot.timeControl;
+		const key = `${snapshot.gameId}|${snapshot.ply}|${snapshot.fen}|${snapshot.myColor ?? "?"}|${
+			tc ? `${tc.baseMs}+${tc.incMs}` : "?"
+		}`;
 		if (key === this.lastPositionKey) return; // the reconnect replay (Task 21)
 		if (
 			this.game?.gameId === snapshot.gameId &&
@@ -709,14 +718,26 @@ export class GameSession implements SessionSource {
 	}
 
 	/**
-	 * §4.6: an adapter that reports the time control on the first `position` rather than on
-	 * `gameStarted` must still get its preset. The model is rebuilt once, before anything has
-	 * been planned this game, so no per-game state is lost; afterwards the profile is frozen.
+	 * §4.3 / §4.6: the time control arrives on a `position`, not on `gameStarted`.
+	 *
+	 * This is the load-bearing path, not a fallback. chess.com answers
+	 * `board.game.timeControl.get()` only once the game has actually started, and the content
+	 * script starts its session from the first readable snapshot — taken before the MAIN-world
+	 * bridge has answered anything — so `GameMeta.timeControl` is normally absent and `startGame`
+	 * has already built the model, the pipeline and the hand for a clockless game. Everything the
+	 * clock drives hangs off this one call: the features' `tcClass` (and with it the compression
+	 * factor, the hard caps and the §8.5 emergency regime, all of which the `untimed` branch
+	 * bypasses), the §4.6 preset, the §7.4 premove gate (bullet/blitz only) and the hand's own
+	 * motor class — a bullet game otherwise keeps a classical hand for its whole length.
+	 *
+	 * Once per game (`profiledTimeControl`), at whatever ply it lands: a game whose clock arrives
+	 * after our first move must not keep planning as untimed for the rest of its length, so the
+	 * rebuilt model *adopts* the previous one's per-game history rather than starting fresh.
 	 */
 	private reprofile(snapshot: PositionSnapshot): void {
 		const tc = snapshot.timeControl;
 		const timing = this.timing;
-		if (!tc || !timing || this.profiledTimeControl !== null || this.myThinkMs.length > 0) return;
+		if (!tc || !timing || this.profiledTimeControl !== null) return;
 		const meta = this.game;
 		if (!meta) return;
 		this.game = { ...meta, timeControl: tc };
@@ -725,6 +746,7 @@ export class GameSession implements SessionSource {
 		const next = timingSettingsFor(settings.timing, tc);
 		this.profile = next.profile;
 		const [baseSec, incSec] = this.timeControlSeconds(this.game);
+		const tcClassOf = tcClass(baseSec, incSec);
 		this.startClockMs = baseSec * MS_PER_S;
 		this.timing = new TimingModel(
 			this.deps.head,
@@ -740,6 +762,7 @@ export class GameSession implements SessionSource {
 			site: meta.site,
 			gameId: meta.gameId,
 		});
+		this.timing.adoptHistory(timing.state);
 		this.pipeline = this.deps.createPipeline
 			? this.deps.createPipeline(this.timing)
 			: this.deps.engine
@@ -749,9 +772,18 @@ export class GameSession implements SessionSource {
 						book: this.deps.book,
 					})
 				: null;
-		log.debug("game-session: time control learned from the first position", {
+		// The hand's class too, in place: replacing the executor would dispose an armed hand and
+		// re-arm it, and a re-arm attaches the debugger — Chrome's infobar, a reflow and a board
+		// that moves, mid-game (§13.4 arms in the waiting view precisely to keep that out of a move
+		// window). `MoveExecutor.setTimeControlClass` changes the profile the next execution reads.
+		this.executorHandle?.setTimeControlClass(motorTcClass(tcClassOf));
+		log.info("game-session: time control learned from a position", {
 			tabId: this.deps.tabId,
+			baseMs: tc.baseMs,
+			incMs: tc.incMs,
+			tc: tcClassOf,
 			profile: next.profile,
+			ply: snapshot.ply,
 		});
 	}
 

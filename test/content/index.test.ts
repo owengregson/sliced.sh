@@ -210,6 +210,34 @@ describe("content entry — feed", () => {
 		await waitFor(() => feed.of("boardRect").length > reported, 2_000);
 		expect(feed.of("boardRect").at(-1)?.rect.top).toBe(BOARD_RECT.y + 48);
 	});
+	it("sends the site's own time control on the position, after `gameStarted` has gone without it", async () => {
+		// §4.3 end to end through the real content script: the page's `{baseTime, increment}` is
+		// what reaches the service worker, not a value a fixture put on the snapshot.
+		//
+		// And the ORDER is the production order, which is why `GameSession.reprofile()` is
+		// load-bearing rather than the dead code the final review found it to be: the session is
+		// started from the first readable snapshot, which is taken before the MAIN-world bridge has
+		// answered anything, so `gameStarted` carries no time control at all. The first `position`
+		// to carry one arrives afterwards, on a position that has not moved.
+		const bridge = new FakeBridge();
+		bridge.responses.set("getState", () => ({
+			fen: WEBGL_FEN,
+			mode: "playing",
+			playingAs: 1,
+			timeControl: { baseTime: 180_000, increment: 0 },
+		}));
+		const { feed } = boot("chesscom-webgl", { bridge });
+		await waitFor(() => feed.of("gameStarted").length === 1, 2_000);
+		expect(feed.of("gameStarted")[0]?.game.timeControl).toBeUndefined();
+		await waitFor(() => feed.of("position").at(-1)?.snapshot.timeControl !== undefined, 2_000);
+		expect(feed.of("position").at(-1)?.snapshot.timeControl).toEqual({
+			baseMs: 180_000,
+			incMs: 0,
+		});
+		// the same ply, republished — not a new position
+		expect(feed.of("position").at(-1)?.snapshot.fen).toBe(WEBGL_FEN);
+		expect(feed.of("position").at(0)?.snapshot.timeControl).toBeUndefined();
+	});
 	it("does not start a session on a non-live page, and re-detects the page kind on popstate", async () => {
 		const { feed, handle, dom } = boot("chesscom-live");
 		dom.window.history.pushState({}, "", "/analysis/game/live/1");

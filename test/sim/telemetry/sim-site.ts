@@ -47,7 +47,14 @@ export interface SimulatedSiteOptions {
 	pageKind?: PageKind;
 	/** Task 30: forward in-page keybinds to the service worker as `CONTENT_KEYBIND`. */
 	sendKeybinds?: boolean;
-	timeControl?: { baseMs: number; incMs: number };
+	/**
+	 * The site's own time control, as it reports it on `gameStarted` and every `position`.
+	 * **Omitted / null means the site has not answered yet** — `timeControl.get()` is null until
+	 * the game actually starts (owner's capture, 2026-09-09), which is the production order: the
+	 * first snapshot is taken before the MAIN-world bridge has answered anything. Use
+	 * `setTimeControl` to deliver it later, the way the page does.
+	 */
+	timeControl?: { baseMs: number; incMs: number } | null;
 }
 
 export interface SimulatedSite {
@@ -85,6 +92,8 @@ export interface SimulatedSite {
 	endGame(result?: GameResult): void;
 	/** Task 30: the §13.6 opponent identity. */
 	opponent(info: { isBot: boolean; name: string; ratingEstimate: number | null }): void;
+	/** §4.3: the site learns its own time control (the game actually started). */
+	setTimeControl(tc: { baseMs: number; incMs: number } | null): void;
 	/** The game id every `position` / `gameStarted` carries. */
 	readonly gameId: string;
 	dispose(): Promise<void>;
@@ -217,6 +226,8 @@ export async function createSimulatedSite(
 		},
 	});
 
+	let timeControl = options.timeControl ?? null;
+
 	function snapshot(clocks: { w: number; b: number }): PositionSnapshot {
 		const last = board.lastMove();
 		const s: PositionSnapshot = {
@@ -229,7 +240,7 @@ export async function createSimulatedSite(
 			clocks: { w: { ms: clocks.w, running: true }, b: { ms: clocks.b, running: true } },
 			capturedAt: sim.now(),
 		};
-		if (options.timeControl) s.timeControl = { ...options.timeControl };
+		if (timeControl) s.timeControl = { ...timeControl };
 		if (last) s.lastMove = { from: last.from, to: last.to, san: last.san };
 		return s;
 	}
@@ -284,7 +295,7 @@ export async function createSimulatedSite(
 					site,
 					pageKind,
 					myColor,
-					...(options.timeControl ? { timeControl: { ...options.timeControl } } : {}),
+					...(timeControl ? { timeControl: { ...timeControl } } : {}),
 					startedAt: sim.now(),
 					...meta,
 				},
@@ -292,6 +303,9 @@ export async function createSimulatedSite(
 		},
 		endGame(result = "1-0") {
 			port?.post({ kind: "gameEnded", result });
+		},
+		setTimeControl(tc) {
+			timeControl = tc;
 		},
 		opponent(info) {
 			port?.post({ kind: "opponent", ...info });

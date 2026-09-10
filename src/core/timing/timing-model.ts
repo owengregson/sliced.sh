@@ -167,6 +167,26 @@ export class TimingModel {
 		this.head.reset?.();
 	}
 
+	/**
+	 * §4.6: the time control arrived *after* the game started, so the session rebuilt this model
+	 * with the preset the clock selects — but the **game** has not restarted. Adopt the previous
+	 * model's per-game history so the rebuild is a change of knobs, not a new game: the AR(1)
+	 * residual, the tilt counter, both pace histories, the CV guard's population and the eval the
+	 * tilt trigger compares against. The persona is not copied: it is sampled from the game id, so
+	 * the rebuild already produced the same one.
+	 */
+	adoptHistory(previous: GameTimingState): void {
+		const st = this._state;
+		st.eps = previous.eps;
+		st.tilt = previous.tilt;
+		st.oppThinkMs = [...previous.oppThinkMs];
+		st.myThinkMs = [...previous.myThinkMs];
+		st.plannedMs = [...previous.plannedMs];
+		st.paceResiduals = [...previous.paceResiduals];
+		st.lastEvalOurPov = previous.lastEvalOurPov;
+		st.lastPlan = previous.lastPlan;
+	}
+
 	/** Kick off head-side inference for the position (no-op for the v1 head). */
 	prepare(ctx: TimingContext): Promise<void> {
 		return this.head.prepare?.(ctx) ?? Promise.resolve();

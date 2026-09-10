@@ -272,6 +272,29 @@ export class MoveExecutor {
 		};
 	}
 
+	/** The hand's motor time-control class (Appendix G §8). */
+	timeControlClass(): TimeControlClass {
+		return this.config.tcClass;
+	}
+
+	/**
+	 * §4.6 / §4.3: the time control arrived after the game started, so the hand's class changes
+	 * **in place**. Replacing the executor instead would dispose an armed hand and re-arm it, and
+	 * a re-arm means `chrome.debugger.attach` — Chrome's infobar, a page reflow and a board that
+	 * moves, mid-game, which is exactly what §13.4 arms in the waiting view to avoid. The class is
+	 * read at the start of every execution (`profileFor`), so the next move uses the new profile
+	 * and nothing in flight changes shape underneath itself.
+	 */
+	setTimeControlClass(tcClass: TimeControlClass): void {
+		if (this.config.tcClass === tcClass) return;
+		log.info("executor: motor time-control class changed", {
+			tabId: this.tabId,
+			from: this.config.tcClass,
+			to: tcClass,
+		});
+		this.config.tcClass = tcClass;
+	}
+
 	// ── lifecycle ─────────────────────────────────────────────────────────
 
 	/**

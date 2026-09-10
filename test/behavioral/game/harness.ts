@@ -42,7 +42,12 @@ export interface GameHarnessOptions {
 	settings?: SettingsPatch;
 	myColor?: Color;
 	fen?: string;
-	timeControl?: { baseMs: number; incMs: number };
+	/**
+	 * The time control the *page* reports. `null` means the site has not answered yet — the
+	 * production order on a real live game (§4.3), where it arrives on a later position and
+	 * `GameSession.reprofile()` is what consumes it. Use `site.setTimeControl(...)` to deliver it.
+	 */
+	timeControl?: { baseMs: number; incMs: number } | null;
 	/** Forward in-page keybinds to the service worker as `CONTENT_KEYBIND`. */
 	sendKeybinds?: boolean;
 	script?: ScriptOptions;
@@ -123,7 +128,7 @@ export async function createGameHarness(options: GameHarnessOptions = {}): Promi
 	});
 	sim.time.install();
 	const tabId = sim.openTab("https://www.chess.com/game/live/1", { active: true }).tabId;
-	const timeControl = options.timeControl ?? DEFAULT_TC;
+	const timeControl = options.timeControl === undefined ? DEFAULT_TC : options.timeControl;
 	const spoken: string[] = [];
 	const toasts: Array<Extract<PanelPortMessage, { kind: "toast" }>> = [];
 
@@ -296,7 +301,7 @@ export async function createGameHarness(options: GameHarnessOptions = {}): Promi
 			await sim.time.runMicrotasks();
 			return value;
 		},
-		async arrive(opponentUci = null, clocks = clocksOf(timeControl.baseMs)) {
+		async arrive(opponentUci = null, clocks = clocksOf(timeControl?.baseMs ?? DEFAULT_TC.baseMs)) {
 			await harness.drive(() => page.arrive(opponentUci, clocks));
 		},
 		async pressKey(bind) {

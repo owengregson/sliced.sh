@@ -6,7 +6,15 @@
 
 import { squareOf } from "@core/chess/squares";
 import { TIMINGS } from "@core/constants/timings";
-import type { Color, GameResult, PageKind, PromoPiece, Site, Square } from "@typedefs/game";
+import type {
+	Color,
+	GameResult,
+	PageKind,
+	PromoPiece,
+	Site,
+	Square,
+	TimeControl,
+} from "@typedefs/game";
 import {
 	AdapterBase,
 	type AdapterOptions,
@@ -36,6 +44,7 @@ import {
 	checkTurnConsistency,
 	probeLadders,
 } from "./self-check";
+import { timeControlFromBridge } from "./time-control";
 
 const S = SELECTORS;
 const SITE: Site = "chesscom";
@@ -190,6 +199,17 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 
 	getClock(side: Color): ClockReading | null {
 		return readClock(this.doc, side);
+	}
+
+	/**
+	 * The game's time control as the site reports it (§4.3). The MAIN-world bridge is the only
+	 * source: `game.timeControl.get()`. There is no DOM fallback — the live page's header shows a
+	 * formatted label, not the pair, and `game.times` / `game.timestamps` are both `{}` — so a
+	 * game whose bridge never answers runs untimed, which is what the timing model's clockless
+	 * branch is for.
+	 */
+	getTimeControl(): TimeControl | null {
+		return timeControlFromBridge(this.bridgeState?.timeControl);
 	}
 
 	getMoveList(): string[] {
@@ -394,6 +414,7 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 		const replay = replayMoves(list.sans.slice(0, ply));
 		const lastMove = replay?.lastMove ?? this.bridgeLastMove();
 		const gameId = this.gameIdentity(ply);
+		const timeControl = this.getTimeControl();
 		const snapshot: AdapterPositionSnapshot = {
 			site: SITE,
 			gameId,
@@ -404,6 +425,10 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 			myColor: this.getMyColor(),
 			...(lastMove ? { lastMove } : {}),
 			clocks: { w: this.clockState("w"), b: this.clockState("b") },
+			// §4.3: the site's own `{baseTime, increment}`, once it answers — `null` until the game
+			// actually starts, which is why `AdapterBase.apply` republishes an unmoved position when
+			// it arrives and why the session re-profiles on it.
+			...(timeControl ? { timeControl } : {}),
 			capturedAt: Date.now(),
 		};
 		return {

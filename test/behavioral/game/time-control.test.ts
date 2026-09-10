@@ -1,0 +1,142 @@
+// test/behavioral/game/time-control.test.ts — §4.3 / §4.6 / §8.4b: the time control the *page*
+// reports reaches the timing model, the motor and the §7.4 premove gate, including when it arrives
+// after the game has started (the production order: `timeControl.get()` is null until the game
+// actually starts, and the session is created from a snapshot taken before the MAIN-world bridge
+// has answered anything, so `GameMeta.timeControl` is normally absent).
+//
+// Every assertion here is on what the site supplied. `site.setTimeControl(...)` is the page
+// learning its own clock, not the harness telling the session what class to be.
+import { afterEach, describe, expect, it } from "bun:test";
+import { TIMING_CONSTANTS } from "@core/timing/constants";
+import { createGameHarness, type GameHarness } from "./harness";
+
+let h: GameHarness;
+afterEach(async () => {
+	await h?.dispose();
+});
+
+const BULLET = { baseMs: 60_000, incMs: 0 };
+
+/** The feature record the timing model attached to the standing plan. */
+function features(harness: GameHarness): Record<string, number> {
+	return harness.session().recommendation()?.plan.features ?? {};
+}
+
+async function recommended(harness: GameHarness): Promise<boolean> {
+	return harness.until(() => harness.session().recommendation() !== null, 10_000);
+}
+
+describe("game session: the time control arrives after the game started (§4.3)", () => {
+	it("plans the first position untimed, then re-profiles the model AND the hand when the site answers", async () => {
+		h = await createGameHarness({
+			timeControl: null, // the site has not answered yet — the production order
+			gameId: "late-tc",
+			settings: { automation: { autoMove: false }, timing: { profile: "natural" } },
+		});
+		// Move 1 with no clock: every clock-pressure term is bypassed and the hand is classical.
+		await h.arrive(null, { w: BULLET.baseMs, b: BULLET.baseMs });
+		expect(await recommended(h)).toBe(true);
+		expect(features(h).tc_untimed).toBe(1);
+		expect(features(h).tc_bullet).toBe(0);
+		// `untimedVirtual` substitutes a 300 s clock and throws the real reading away.
+		expect(features(h).clock_s).toBe(TIMING_CONSTANTS.untimedVirtual.clockS);
+		expect(features(h).pressure).toBe(1);
+		expect(h.executor()?.timeControlClass()).toBe("classical");
+		expect((await h.snapshot()).session.timeControl).toBeUndefined();
+
+		// The game starts: the site now answers `{baseTime: 60000, increment: 0}`. The position has
+		// not moved — as white it cannot — so this is the republished ply, and it must not be taken
+		// for the reconnect replay.
+		h.site.setTimeControl(BULLET);
+		await h.arrive(null, { w: BULLET.baseMs, b: BULLET.baseMs });
+		expect(await h.until(() => features(h).tc_bullet === 1, 10_000)).toBe(true);
+
+		// The model now conditions on the real clock …
+		expect(features(h).tc_untimed).toBe(0);
+		expect(features(h).clock_s).toBeCloseTo(BULLET.baseMs / 1000, 6);
+		expect(features(h).base_s).toBe(BULLET.baseMs / 1000);
+		// … and the hand is a bullet hand, which is what the final review found `reprofile` missed.
+		expect(h.executor()?.timeControlClass()).toBe("bullet");
+		// …and the panel sees it.
+		expect((await h.snapshot()).session.timeControl).toEqual(BULLET);
+	});
+
+	it("re-profiles even when the clock arrives after our first move, keeping the game's history", async () => {
+		h = await createGameHarness({
+			timeControl: null,
+			gameId: "late-tc-after-move",
+			settings: { automation: { autoMove: true }, strength: { matchOpponentRating: false } },
+		});
+		expect(await h.until(() => h.executor()?.isArmed() === true, 2_000)).toBe(true);
+		await h.arrive(null, { w: BULLET.baseMs, b: BULLET.baseMs });
+		expect(await recommended(h)).toBe(true);
+		const firstPlan = h.session().recommendation()?.plan.thinkMs ?? 0;
+		expect(firstPlan).toBeGreaterThan(0);
+		// let the hand play the move, so the model has observed a think time for this game
+		expect(await h.until(() => h.session().currentState() === "live:opponent-turn", 60_000)).toBe(
+			true
+		);
+
+		// The clock arrives on an opponent-turn position, a move late. The old guard
+		// (`myThinkMs.length > 0`) refused here and the game stayed untimed for its whole length.
+		h.site.setTimeControl(BULLET);
+		await h.arrive();
+		expect(h.executor()?.timeControlClass()).toBe("bullet");
+
+		// Our turn again: the plan is now conditioned on the real clock …
+		const reply = h.transport.movesFor(h.site.board.fen())[0] as string;
+		await h.arrive(reply);
+		expect(await h.until(() => features(h).tc_bullet === 1, 20_000)).toBe(true);
+		expect(features(h).tc_untimed).toBe(0);
+		// … and the rebuilt model kept this game's own history rather than starting a new game:
+		// the move already played is still in the §8.6 log with its realised think time, and the
+		// CV guard's population (`plannedMs`) still holds both plans.
+		const played = h.timingLog.entries().filter((e) => e.actualMs !== null);
+		expect(played.length).toBeGreaterThanOrEqual(1);
+		expect(h.session().recommendation()?.plan.features.eps).toBeDefined();
+	}, 120_000);
+
+	it("the page's own clock is what opens the §7.4 premove gate (bullet/blitz only)", async () => {
+		// `isPremoveSpeed(undefined)` is false, so with no time control on the snapshot §7.4 can
+		// never fire — which is what production did on every game. The page answering its clock is
+		// what opens the gate; nothing else about the game changes.
+		const SEEDS = 6;
+		let firedWithClock = false;
+		let firedUntimed = false;
+		for (let seed = 0; seed < SEEDS; seed++) {
+			for (const withClock of [false, true]) {
+				await h?.dispose();
+				h = await createGameHarness({
+					timeControl: null,
+					gameId: `premove-gate-${seed}`,
+					seed: `premove-gate-${seed}`,
+					settings: {
+						automation: { autoMove: true },
+						strength: { matchOpponentRating: false, targetElo: 3000 },
+					},
+					script: { bestCp: 900, stepCp: 900 },
+				});
+				// move 1 (untimed either way: the site has not answered yet)
+				await h.arrive();
+				expect(await h.until(() => h.session().currentState() === "live:opponent-turn", 60_000)).toBe(
+					true
+				);
+				// the site learns its clock exactly here, before the opponent-turn position
+				if (withClock) h.site.setTimeControl(BULLET);
+				await h.arrive();
+				await h.advance(2_000);
+				const expected = h.transport.movesFor(h.site.board.fen())[0] as string;
+				await h.arrive(expected);
+				expect(await h.until(() => h.session().recommendation() !== null, 20_000)).toBe(true);
+				const source = h.session().recommendation()?.chosen.source;
+				if (withClock && source === "premove") firedWithClock = true;
+				if (!withClock && source === "premove") firedUntimed = true;
+			}
+			if (firedWithClock) break;
+		}
+		// §7.4's probability is a per-game draw, so this is "at least one of the seeds fired".
+		expect(firedWithClock).toBe(true);
+		// …and with no clock on the snapshot it is unreachable, every seed.
+		expect(firedUntimed).toBe(false);
+	}, 300_000);
+});

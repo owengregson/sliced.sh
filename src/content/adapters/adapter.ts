@@ -13,7 +13,7 @@
 
 import type { UciParts } from "@core/chess/san";
 import { EXECUTOR } from "@core/constants/cdp";
-import { TIMINGS } from "@core/constants/timings";
+import { TIME_CONTROL, TIMINGS } from "@core/constants/timings";
 import { log } from "@core/logger";
 import { rectShiftPx } from "@core/motor/geometry";
 import { TOKENS } from "@design/tokens.generated";
@@ -27,6 +27,7 @@ import type {
 	PromoPiece,
 	Site,
 	Square,
+	TimeControl,
 } from "@typedefs/game";
 import { pieceAt } from "./dom-fen";
 import { pointToSquare as pointToSquareGeom, squareRect as squareRectGeom } from "./geometry";
@@ -136,6 +137,12 @@ export interface SiteAdapter {
 	/** `null` when spectating / analysis. */
 	getMyColor(): Color | null;
 	getClock(side: Color): ClockReading | null;
+	/**
+	 * §4.3: the game's own time control, or `null` while the site has not answered (it answers
+	 * only once the game has actually started). Everything the timing model does with the clock
+	 * depends on this: without it every game conditions as `untimed`.
+	 */
+	getTimeControl(): TimeControl | null;
 	/** SAN, main line only. */
 	getMoveList(): string[];
 	/** Plies played (main line) / current ply if browsing. */
@@ -359,6 +366,18 @@ export abstract class AdapterBase implements SiteAdapter {
 	 * different board is that board's own game start.
 	 */
 	private lastColor: Color | null = null;
+	/**
+	 * The time control of the last reading delivered, for the same reason as `lastColor`: the site
+	 * answers `timeControl.get()` only once the game has actually *started* — a game "not yet
+	 * started" answers `null` while its clocks already read `10:00` (owner's capture, 2026-09-09)
+	 * — and by then the position has not moved, so the dedupe key is identical and the session
+	 * would plan the whole first move as `untimed`: classical motor profile, no premoves, a 7.5 s
+	 * think and every clock-pressure term bypassed. Learning it is a change worth delivering.
+	 */
+	private lastTimeControl: TimeControl | null = null;
+	/** Bridge re-asks spent on a time control this game has not been told (`TIME_CONTROL.maxProbes`). */
+	private timeControlProbes = 0;
+	private timeControlTimer: ReturnType<typeof setTimeout> | null = null;
 	private lastGameKey: string | null = null;
 	private lastGameOver = false;
 	private lastProbeSignature: string | null = null;
@@ -420,6 +439,7 @@ export abstract class AdapterBase implements SiteAdapter {
 	abstract getSideToMove(): Color | null;
 	abstract getMyColor(): Color | null;
 	abstract getClock(side: Color): ClockReading | null;
+	abstract getTimeControl(): TimeControl | null;
 	abstract getMoveList(): string[];
 	abstract getPly(): number;
 	abstract isAtLivePosition(): boolean;
@@ -611,6 +631,8 @@ export abstract class AdapterBase implements SiteAdapter {
 		this.pending.cancel();
 		if (this.selfCheckTimer !== null) clearInterval(this.selfCheckTimer);
 		this.selfCheckTimer = null;
+		if (this.timeControlTimer !== null) clearTimeout(this.timeControlTimer);
+		this.timeControlTimer = null;
 		this.disconnectObservers();
 		for (const d of this.disposers.splice(0)) d();
 		this.positionCbs.clear();
@@ -897,8 +919,10 @@ export abstract class AdapterBase implements SiteAdapter {
 		this.primed = true;
 		this.lastKey = reading.key;
 		this.lastColor = reading.snapshot.myColor;
+		this.lastTimeControl = reading.snapshot.timeControl ?? null;
 		this.lastGameKey = reading.gameKey;
 		this.lastGameOver = reading.gameOver !== null;
+		this.scheduleTimeControlProbe(reading);
 	}
 
 	/** Apply the DOM reading at once; when the bridge answers, apply again (dedupe absorbs no-ops). */
@@ -920,6 +944,7 @@ export abstract class AdapterBase implements SiteAdapter {
 		if (gameChanged) {
 			this.lastGameKey = reading.gameKey;
 			this.lastGameOver = false;
+			this.timeControlProbes = 0;
 			for (const cb of this.startCbs) cb();
 			this.probe();
 		}
@@ -928,16 +953,48 @@ export abstract class AdapterBase implements SiteAdapter {
 		// second session on the same board.
 		const colourLearned =
 			!gameChanged && this.lastColor === null && reading.snapshot.myColor !== null;
+		// Same shape, same reason (§4.3): the time control arrives after the first reading of the
+		// game it belongs to, on a position that has not moved.
+		const timeControlLearned =
+			!gameChanged && this.lastTimeControl === null && reading.snapshot.timeControl !== undefined;
 		this.lastColor = reading.snapshot.myColor;
-		if (reading.key !== this.lastKey || colourLearned) {
+		this.lastTimeControl = reading.snapshot.timeControl ?? null;
+		if (reading.key !== this.lastKey || colourLearned || timeControlLearned) {
 			this.lastKey = reading.key;
 			for (const cb of this.positionCbs) cb(reading.snapshot);
 		}
+		this.scheduleTimeControlProbe(reading);
 		const over = reading.gameOver !== null;
 		if (over && !this.lastGameOver) {
 			for (const cb of this.endCbs) cb(reading.gameOver ?? "*");
 		}
 		this.lastGameOver = over;
+	}
+
+	/**
+	 * §4.3: re-ask the site for a time control it has not given us yet.
+	 *
+	 * `timeControl.get()` is `null` until the game actually starts, and two page signals normally
+	 * land at that moment — the bridge's own `CreateGame` / `ModeChanged` event and the active
+	 * clock gaining its turn class, both of which `schedule()` a re-evaluation that re-reads the
+	 * bridge. Neither is guaranteed, and a first move planned without the time control runs the
+	 * entire clockless branch, so this is the bounded safety net: while the page *shows clocks*
+	 * (a timed game) and the site has not answered, ask again on a slow timer. Passive reads only
+	 * (§13.3), capped per game, and never armed for a page with no clocks at all — an untimed
+	 * computer game is not waiting for an answer, it has none.
+	 */
+	private scheduleTimeControlProbe(reading: AdapterReading): void {
+		if (this.destroyed || this.timeControlTimer !== null) return;
+		if (reading.snapshot.timeControl !== undefined) return;
+		if (this.timeControlProbes >= TIME_CONTROL.maxProbes) return;
+		const { w, b } = reading.snapshot.clocks;
+		if (w.ms <= 0 && b.ms <= 0) return;
+		if (!this.readyBridge()) return;
+		this.timeControlProbes += 1;
+		this.timeControlTimer = setTimeout(() => {
+			this.timeControlTimer = null;
+			this.schedule();
+		}, TIMINGS.adapterTimeControlRetryMs);
 	}
 
 	private draw(
