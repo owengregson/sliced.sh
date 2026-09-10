@@ -132,6 +132,20 @@ back over the `sl-engine` port in `LIMITS.nnueChunkBytes` slices —
 `src/service/handlers/engine/download-relay.ts`. Chunks are base64 **text**: `chrome.runtime`
 ports JSON-serialise their payloads, so an `ArrayBuffer` would arrive as `{}`.
 
+**chess.com's live board is a `<canvas>`, and the page bridge is the only way to read it.**
+`/play/computer` still lays out `.piece` divs, but the live board
+(`/play/online`, `/game/<digits>`) is `wc-chess-board#board-single.board.board-webgl-2d` with one
+`<canvas>` child, no `.piece`, no `element-pool` and no SVG coordinates. So on a live game the
+position comes from `board.game` over the bridge (`getFEN`, `getTurn`, `getPlayingAs`,
+`getOptions().flipped`) plus the move list DOM, which itself does not exist until the first move
+is played. Two rules follow: never gate a reading on the DOM placement being non-null, and detect
+the renderer behaviourally ("no piece element"), never by the `board-webgl-2d` class. Orientation
+is `getOptions().flipped` alone — it already means "black is at the bottom", the same thing
+`geometry.ts` means by `flipped`; it is true whenever you play black, so do **not** combine it
+with `getPlayingAs()`. Without a bridge the only DOM source left is the bottom clock's colour
+(the live player panel carries no colour class and the WebGL board carries no `flipped` class).
+QA against bots only exercises the DOM renderer — see `docs/qa-checklist.md` §B0.
+
 **Offscreen documents have no `chrome.storage`.** Every setting the engine host needs arrives
 over the port as a `configure` message; anything it must persist goes to OPFS, with IndexedDB
 (`NNUE_DB`, `MODEL_DB`) as the fallback. Do not reach for `chrome.storage` in `src/offscreen/**`.

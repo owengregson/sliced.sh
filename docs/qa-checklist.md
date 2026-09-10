@@ -49,6 +49,26 @@ not run is `not run`, never a tick.
 
 ## B. Real-site play
 
+### B0. chess.com renderers — the WebGL live board and the DOM bot board
+
+**Why this section exists.** chess.com ships two board renderers. `/play/computer` still lays out
+`.piece` divs; the **live** board (`/play/online`, `/game/<digits>`) draws into a `<canvas>` with
+`wc-chess-board#board-single.board.board-webgl-2d` and has **no piece elements at all**. The
+bots-only rule above means the whole of section B otherwise exercises the DOM renderer only —
+which is how "the extension does nothing on a live game" survived 34 task reviews and a green
+suite. Everything here is read-only: do **not** arm auto-play, so nothing is played in a live
+game against a human.
+
+| # | Do | Expect | Observed |
+|---|---|---|---|
+| B0.1 | On a live game, page console: `const b=document.querySelector("wc-chess-board#board-single"); ({cls:b.className, canvas:b.querySelectorAll("canvas").length, pieces:b.querySelectorAll(".piece").length, fen:b.game.getFEN(), playingAs:b.game.getPlayingAs(), flipped:b.game.getOptions().flipped})` | `pieces: 0`, `canvas: 1`, a correct FEN. Record `playingAs` / `flipped` — the adapter's orientation rests on `flipped` meaning "black at the bottom" | |
+| B0.2 | Panel on a live game, observing only | Live view within a move or two; SAN, eval and lines update on every move of both sides | |
+| B0.3 | Service-worker console during that game | No `adapter.selectorMiss`; `gameStarted` exactly once per game (a second one right after chess.com rewrites `/play/online` → `/game/<id>` is known and harmless) | |
+| B0.4 | Highlights on (default), observing a live game | The two highlighted squares are the recommended move's, on the correct squares — check a game **as black** as well, where the board is rotated 180° | |
+| B0.5 | Flip the live board by hand (board context menu / keyboard) mid-game | Highlights stay on the right squares; the panel's lines do not change | |
+| B0.6 | `/play/computer` against a bot | Same as above, with `pieces: 32` in B0.1's probe — the DOM path must not have regressed | |
+| B0.7 | A promotion on the **live** board with auto-queen off in chess.com's settings | **Known gap:** the picker is drawn on the canvas, so the hand cannot find it and leaves the pawn on the last rank. Record what the picker looks like in the DOM (if anything) — that capture is what a fix needs | |
+
 ### B1. chess.com — blitz vs a bot, with a promotion and a premove
 
 Set Settings › Strength to something clearly sub-engine (e.g. 1200, Balanced) so the play is
