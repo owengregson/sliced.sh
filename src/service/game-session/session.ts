@@ -284,6 +284,8 @@ export class GameSession implements SessionSource {
 	private disposed = false;
 	/** `mayAct()` as of the last settings write this session saw (§4.4 flip detection). */
 	private acting: boolean;
+	/** Fix D: whether a pointer mirror is currently drawn on this tab's page. */
+	private cursorShown = false;
 
 	constructor(deps: GameSessionDeps) {
 		this.deps = deps;
@@ -416,6 +418,9 @@ export class GameSession implements SessionSource {
 		// Sent first either way: `highlightMoves` is reported as `enabled && highlightMoves`, so
 		// this is also what clears a mark the content script has already drawn.
 		this.pushContentSettings();
+		// Fix D: the mirror is page DOM, so it goes the moment it is no longer allowed — which is
+		// either the switch or `display.virtualCursor`, and only the switch makes `flipped` true.
+		if (!this.virtualCursorAllowed()) this.hideVirtualCursor();
 		if (!flipped) return;
 		if (on) void this.resumeEnabled();
 		else this.stopDisabled();
@@ -541,6 +546,7 @@ export class GameSession implements SessionSource {
 		if (inFlight) void inFlight.stop();
 		this.ponderer?.dispose();
 		this.deps.autoQueue.cancel(this.deps.tabId);
+		this.hideVirtualCursor();
 		this.window.discard();
 		this.deps.onLivenessChanged?.();
 	}
@@ -615,6 +621,7 @@ export class GameSession implements SessionSource {
 		this.deps.autoQueue.cancel(this.deps.tabId);
 		this.rec = null;
 		this.clearBoardMarks();
+		this.hideVirtualCursor();
 		if (event === "navigated") this.game = null;
 		this.apply(event);
 		this.deps.notify();
@@ -635,6 +642,7 @@ export class GameSession implements SessionSource {
 		this.rec = null;
 		this.premove = null;
 		this.clearBoardMarks();
+		this.hideVirtualCursor();
 		void this.finishGame(result);
 		this.deps.notify();
 	}
@@ -1199,6 +1207,8 @@ export class GameSession implements SessionSource {
 
 	private disarm(): void {
 		this.executorHandle?.disarm();
+		// The hand no longer owns a pointer on this tab, so nothing of ours belongs on the page.
+		this.hideVirtualCursor();
 		this.apply("disarm");
 		this.deps.notify();
 	}
@@ -1209,6 +1219,7 @@ export class GameSession implements SessionSource {
 		this.executorHandle?.disarm();
 		this.deps.autoQueue.cancel(this.deps.tabId);
 		this.clearBoardMarks();
+		this.hideVirtualCursor();
 		this.rec = null;
 		this.premove = null;
 		this.apply("disable");
@@ -1368,6 +1379,7 @@ export class GameSession implements SessionSource {
 			executor.on("hand", (hand) => {
 				if (hand !== "rest") this.apply("handStarted");
 			}),
+			executor.on("pointer", (p) => this.onHandPointer(p)),
 		];
 		// A game that follows an armed one keeps the hand armed (the debugger stays attached), and
 		// `Settings.automation.autoMove` is the stored "arm me" default. Either way the attach
@@ -1556,6 +1568,42 @@ export class GameSession implements SessionSource {
 	 */
 	private clearBoardMarks(): void {
 		this.deps.link.post(this.deps.tabId, { kind: "clearHighlight" });
+	}
+
+	/**
+	 * Fix D: the hand dispatched a point, so the mirror on the page moves to it. Called for every
+	 * acknowledged point — what the page was told, not what was planned — which is why the mirror
+	 * is the truth about where the pointer is rather than an animation of a route.
+	 *
+	 * It is not rate-limited: the hand's own cadence is ~45 points/s over a move (measured in the
+	 * simulator: ~135 points per 3 s move, bursts 4-6 ms apart), which one port message each
+	 * carries comfortably, and coalescing would show a position the pointer has already left.
+	 * Between moves no point arrives, so the mirror simply stays where the pointer is.
+	 */
+	private onHandPointer(p: { x: number; y: number; pressed: boolean }): void {
+		if (!this.virtualCursorAllowed()) return;
+		this.cursorShown = true;
+		this.deps.link.post(this.deps.tabId, {
+			kind: "cursorTo",
+			x: p.x,
+			y: p.y,
+			down: p.pressed,
+		});
+	}
+
+	/** §4.4 and `Settings.display.virtualCursor`: may the mirror be on the page at all? */
+	private virtualCursorAllowed(): boolean {
+		return this.mayAct() && this.deps.getSettings().display.virtualCursor;
+	}
+
+	/**
+	 * Erase the mirror — a no-op when nothing was drawn, so every stop path can call it
+	 * unconditionally: disarm, `Shift+X`, the switch, the setting, game over, a navigation, dispose.
+	 */
+	private hideVirtualCursor(): void {
+		if (!this.cursorShown) return;
+		this.cursorShown = false;
+		this.deps.link.post(this.deps.tabId, { kind: "cursorHide" });
 	}
 
 	/** Record the move that produced `snapshot` and the pace it was played at. */

@@ -117,6 +117,14 @@ export interface ExecutorEvents {
 	aborted: ExecutionReport;
 	skipped: ExecutionReport;
 	hand: HandState;
+	/**
+	 * Fix D: one event per point the renderer has *acknowledged* — the tap the page-side pointer
+	 * mirror is fed from, so what the owner sees is what the page was told rather than a plan.
+	 * Viewport CSS px (the space `Input.dispatchMouseEvent` takes), rounded as dispatched, with
+	 * the left-button state that command carried. The rate is the hand's own: ~45 points/s over a
+	 * move, in bursts 4-6 ms apart.
+	 */
+	pointer: { x: number; y: number; pressed: boolean };
 }
 export type ExecutorEvent = keyof ExecutorEvents;
 
@@ -662,6 +670,7 @@ export class MoveExecutor {
 		const backend = CdpInputBackend.forTab(this.debugger, this.tabId, start, {
 			now: this.now,
 			scheduler: this.scheduler,
+			onDispatch: (p) => this.emit("pointer", p),
 		});
 		const controller = new HandController({
 			backend,

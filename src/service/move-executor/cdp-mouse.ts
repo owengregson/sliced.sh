@@ -8,6 +8,13 @@
  * plus its `dtMs`, a late ack skips the sleep instead of accumulating drift,
  * and a stall longer than `CDP.stallResyncMs` re-anchors the schedule. Every
  * dispatch resolves after the renderer acknowledges the event.
+ *
+ * `onDispatch` (Fix D) is the tap the pointer mirror is fed from: it reports
+ * every point the renderer has *acknowledged*, in the rounded viewport CSS px
+ * the command carried, with the left-button state that command carried. It is
+ * deliberately after the ack and not before it — what the page is shown must be
+ * what the page was told, never a plan, and a point the renderer rejected was
+ * never told to anyone.
  */
 
 import { CDP } from "@core/constants/cdp";
@@ -25,6 +32,8 @@ export type Cdp = (method: string, params?: Record<string, unknown>) => Promise<
 export interface CdpMouseOptions {
 	now?: () => number;
 	scheduler?: Scheduler;
+	/** Every acknowledged point (viewport CSS px, rounded) and whether the left button was down. */
+	onDispatch?: (p: { x: number; y: number; pressed: boolean }) => void;
 }
 
 type MouseEventType = "mousePressed" | "mouseReleased" | "mouseMoved";
@@ -36,6 +45,7 @@ export class CdpMouse {
 	private travelled = 0;
 	private readonly now: () => number;
 	private readonly scheduler: Scheduler;
+	private readonly onDispatch: ((p: { x: number; y: number; pressed: boolean }) => void) | null;
 
 	constructor(
 		private readonly cdp: Cdp,
@@ -45,6 +55,7 @@ export class CdpMouse {
 		this.pos = { x: Math.round(start.x), y: Math.round(start.y) };
 		this.now = options.now ?? defaultNow;
 		this.scheduler = options.scheduler ?? defaultScheduler;
+		this.onDispatch = options.onDispatch ?? null;
 	}
 
 	get position(): Pt {
@@ -135,5 +146,6 @@ export class CdpMouse {
 		});
 		this.travelled += Math.hypot(x - this.pos.x, y - this.pos.y);
 		this.pos = { x, y };
+		this.onDispatch?.({ x, y, pressed: (buttons & CDP.mouse.leftButtons) !== 0 });
 	}
 }

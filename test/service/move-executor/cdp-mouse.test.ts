@@ -25,10 +25,14 @@ afterEach(async () => {
 	await sim.dispose();
 });
 
-const makeMouse = (start = { x: 10, y: 10 }) =>
+const makeMouse = (
+	start = { x: 10, y: 10 },
+	onDispatch?: (p: { x: number; y: number; pressed: boolean }) => void
+) =>
 	new CdpMouse((method, params) => debuggerSend(tabId, method, params), start, {
 		now: sim.now,
 		scheduler: defaultScheduler,
+		...(onDispatch ? { onDispatch } : {}),
 	});
 
 const mouseCommands = (): Array<Record<string, unknown> & { at: number }> =>
@@ -145,6 +149,38 @@ describe("CdpMouse", () => {
 		expect(mouse.pressed).toBe(false);
 		await mouse.moveAt({ x: 21, y: 21 }, sim.now());
 		expect(mouseCommands().at(-1)).toMatchObject({ type: "mouseMoved", button: "none", buttons: 0 });
+	});
+
+	// Fix D: the pointer mirror is fed from here — the point the renderer has *acknowledged*, not
+	// a planned one — so what the owner sees on the page is what the page was actually told.
+	it("onDispatch reports every acknowledged point, rounded, with the button state it carried", async () => {
+		const seen: Array<{ x: number; y: number; pressed: boolean }> = [];
+		const mouse = makeMouse({ x: 10, y: 10 }, (p) => seen.push(p));
+		await mouse.moveAt({ x: 450.4, y: 650.6 }, sim.now());
+		await mouse.pressAt({ x: 450, y: 650 }, sim.now());
+		const done = mouse.travel([{ x: 450, y: 520, dtMs: 8 }]);
+		await sim.time.advance(20);
+		await done;
+		await mouse.releaseAt({ x: 450, y: 450 }, sim.now());
+		expect(seen).toEqual([
+			{ x: 450, y: 651, pressed: false },
+			{ x: 450, y: 650, pressed: true },
+			{ x: 450, y: 520, pressed: true },
+			{ x: 450, y: 450, pressed: false },
+		]);
+		// exactly the coordinates the CDP commands carried
+		expect(mouseCommands().map((c) => [c.x, c.y])).toEqual(seen.map((p) => [p.x, p.y]));
+	});
+
+	it("onDispatch says nothing about a point the renderer rejected", async () => {
+		sim.debugger.respond(CDP.inputDispatchMouseEvent, async (params) => {
+			if ((params as { type: string }).type === "mousePressed") throw new Error("Target closed");
+			return {};
+		});
+		const seen: Array<{ x: number; y: number; pressed: boolean }> = [];
+		const mouse = makeMouse({ x: 10, y: 10 }, (p) => seen.push(p));
+		await expect(mouse.pressAt({ x: 20, y: 20 }, sim.now())).rejects.toThrow("Target closed");
+		expect(seen).toEqual([]);
 	});
 
 	it("travel stops at an abort and leaves the button state untouched", async () => {
