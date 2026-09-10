@@ -376,6 +376,7 @@ export const ROWS: readonly RowSpec[] = [
 		...rowCopy("display.reducedMotion"),
 		items: items(SETTINGS_COPY.options.reducedMotion),
 	},
+	toggle("display.virtualCursor"),
 	// advanced
 	{
 		kind: "stepper",

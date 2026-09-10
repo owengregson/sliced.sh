@@ -182,6 +182,7 @@ export function normalizeSettings(raw: unknown): Settings {
 			ttsVoice: typeof display.ttsVoice === "string" ? display.ttsVoice : D.display.ttsVoice,
 			theme: oneOf(display.theme, D.display.theme, THEMES),
 			reducedMotion: oneOf(display.reducedMotion, D.display.reducedMotion, REDUCED_MOTION),
+			virtualCursor: bool(display.virtualCursor, D.display.virtualCursor),
 		},
 		engine: {
 			threads: threads(engine.threads, D.engine.threads),

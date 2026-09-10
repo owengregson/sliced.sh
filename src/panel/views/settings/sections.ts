@@ -69,6 +69,7 @@ export const SECTIONS: readonly SectionSpec[] = [
 		"display.ttsVoice",
 		"display.theme",
 		"display.reducedMotion",
+		"display.virtualCursor",
 	]),
 	section("account", []),
 	section("advanced", [

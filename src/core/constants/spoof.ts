@@ -14,6 +14,11 @@ export const SPOOF_PURPOSES = {
 	contentToken: "contentTok",
 	/** Class name of the highlight overlay `<svg>` the bridge inserts on `draw` (§13.3 rule 3). */
 	overlayClass: "overlayCls",
+	/**
+	 * Class name of the pointer mirror the bridge inserts on the first `cursorTo` (§13.3 rule 3).
+	 * Also the only way the program finds the element again, so it carries no `id` / `data-*`.
+	 */
+	cursorClass: "cursorCls",
 } as const;
 
 export type SpoofPurpose = (typeof SPOOF_PURPOSES)[keyof typeof SPOOF_PURPOSES];

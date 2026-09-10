@@ -61,6 +61,12 @@ export const TIMINGS = {
 	 * `TIME_CONTROL.maxProbes`.
 	 */
 	adapterTimeControlRetryMs: 1_000,
+	/**
+	 * Fix D: how long the pointer mirror takes to fade in once the hand's first point arrives
+	 * (the reference implementation's `transition: opacity 0.4s ease`). Only a fade *in* exists —
+	 * the element is removed on hide, per the §13.3 presence rules.
+	 */
+	virtualCursorFadeMs: 400,
 } as const;
 
 /**

@@ -213,7 +213,17 @@ export type GamePortCommand =
 	 * board with `own` / `enemy` / `empty` for each square (relative to the side the hand
 	 * plays) — colour-aware on purpose, so a capture is never mistaken for a landed move.
 	 */
-	| { kind: "boardCheck"; id: string; squares: Square[] };
+	| { kind: "boardCheck"; id: string; squares: Square[] }
+	/**
+	 * The pointer mirror (Fix D). `cursorTo` carries one point the hand has actually dispatched —
+	 * viewport CSS px, the space `Input.dispatchMouseEvent` and `clientX/clientY` share, so the
+	 * page program positions a `position: fixed` element with it and converts nothing — plus the
+	 * left-button state at that point. One command per dispatched point (~45/s, measured): the
+	 * content script relays it to the MAIN-world bridge, which is the only world allowed to insert
+	 * the element (§13.3). `cursorHide` removes it.
+	 */
+	| { kind: "cursorTo"; x: number; y: number; down: boolean }
+	| { kind: "cursorHide" };
 
 /**
  * A slice of a net relayed by the SW (`handlers/engine/nnue-download.ts`).

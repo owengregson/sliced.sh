@@ -41,6 +41,8 @@ export const BRIDGE_WIRE = {
 	x: "x",
 	y: "y",
 	at: "t",
+	/** Left-button state of the mirrored pointer (`cursorTo` request). */
+	down: "d",
 } as const;
 
 /** `orientation` values on the wire. */

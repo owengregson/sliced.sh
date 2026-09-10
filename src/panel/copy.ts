@@ -490,6 +490,11 @@ export const SETTINGS_COPY = {
 		"display.ttsVoice": { label: "Voice" },
 		"display.theme": { label: "Theme" },
 		"display.reducedMotion": { label: "Reduced motion" },
+		"display.virtualCursor": {
+			label: "Show the hand's pointer",
+			help:
+				"Draws where the virtual hand's pointer is on the game page. Your own mouse is not tracked.",
+		},
 		"engine.threads": { label: "Engine threads" },
 		"engine.hashMb": { label: "Hash" },
 		"engine.depthCap": { label: "Depth cap" },

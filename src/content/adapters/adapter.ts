@@ -218,6 +218,13 @@ export const BRIDGE_KINDS = {
 	ply: "ply",
 	/** Both directions: content asks for the last pointer position, the page answers (Task 21). */
 	cursor: "cursor",
+	/**
+	 * Content → page, fire-and-forget (no reply): move the mirror of the hand's own pointer to
+	 * `{x, y, down}`, and remove it again. Only the service worker knows what it dispatched, so
+	 * these are the only bridge commands whose payload does not come from the page.
+	 */
+	cursorTo: "cursorTo",
+	cursorHide: "cursorHide",
 } as const;
 
 /** Normalised `getState` / `move` / `state` payload from the bridge. */

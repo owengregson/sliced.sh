@@ -77,6 +77,12 @@ export interface Settings {
 		ttsVoice: string | null;
 		theme: "dark" | "light" | "system";
 		reducedMotion: "system" | "on" | "off";
+		/**
+		 * Fix D: draw a mirror of the hand's own pointer on the game page, so the owner can see
+		 * where it is. It tracks only what the executor dispatched — never the real mouse — and is
+		 * present only while the hand owns the pointer on that tab.
+		 */
+		virtualCursor: boolean;
 	};
 	engine: {
 		threads: number | "auto";
@@ -162,6 +168,7 @@ export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze<Settings>({
 		ttsVoice: null,
 		theme: "dark",
 		reducedMotion: "system",
+		virtualCursor: true,
 	},
 	engine: { threads: "auto", hashMb: 32, depthCap: 22, multiPv: 4, nnue: "auto" },
 	advanced: { logLevel: "info", timingLogEnabled: true },
