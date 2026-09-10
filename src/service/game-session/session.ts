@@ -643,11 +643,15 @@ export class GameSession implements SessionSource {
 	}
 
 	onGameEnded(result: GameResult): void {
+		// Fix D: above the guard on purpose. `gameEnded` is refused from `idle` only, which a
+		// reconnect cannot produce (`FeedPort` replays `hello` before the outbox, which moves the
+		// session to `waiting-for-game`) — but the arrow does not self-heal the way a board mark
+		// does, so it costs one line not to depend on that reasoning.
+		this.hideVirtualCursor();
 		if (!this.apply("gameEnded")) return;
 		this.cancelInFlight();
 		this.rec = null;
 		this.premove = null;
-		this.hideVirtualCursor();
 		this.clearBoardMarks();
 		void this.finishGame(result);
 		this.deps.notify();
@@ -1583,9 +1587,33 @@ export class GameSession implements SessionSource {
 	 * acknowledged point — what the page was told, not what was planned — which is why the mirror
 	 * is the truth about where the pointer is rather than an animation of a route.
 	 *
-	 * It is not rate-limited: the hand's own cadence is ~45 points/s over a move (measured in the
-	 * simulator: ~135 points per 3 s move, bursts 4-6 ms apart), which one port message each
-	 * carries comfortably, and coalescing would show a position the pointer has already left.
+	 * **Cadence, measured in the simulator** (ten runs, five seeds x preview on/off, gaps pooled
+	 * rather than per-run medians): 86-153 points per ~3 s move, 33-53/s, gap p50 **7 ms**, p90
+	 * **33 ms**, p99 ~580 ms, and **83%** of gaps inside one 16.7 ms frame. The long tail is the
+	 * hand's own deliberate pauses, not a transport problem. An independent re-measurement got
+	 * p50 7.7 / p90 24.3 over 1228 gaps, so treat ~7 ms median and a tens-of-ms p90 as the figures.
+	 *
+	 * **Why every point is posted rather than coalesced onto a frame.** Not because of load — the
+	 * port is nowhere near strained, which is the only test the brief set. The §13.3 question is
+	 * the real one, and frame coalescing would genuinely reduce page-observable surface: fewer
+	 * `postMessage` envelopes and, since a `MutationObserver` queues one record per changed-property
+	 * write, proportionally fewer `style` records during the bursts. Two reasons it is still not
+	 * worth doing:
+	 *
+	 *  1. The coordinates are not new information to the page. Every mirrored point corresponds to a
+	 *     *trusted* `pointermove` / `pointerdown` / `pointerup` the page already received from CDP at
+	 *     that same cadence, so chess.com has the stream and its timing with or without us. What an
+	 *     envelope adds is the conjunction "whatever posts these knows the pointer stream" — and a
+	 *     visible arrow that tracks the pointer already discloses exactly that, at any sample rate.
+	 *  2. The brief ruled on load ("coalesce only if a measurement shows the port or the bridge
+	 *     cannot keep up"), and it does keep up.
+	 *
+	 * If that trade is ever revisited, the place to do it is the ISOLATED relay
+	 * (`src/content/virtual-cursor.ts`), which already owns a `dispose()` and whose
+	 * `requestAnimationFrame` is not the page's function and so cannot be counted or intercepted by
+	 * a page script — not the MAIN-world program, where a loop would be page-realm surface of its
+	 * own. That buys ≤1 frame of latency and `docs/qa-checklist.md` §B5.9 is the measurement.
+	 *
 	 * Between moves no point arrives, so the mirror simply stays where the pointer is.
 	 */
 	private onHandPointer(p: { x: number; y: number; pressed: boolean }): void {

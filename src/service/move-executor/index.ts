@@ -121,8 +121,9 @@ export interface ExecutorEvents {
 	 * Fix D: one event per point the renderer has *acknowledged* — the tap the page-side pointer
 	 * mirror is fed from, so what the owner sees is what the page was told rather than a plan.
 	 * Viewport CSS px (the space `Input.dispatchMouseEvent` takes), rounded as dispatched, with
-	 * the left-button state that command carried. The rate is the hand's own: ~45 points/s over a
-	 * move, in bursts 4-6 ms apart.
+	 * the left-button state that command carried. The rate is the hand's own: 33-53 points/s over a
+	 * move, gap p50 ~7 ms and p90 ~33 ms, with the long tail being its deliberate pauses
+	 * (`GameSession.onHandPointer` carries the full measurement and why nothing is coalesced).
 	 */
 	pointer: { x: number; y: number; pressed: boolean };
 }

@@ -62,7 +62,10 @@ describe("game session: in-page keybinds (Step 2e)", () => {
 		expect(await h.until(() => h.session().currentState() === "idle", 2_000)).toBe(true);
 		expect(h.executor()?.isArmed()).toBe(false);
 		expect(h.session().recommendation()).toBeNull();
-		expect(h.commands().at(-1)?.kind).toBe("clearHighlight");
+		// The mark family only: this row is about the keybind clearing the board, not about which
+		// command happens to be posted last (the stop path posts others — Fix D's `cursorHide`).
+		const marks = h.commands().filter((c) => c.kind === "highlight" || c.kind === "clearHighlight");
+		expect(marks.at(-1)?.kind).toBe("clearHighlight");
 
 		await h.advance(60_000);
 		expect(presses().length).toBe(before);

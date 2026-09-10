@@ -124,9 +124,12 @@ describe("game session: the pointer mirror follows what the hand dispatched", ()
 		await stopped("disarm", () => h.sw.run(() => h.session().command("disarm")));
 		await stopped("Shift+X", () => h.drive(() => h.session().command("disable")));
 		await stopped("a navigation", () => h.drive(() => h.session().onTabEvent("navigated")));
+		// Above the `apply("gameEnded")` guard, so it posts even from `idle` — which a navigation
+		// has just put this session in, making this the exact state the guard would have swallowed.
+		await stopped("game over", () => h.drive(() => h.session().onGameEnded("1-0")));
 		await stopped("the setting going off", () => h.patch({ display: { virtualCursor: false } }));
 		await stopped("the switch going off", () => h.patch({ enabled: false }));
-		expect(n).toBe(5);
+		expect(n).toBe(6);
 	});
 
 	it("a session that replaced an evicted one still erases the arrow the old one drew", async () => {
