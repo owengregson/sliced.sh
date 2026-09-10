@@ -23,7 +23,7 @@ import {
 	type SiteAdapter,
 	toRect,
 } from "./adapter";
-import { chesscomActiveClockColor, readChesscomClock } from "./clocks";
+import { chesscomActiveClockColor, chesscomBottomClockColor, readChesscomClock } from "./clocks";
 import { approximateFen, chesscomPlacementFromDom, placementOf, replayMoves } from "./dom-fen";
 import { type ChesscomMoveList, readChesscomMoveList } from "./move-list";
 import { detectChesscomPageKind } from "./page-kind";
@@ -39,7 +39,13 @@ import {
 
 const C = SELECTORS.chesscom;
 const SITE: Site = "chesscom";
-const LIVE_ID_RE = /^\/game\/live\/(\d+)/;
+/**
+ * Game id in a live game URL. chess.com serves live games at `/game/<digits>`
+ * (owner's capture, 2026-09-09); `/game/live/<digits>` is the older form and
+ * still appears in links. `/game/daily/<id>` and the archive's
+ * `/games/view/<id>` deliberately do not match.
+ */
+const LIVE_ID_RE = /^\/game\/(?:live\/)?(\d+)/;
 const RATING_RE = /(\d{3,4})/;
 
 /** Ladders whose miss is a telemetry-worthy `selectorMiss` (the rest are situational). */
@@ -65,7 +71,14 @@ const LADDERS: Record<string, readonly string[]> = {
 };
 
 /** Body-observer interest: board replacement, game-over modal, result row, promotion window. */
-const RELEVANT = [...C.board, ...C.gameOver, ...C.result, ...C.promotionWindow].join(",");
+const RELEVANT = [
+	...C.board,
+	// the live page has no `wc-simple-move-list` until the first move is played
+	...C.moveList,
+	...C.gameOver,
+	...C.result,
+	...C.promotionWindow,
+].join(",");
 
 function squareFromClass(el: Element): Square | null {
 	const m = C.squareRe.exec(el.getAttribute("class") ?? "");
@@ -78,6 +91,16 @@ function ratingFrom(text: string | null | undefined): number | null {
 	return m ? Number(m[1]) : null;
 }
 
+/**
+ * Whether this board renders its pieces as DOM elements. chess.com ships two
+ * renderers: `/play/computer` still lays out `.piece` divs, while the live board
+ * draws into a `<canvas>` (WebGL) and has none. Behavioural, not class-based:
+ * `board-webgl-2d` is a name chess.com may change, "no piece element" is not.
+ */
+function hasDomPieces(board: Element): boolean {
+	return querySafe(board, C.piece) !== null;
+}
+
 function plyOf(list: ChesscomMoveList): number {
 	return list.selectedIndex >= 0 ? list.selectedIndex + 1 : list.sans.length;
 }
@@ -85,6 +108,7 @@ function plyOf(list: ChesscomMoveList): number {
 export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 	readonly site = SITE;
 	private observedBoard: Element | null = null;
+	private observedMoveList: Element | null = null;
 
 	constructor(options: AdapterOptions = {}) {
 		super(options, TIMINGS.adapterDebounceMs, TIMINGS.adapterSelfCheckIntervalMs);
@@ -131,9 +155,11 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 		}
 		const kind = this.detectPageKind();
 		if (kind !== "live-game" && kind !== "vs-computer" && kind !== "daily") return null;
-		const bottom = this.bottomColor();
-		if (bottom) return bottom;
-		return this.isFlipped() ? "b" : "w";
+		const playing = bridgeColor(s?.playingAs);
+		if (playing) return playing;
+		// The page shows my colour at the bottom unless the user turned the board round by hand,
+		// which it does not report separately: the bottom colour is the best DOM answer there is.
+		return this.bottomColor() ?? (this.isFlipped() ? "b" : "w");
 	}
 
 	// ---- position -----------------------------------------------------------------
@@ -179,9 +205,22 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 		return board ? toRect(board.getBoundingClientRect()) : null;
 	}
 
+	/**
+	 * "Black at the bottom", which is what `geometry.ts` means by `flipped`.
+	 * chess.com's `getOptions().flipped` means exactly that — measured on live
+	 * games: white is `playingAs 1 / flipped false`, black is
+	 * `playingAs 2 / flipped true` — so the bridge value passes straight through
+	 * (it is NOT "the user flipped it by hand", and combining it with
+	 * `playingAs` would mirror every square when playing black).
+	 *
+	 * Without a bridge: the board's own `flipped` class (DOM renderer only — the
+	 * WebGL board does not carry it even when black is at the bottom), then the
+	 * colour the page shows at the bottom.
+	 */
 	isFlipped(): boolean {
 		if (typeof this.bridgeState?.flipped === "boolean") return this.bridgeState.flipped;
-		return this.boardElement()?.classList.contains(C.boardFlippedClass) ?? false;
+		if (this.boardElement()?.classList.contains(C.boardFlippedClass) === true) return true;
+		return this.bottomColor() === "b";
 	}
 
 	getPromotionTargetRect(dest: Square, piece: PromoPiece): Rect | null {
@@ -222,13 +261,18 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 
 	probe(): ProbeReport {
 		const ladder = probeLadders(LADDERS, this.doc);
+		const board = this.boardElement();
 		const placement = this.getPlacement();
 		const list = readChesscomMoveList(this.doc);
 		const replay = replayMoves(list.sans.slice(0, plyOf(list)));
 		const bottom = this.bottomColor();
+		const canvas = board !== null && !hasDomPieces(board);
+		const info = this.positionInfoFor(placement, list);
 		const checks = [
-			checkBoardSanity(placement),
-			checkPlacementConsistency(replay ? placementOf(replay.fen) : null, placement),
+			checkBoardSanity(placement ?? (info ? placementOf(info.fen) : null)),
+			canvas
+				? { name: "placementConsistency", ok: true, detail: "canvas board (no DOM pieces)" }
+				: checkPlacementConsistency(replay ? placementOf(replay.fen) : null, placement),
 			checkTurnConsistency([
 				{ name: "bridge", turn: this.bridgeTurn() },
 				{ name: "clock", turn: chesscomActiveClockColor(this.doc) },
@@ -236,8 +280,9 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 			]),
 			checkOrientation([
 				{
+					// the WebGL board never carries the class, so it is no evidence there
 					name: "class",
-					flipped: this.boardElement()?.classList.contains(C.boardFlippedClass) ?? null,
+					flipped: canvas ? null : (board?.classList.contains(C.boardFlippedClass) ?? null),
 				},
 				{
 					name: "bridge",
@@ -266,13 +311,14 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 	protected installObservers(): void {
 		const board = this.boardElement();
 		this.observedBoard = board;
+		this.observedMoveList = this.moveListElement();
 		this.observe(board, {
 			childList: true,
 			subtree: true,
 			attributes: true,
 			attributeFilter: ["class", "style"],
 		});
-		this.observe(queryFirstElement(C.moveList, this.doc), {
+		this.observe(this.observedMoveList, {
 			childList: true,
 			subtree: true,
 			characterData: true,
@@ -293,12 +339,21 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 	protected read(): AdapterReading | null {
 		const board = this.boardElement();
 		if (!board) return null;
-		if (board !== this.observedBoard) this.reinstallObservers();
-		if (querySafe(board, C.dragging)) return null;
+		// the live page grows its move list after the first move; observe it when it appears
+		if (board !== this.observedBoard || this.moveListElement() !== this.observedMoveList)
+			this.reinstallObservers();
+		const domPieces = hasDomPieces(board);
+		// DOM renderer only: a `.piece.dragging` means the markup is mid-gesture. The WebGL board
+		// has no piece element to drag, and `game.getFEN()` moves only on a completed move.
+		if (domPieces && querySafe(board, C.dragging)) return null;
 		const placement = this.getPlacement();
 		const list = readChesscomMoveList(this.doc);
 		const info = this.positionInfoFor(placement, list);
-		if (!info || !placement) return null;
+		// `positionInfoFor` is the position source (bridge → replay → DOM); the DOM placement is
+		// only one of its inputs, and a WebGL board never has one.
+		if (!info) return null;
+		// A board that renders pieces but cannot be read is mid-animation: retry on the next record.
+		if (domPieces && placement === null) return null;
 		const sideToMove =
 			this.sideToMoveFor(placement, list) ?? (info.fen.split(" ")[1] === "b" ? "b" : "w");
 		const ply = plyOf(list);
@@ -318,19 +373,38 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 			capturedAt: Date.now(),
 		};
 		return {
-			key: `${placement}|${sideToMove}`,
+			// Keyed off the position actually published: the DOM placement is `null` for the
+			// whole of a WebGL game, which would dedupe every move away.
+			key: `${placementOf(info.fen)}|${sideToMove}`,
 			snapshot,
 			gameOver: this.gameResultFor(list),
 			gameKey: gameId,
 		};
 	}
 
+	/**
+	 * What `observeMove` compares. With no `.piece` elements the move list is the
+	 * DOM evidence that a move landed, and its replay is the placement to check;
+	 * the bridge cache is the last resort because an unsolicited page event can
+	 * leave it one `getState` behind. `highlightSquares()` is empty on a WebGL
+	 * board, so confirmation there rests on the move count.
+	 */
 	protected watchMove(): MoveWatch {
+		const list = readChesscomMoveList(this.doc);
+		const dom = this.getPlacement();
 		return {
-			placement: this.getPlacement(),
-			moveCount: readChesscomMoveList(this.doc).sans.length,
+			placement: dom ?? this.placementWithoutPieces(list),
+			moveCount: list.sans.length,
 			lastMoveSquares: this.highlightSquares(),
 		};
+	}
+
+	/** Placement of a board that renders no pieces: the move list's replay, else the bridge FEN. */
+	private placementWithoutPieces(list: ChesscomMoveList): string | null {
+		const replay = this.hasMoveList() ? replayMoves(list.sans.slice(0, plyOf(list))) : null;
+		if (replay) return placementOf(replay.fen);
+		const fen = this.bridgeFen();
+		return fen === null ? null : placementOf(fen);
 	}
 
 	protected drawPayload(
@@ -349,7 +423,11 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 	}
 
 	protected hasMoveList(): boolean {
-		return queryFirstElement(C.moveList, this.doc) !== null;
+		return this.moveListElement() !== null;
+	}
+
+	private moveListElement(): Element | null {
+		return queryFirstElement(C.moveList, this.doc);
 	}
 
 	protected urlGameId(): string | null {
@@ -358,14 +436,20 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 
 	// ---- private readers ----------------------------------------------------------
 
-	/** Hybrid FEN (Appendix C §3): bridge → SAN replay → DOM placement with `approximate`. */
+	/**
+	 * Hybrid FEN (Appendix C §3): bridge → SAN replay → DOM placement with
+	 * `approximate`. A WebGL board has no DOM placement at all, which is exactly
+	 * what the first two sources are for.
+	 */
 	private positionInfoFor(placement: string | null, list: ChesscomMoveList): PositionInfo | null {
 		const fromBridge = this.bridgeFen();
 		if (fromBridge && (placement === null || placementOf(fromBridge) === placement))
 			return { fen: fromBridge, approximate: false, source: "bridge" };
 		const ply = plyOf(list);
 		const replay = replayMoves(list.sans.slice(0, ply));
-		if (replay && (placement === null || placementOf(replay.fen) === placement))
+		// With no placement to corroborate it, a replay is evidence only when the page renders a
+		// move list: an absent one would otherwise "prove" the start position on any board.
+		if (replay && (placement !== null ? placementOf(replay.fen) === placement : this.hasMoveList()))
 			return { fen: replay.fen, approximate: false, source: "replay" };
 		if (!placement) return null;
 		const turn = this.sideToMoveFor(placement, list) ?? "w";
@@ -389,12 +473,18 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 		return plyOf(list) % 2 === 0 ? "w" : "b";
 	}
 
+	/**
+	 * The colour the page shows at the bottom: the bottom player panel's colour
+	 * block, else the bottom clock's colour. The live (WebGL) layout's panel
+	 * carries no colour class — its clocks do (owner's capture, 2026-09-09).
+	 */
 	private bottomColor(): Color | null {
 		const bottom = queryFirstElement(C.playerBottom, this.doc);
-		if (!bottom) return null;
-		if (querySafe(bottom, C.bottomColorClass.w)) return "w";
-		if (querySafe(bottom, C.bottomColorClass.b)) return "b";
-		return null;
+		if (bottom) {
+			if (querySafe(bottom, C.bottomColorClass.w)) return "w";
+			if (querySafe(bottom, C.bottomColorClass.b)) return "b";
+		}
+		return chesscomBottomClockColor(this.doc);
 	}
 
 	private bridgeTurn(): Color | null {

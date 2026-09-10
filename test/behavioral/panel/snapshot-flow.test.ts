@@ -3,7 +3,7 @@
 // Session state comes from hand-driven fakes (Task 30 supplies the real registry).
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { LicenseClient, LicenseResult } from "@core/auth/license-client";
-import { MSG, type PanelSnapshot, TIMINGS } from "@core/constants";
+import { DEFAULT_SETTINGS, MSG, type PanelSnapshot, TIMINGS } from "@core/constants";
 import { installMessageRouter, type MessageRouter } from "@core/messaging/router";
 import { setSettings } from "@core/storage/settings-storage";
 import { defaultScheduler } from "@core/util/scheduler";
@@ -115,7 +115,7 @@ describe("panel ↔ service worker: snapshot flow", () => {
 		});
 		expect(snap?.stats).toEqual({ games: 0, moves: 0, avgThinkMs: 0 });
 		expect(snap?.engine.state).toBe("booting");
-		expect(snap?.settings.enabled).toBe(false);
+		expect(snap?.settings.enabled).toBe(DEFAULT_SETTINGS.enabled);
 		expect(snap?.recommendation).toBeUndefined();
 		expect(broadcaster.connections()).toBe(1);
 	});

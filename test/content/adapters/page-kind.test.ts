@@ -8,6 +8,12 @@ import { loadFixture, pageDocument } from "./helpers";
 describe("detectChesscomPageKind (Appendix C §1.1)", () => {
 	const table: Array<[string, PageKind]> = [
 		["/game/live/173765478164", "live-game"],
+		// the URL a real live game actually has (owner's capture, 2026-09-09)
+		["/game/174252022572", "live-game"],
+		["/game/174252022572/", "live-game"],
+		// an archived game is not a live session
+		["/games/view/173765478164", "other"],
+		["/games/archive", "other"],
 		["/play/online", "live-lobby"],
 		["/play/online/new", "live-lobby"],
 		["/play/online/watch", "live-lobby"],

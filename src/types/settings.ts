@@ -48,9 +48,17 @@ export interface Settings {
 		previewSelectScale: number;
 	};
 	automation: {
+		/**
+		 * Lets the hand play on its own. Ships **off**: playing moves on a real
+		 * account stays an explicit opt-in (arming also attaches the debugger, §13.4).
+		 */
 		autoMove: boolean;
 		autoQueue: boolean;
-		/** V2 default false, §13.3. */
+		/**
+		 * Draws the recommendation on the board. Ships **on** so a fresh install shows
+		 * something; §13.3 rule 4 still holds at runtime — the content script draws
+		 * nothing until the service worker sends `settings`.
+		 */
 		highlightMoves: boolean;
 		highlightStyle: "squares" | "arrows" | "both";
 	};
@@ -114,7 +122,9 @@ export const DEFAULT_KEYBINDS: Readonly<Omit<Keybinds, "global">> = Object.freez
 });
 
 export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze<Settings>({
-	enabled: false,
+	// A fresh install assists (highlights + recommendations) but never moves by itself:
+	// `automation.autoMove` is the explicit opt-in, and nothing else ships inert.
+	enabled: true,
 	strength: {
 		targetElo: 1500,
 		matchOpponentRating: true,
@@ -142,7 +152,7 @@ export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze<Settings>({
 		previewSelects: "auto",
 		previewSelectScale: 1,
 	},
-	automation: { autoMove: false, autoQueue: false, highlightMoves: false, highlightStyle: "both" },
+	automation: { autoMove: false, autoQueue: false, highlightMoves: true, highlightStyle: "both" },
 	keybinds: { ...DEFAULT_KEYBINDS, global: false },
 	display: {
 		evalBar: true,

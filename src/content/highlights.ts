@@ -3,8 +3,8 @@
  * `clearHighlight` port commands to the adapter — which draws through the
  * bridge: native `game.markings` on chess.com, the bridge-embedded overlay
  * program on lichess — and only while `Settings.automation.highlightMoves`
- * is on (default off; nothing is drawn until the service worker sends
- * `settings`). `clearForExecution()` runs before every `observeMove` and
+ * is on (nothing is drawn until the service worker sends `settings`, whatever
+ * the stored default says). `clearForExecution()` runs before every `observeMove` and
  * resolves only once the page side has acknowledged the clear (bounded by
  * the bridge call timeout, `TIMINGS.adapterBridgeTimeoutMs`), so no mark is
  * present at move-submission time.

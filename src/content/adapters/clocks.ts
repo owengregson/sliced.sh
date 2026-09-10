@@ -56,6 +56,21 @@ export function chesscomActiveClockColor(root: ParentNode): Color | null {
 	return null;
 }
 
+/**
+ * Colour of the clock at the bottom of the board — i.e. the colour the page
+ * shows at the bottom. The clocks keep their colour class on the WebGL board,
+ * where the player panel has none (owner's live capture, 2026-09-09:
+ * `clock-component clock-bottom clock-black clock-player-turn`).
+ */
+export function chesscomBottomClockColor(root: ParentNode): Color | null {
+	const C = SELECTORS.chesscom;
+	const el = querySafe(root, C.clockBottom);
+	if (!el) return null;
+	if (hasAnyClass(el, [C.clockColor.w])) return "w";
+	if (hasAnyClass(el, [C.clockColor.b])) return "b";
+	return null;
+}
+
 export function readLichessClock(root: ParentNode, side: Color): ClockReading | null {
 	const L = SELECTORS.lichess;
 	const clock = querySafe(root, `${L.clock}${L.clockColor[side]}`);

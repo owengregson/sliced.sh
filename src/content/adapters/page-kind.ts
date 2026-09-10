@@ -6,7 +6,13 @@
 import type { PageKind } from "@typedefs/game";
 import { SELECTORS } from "./selectors";
 
-const CHESSCOM_LIVE_GAME = /^\/game\/live\/\d+/;
+/**
+ * Live game URL. chess.com serves live games at `/game/<digits>` (owner's
+ * capture, 2026-09-09); `/game/live/<digits>` is the older form. `/game/daily/…`
+ * falls through to the daily pattern and the archive's `/games/view/<id>` never
+ * matches (`/games/` ≠ `/game/`).
+ */
+const CHESSCOM_LIVE_GAME = /^\/game\/(?:live\/)?\d+/;
 const CHESSCOM_LOBBY = /^\/play\/online|^\/live(?:[/#?]|$)/;
 const CHESSCOM_COMPUTER = /^\/play\/(computer|bots)(?:[/?#]|$)/;
 const CHESSCOM_DAILY = /^\/(game\/daily|daily)(?:[/?#]|$)/;

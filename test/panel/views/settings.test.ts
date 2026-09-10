@@ -210,7 +210,9 @@ describe("settings view · rows", () => {
 		).toHaveLength(2);
 		expect(row(h.root, "execution.previewSelectScale").querySelector("[role=slider]")).not.toBeNull();
 		const highlight = row(h.root, "automation.highlightMoves");
-		expect(highlight.querySelector("[role=switch]")?.getAttribute("aria-checked")).toBe("false");
+		expect(highlight.querySelector("[role=switch]")?.getAttribute("aria-checked")).toBe(
+			String(DEFAULT_SETTINGS.automation.highlightMoves)
+		);
 		expect(highlight.querySelector(".sl-settings-row__help")?.textContent).toBe(
 			SETTINGS_COPY.rows["automation.highlightMoves"].help
 		);

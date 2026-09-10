@@ -126,7 +126,7 @@ export function liveSnapshot(o: LiveOverrides = {}): PanelSnapshot {
 			...o.engine,
 		},
 		executor: o.executor ?? { debuggerAttached: false },
-		// The assistant is on during a game (DEFAULT_SETTINGS ships it off).
+		// The assistant is on during a game (and DEFAULT_SETTINGS ships it on).
 		settings: { ...DEFAULT_SETTINGS, enabled: true, ...o.settings },
 		autoMove: o.autoMove ?? { armed: false },
 		stats: { games: 6, moves: 210, avgThinkMs: 3100, ...o.stats },

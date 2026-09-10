@@ -16,6 +16,8 @@ export const FIXTURE_URLS = {
 	"chesscom-live": "https://www.chess.com/game/live/173765478164",
 	"chesscom-computer": "https://www.chess.com/play/computer",
 	"chesscom-gameover": "https://www.chess.com/game/live/173765478165",
+	/** The owner's real live game: WebGL board, no DOM pieces, `/game/<digits>`. */
+	"chesscom-webgl": "https://www.chess.com/game/174252022572",
 	"lichess-round-white": "https://lichess.org/abcdefgh1234",
 	"lichess-round-black": "https://lichess.org/ijklmnop5678",
 	"lichess-promotion": "https://lichess.org/qrstuvwx9012",

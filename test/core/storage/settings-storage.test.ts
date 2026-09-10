@@ -50,7 +50,7 @@ describe("normalizeSettings", () => {
 			engine: { nnue: "huge" },
 			advanced: { logLevel: "verbose" },
 		});
-		expect(s.enabled).toBe(false);
+		expect(s.enabled).toBe(DEFAULT_SETTINGS.enabled);
 		expect(s.strength.persona).toBe("balanced");
 		expect(s.strength.selectionMode).toBe("hybrid");
 		expect(s.timing.profile).toBe("natural");

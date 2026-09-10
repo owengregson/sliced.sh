@@ -289,6 +289,22 @@ describe("move card states (§5.6)", () => {
 		expect(card.dataset.state).toBe("engine-stopped");
 	});
 
+	it("unarmed on my turn: the note says which key arms the hand, not nothing", async () => {
+		// auto-play ships off, so this is what a fresh install sees on its first turn: the play
+		// button is disabled and the card must say why rather than looking dead.
+		h = await mountLive(dom.sim, liveSnapshot());
+		const note = h.q(".sl-move__note");
+		expect(note.hidden).toBe(false);
+		expect(note.textContent).toBe(COPY.move.noteUnarmed("Shift+A"));
+		h.store.emit(
+			liveSnapshot({
+				autoMove: { armed: true, scheduledAt: Date.now() + THINK_MS, plan: makeRecommendation().plan },
+			})
+		);
+		// armed: the informational notes get the line back
+		expect(h.q(".sl-move__note").textContent).not.toBe(COPY.move.noteUnarmed("Shift+A"));
+	});
+
 	it("play button: disabled until armed → Play move → Auto-playing in 4.2s → hover Cancel this move → Playing…; flash on executed", async () => {
 		h = await mountLive(dom.sim, idleSnapshot());
 		// §13.4: the hand plays only once armed (the debugger attaches at arm time, never
@@ -631,13 +647,19 @@ describe("toggles row (§6.1)", () => {
 	});
 
 	it("highlight and auto-queue write settings; the row reflects snapshots", async () => {
-		h = await mountLive(dom.sim, idleSnapshot());
+		const mounted = idleSnapshot();
+		h = await mountLive(dom.sim, mounted);
+		// each toggle writes the opposite of the value it was mounted with (whatever ships by default)
+		const wantHighlight = !mounted.settings.automation.highlightMoves;
+		const wantQueue = !mounted.settings.automation.autoQueue;
 		click(toggle("highlight"));
 		await dom.tick(0);
-		expect((await chromeLocalGet(LOCAL_KEYS.settings))?.automation.highlightMoves).toBe(true);
+		expect((await chromeLocalGet(LOCAL_KEYS.settings))?.automation.highlightMoves).toBe(
+			wantHighlight
+		);
 		click(toggle("autoqueue"));
 		await dom.tick(0);
-		expect((await chromeLocalGet(LOCAL_KEYS.settings))?.automation.autoQueue).toBe(true);
+		expect((await chromeLocalGet(LOCAL_KEYS.settings))?.automation.autoQueue).toBe(wantQueue);
 		h.store.emit(
 			idleSnapshot({
 				settings: {

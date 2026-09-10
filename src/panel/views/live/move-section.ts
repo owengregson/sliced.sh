@@ -192,6 +192,10 @@ export function executionKey(exec: NonNullable<PanelSnapshot["session"]["lastExe
 
 function noteFor(snapshot: PanelSnapshot, state: MoveCardData["state"]): string | null {
 	if (state !== "your-move" || !snapshot.recommendation) return null;
+	// The play button is disabled until the hand is armed (§13.4, and auto-play ships off), so the
+	// card would otherwise sit there with a move on it and nothing happening. Say what to press.
+	if (!snapshot.autoMove.armed)
+		return COPY.move.noteUnarmed(formatKeybind(snapshot.settings.keybinds.toggleAutoMove));
 	const { chosen, eval: score } = snapshot.recommendation;
 	if (chosen.source === "book") return COPY.move.noteBook;
 	if (score.mate !== undefined && score.mate > 0) return COPY.move.noteMate(score.mate);

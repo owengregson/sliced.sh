@@ -161,7 +161,7 @@ export interface SiteAdapter {
 	onGameStart(cb: () => void): () => void;
 	onGameEnd(cb: (result: GameResult) => void): () => void;
 
-	/** Draw the recommendation (only when asked — default off, §13.3). */
+	/** Draw the recommendation; only when asked — the adapter never draws on its own (§13.3). */
 	highlight(from: Square, to: Square, style: HighlightStyle): void;
 	arrows(lines: ArrowLine[]): void;
 	/** Resolves once the page side has answered (or the bridge call timed out / failed). */

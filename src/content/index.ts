@@ -18,7 +18,7 @@
  *     `boardCheck` (the executor's colour-aware position guard) and
  *     `cursorProbe` (bridge closure, else the tracker);
  *   - applies `highlight` / `arrow` / `clearHighlight` only while the
- *     `settings` command has turned `highlightMoves` on (default off);
+ *     `settings` command has turned `highlightMoves` on (off until it arrives);
  *   - installs the in-page keybinds (`keybinds` command updates them; the
  *     initial set comes from the `CONTENT_HELLO` request) and the cursor
  *     tracker (trusted samples on the port; unthrottled while the hand moves);

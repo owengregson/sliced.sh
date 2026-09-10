@@ -67,7 +67,7 @@ function boot(name: FixtureName, opts: { bridge?: FakeBridge } = {}) {
 	cleanups.push(installWindowGlobals(dom.window));
 	const { feed, factory } = fakeFeed();
 	const bridge = opts.bridge ?? new FakeBridge();
-	bridge.responses.set("getState", () => ({}));
+	if (!bridge.responses.has("getState")) bridge.responses.set("getState", () => ({}));
 	bridge.responses.set("draw", () => ({ keys: ["k1"] }));
 	bridge.responses.set("clear", () => undefined);
 	const handle = startContent({
@@ -104,6 +104,10 @@ function playD4(dom: TabDom): void {
 	dom.query(".clock-bottom").classList.remove("clock-player-turn");
 	dom.query(".clock-top").classList.add("clock-player-turn");
 }
+
+/** The owner's live capture: WebGL board at `/game/174252022572`, after 1.e4 c6 2.d3 d5 3.f3 dxe4. */
+const WEBGL_FEN = "rnbqkbnr/pp2pppp/2p5/8/4p3/3P1P2/PPP3PP/RNBQKBNR w KQkq - 0 4";
+const WEBGL_BOARD = { x: 120, y: 80, width: 704, height: 704 };
 
 describe("site-detect", () => {
 	it("maps hostnames to Site through SITE_MATCHES", () => {
@@ -158,6 +162,27 @@ describe("content entry — feed", () => {
 		expect(handle.pageKind()).toBe("vs-computer");
 		expect(feed.of("gameStarted")).toHaveLength(1);
 		expect(feed.of("opponent")[0]?.isBot).toBe(true);
+	});
+	it("starts a session and answers geometry on a WebGL canvas board (no DOM pieces)", async () => {
+		const bridge = new FakeBridge();
+		bridge.responses.set("getState", () => ({ fen: WEBGL_FEN, mode: "playing", playingAs: 1 }));
+		const { feed, dom, handle } = boot("chesscom-webgl", { bridge });
+		await waitFor(() => feed.of("gameStarted").length === 1, 2_000);
+		expect(handle.pageKind()).toBe("live-game");
+		expect(feed.of("gameStarted")[0]?.game.gameId).toBe("174252022572");
+		expect(feed.of("gameStarted")[0]?.game.myColor).toBe("w");
+		expect(feed.of("position").at(-1)?.snapshot.fen).toBe(WEBGL_FEN);
+		expect(feed.of("position").at(-1)?.snapshot.ply).toBe(6);
+		// geometry and occupancy come from the rect and the published FEN, not from `.piece`
+		dom.layout("wc-chess-board", WEBGL_BOARD);
+		feed.command({ kind: "geometry", id: "wg" });
+		const g = feed.of("geometryResult").at(-1);
+		expect(g?.flipped).toBe(false);
+		expect(Object.keys(g?.squares ?? {})).toHaveLength(64);
+		expect(g?.squares?.a1).toMatchObject({ x: WEBGL_BOARD.x, y: WEBGL_BOARD.y + 7 * 88 });
+		expect(g?.occupancy?.e1).toBe("own");
+		expect(g?.occupancy?.e4).toBe("enemy");
+		expect(g?.occupancy?.d5).toBe("empty");
 	});
 	it("does not start a session on a non-live page, and re-detects the page kind on popstate", async () => {
 		const { feed, handle, dom } = boot("chesscom-live");

@@ -59,7 +59,10 @@ export const COPY = {
 		noteOnly: "Only move",
 		noteMate: (n: number): string => `Mate in ${n}`,
 		noteForced: "Forced",
-		disabled: "Assistant off · press D to resume",
+		/** Your move, a recommendation shown, but the hand is not armed: say how to arm it. */
+		noteUnarmed: (key: string): string => `Auto-play off · ${key} to let it play`,
+		// There is no "D" shortcut: the only control is the Settings view's Assistant toggle.
+		disabled: "Assistant off · turn it on in Settings",
 		plan: (seconds: string, method: string, premove: boolean): string =>
 			`thinking ${seconds}s · ${method}${premove ? " · premove" : ""}`,
 		play: "Play move",
