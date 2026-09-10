@@ -232,6 +232,11 @@ describe("telemetry: the §13.2 gate at bullet and blitz, pooled", () => {
 				expect(
 					row.includes("hold-time vs n_reasonable correlation") || known.some((k) => row.includes(k))
 				).toBe(true);
+			// Anchor the band itself: if the eligible pool ever fell below the band's own minimum the
+			// preview rate would stop being evaluated at all, with nothing noticing.
+			expect(summary.multiSelect.eligible).toBeGreaterThanOrEqual(
+				TELEMETRY_BANDS.multiSelect.minMovesForBand
+			);
 			console.log(
 				`bullet preview rate ${(100 * (summary.multiSelect.rate ?? 0)).toFixed(2)} % (${summary.multiSelect.count}/${summary.multiSelect.eligible}) — band ${100 * TELEMETRY_BANDS.multiSelect.rate[0]}–${100 * TELEMETRY_BANDS.multiSelect.rate[1]} %, population ≈ 3.7 % over 12 families`
 			);
@@ -259,8 +264,10 @@ describe("telemetry: the §13.2 gate at bullet and blitz, pooled", () => {
 			);
 			// A floor of 0.10, not `> 0`. The decisive re-measurement (432 games per speed) puts blitz
 			// at 0.2087 with a family minimum of 0.168 and a spread of 0.168–0.259, so 0.10 is half the
-			// worst family and cannot flake, while still failing loudly if the complexity term stops
-			// acting at this speed. The 0.20 floor itself is not asserted here: at blitz its verdict
+			// worst pooled observation and cannot flake. It is a backstop against total collapse, not a
+			// guard on the complexity term: zeroing the four explicit complexity coefficients leaves r
+			// at 0.144, which still clears it — what catches the term is the bullet case above. The
+			// 0.20 floor itself is not asserted here: at blitz its verdict
 			// moves with the seed population (0.2087 over 432 games, 0.234 over these 108, ≈ 0.15 over
 			// the reviewer's first prefix set), which is exactly the coin flip C1 was about.
 			expect(r).toBeGreaterThanOrEqual(0.1);

@@ -209,7 +209,7 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 	 * branch is for.
 	 */
 	getTimeControl(): TimeControl | null {
-		// The clocks are the unit cross-check (§4.3): a base the page's own clock dwarfs tenfold is
+		// The clocks are the unit cross-check (§4.3): a no-increment base a credible page clock exceeds a hundredfold is
 		// not in milliseconds. Both sides come from the same reading, so the two cannot disagree.
 		const hint = Math.max(this.clockState("w").ms, this.clockState("b").ms);
 		return timeControlFromBridge(this.bridgeState?.timeControl, hint);

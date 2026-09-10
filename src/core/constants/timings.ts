@@ -98,6 +98,16 @@ export const TIME_CONTROL = {
 	/** Beyond 24 h the value is not a clock in ms either (nor in seconds). */
 	maxPlausibleMs: 86_400_000,
 	/**
+	 * The largest base a *live* game can have, and the discriminator the clock witness needs. A
+	 * stale clock from the previous game is not evidence about this one, and bounding the hint by
+	 * `maxPlausibleMs` (a day) is far too loose to notice: `{60_000, 0}` beside a leftover two-hour
+	 * clock still satisfied "the clock exceeds the base a hundredfold" and read a one-minute game as
+	 * 16.7 h. The discriminating question is whether the *seconds hypothesis* yields a base a live
+	 * game could actually have. chess.com's custom live maximum is 180 minutes, so anything the
+	 * rescale would push past that is the stale clock talking, not the unit.
+	 */
+	maxLiveBaseMs: 10_800_000,
+	/**
 	 * How many times one game re-asks for a time control it has not been told. At
 	 * `TIMINGS.adapterTimeControlRetryMs` this covers the first half-minute after the board
 	 * appears, which is the window in which a game that was "not yet started" starts.

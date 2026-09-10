@@ -93,19 +93,40 @@ describe("timeControlFromBridge", () => {
 			baseMs: 1_800_000,
 			incMs: 0,
 		});
-		// The one reading left unguarded, recorded rather than wished away: a seconds-reported pair
-		// *with* an increment (20+10) keeps its millisecond-looking base, because the only witness
-		// that would catch it is the clock one and consulting that with an increment present is the
-		// false positive below. The increment is still rescaled, so the game reads as blitz
-		// (base_eff 1.2 + 40×10 = 401 s) rather than as a sub-second emergency — the bad direction
-		// is covered, and the log says the units were not milliseconds.
+		// A seconds-reported pair *with* an increment is caught by the pair witness, which needs no
+		// clock at all: no real control starts with less time than it hands back per move, so a base
+		// below the rescaled increment proves both fields are seconds. 20+10 and 30+30 both land.
 		expect(timeControlFromBridge({ baseTime: 1_200, increment: 10 }, 1_200_000)).toEqual({
-			baseMs: 1_200,
+			baseMs: 1_200_000,
 			incMs: 10_000,
+		});
+		expect(timeControlFromBridge({ baseTime: 1_200, increment: 10 })).toEqual({
+			baseMs: 1_200_000,
+			incMs: 10_000,
+		});
+		expect(timeControlFromBridge({ baseTime: 1_800, increment: 30 })).toEqual({
+			baseMs: 1_800_000,
+			incMs: 30_000,
+		});
+		// …and it cannot fire on a genuine mixed pair: 3+2 reported as ms base + s increment has a
+		// base far above the rescaled increment, so only the increment is touched.
+		expect(timeControlFromBridge({ baseTime: 180_000, increment: 2 })).toEqual({
+			baseMs: 180_000,
+			incMs: 2_000,
 		});
 		// …and with no increment the same game is caught outright
 		expect(timeControlFromBridge({ baseTime: 1_200, increment: 0 }, 1_200_000)).toEqual({
 			baseMs: 1_200_000,
+			incMs: 0,
+		});
+		// A stale clock from the previous game is not admissible evidence: at >= 100x a no-increment
+		// base it would reproduce the very failure this witness exists to prevent.
+		expect(timeControlFromBridge({ baseTime: 60_000, increment: 0 }, 7_200_000)).toEqual({
+			baseMs: 60_000,
+			incMs: 0,
+		});
+		expect(timeControlFromBridge({ baseTime: 600_000, increment: 0 }, 86_400_000)).toEqual({
+			baseMs: 600_000,
 			incMs: 0,
 		});
 		// The increment-heavy controls that made the first version of this check WORSE than the bug

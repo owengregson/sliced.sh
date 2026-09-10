@@ -76,15 +76,26 @@ export function timeControlFromBridge(value: unknown, clockHintMs = 0): TimeCont
 	// previous game for a moment after a rematch, which is a ratio of ten or thirty, while the
 	// seconds hypothesis predicts a thousand.
 	//
-	// One reading is therefore left unguarded on purpose: a seconds-reported pair *with* an
-	// increment (`{1800, 30}` for 30+30) keeps its 1.8 s base, because the only witness that would
-	// catch it is the clock one, and enabling that with an increment present is the false positive
-	// above. Its increment is still rescaled, so the game reads as classical rather than as an
-	// emergency — the bad direction is covered.
+	// A seconds-reported pair *with* an increment (`{1800, 30}` for 30+30) is caught by the pair
+	// witness below rather than by the clock one, which stays gated on `inc === 0`.
 	const tooSmallBase = base < TIME_CONTROL.minPlausibleMs;
-	const clockExceedsBase = inc === 0 && clockHintMs > base * TIME_CONTROL.clockExceedsBaseFactor;
-	const baseInSeconds = tooSmallBase || clockExceedsBase;
+	// The clock witness is only admissible when the unit hypothesis it supports is itself credible:
+	// …and the rescale it implies must yield a base a live game could have. A stale clock from the
+	// previous game is not evidence about this one, and it can be any size.
+	const secondsBaseIsLive = base * TIME_CONTROL.msPerSecond <= TIME_CONTROL.maxLiveBaseMs;
+	const clockExceedsBase =
+		inc === 0 &&
+		clockHintMs > 0 &&
+		secondsBaseIsLive &&
+		clockHintMs > base * TIME_CONTROL.clockExceedsBaseFactor;
 	const incInSeconds = inc > 0 && inc < TIME_CONTROL.minPlausibleMs;
+	// A seconds-reported *pair* is self-witnessing: no real control starts with less time on the
+	// clock than it hands back per move, so a base below the rescaled increment proves both fields
+	// are seconds. This catches {1800, 30} and {1200, 10} — which the clock witness cannot, because
+	// admitting it with an increment present is the false positive above — and cannot fire on a
+	// genuine mixed pair, since {180_000, 2} has a base far above 2000.
+	const pairInSeconds = incInSeconds && base < inc * TIME_CONTROL.msPerSecond;
+	const baseInSeconds = tooSmallBase || clockExceedsBase || pairInSeconds;
 	if (baseInSeconds || incInSeconds) {
 		log.warn("adapter: time control is not in milliseconds", {
 			baseTime: base,
@@ -94,7 +105,9 @@ export function timeControlFromBridge(value: unknown, clockHintMs = 0): TimeCont
 				? "the base is under a second"
 				: clockExceedsBase
 					? "the clock on the page exceeds the base with no increment to explain it"
-					: "none (the base reads as milliseconds)",
+					: pairInSeconds
+						? "the base is below the increment, so both fields are seconds"
+						: "none (the base reads as milliseconds)",
 			incrementWitness: incInSeconds ? "the increment is under a second" : "none",
 		});
 	}
