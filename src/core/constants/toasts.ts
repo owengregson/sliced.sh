@@ -3,7 +3,7 @@
  * key, the panel renders `COPY.toast[key]` — user-facing copy never crosses into the SW bundle.
  */
 export const TOAST_KEYS = {
-	/** A move landed (`args: { san, elapsedMs, tier }`). */
+	/** A move landed (`args: { san, elapsedMs }`; every move is a drag, so the panel names it). */
 	played: "played",
 	/** The executor could not verify the move on the board. */
 	notVerified: "notVerified",

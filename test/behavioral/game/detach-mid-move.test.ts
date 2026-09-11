@@ -25,7 +25,7 @@ const mouseEvents = (type: string): unknown[] =>
 describe("the debugger is never taken away mid-drag (§13)", () => {
 	it("PANEL_DETACH_DEBUGGER while the hand holds a piece releases it first", async () => {
 		h = await createGameHarness({
-			settings: { automation: { autoMove: true }, execution: { style: "drag" } },
+			settings: { automation: { autoMove: true } },
 		});
 		await h.sw.run(() => h.session().command("armAutoMove"));
 		await h.arrive();

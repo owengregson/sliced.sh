@@ -181,7 +181,6 @@ export interface ExecutionPlan {
 	from: { x: number; y: number; rect: Rect; square: Square };
 	to: { x: number; y: number; rect: Rect; square: Square };
 	promotion?: PromoPiece;
-	style: ClickStyle;
 	motor: MotorProfile;
 	/** Last known cursor (the hand owns the pointer, §13.5). */
 	startPoint?: Pt;

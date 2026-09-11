@@ -7,9 +7,9 @@
  * think time; a plan whose deadline is far off waits on the injected
  * scheduler); `playNow()` executes the pending move with an instant plan;
  * `cancel()` aborts (a held piece is dropped at once). Every execution is
- * verified through the content adapter and retried once in the other tier
- * (`retry-policy.ts`); the outcome is emitted as `executed | failed |
- * aborted | skipped`, hand-state changes as `hand`.
+ * verified through the content adapter and retried once (`retry-policy.ts`); the outcome is emitted as `executed | failed |
+ * aborted | skipped`, hand-state changes as `hand`. Every committed move is a
+ * drag (click-to-move was removed end to end), so the retry is a second drag.
  */
 
 import { isSquare } from "@core/chess/squares";
@@ -20,7 +20,6 @@ import { log } from "@core/logger";
 import { perGameProfile, perMoveProfile, profileFor } from "@core/motor/motor-profile";
 import { plausibleStart } from "@core/motor/sampling";
 import type {
-	ClickStyle,
 	ExecutionPlan,
 	ExecutionResult,
 	HandState,
@@ -55,7 +54,7 @@ import {
 	preTouchMsOf,
 	type TimingWindow,
 } from "./hand-controller";
-import { otherTier, runWithRetry } from "./retry-policy";
+import { runWithRetry } from "./retry-policy";
 import { checkSquares, type VerifyResult, verifyMove } from "./verifier";
 
 /** The slice of `ContentLink` the executor needs (geometry + verification requests). */
@@ -71,11 +70,9 @@ export interface ExecutorLink {
 export interface ExecutorGameConfig {
 	persona: PersonaId;
 	tcClass: TimeControlClass;
-	/** `Settings.execution.style`: `auto` picks a per-game dominant style (70/30). */
-	style: ClickStyle | "auto";
 	/** `Settings.execution.previewSelectScale`, 0 when previews are off. */
 	previewScale: number;
-	/** Seeds the per-game hand (profile offsets, dominant styles). */
+	/** Seeds the per-game hand (profile offsets, per-move sampling). */
 	gameSeed: number | string;
 	/** `Settings.execution.verifyMoves` (default true). */
 	verifyMoves?: boolean;
@@ -231,7 +228,6 @@ export class MoveExecutor {
 	private readonly now: () => number;
 	private readonly scheduler: Scheduler;
 	private readonly config: ExecutorGameConfig;
-	private readonly dominantStyle: ClickStyle;
 	private readonly geometry: GeometryProvider;
 	private readonly listeners = new Map<ExecutorEvent, Set<(payload: never) => void>>();
 	private pending: Pending | null = null;
@@ -264,18 +260,10 @@ export class MoveExecutor {
 		this.config = {
 			persona: deps.persona,
 			tcClass: deps.tcClass,
-			style: deps.style,
 			previewScale: deps.previewScale,
 			gameSeed: deps.gameSeed,
 			verifyMoves: deps.verifyMoves ?? true,
 		};
-		const gameRng = createRng(`${deps.gameSeed}:style`);
-		this.dominantStyle =
-			deps.style === "auto"
-				? gameRng.chance(EXECUTOR.dominantStyleShare)
-					? "drag"
-					: "click"
-				: deps.style;
 		this.geometry = {
 			read: (tabId, promotion, signal) => this.readGeometry(tabId, promotion, signal),
 		};
@@ -530,7 +518,7 @@ export class MoveExecutor {
 			ok: false,
 			outcome: "aborted",
 			reason: EXECUTOR.reasons.dropped,
-			tier: this.dominantStyle,
+			tier: EXECUTOR.committedTier,
 			attempts: 0,
 			endPoint: this.ownership.position(this.tabId) ?? { x: 0, y: 0 },
 			elapsedMs: 0,
@@ -564,7 +552,7 @@ export class MoveExecutor {
 			ok: false,
 			outcome: "skipped",
 			reason,
-			tier: this.dominantStyle,
+			tier: EXECUTOR.committedTier,
 			attempts: 0,
 			endPoint: this.ownership.position(this.tabId) ?? { x: 0, y: 0 },
 			elapsedMs,
@@ -585,7 +573,7 @@ export class MoveExecutor {
 				ok: false,
 				outcome: "failed",
 				reason,
-				tier: this.dominantStyle,
+				tier: EXECUTOR.committedTier,
 				attempts: 0,
 				endPoint: this.ownership.position(this.tabId) ?? { x: 0, y: 0 },
 				elapsedMs: this.now() - t0,
@@ -656,7 +644,6 @@ export class MoveExecutor {
 		const fromRect = geo.squareRect(rec.chosen.from);
 		const toRect = geo.squareRect(rec.chosen.to);
 		const moveRng = createRng(`${this.config.gameSeed}:${rec.fen}:${rec.chosen.uci}`);
-		const style = this.styleFor(moveRng);
 		const moveKind = ctx.moveKind ?? this.moveKindOf(rec);
 		const motor = perMoveProfile(
 			perGameProfile(
@@ -699,7 +686,6 @@ export class MoveExecutor {
 				rect: toRect,
 				square: rec.chosen.to,
 			},
-			style,
 			motor,
 			expected: { san: rec.chosen.san, uci: rec.chosen.uci, premove: rec.chosen.source === "premove" },
 			geometry: { reply, readAt },
@@ -719,13 +705,8 @@ export class MoveExecutor {
 				: Promise.resolve({ outcome: "ok" });
 		try {
 			return await runWithRetry({
-				style,
-				attempt: (tier, index) =>
-					controller.execute(
-						{ ...plan, style: tier },
-						index === 0 ? timing : instantTiming(timing),
-						signal
-					),
+				attempt: (index) =>
+					controller.execute(plan, index === 0 ? timing : instantTiming(timing), signal),
 				verify: check,
 				recheck: (checkSignal) => check(EXECUTOR.recheckTimeoutMs, checkSignal),
 				checkSignal: () => this.freshCheckSignal(),
@@ -832,13 +813,6 @@ export class MoveExecutor {
 			return { outcome: "skipped", reason: EXECUTOR.reasons.verificationUnavailable };
 		}
 		return occ[from] === "own" && occ[to] !== "own" ? null : changed;
-	}
-
-	private styleFor(moveRng: ReturnType<typeof createRng>): ClickStyle {
-		if (this.config.style !== "auto") return this.config.style;
-		return moveRng.chance(EXECUTOR.dominantStyleShare)
-			? this.dominantStyle
-			: otherTier(this.dominantStyle);
 	}
 
 	private moveKindOf(rec: Recommendation): MotorMoveKind {

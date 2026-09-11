@@ -91,7 +91,6 @@ export interface SimulatedGameOptions {
 	seed: string;
 	moves: number;
 	persona?: PersonaId;
-	style?: ExecutorGameConfig["style"];
 	previewScale?: number;
 	targetElo?: number;
 	clock?: { baseSec: number; incSec: number; myStartMs?: number; oppStartMs?: number };
@@ -300,7 +299,6 @@ export async function runSimulatedGame(options: SimulatedGameOptions): Promise<S
 				scheduler: defaultScheduler,
 				persona,
 				tcClass: motorClass,
-				style: options.style ?? "auto",
 				previewScale: options.previewScale ?? DEFAULT_SETTINGS.execution.previewSelectScale,
 				gameSeed: options.seed,
 			});

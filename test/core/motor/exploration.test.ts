@@ -1,6 +1,6 @@
 // test/core/motor/exploration.test.ts — Step 4 (§9.3 planner, §8.4b allocation, §9.3a preview bands).
 import { describe, expect, it } from "bun:test";
-import { MOTOR_DEFAULTS } from "@core/motor/constants";
+import { EXPLORATION, MOTOR_DEFAULTS } from "@core/motor/constants";
 import {
 	actionDurationMs,
 	type ExplorationCandidate,
@@ -9,7 +9,8 @@ import {
 	planDurationMs,
 	restPoint,
 } from "@core/motor/exploration";
-import type { HandAction, Pt } from "@core/motor/types";
+import { profileFor } from "@core/motor/motor-profile";
+import type { HandAction, Pt, TimeControlClass } from "@core/motor/types";
 import { createRng } from "@core/rng";
 import type { Square } from "@typedefs/game";
 import { BOARD, dist, geometry, inside, squareRect } from "./fixtures";
@@ -29,6 +30,15 @@ const DESTS: Partial<Record<Square, Square[]>> = {
 const legalDestinations = (sq: Square): Square[] => DESTS[sq] ?? [];
 const GEO = geometry();
 const CURSOR: Pt = { x: 420, y: 720 };
+/**
+ * A pre-touch window that saturates the hover ramp (`hoverRampMs[1]`) and still has room for the
+ * most hovers the planner will ever schedule at their longest dwell, after the decision pause has
+ * taken its largest share. Every term is a registry value.
+ */
+const LONG_WAIT_MS =
+	EXPLORATION.hoverRampMs[1] +
+	(EXPLORATION.hoverCountWeights.length * EXPLORATION.hoverDwellMs[1]) /
+		(1 - EXPLORATION.decisionPauseFrac[1]);
 
 function opts(over: Partial<ExplorationOptions> = {}): ExplorationOptions {
 	return {
@@ -126,6 +136,67 @@ describe("ExplorationPlanner.plan", () => {
 			expect(actions[0]!.kind).toBe("rest");
 			expect(planDurationMs(actions)).toBeLessThanOrEqual(300);
 		}
+	});
+
+	// The owner's live 3+0 game: "it always touches pieces before it moves … it just seems pretty
+	// robotic right now." Measured over 420 moves of a simulated 3+0 game, the hand hovered a
+	// candidate piece on 75 % of the moves whose pre-touch window was long enough to explore, and
+	// 63 % of those hovers dwelled on the piece for *exactly* `hoverDwellMs[1]` (84 % in a 10+0
+	// game) because the window's surplus filled every hover to the top of its range. These two
+	// tests pin both properties: the rate is the model's own rate scaled by the time control, and
+	// the realised dwells are spread across the range instead of collapsing onto its ceiling.
+	it("hover dwells spread across their range instead of pinning to its ceiling", () => {
+		const dwells: number[] = [];
+		for (let seed = 0; seed < 600; seed++)
+			for (const a of plan(`dwell${seed}`, LONG_WAIT_MS))
+				if (a.kind === "hover") dwells.push(a.dwellMs);
+		expect(dwells.length).toBeGreaterThan(200);
+		const [lo, hi] = EXPLORATION.hoverDwellMs;
+		for (const d of dwells) {
+			expect(d).toBeGreaterThanOrEqual(lo);
+			expect(d).toBeLessThanOrEqual(hi);
+		}
+		// a pinned distribution is the defect: before the fix this was 0.63–0.84
+		expect(dwells.filter((d) => d >= hi - 1).length / dwells.length).toBeLessThan(0.1);
+		// and every fifth of the range is actually used
+		const fifth = (hi - lo) / 5;
+		const used = new Set(dwells.map((d) => Math.min(4, Math.floor((d - lo) / fifth))));
+		expect(used.size).toBe(5);
+	});
+
+	it("the realised hover rate is the model's rate, scaled down for a fast time control", () => {
+		const rates = new Map<TimeControlClass, { model: number; realised: number }>();
+		for (const tc of ["bullet", "blitz", "rapid", "classical"] as const) {
+			const profile = profileFor("balanced", tc, "normal");
+			// `hoverAnyProb`'s own formula at a window past the top of `hoverRampMs` (ramp = 1)
+			const model = Math.min(
+				EXPLORATION.hoverProbCap,
+				profile.exploration.hoverProb * (1 + EXPLORATION.hoverNSlope * (opts().nReasonable - 1))
+			);
+			let hovered = 0;
+			const runs = 1000;
+			for (let i = 0; i < runs; i++)
+				if (
+					planner
+						.plan(LONG_WAIT_MS, CANDIDATES, GEO, profile, createRng(`hr-${tc}-${i}`), opts())
+						.some((a) => a.kind === "hover")
+				)
+					hovered += 1;
+			rates.set(tc, { model, realised: hovered / runs });
+			expect(hovered / runs).toBeCloseTo(model, 1);
+		}
+		const r = (tc: TimeControlClass) => rates.get(tc)?.realised ?? 0;
+		// a faster clock browses less (`TC_EXPLORATION`)
+		expect(r("bullet")).toBeLessThan(r("blitz"));
+		expect(r("blitz")).toBeLessThan(r("rapid"));
+		expect(r("classical")).toBeCloseTo(r("rapid"), 1);
+		// and in **no** class is hovering the hand's default: the owner's complaint was that it always
+		// touches pieces first, and the unscaled rapid model hovered on 0.775 of these moves. This
+		// holds at `opts().nReasonable`, which is at or below the shipped `engine.multiPv`; the rate
+		// rises with `n_reasonable` by design and the bound is only claimed up to that default
+		// (`TC_EXPLORATION`, and the rule test in `motor-profile.test.ts`).
+		for (const tc of ["bullet", "blitz", "rapid", "classical"] as const)
+			expect(r(tc)).toBeLessThan(0.5);
 	});
 
 	it("produces traces/feints toward the to-square without pressing, occasionally", () => {

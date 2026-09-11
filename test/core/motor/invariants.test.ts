@@ -2,11 +2,11 @@
 // site-faithful selection model (chessground / chess.com: a press on a legal destination of
 // the selected piece plays that move; a press on an own piece selects it; anything else clears).
 import { describe, expect, it } from "bun:test";
-import { CLICK, MOTOR_DEFAULTS, PROFILE_NOISE, SAMPLING } from "@core/motor/constants";
+import { MOTOR_DEFAULTS, PROFILE_NOISE, SAMPLING } from "@core/motor/constants";
 import { ExplorationPlanner } from "@core/motor/exploration";
-import { perGameProfile, perMoveProfile, sampleRange } from "@core/motor/motor-profile";
+import { perGameProfile, perMoveProfile } from "@core/motor/motor-profile";
 import { generatePath, grabWobble } from "@core/motor/path-generator";
-import { clickReleasePoint, plausibleStart, samplePointInRect } from "@core/motor/sampling";
+import { plausibleStart, samplePointInRect } from "@core/motor/sampling";
 import type { MotorProfile, Occupancy, PathPoint, Pt } from "@core/motor/types";
 import { createRng, type Rng } from "@core/rng";
 import type { Square } from "@typedefs/game";
@@ -94,6 +94,7 @@ describe("motor invariants (500 random moves)", () => {
 		const seenPaths = new Set<string>();
 		let cursor: Pt = plausibleStart(BOARD, rng);
 		let previews = 0;
+		let maxPresses = 0;
 		let idleSwitches = 0;
 		let switches = 0;
 		let moves = 0;
@@ -109,9 +110,10 @@ describe("motor invariants (500 random moves)", () => {
 			}
 			const fromRect = squareRect(pos.committed.from);
 			const toRect = squareRect(pos.committed.to);
-			const style = rng.chance(0.6) ? "drag" : "click";
 			const sel = { selected: null as Square | null };
 			let pressCount = 0;
+			/** What the plan says the page will be pressed on: one press per preview leg. */
+			let plannedPresses = 0;
 
 			// Exploration (pre-touch window) — previews are the only non-committed presses.
 			const actions = planner.plan(rng.int(300, 5000), pos.candidates, GEO, m, rng, {
@@ -136,6 +138,7 @@ describe("motor invariants (500 random moves)", () => {
 				if (!pv) continue;
 				previews++;
 				pressCount++;
+				plannedPresses += 1 + (pv.deselect ? 1 : 0);
 				expect(inside(pv.press, pv.pieceRect)).toBe(true);
 				expect(pos.occupancy(pv.piece)).toBe("own");
 				// The preview press must select, never play a move.
@@ -197,51 +200,35 @@ describe("motor invariants (500 random moves)", () => {
 			pressCount++;
 			expect(press(sel, pos.committed.from, pos)).toBe(false);
 			expect(sel.selected).toBe(pos.committed.from);
-			if (style === "drag") {
-				const wobble = grabWobble(cursor, m, rng);
-				checkPath(cursor, wobble, m);
-				cursor = { x: wobble[wobble.length - 1]!.x, y: wobble[wobble.length - 1]!.y };
-				const drop = samplePointInRect(
-					toRect,
-					SAMPLING.release.sigmaFrac,
-					SAMPLING.release.innerFrac,
-					rng
-				);
-				const travel = generatePath(cursor, drop, toRect, m, rng);
-				checkPath(cursor, travel, m);
-				const last = travel[travel.length - 1]!;
-				expect(seenPaths.has(JSON.stringify(travel))).toBe(false);
-				seenPaths.add(JSON.stringify(travel));
-				cursor = { x: last.x, y: last.y };
-				expect(inside(cursor, toRect)).toBe(true); // mouseReleased inside its target
-			} else {
-				const release = clickReleasePoint(cursor, rng);
-				expect(dist(cursor, release)).toBeLessThanOrEqual(2);
-				cursor = release;
-				const second = samplePointInRect(
-					toRect,
-					SAMPLING.press.sigmaFrac,
-					SAMPLING.press.innerFrac,
-					rng
-				);
-				const travel = generatePath(cursor, second, toRect, m, rng);
-				checkPath(cursor, travel, m);
-				const last = travel[travel.length - 1]!;
-				cursor = { x: last.x, y: last.y };
-				expect(inside(cursor, toRect)).toBe(true);
-				pressCount++;
-				// The second click of the committed move is the only press that plays a move.
-				expect(press(sel, pos.committed.to, pos)).toBe(true);
-				const rel = clickReleasePoint(cursor, rng);
-				expect(dist(cursor, rel)).toBeLessThanOrEqual(2);
-				cursor = rel;
-				expect(sampleRange(CLICK.interClickGapMs, rng)).toBeGreaterThanOrEqual(
-					CLICK.interClickGapMs[0]
-				);
-			}
-			expect(pressCount).toBeLessThanOrEqual(2 + 2 * 2);
+			// The committed move is a drag, always: grab, travel, release inside the destination.
+			// There is no click-click form to simulate — it was removed end to end.
+			const wobble = grabWobble(cursor, m, rng);
+			checkPath(cursor, wobble, m);
+			cursor = { x: wobble[wobble.length - 1]!.x, y: wobble[wobble.length - 1]!.y };
+			const drop = samplePointInRect(
+				toRect,
+				SAMPLING.release.sigmaFrac,
+				SAMPLING.release.innerFrac,
+				rng
+			);
+			const travel = generatePath(cursor, drop, toRect, m, rng);
+			checkPath(cursor, travel, m);
+			const last = travel[travel.length - 1]!;
+			expect(seenPaths.has(JSON.stringify(travel))).toBe(false);
+			seenPaths.add(JSON.stringify(travel));
+			cursor = { x: last.x, y: last.y };
+			expect(inside(cursor, toRect)).toBe(true); // mouseReleased inside its target
+			// The page is pressed exactly once for the committed drag plus once per planned preview
+			// leg — an equality, so a plan that grew a press the simulation did not walk (or a
+			// second committed press) fails here rather than sliding under a slack ceiling.
+			expect(pressCount).toBe(1 + plannedPresses);
+			maxPresses = Math.max(maxPresses, pressCount);
 		}
 		expect(moves).toBe(500);
+		// and the model's own ceiling — one committed press plus two previews with a deselect each —
+		// is never exceeded over the whole run
+		expect(maxPresses).toBeLessThanOrEqual(1 + 2 * 2);
+		expect(maxPresses).toBeGreaterThan(1);
 		expect(previews).toBeGreaterThan(0);
 		expect(switches).toBeGreaterThan(0);
 		expect(seenPaths.size).toBeGreaterThan(500);

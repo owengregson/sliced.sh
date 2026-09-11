@@ -41,6 +41,23 @@ describe("normalizeSettings", () => {
 		expect("extra" in (s.strength as Record<string, unknown>)).toBe(false);
 		expect((s.strength as { targetElo: number }).targetElo).toBe(2000);
 	});
+	it("tolerates a stored `execution.style` from a pre-drag-only profile: dropped, nothing else lost", () => {
+		// Click-to-move was removed end to end, so the setting is gone. A profile stored by an older
+		// build still carries it (`"click"` / `"auto"` / `"drag"`) and must normalise cleanly —
+		// `execution` keeps every surviving field and the key itself does not come back.
+		for (const stored of ["click", "auto", "drag"]) {
+			const s = normalizeSettings({
+				execution: { style: stored, motorSpeed: 1.5, previewSelects: "off" },
+			});
+			expect("style" in (s.execution as unknown as Record<string, unknown>)).toBe(false);
+			expect(s.execution.motorSpeed).toBe(1.5);
+			expect(s.execution.previewSelects).toBe("off");
+			expect(s.execution.verifyMoves).toBe(DEFAULT_SETTINGS.execution.verifyMoves);
+			expect(s.execution.backend).toBe(DEFAULT_SETTINGS.execution.backend);
+		}
+		// and the shipped defaults never had it either
+		expect("style" in (DEFAULT_SETTINGS.execution as unknown as Record<string, unknown>)).toBe(false);
+	});
 	it("replaces invalid enum values and wrong-typed fields with defaults", () => {
 		const s = normalizeSettings({
 			enabled: "yes",

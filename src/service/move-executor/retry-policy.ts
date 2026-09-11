@@ -1,10 +1,13 @@
 /**
- * Retry policy (§9.3, Appendix G §6): Tier 1 drag → Tier 2 click-click once
- * (or the reverse for a click-first hand), then report failure. Before every
- * retry the board is re-checked so a move that did land (slow verification)
- * is never played twice, and the retry waits `TIMINGS.executorRetryDelayMs`.
- * A board that cannot be checked at all (`unavailable`, from the verification
- * or the re-check) is terminal: nothing is dispatched on a guess.
+ * Retry policy (§9.3, Appendix G §6): one drag, then — once — another drag
+ * (`instantTiming`, touch only), then report failure. Click-to-move was removed
+ * end to end after the owner's live game, so there is no "other tier" to fall
+ * back to: a move is a drag, and a failed drag is retried as a drag. Before
+ * every retry the board is re-checked so a move that did land (slow
+ * verification) is never played twice, and the retry waits
+ * `TIMINGS.executorRetryDelayMs`. A board that cannot be checked at all
+ * (`unavailable`, from the verification or the re-check) is terminal: nothing is
+ * dispatched on a guess.
  *
  * Every board check runs on a signal from `checkSignal()` — fresh at that
  * moment, so the cancel that interrupted the attempt never poisons it; only a
@@ -21,17 +24,8 @@
 import { EXECUTOR } from "@core/constants/cdp";
 import { TIMINGS } from "@core/constants/timings";
 import { log } from "@core/logger";
-import type { ClickStyle, ExecutionResult } from "@core/motor/types";
+import type { ExecutionResult } from "@core/motor/types";
 import type { VerifyResult } from "./verifier";
-
-export function otherTier(tier: ClickStyle): ClickStyle {
-	return tier === "drag" ? "click" : "drag";
-}
-
-/** The tiers to try in order, capped at `EXECUTOR.maxAttempts`. */
-export function tiersFor(style: ClickStyle): ClickStyle[] {
-	return [style, otherTier(style)].slice(0, EXECUTOR.maxAttempts);
-}
 
 /** Delay before retry number `n` (1-based); the last registry entry repeats. */
 export function retryDelayMs(n: number): number {
@@ -41,9 +35,8 @@ export function retryDelayMs(n: number): number {
 }
 
 export interface RetryRunnerOptions {
-	style: ClickStyle;
 	/** Dispatch one attempt (`index` 0 = the full timed execution, later ones are instant retries). */
-	attempt(tier: ClickStyle, index: number): Promise<ExecutionResult>;
+	attempt(index: number): Promise<ExecutionResult>;
 	/** Verification after an attempt, bounded by `timeoutMs` and `signal`. */
 	verify(timeoutMs: number, signal: AbortSignal): Promise<VerifyResult>;
 	/** Short board re-check (`EXECUTOR.recheckTimeoutMs`) before a retry and after an interrupted attempt. */
@@ -74,11 +67,9 @@ function unavailable(
 }
 
 export async function runWithRetry(o: RetryRunnerOptions): Promise<ExecutionResult> {
-	const tiers = tiersFor(o.style);
 	let attempts = 0;
 	let last: ExecutionResult | null = null;
-	for (let i = 0; i < tiers.length; i++) {
-		const tier = tiers[i] as ClickStyle;
+	for (let i = 0; i < EXECUTOR.maxAttempts; i++) {
 		if (i > 0 && last) {
 			await o.delay(retryDelayMs(i));
 			if (o.signal?.aborted) {
@@ -86,12 +77,12 @@ export async function runWithRetry(o: RetryRunnerOptions): Promise<ExecutionResu
 			}
 			const pre = await o.recheck(o.checkSignal());
 			if (pre.outcome === "ok") {
-				log.info("executor: move landed before the retry; not re-dispatching", { tier: last.tier });
+				log.info("executor: move landed before the retry; not re-dispatching", { attempt: i });
 				return { ...last, ok: true, outcome: "executed", attempts };
 			}
 			if (pre.outcome === "unavailable") return unavailable(last, attempts, pre);
 		}
-		const result = await o.attempt(tier, i);
+		const result = await o.attempt(i);
 		if (result.outcome !== "skipped" || result.pressed) attempts += 1;
 		if (!result.ok) {
 			// `pressedAny`, not `pressed`: a §9.3a **preview** press is a real `mousedown` on a real
@@ -124,7 +115,7 @@ export async function runWithRetry(o: RetryRunnerOptions): Promise<ExecutionResu
 		);
 		if (verdict.outcome === "ok") return { ...result, attempts };
 		if (verdict.outcome === "unavailable") return unavailable(result, attempts, verdict);
-		log.warn("executor: move not verified", { tier, verdict, cancelled });
+		log.warn("executor: move not verified", { attempt: i, verdict, cancelled });
 		if (cancelled) {
 			return { ...result, ok: false, outcome: "aborted", reason: EXECUTOR.reasons.aborted, attempts };
 		}

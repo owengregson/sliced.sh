@@ -2,9 +2,10 @@
  * The virtual hand (§9.3–§9.5): one execution =
  * `rest → orientation → [scan hovers …] → [preview-select …] → decision pause
  * → approach(from) → press → grabWobble → travel(to) → [hesitate] → settle →
- * release → [promotion: look-delay → approach(picker) → click] → post-drop rest`
- * (click-click: approach → press/hold/release on from → inter-click gap →
- * approach → press/hold/release on to).
+ * release → [promotion: look-delay → approach(picker) → click] → post-drop rest`.
+ * A committed move is always a drag; click-to-move was removed end to end after
+ * the owner's live game (preview selections, §9.3a, still click — a preview is
+ * not a move).
  *
  * Everything runs on one absolute schedule anchored at `t0`: the exploration
  * planner fills the pre-touch window (`plan.window` phases when the timing
@@ -226,7 +227,6 @@ interface Rects {
 }
 
 interface DragTouch {
-	kind: "drag";
 	approach: PathPoint[];
 	pressAt: Pt;
 	preGrabMs: number;
@@ -238,22 +238,8 @@ interface DragTouch {
 	settleMs: number;
 }
 
-interface ClickTouch {
-	kind: "click";
-	approach: PathPoint[];
-	pressAt: Pt;
-	prePressMs: number;
-	holdMs: number;
-	releaseAt: Pt;
-	gapMs: number;
-	approach2: PathPoint[];
-	press2At: Pt;
-	prePress2Ms: number;
-	hold2Ms: number;
-	release2At: Pt;
-}
-
-type Touch = (DragTouch | ClickTouch) & { approachMs: number; touchMs: number };
+/** The committed touch: a drag, always, plus the budgets it was fitted to. */
+type Touch = DragTouch & { approachMs: number; touchMs: number };
 
 /** The coordinate space a touch was planned in: what the board-reflow guard compares against. */
 interface PlannedGeometry {
@@ -338,7 +324,7 @@ export class HandController {
 			| "previewedSquares"
 			| "pressedAny"
 		> => ({
-			tier: plan.style,
+			tier: EXECUTOR.committedTier,
 			endPoint: this.backend.position(),
 			elapsedMs: (this.dropAt ?? this.now()) - t0,
 			timeline: tl.entries,
@@ -500,8 +486,7 @@ export class HandController {
 			touch.approach,
 			guardOf(planned, (r) => this.guardBoard(r))
 		);
-		if (touch.kind === "drag") await this.drag(touch, rects, m, tl, plan, planned);
-		else await this.clickClick(touch, tl, planned);
+		await this.drag(touch, rects, m, tl, plan, planned);
 
 		if (plan.promotion) await this.promote(plan, timing, plan.promotion, m, tl);
 		await this.postDropRest(m, tl);
@@ -671,80 +656,44 @@ export class HandController {
 		);
 		const approachRaw = generatePath(cursor, press, rects.from, m, rng);
 		const pressAt = lastPoint(approachRaw, press);
-		if (plan.style === "drag") {
-			const preGrabMs = sampleRange(CLICK.preGrabPauseMs, rng);
-			const grabDelayMs = sampleRange(m.grabDelayMs, rng);
-			const wobble = grabWobble(pressAt, m, rng);
-			const wobbleEnd = lastPoint(wobble, pressAt);
-			const drop = samplePointInRect(
-				rects.to,
-				SAMPLING.release.sigmaFrac,
-				SAMPLING.release.innerFrac,
-				rng
-			);
-			const raw = generatePath(wobbleEnd, drop, rects.to, m, rng);
-			const travel = rescalePath(
-				raw,
-				Math.max(EXECUTOR.minTravelMs, timing.dragDurationMs),
-				m,
-				wobbleEnd
-			);
-			const travelEnd = lastPoint(travel, drop);
-			const hesitate = rng.chance(m.hesitationProb)
-				? grabWobble(travelEnd, m, rng).map((p) => ({
-						...p,
-						dtMs: sampleRange(PATH.hesitationWobbleDtMs, rng),
-					}))
-				: [];
-			const settleMs = sampleRange(m.releaseSettleMs, rng);
-			const touchMs =
-				preGrabMs + grabDelayMs + pathMs(wobble) + pathMs(travel) + pathMs(hesitate) + settleMs;
-			const fitted = this.fitApproach(approachRaw, touchMs, timing, m, cursor);
-			return {
-				kind: "drag",
-				approach: fitted.path,
-				pressAt,
-				preGrabMs,
-				grabDelayMs,
-				wobble,
-				travel,
-				drop,
-				hesitate,
-				settleMs,
-				approachMs: fitted.ms,
-				touchMs,
-			};
-		}
-		const prePressMs = sampleRange(CLICK.prePressPauseMs, rng);
-		const holdMs = sampleRange(m.pressHoldMs, rng);
-		const releaseAt = clickReleasePoint(pressAt, rng);
-		const gapMs = sampleRange(CLICK.interClickGapMs, rng);
-		const press2 = samplePointInRect(
+		const preGrabMs = sampleRange(CLICK.preGrabPauseMs, rng);
+		const grabDelayMs = sampleRange(m.grabDelayMs, rng);
+		const wobble = grabWobble(pressAt, m, rng);
+		const wobbleEnd = lastPoint(wobble, pressAt);
+		const drop = samplePointInRect(
 			rects.to,
-			SAMPLING.press.sigmaFrac,
-			SAMPLING.press.innerFrac,
+			SAMPLING.release.sigmaFrac,
+			SAMPLING.release.innerFrac,
 			rng
 		);
-		const approach2 = generatePath(releaseAt, press2, rects.to, m, rng);
-		const press2At = lastPoint(approach2, press2);
-		const prePress2Ms = sampleRange(CLICK.prePressPauseMs, rng);
-		const hold2Ms = sampleRange(m.pressHoldMs, rng);
-		const release2At = clickReleasePoint(press2At, rng);
-		const touchMs = prePressMs + holdMs + gapMs + pathMs(approach2) + prePress2Ms + hold2Ms;
+		const raw = generatePath(wobbleEnd, drop, rects.to, m, rng);
+		const travel = rescalePath(
+			raw,
+			Math.max(EXECUTOR.minTravelMs, timing.dragDurationMs),
+			m,
+			wobbleEnd
+		);
+		const travelEnd = lastPoint(travel, drop);
+		const hesitate = rng.chance(m.hesitationProb)
+			? grabWobble(travelEnd, m, rng).map((p) => ({
+					...p,
+					dtMs: sampleRange(PATH.hesitationWobbleDtMs, rng),
+				}))
+			: [];
+		const settleMs = sampleRange(m.releaseSettleMs, rng);
+		const touchMs =
+			preGrabMs + grabDelayMs + pathMs(wobble) + pathMs(travel) + pathMs(hesitate) + settleMs;
 		const fitted = this.fitApproach(approachRaw, touchMs, timing, m, cursor);
 		return {
-			kind: "click",
 			approach: fitted.path,
 			pressAt,
-			prePressMs,
-			holdMs,
-			releaseAt,
-			gapMs,
-			approach2,
-			press2At,
-			prePress2Ms,
-			hold2Ms,
-			release2At,
+			preGrabMs,
+			grabDelayMs,
+			wobble,
+			travel,
+			drop,
+			hesitate,
+			settleMs,
 			approachMs: fitted.ms,
 			touchMs,
 		};
@@ -792,34 +741,6 @@ export class HandController {
 			throw error;
 		}
 		await this.release(this.backend.position());
-		this.dropAt = this.now();
-	}
-
-	private async clickClick(
-		t: ClickTouch,
-		tl: Timeline,
-		planned: PlannedGeometry | null
-	): Promise<void> {
-		const guard = guardOf(planned, (r) => this.guardBoard(r));
-		tl.begin("grab");
-		this.setState("grabbing");
-		await this.pause(t.prePressMs, guard);
-		await this.press(t.pressAt, true);
-		await this.pause(t.holdMs);
-		await this.release(t.releaseAt);
-		tl.begin("drag");
-		this.setState("approaching");
-		await this.pause(t.gapMs, guard);
-		await this.travel(t.approach2, guard);
-		tl.begin("drop");
-		this.setState("dropping");
-		await this.pause(t.prePress2Ms, guard);
-		// Nothing is held between the two clicks: a board that has moved needs no escape release,
-		// only the second press withheld. The piece stays selected and no move is submitted.
-		guard?.();
-		await this.press(t.press2At, true);
-		await this.pause(t.hold2Ms);
-		await this.release(t.release2At);
 		this.dropAt = this.now();
 	}
 

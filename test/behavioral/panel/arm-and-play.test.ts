@@ -171,7 +171,6 @@ beforeEach(async () => {
 				scheduler: defaultScheduler,
 				persona: "balanced",
 				tcClass: "blitz",
-				style: "drag",
 				previewScale: 0,
 				gameSeed: "game-1",
 			});
@@ -298,11 +297,7 @@ describe("panel ↔ service worker: arm and play", () => {
 				kind: "toast",
 				level: "info",
 				key: TOAST_KEYS.played,
-				args: {
-					san: "e2e4",
-					elapsedMs: after.session.lastExecution?.elapsedMs ?? 0,
-					tier: "drag",
-				},
+				args: { san: "e2e4", elapsedMs: after.session.lastExecution?.elapsedMs ?? 0 },
 			},
 		]);
 		expect(snapshots.some((s) => s.session.hand === "moving")).toBe(true);

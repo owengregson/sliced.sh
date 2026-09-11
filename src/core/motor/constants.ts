@@ -110,9 +110,12 @@ export const SAMPLING = {
 	offBoardPx: [6, 40] as MsRange,
 } as const;
 
-/** Click mechanics (§9.3, §13.5). */
+/**
+ * Click mechanics (§9.3, §13.5). A *committed* move is always a drag, so there is no inter-click
+ * gap here any more; what is left serves the preview selections (§9.3a) and the drag's own
+ * pre-press pause.
+ */
 export const CLICK = {
-	interClickGapMs: [90, 220] as MsRange,
 	/** Real click drift: press and release within 2 px (integer ±1). */
 	releaseDriftPx: 1,
 	prePressPauseMs: [15, 60] as MsRange,
@@ -203,6 +206,43 @@ export const TC_MODULATION: Readonly<Record<TimeControlClass, Partial<MotorProfi
 	},
 	rapid: {},
 	classical: { travelSpeedScale: 1.3, hesitationProb: 0.2, releaseSettleMs: [30, 110] },
+};
+
+/**
+ * Appendix G §8 modulation of the *exploration* rates by time-control class. `TC_MODULATION` is a
+ * shallow override of the profile, so the nested `exploration` block cannot be modulated there
+ * without repeating every field of it; this table scales the rates instead, once (C1).
+ *
+ * The hover appetite is the behaviour that reads as the hand "touching pieces before it moves"
+ * (the owner's live game): measured over 420 moves of a simulated 3+0 game, the hand hovered a
+ * candidate piece on 75 % of the moves whose pre-touch window was long enough to explore at all
+ * — the slow, conspicuous moves a watcher notices — and on a saturated window at rapid the
+ * unscaled model hovers on 0.775 of them.
+ *
+ * **The rule these numbers come from: hovering must be something the hand sometimes does, never
+ * its default.** "Not its default" is `< 0.5` on the windows where the `hoverRampMs` ramp is
+ * saturated, evaluated at four reasonable moves — production's worst case at the shipped
+ * `Settings.engine.multiPv` of 4, since `n_reasonable` can never exceed the number of lines — where
+ * the planner's `f = 1 + hoverNSlope·(n−1)` is 1.6. That caps the scale at
+ * `0.5 / 1.6 / MOTOR_DEFAULTS.exploration.hoverProb` = 0.568, so rapid and classical take 0.55 —
+ * the rule's own ceiling, rounded down. A faster clock browses less still: a blitz or bullet hand
+ * goes straight for the piece. Realised rates on a 3500 ms window (3000 seeds, n = 4): bullet
+ * 0.269, blitz 0.391, rapid and classical 0.426.
+ *
+ * **The limit of that guarantee: it holds at the shipped MultiPV, not at every setting.** The
+ * n-term keeps rising, and a user who raises `multiPv` toward `LIMITS.multiPvMax` (8) takes the
+ * rapid rate back to where the complaint started — model 0.726 at n = 8, realised 0.59 on a
+ * 3500 ms window and ≈ 0.70 on longer ones. Raising the shipped default therefore means
+ * re-deriving this table, which `motor-profile.test.ts` makes a failing test rather than a
+ * judgement call. There is no behaviour dataset behind any of this (see `MOTOR_DEFAULTS`); the
+ * rule is the justification, and this table is the lever if the owner still sees the hand
+ * touching pieces.
+ */
+export const TC_EXPLORATION: Readonly<Record<TimeControlClass, { hoverProb: number }>> = {
+	bullet: { hoverProb: 0.35 },
+	blitz: { hoverProb: 0.5 },
+	rapid: { hoverProb: 0.55 },
+	classical: { hoverProb: 0.55 },
 };
 
 /** Mild persona modulation (Elo affects think time far more than motor time). */

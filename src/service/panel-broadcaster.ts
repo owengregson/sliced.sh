@@ -190,7 +190,7 @@ function toastFor(
 			level: "info",
 			toast: {
 				key: TOAST_KEYS.played,
-				args: { san: rec.chosen.san, elapsedMs: result.elapsedMs, tier: result.tier },
+				args: { san: rec.chosen.san, elapsedMs: result.elapsedMs },
 			},
 		};
 	if (result.outcome === "failed" && result.reason === EXECUTOR.reasons.unverified)

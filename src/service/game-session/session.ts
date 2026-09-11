@@ -43,6 +43,7 @@ import { applyMoves, legalMoves, uciToSan } from "@core/chess/san";
 import { sanToSpeech } from "@core/chess/san-speech";
 import { isSquare } from "@core/chess/squares";
 import { chromeLocalGet, chromeLocalSet } from "@core/chrome/storage";
+import { EXECUTOR } from "@core/constants/cdp";
 import { LIMITS } from "@core/constants/limits";
 import type { GamePortCommand, GamePortMessage } from "@core/constants/messages";
 import { LOCAL_KEYS } from "@core/constants/storage-keys";
@@ -1038,7 +1039,7 @@ export class GameSession implements SessionSource {
 				nowMs: this.now(),
 				engineReady: this.deps.engine !== null,
 				autoQueen: true,
-				inputMethod: settings.execution.style === "click" ? "click" : "drag",
+				inputMethod: EXECUTOR.committedTier,
 			});
 		} catch (error) {
 			log.warn("game-session: pipeline failed", { error: errorMessage(error) });
@@ -1804,7 +1805,7 @@ export class GameSession implements SessionSource {
 			targetElo: this.targetElo(),
 			profile: settings.strength.persona,
 			engineReady: this.deps.engine !== null,
-			inputMethod: settings.execution.style === "click" ? "click" : "drag",
+			inputMethod: EXECUTOR.committedTier,
 			autoQueen: true,
 			nowMs: this.now(),
 		};

@@ -185,6 +185,33 @@ describe("planPreview", () => {
 		expect(idle).toBeGreaterThan(20);
 	});
 
+	// `motor.pressHoldMs` lost its only assertion when the committed click-click form was removed
+	// (a drag holds the button for the whole travel instead). It is still live production behaviour
+	// here — the preview press and the deselect click are the two presses the page sees held — so
+	// the floor and ceiling are pinned where they are now sampled.
+	it("every preview press is held for a sampled `pressHoldMs`, deselect click included", () => {
+		const [lo, hi] = MOTOR_DEFAULTS.pressHoldMs;
+		let holds = 0;
+		let deselects = 0;
+		const seen = new Set<number>();
+		for (let seed = 0; seed < 300; seed++) {
+			const pv = planPreview(input(), createRng(seed));
+			if (!pv) continue;
+			holds += 1;
+			seen.add(pv.holdMs);
+			expect(pv.holdMs).toBeGreaterThanOrEqual(lo);
+			expect(pv.holdMs).toBeLessThanOrEqual(hi);
+			if (!pv.deselect) continue;
+			deselects += 1;
+			expect(pv.deselect.holdMs).toBeGreaterThanOrEqual(lo);
+			expect(pv.deselect.holdMs).toBeLessThanOrEqual(hi);
+		}
+		expect(holds).toBeGreaterThan(100);
+		expect(deselects).toBeGreaterThan(0);
+		// sampled per press, not a constant
+		expect(seen.size).toBeGreaterThan(holds / 2);
+	});
+
 	it("geometry: press on the piece, hover on a destination, release rules per style", () => {
 		for (let seed = 0; seed < 300; seed++) {
 			const pv = planPreview(input(), createRng(seed));

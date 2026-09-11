@@ -1,6 +1,13 @@
 // test/core/motor/motor-profile.test.ts — Appendix G §8 modulation.
 import { describe, expect, it } from "bun:test";
-import { MOTOR_DEFAULTS, PREVIEW, PROMOTION_LOOK_DELAY_MS } from "@core/motor/constants";
+import { LIMITS } from "@core/constants/limits";
+import {
+	EXPLORATION,
+	MOTOR_DEFAULTS,
+	PREVIEW,
+	PROMOTION_LOOK_DELAY_MS,
+	TC_EXPLORATION,
+} from "@core/motor/constants";
 import {
 	chooseStyle,
 	perGameProfile,
@@ -8,7 +15,9 @@ import {
 	profileFor,
 	sampleRange,
 } from "@core/motor/motor-profile";
+import type { TimeControlClass } from "@core/motor/types";
 import { createRng } from "@core/rng";
+import { DEFAULT_SETTINGS } from "@typedefs/settings";
 
 describe("profileFor", () => {
 	it("blitz is faster and sloppier than rapid; classical slower with more hesitation", () => {
@@ -37,6 +46,44 @@ describe("profileFor", () => {
 			6
 		);
 		expect(profileFor("balanced", "rapid", "capture").travelSpeedScale).toBe(normal.travelSpeedScale);
+	});
+	it("scales the hover appetite by the time control: a fast hand browses less", () => {
+		// The owner's live 3+0 game read as "it always touches pieces before it moves": the hover
+		// rate is the one exploration behaviour that puts the cursor on a piece the hand is not
+		// moving and holds it there. `TC_EXPLORATION` is the modulation; rapid is the unscaled model.
+		const hover = (tc: TimeControlClass): number =>
+			profileFor("balanced", tc, "normal").exploration.hoverProb;
+		// The rule the table is derived from: hovering is never the hand's *default*. On a window that
+		// saturates the ramp, at production's worst case — `n_reasonable` cannot exceed the line
+		// count, so the shipped `engine.multiPv` is the ceiling, and the planner's n-term there is
+		// 1 + hoverNSlope·(multiPv − 1) — the rate stays under one half for every class, which is
+		// what caps the scale at 0.5 / 1.6 / 0.55 = 0.568.
+		//
+		// The guarantee is bounded by that default, not universal: the n-term keeps rising, and at
+		// `LIMITS.multiPvMax` (8) the rapid model is 0.726 — back to the rate the owner complained
+		// about. Reading the bound from `DEFAULT_SETTINGS` rather than writing 4 is what makes
+		// raising the shipped default fail here, instead of silently voiding the rule.
+		const worstCaseN = DEFAULT_SETTINGS.engine.multiPv;
+		expect(worstCaseN).toBeLessThanOrEqual(LIMITS.multiPvMax);
+		const nTerm = 1 + EXPLORATION.hoverNSlope * (worstCaseN - 1);
+		for (const tc of ["bullet", "blitz", "rapid", "classical"] as const) {
+			expect(hover(tc) * nTerm).toBeLessThan(0.5);
+			expect(hover(tc)).toBeCloseTo(
+				MOTOR_DEFAULTS.exploration.hoverProb * TC_EXPLORATION[tc].hoverProb,
+				6
+			);
+		}
+		// every class is damped, and a faster clock browses less
+		expect(hover("rapid")).toBeLessThan(MOTOR_DEFAULTS.exploration.hoverProb);
+		expect(hover("classical")).toBeCloseTo(hover("rapid"), 6);
+		expect(hover("blitz")).toBeLessThan(hover("rapid"));
+		expect(hover("bullet")).toBeLessThan(hover("blitz"));
+		// nothing else in the exploration block is modulated by the class
+		for (const tc of ["bullet", "blitz", "rapid", "classical"] as const) {
+			const e = profileFor("balanced", tc, "normal").exploration;
+			expect(e.feintProb).toBe(MOTOR_DEFAULTS.exploration.feintProb);
+			expect(e.restStyle).toBe(MOTOR_DEFAULTS.exploration.restStyle);
+		}
 	});
 	it("sets the persona preview base and keeps persona modulation mild", () => {
 		for (const persona of ["cautious", "balanced", "aggressive", "blitz"] as const) {

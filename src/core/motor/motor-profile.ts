@@ -14,6 +14,7 @@ import {
 	PROFILE_NOISE,
 	PROMOTION_LOOK_DELAY_MS,
 	STYLE_MIX_PER_GAME,
+	TC_EXPLORATION,
 	TC_MODULATION,
 } from "./constants";
 import { sampleRange } from "./geometry";
@@ -32,7 +33,8 @@ const prob = (p: number): number => Math.min(1, Math.max(0, p));
 /**
  * The persona / time-control / move-kind profile of Appendix G §8: blitz is
  * faster and sloppier, classical slower with more hesitation, premoves ×0.7,
- * blitz captures ×0.8, promotions add the 150–400 ms look-delay.
+ * blitz captures ×0.8, promotions add the 150–400 ms look-delay. The exploration
+ * rates are modulated by the class too (`TC_EXPLORATION`): a fast hand browses less.
  */
 export function profileFor(
 	persona: PersonaId,
@@ -57,7 +59,11 @@ export function profileFor(
 		microCorrectionProb: prob(merged.microCorrectionProb * pm.microCorrection),
 		lookDelayMs: moveKind === "promotion" ? PROMOTION_LOOK_DELAY_MS : [0, 0],
 		styleMix: { ...merged.styleMix },
-		exploration: { ...merged.exploration, previewBase: PREVIEW.base[persona] },
+		exploration: {
+			...merged.exploration,
+			hoverProb: prob(merged.exploration.hoverProb * TC_EXPLORATION[tcClass].hoverProb),
+			previewBase: PREVIEW.base[persona],
+		},
 	};
 }
 

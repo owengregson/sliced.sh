@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { debuggerAttach, debuggerSend } from "@core/chrome/debugger";
 import { type BoardGeometryReply, CDP, EXECUTOR } from "@core/constants";
-import { CLICK, MOTOR_DEFAULTS, PATH, PROMOTION_LOOK_DELAY_MS } from "@core/motor/constants";
+import { MOTOR_DEFAULTS, PATH, PROMOTION_LOOK_DELAY_MS } from "@core/motor/constants";
 import type {
 	ExecutionPlan,
 	HandState,
@@ -112,7 +112,6 @@ function makePlan(over: Partial<ExecutionPlan> = {}, previewScale = 0): Executio
 		site: "chesscom",
 		from: { x: from.left + from.width / 2, y: from.top + from.height / 2, rect: from, square: "e2" },
 		to: { x: to.left + to.width / 2, y: to.top + to.height / 2, rect: to, square: "e4" },
-		style: "drag",
 		motor: MOTOR_DEFAULTS,
 		expected: { uci: "e2e4", premove: false },
 		exploration: {
@@ -447,37 +446,73 @@ describe("HandController preview selections and a reflow (§9.5 / §9.3a)", () =
 	});
 });
 
-describe("HandController click-click execution", () => {
-	it("emits exactly two press/release pairs (within 2 px each), an inter-click gap in [90, 220] ms, and no held moves", async () => {
-		const ctrl = makeController(3);
-		const plan = makePlan({ style: "click" });
-		const timing = makeTiming();
-		const result = await run(ctrl, plan, timing);
-		expect(result.outcome).toBe("executed");
-		expect(result.tier).toBe("click");
-		const cmds = commands();
-		const presses = cmds.filter((c) => c.type === "mousePressed");
-		const releases = cmds.filter((c) => c.type === "mouseReleased");
-		expect(presses).toHaveLength(2);
-		expect(releases).toHaveLength(2);
-		expect(inside(presses[0] as Cmd, plan.from.rect)).toBe(true);
-		expect(inside(presses[1] as Cmd, plan.to.rect)).toBe(true);
-		for (let i = 0; i < 2; i++) {
-			const p = presses[i] as Cmd;
-			const r = releases[i] as Cmd;
-			expect(Math.abs(p.x - r.x)).toBeLessThanOrEqual(CLICK.releaseDriftPx);
-			expect(Math.abs(p.y - r.y)).toBeLessThanOrEqual(CLICK.releaseDriftPx);
-			expect(r.at - p.at).toBeGreaterThanOrEqual(plan.motor.pressHoldMs[0] - 1);
+describe("HandController: the committed touch is always a drag", () => {
+	// The plan's `dragDurationMs` is what makes one drag slower than another; a hand whose travel
+	// is pinned to `EXECUTOR.minTravelMs` regardless of the plan would still pass every other
+	// assertion in this file while moving every piece at exactly the same speed — the robotic
+	// failure the timing-shape run cannot see, because its spread comes from the approach fit.
+	it("the held leg follows the plan's dragDurationMs, not a fixed floor", async () => {
+		const held: number[] = [];
+		for (const dragDurationMs of [EXECUTOR.minTravelMs, EXECUTOR.minTravelMs * 8]) {
+			sim.debugger.clearCommands();
+			const ctrl = makeController(9);
+			const timing = makeTiming({
+				thinkMs: 8000,
+				preMoveHoverMs: 4000,
+				dragDurationMs,
+				deadlineMs: START + 8000,
+				window: {
+					orientationMs: 4000,
+					scanMs: 0,
+					previewMs: 0,
+					decisionMs: 0,
+					approachMs: dragDurationMs,
+				},
+			});
+			const result = await run(ctrl, makePlan(), timing);
+			expect(result.outcome).toBe("executed");
+			const cmds = commands();
+			const press = cmds.find((c) => c.type === "mousePressed") as Cmd;
+			const release = cmds.find((c) => c.type === "mouseReleased") as Cmd;
+			held.push(release.at - press.at);
 		}
-		const firstRelease = releases[0] as Cmd;
-		const next = cmds[cmds.indexOf(firstRelease) + 1] as Cmd;
-		expect(next.type).toBe("mouseMoved");
-		expect(next.at - firstRelease.at).toBeGreaterThanOrEqual(CLICK.interClickGapMs[0]);
-		expect(next.at - firstRelease.at).toBeLessThanOrEqual(CLICK.interClickGapMs[1]);
-		for (const c of cmds.filter((c) => c.type === "mouseMoved"))
-			expect(c).toMatchObject({ button: "none", buttons: 0 });
-		expect((presses[0] as Cmd).at).toBeGreaterThanOrEqual(timing.preMoveHoverMs);
-		expect(Math.abs(result.elapsedMs - timing.thinkMs)).toBeLessThanOrEqual(60);
+		expect(held[0]).toBeGreaterThan(0);
+		// eight times the floor has to show up as a materially longer hold
+		expect(held[1] ?? 0).toBeGreaterThan((held[0] ?? 0) * 2);
+	});
+
+	// Click-to-move was removed end to end (the owner's live-game report): there is no plan field,
+	// no persona weighting and no retry tier that can make the hand commit a move with two clicks.
+	// What that means at the page is one press, one release, and the button *held* in between —
+	// asserted over seeded moves so no branch of the sampler can sneak a second pair back in.
+	it("one press, one release, the button held across the travel — on every seed", async () => {
+		for (const seed of [1, 3, 5, 7, 11, 13, 17, 19]) {
+			sim.debugger.clearCommands();
+			const ctrl = makeController(seed);
+			const plan = makePlan();
+			const timing = makeTiming();
+			const result = await run(ctrl, plan, timing);
+			expect(result.outcome).toBe("executed");
+			expect(result.tier).toBe("drag");
+			const cmds = commands();
+			const presses = cmds.filter((c) => c.type === "mousePressed");
+			const releases = cmds.filter((c) => c.type === "mouseReleased");
+			expect(presses).toHaveLength(1);
+			expect(releases).toHaveLength(1);
+			const press = presses[0] as Cmd;
+			const release = releases[0] as Cmd;
+			expect(inside(press, plan.from.rect)).toBe(true);
+			expect(inside(release, plan.to.rect)).toBe(true);
+			// the held leg: every move between the press and the release reports the button down
+			const held = cmds.filter(
+				(c) => c.type === "mouseMoved" && c.at >= press.at && c.at <= release.at
+			);
+			expect(held.length).toBeGreaterThan(0);
+			for (const c of held) expect(c.buttons).toBe(1);
+			// and nothing is dispatched with the button down once the piece is let go
+			for (const c of cmds.filter((c) => c.type === "mouseMoved" && c.at > release.at))
+				expect(c.buttons).toBe(0);
+		}
 	});
 });
 

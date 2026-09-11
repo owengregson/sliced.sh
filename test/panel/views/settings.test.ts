@@ -261,10 +261,10 @@ describe("settings view · rows", () => {
 		expect(h.patches.at(-1)).toEqual({ display: { pvCount: LIMITS.multiPvMax - 1 } });
 		// Chips and segments → enum patches.
 		click(q(row(h.root, "strength.persona"), '.sl-chip[data-value="aggressive"]'));
-		click(q(row(h.root, "execution.style"), '.sl-segment__item[data-value="click"]'));
+		click(q(row(h.root, "execution.backend"), '.sl-segment__item[data-value="native"]'));
 		await dom.tick(0);
 		expect(h.patches.at(-2)).toEqual({ strength: { persona: "aggressive" } });
-		expect(h.patches.at(-1)).toEqual({ execution: { style: "click" } });
+		expect(h.patches.at(-1)).toEqual({ execution: { backend: "native" } });
 		// Select → string patch; threads stepper below 1 means "auto".
 		const level = q<HTMLSelectElement>(row(h.root, "advanced.logLevel"), "select");
 		level.value = "debug";

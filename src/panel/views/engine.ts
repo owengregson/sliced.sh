@@ -425,20 +425,17 @@ export function createEngineView(deps: EngineViewDeps = {}): View {
 							? COPY.engineView.site
 							: COPY.engineView.none;
 				const execution = snapshot.session.lastExecution;
-				const style = settings.execution.style;
-				const styleLabel =
-					execution?.tier === "click" || (!execution && style === "click")
-						? COPY.execution.click
-						: execution?.tier === "drag" || style === "drag"
-							? COPY.execution.drag
-							: COPY.engineView.styleAuto;
+				// Every committed move is a drag (there is no click-to-move), so the row names the
+				// timing profile against the one input method the hand has.
 				valueCell("input").textContent = COPY.engineView.inputMode(
-					styleLabel,
+					COPY.execution.drag,
 					COPY.engineView.profiles[settings.timing.profile]
 				);
 				valueCell("last").textContent = execution
 					? COPY.engineView.lastAction(
-							execution.tier,
+							// Every committed move is a drag, and the word the user reads comes from
+							// `copy.ts` (C5) — never from the service worker's own `tier` value.
+							COPY.execution.drag,
 							seconds(execution.elapsedMs),
 							COPY.engineView.outcomes[execution.outcome]
 						)
