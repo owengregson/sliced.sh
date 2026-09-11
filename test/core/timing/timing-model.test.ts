@@ -469,6 +469,29 @@ describe("TimingModel.replan / observe", () => {
 		m.observe(plan.thinkMs, plan);
 		expect(m.state.eps).toBeCloseTo(before + Math.log(2), 6);
 	});
+	it("attributes late observations to the original ply and never to a new game", () => {
+		const { m, entries } = model();
+		m.startGame(meta);
+		const first = m.planMove(ctx({ ply: 20 }));
+		m.planMove(ctx({ ply: 22 }));
+		m.observe(first.thinkMs, first, { gameId: meta.gameId, ply: 20 });
+		expect(entries.find((e) => e.ply === 20)?.actualMs).toBe(first.thinkMs);
+		expect(entries.find((e) => e.ply === 22)?.actualMs).toBeNull();
+		m.startGame({ ...meta, gameId: "new-game" });
+		m.observe(first.thinkMs, first, { gameId: meta.gameId, ply: 20 });
+		expect(m.state.myThinkMs).toEqual([]);
+	});
+	it("reports manual acceleration without learning it as natural pace", () => {
+		const { m, entries } = model();
+		m.startGame(meta);
+		let plan = m.planMove(ctx());
+		for (let i = 0; i < 50 && plan.mode !== "normal"; i++) plan = m.planMove(ctx());
+		const before = m.state.eps;
+		m.observe(plan.thinkMs / 2, plan, { gameId: meta.gameId, ply: 24, adaptPace: false });
+		expect(m.state.eps).toBe(before);
+		expect(m.state.paceResiduals).toEqual([]);
+		expect(entries[entries.length - 1]?.actualMs).toBe(plan.thinkMs / 2);
+	});
 });
 
 describe("game independence (§8.4b item 4)", () => {

@@ -10,6 +10,7 @@ import {
 	type PanelSnapshot,
 	UI_TIMINGS,
 } from "@core/constants";
+import { TIMING_STATISTICS } from "@core/constants/telemetry";
 import type { LogEntry } from "@core/logger";
 import type { TypedMessage } from "@core/messaging/typed-messages";
 import { COPY } from "@panel/copy";
@@ -396,6 +397,43 @@ describe("engine view — executor", () => {
 });
 
 describe("engine view — timing rationale log", () => {
+	it("does not restore pre-clear history when the initial export finishes late", async () => {
+		let resolveHistory: (rows: TimingLogEntry[]) => void = () => {};
+		store.responses[MSG.PANEL_EXPORT_TIMING_LOG] = new Promise<TimingLogEntry[]>((resolve) => {
+			resolveHistory = resolve;
+		});
+		const root = await mountView(engineSnapshot());
+		click(root.querySelector('[data-cmd="clear"]') as HTMLElement);
+		resolveHistory([timingEntry()]);
+		await dom.tick(0);
+		expect(root.querySelectorAll(".sl-engine__log-row")).toHaveLength(0);
+		store.port({ kind: "timingLog", entry: timingEntry({ ply: 16 }) });
+		await dom.tick(0);
+		expect(root.querySelectorAll(".sl-engine__log-row")).toHaveLength(1);
+	});
+	it("shows the actual timing source, fallback reason and effective context", () => {
+		const lines = rationaleRows(
+			timingEntry({
+				model: { head: "v1-parametric", requestedHead: "chessmimic", fallbackReason: "timeout" },
+				targetElo: 1650,
+				opponentClockMs: 120_000,
+				rationale: ["clock cap"],
+			})
+		)[0]?.lines;
+		expect(lines).toContain("model v1-parametric");
+		expect(lines).toContain("fallback: timeout");
+		expect(lines).toContain("target 1650 · opponent 120.0s");
+		expect(lines).toContain("clock cap");
+	});
+	it("replaces a streamed plan with its execution receipt instead of duplicating the move", async () => {
+		store.responses[MSG.PANEL_EXPORT_TIMING_LOG] = [timingEntry()];
+		const root = await mountView(engineSnapshot());
+		store.port({ kind: "timingLog", entry: timingEntry({ actualMs: 4400 }) });
+		await dom.tick(0);
+		expect(
+			[...root.querySelectorAll<HTMLElement>(".sl-engine__log-row")].map((r) => r.dataset.kind)
+		).toEqual(["plan", "exec", "verify"]);
+	});
 	it("rationaleRows maps an entry to plan / exec / verify / warn rows", () => {
 		const planned = rationaleRows(timingEntry());
 		expect(planned.map((r) => r.kind)).toEqual(["plan"]);
@@ -506,11 +544,23 @@ describe("engine view — timing rationale log", () => {
 describe("engine view — session", () => {
 	it("renders the session line from stats and Reset session dispatches", async () => {
 		const s = engineSnapshot();
-		s.stats = { games: 6, moves: 210, avgThinkMs: 3100 };
+		s.stats = {
+			games: 6,
+			moves: 210,
+			avgThinkMs: 3100,
+			timingVersion: TIMING_STATISTICS.version,
+			timingSamples: 20,
+		};
 		const root = await mountView(s);
 		expect(text(root, ".sl-engine__session")).toBe(COPY.engineView.session(6, 210, "3.1"));
 		click(root.querySelector('[data-cmd="reset"]') as HTMLElement);
 		expect(store.dispatched.at(-1)).toBe(MSG.PANEL_RESET_SESSION);
+	});
+	it("does not present the legacy hand-only average as a measured turn time", async () => {
+		const s = engineSnapshot();
+		s.stats = { games: 6, moves: 210, avgThinkMs: 2100 };
+		const root = await mountView(s);
+		expect(text(root, ".sl-engine__session")).toBe(COPY.engineView.session(6, 210, null));
 	});
 });
 

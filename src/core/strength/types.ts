@@ -46,10 +46,7 @@ export interface SelectionContext {
 	engineBestmove?: string;
 	/** `Settings.strength.blunderScale`. */
 	blunderScale: number;
-	/**
-	 * §7.5 quality guard: a search shallower than `SEARCH_BUDGET.shallowDepth` is already
-	 * "human-ish", so the session passes the top two lines with τ halved. Default 1.
-	 */
+	/** Optional explicit temperature adjustment; search depth does not alter it. Default 1. */
 	tauScale?: number;
 	rng: Rng;
 	state: SelectionState;

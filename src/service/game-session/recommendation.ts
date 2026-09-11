@@ -4,20 +4,19 @@
  *
  *   bookPolicy → engine.analyse → selectMove → timingModel.planMove
  *
- * The book and the engine run **in parallel** (§7.3 item 3: "the engine
+ * The book, timing inference, and engine run **in parallel** (§7.3 item 3: "the engine
  * searches in parallel regardless"); the trap check that §7.3 needs the lines
  * for is applied here once both have answered (`lineFacts` + `isTrap`), so the
- * book never has to wait for the search. Everything but the engine call is a
- * pure function of its inputs.
+ * book never has to wait for the search. Timing inference is bounded by the head’s deadline and bypassed for clock races.
  *
  * Budget (§6.4 / §7.5): **plan-independent**, derived from the time control and
  * the position — `SEARCH_BUDGET.moveMs[tc]` (§6.4's "plan-independent
  * 400–1500 ms"), bounded by §7.5's `0.6 · plannedThinkMs` so the search still
  * finishes before the hand acts, bounded again by a fraction of the clock we
  * have left, and collapsed to the floor in a position with one legal move.
- * `depthCap` follows the speed class, `K` the budget, and the shallow-device
- * guard retries only within the original wall-clock budget and then falls back to the top two lines with
- * τ halved.
+ * `depthCap` follows the speed class, while candidate breadth follows both the
+ * budget and the active target. A shallow search retries only within the original
+ * wall-clock budget and retains the available candidates for rating-sensitive selection.
  *
  * The old budget was `0.6 · plannedThinkMs` alone, which tied the search to the
  * wait: every `untimed` game (i.e. every game, before the time control was
@@ -35,6 +34,7 @@ import { phase as phaseOf } from "@core/chess/phase";
 import { legalMoves, parseUci, uciToSan } from "@core/chess/san";
 import { LIMITS } from "@core/constants/limits";
 import { SEARCH_BUDGET } from "@core/constants/search";
+import { requestEloForTarget } from "@core/engine/options";
 import type { AnalysisHandle, AnalysisRequest, AnalysisResult } from "@core/engine/types";
 import { log } from "@core/logger";
 import type { Rng } from "@core/rng";
@@ -44,6 +44,7 @@ import { conversionPool, isImmediateMate } from "@core/strength/conversion";
 import { effectiveElo } from "@core/strength/elo-map";
 import { selectMove } from "@core/strength/move-selector";
 import { avoidRepetition, repetitionRisk } from "@core/strength/repetition";
+import { usesNativeSelection } from "@core/strength/selection-mode";
 import type { SelectionContext, SelectionState } from "@core/strength/types";
 import { budgetController, scheduleAlloc } from "@core/timing/budget";
 import { TIMING_CONSTANTS } from "@core/timing/constants";
@@ -130,6 +131,10 @@ export interface SearchBudgetInput {
 	legalMoves: number;
 	/** §7.5's bound: the think time the model is expected to plan (`estimatedThinkMs`). */
 	plannedThinkMs: number;
+	/** Active opponent-matched target, when different from the saved fixed target. */
+	targetElo?: number;
+	/** Form only decides whether Hybrid uses native selection; sampling breadth retains its target. */
+	form?: number;
 }
 
 /**
@@ -163,8 +168,16 @@ export function searchBudget(input: SearchBudgetInput, settings: Settings): Sear
 			: movetimeMs < SEARCH_BUDGET.multiPvMediumMs
 				? SEARCH_BUDGET.multiPvMedium
 				: SEARCH_BUDGET.multiPvLarge;
-	// §6.4: never below the user's MultiPV (the panel shows that many lines).
-	const multiPv = Math.min(SEARCH_BUDGET.multiPvLarge, Math.max(adaptive, settings.engine.multiPv));
+	const targetElo = input.targetElo ?? settings.strength.targetElo;
+	const sampling = !usesNativeSelection(
+		settings.strength.selectionMode,
+		effectiveElo(targetElo, input.form ?? 0)
+	);
+	const breadth = sampling
+		? (SEARCH_BUDGET.selectionCandidates.find((band) => targetElo <= band.maxElo)?.count ?? 0)
+		: 0;
+	const wanted = Math.max(adaptive, settings.engine.multiPv, breadth);
+	const multiPv = legalMoves > 0 ? Math.min(wanted, legalMoves) : wanted;
 	return { movetimeMs, depthCap, multiPv };
 }
 
@@ -178,6 +191,8 @@ export interface OwnMoveBudgetInput {
 	/** `Persona.tau` — the reserve scales with it. */
 	tau: number;
 	budgetUsedRatio: number;
+	targetElo?: number;
+	form?: number;
 }
 
 /**
@@ -202,7 +217,14 @@ export function ownMoveBudget(input: OwnMoveBudgetInput, settings: Settings): Se
 		settings
 	);
 	const budget = searchBudget(
-		{ tc, myClockMs: input.myClockMs, legalMoves: legalMoves(input.fen).length, plannedThinkMs },
+		{
+			tc,
+			myClockMs: input.myClockMs,
+			legalMoves: legalMoves(input.fen).length,
+			plannedThinkMs,
+			targetElo: input.targetElo ?? settings.strength.targetElo,
+			form: input.form ?? 0,
+		},
 		settings
 	);
 	const us = loadPosition(input.fen)?.turn();
@@ -274,6 +296,25 @@ function usableLines(lines: readonly EvalLine[]): EvalLine[] {
 	return lines.filter((l) => l.pvUci[0] !== undefined && l.pvUci[0] !== "");
 }
 
+/** A quick engine/cache answer keeps the original short inference window, never an extra search. */
+async function finishTimingPreparation(
+	pending: Promise<void>,
+	remainingMs: number,
+	signal?: AbortSignal
+): Promise<void> {
+	if (remainingMs <= 0 || signal?.aborted) return;
+	await new Promise<void>((resolve) => {
+		const finish = () => {
+			clearTimeout(timer);
+			signal?.removeEventListener("abort", finish);
+			resolve();
+		};
+		const timer = setTimeout(finish, remainingMs);
+		signal?.addEventListener("abort", finish, { once: true });
+		pending.then(finish, finish);
+	});
+}
+
 export class RecommendationPipeline {
 	private readonly engine: PipelineEngine;
 	private readonly timing: TimingModel;
@@ -294,7 +335,7 @@ export class RecommendationPipeline {
 	async run(input: RecommendationInput): Promise<RecommendationOutcome | null> {
 		const { snapshot, settings } = input;
 		const myColor = snapshot.myColor;
-		if (myColor === null) return null;
+		if (myColor === null || input.signal?.aborted) return null;
 		const [baseSec, incSec] = tcSeconds(snapshot.timeControl);
 		const myClockMs = snapshot.clocks[myColor].ms;
 		const oppClockMs = snapshot.clocks[myColor === "w" ? "b" : "w"].ms;
@@ -307,29 +348,19 @@ export class RecommendationPipeline {
 				timeControl: snapshot.timeControl,
 				tau: input.tau,
 				budgetUsedRatio: input.budgetUsedRatio,
+				targetElo: input.targetElo,
+				form: input.form,
 			},
 			settings
 		);
-
-		// §7.3 item 3 + §3.2 step 1: the book and the engine run at the same time.
-		const bookPending = this.bookMove(input);
-		const analysis = await this.analyse(snapshot, budget, input.signal, input.history);
-		if (input.signal?.aborted) return null;
-		const book = await bookPending;
-
-		const lines = usableLines(analysis?.final.lines ?? []);
-		const depth = analysis?.final.depth ?? 0;
-		const shallow = depth > 0 && depth < SEARCH_BUDGET.shallowDepth;
-		const chosen = this.choose(input, lines, book, analysis, shallow);
-		if (!chosen) return null;
 
 		const timingCtx: TimingContext = {
 			fen: snapshot.fen,
 			ply: snapshot.ply,
 			moves: [...input.moves],
 			myColor,
-			chosenMove: chosen.uci,
-			lines,
+			chosenMove: "",
+			lines: [],
 			evalBeforeOppMove: this.timing.state.lastEvalOurPov,
 			expectedOppReply: input.expectedOppReply,
 			myClockMs,
@@ -346,10 +377,60 @@ export class RecommendationPipeline {
 			autoQueen: input.autoQueen,
 			nowMs: input.nowMs,
 		};
+		// Timing inference only needs position/history/clocks; overlap its bounded
+		// preparation with the search, then fill the chosen move before sampling.
+		const preparation = new AbortController();
+		const preparationStarted = this.now();
+		const abortPreparation = () => preparation.abort();
+		input.signal?.addEventListener("abort", abortPreparation, { once: true });
+		const timingPending = this.timing.prepare(timingCtx, {
+			budgetMs: budget.movetimeMs,
+			signal: preparation.signal,
+		});
+
+		// §7.3 item 3 + §3.2 step 1: the book and the engine run at the same time.
+		const bookPending = this.bookMove(input);
+		let analysis: AnalysisResult | null;
+		try {
+			analysis = await this.analyse(snapshot, budget, input.targetElo, input.signal, input.history);
+		} finally {
+			// Cached analysis may return before warmed inference. Keep only the original
+			// short inference window; searches already beyond it never wait any longer.
+			await finishTimingPreparation(
+				timingPending,
+				Math.min(TIMING_CONSTANTS.chessmimic.inferenceBudgetMs, budget.movetimeMs) -
+					(this.now() - preparationStarted),
+				input.signal
+			);
+			preparation.abort();
+			input.signal?.removeEventListener("abort", abortPreparation);
+			await timingPending;
+		}
+		if (input.signal?.aborted) return null;
+		const book = await bookPending;
+
+		const lines = usableLines(analysis?.final.lines ?? []);
+		const depth = analysis?.final.depth ?? 0;
+		const chosen = this.choose(input, lines, book, analysis);
+		if (!chosen) return null;
+		if (analysis && !analysis.final.complete && chosen.source !== "book") {
+			delete chosen.cpLoss;
+			chosen.quality = {
+				kind: "search",
+				eligible: false,
+				reason: "incomplete",
+				depth,
+				candidates: lines.length,
+			};
+		}
+
+		if (input.signal?.aborted) return null;
+		timingCtx.chosenMove = chosen.uci;
+		timingCtx.lines = lines;
 		if (book !== null) timingCtx.inBook = true;
 		const plan = this.timing.planMove(timingCtx);
-		// Appendix D §2 feature 11, *not* the MultiPV count: `K` is a function of the time budget
-		// (§7.5's 3/6/8 ladder), so reporting it as `n_reasonable` would put a driver of the think
+		// Appendix D §2 feature 11, *not* the MultiPV count: `K` depends on target and time budget,
+		// so reporting it as `n_reasonable` would put a driver of the think
 		// time on the complexity axis and make `report.py`'s `ln(hold) vs ln(n_reasonable)`
 		// correlation spurious. `planMove` has just computed the real one.
 		const nReasonable = Math.max(1, plan.features.n_reasonable ?? 1);
@@ -397,11 +478,12 @@ export class RecommendationPipeline {
 	private async analyse(
 		snapshot: PositionSnapshot,
 		budget: SearchBudget,
+		targetElo: number,
 		signal: AbortSignal | undefined,
 		history?: PositionHistory
 	): Promise<AnalysisResult | null> {
 		const started = this.now();
-		const first = await this.runSearch(snapshot, budget, signal, history);
+		const first = await this.runSearch(snapshot, budget, targetElo, signal, history);
 		if (!first || signal?.aborted) return first;
 		if (first.final.depth >= SEARCH_BUDGET.retryDepth) return first;
 		const remaining = budget.movetimeMs - Math.max(this.now() - started, first.final.timeMs);
@@ -416,6 +498,7 @@ export class RecommendationPipeline {
 				...budget,
 				movetimeMs: remaining,
 			},
+			targetElo,
 			signal,
 			history
 		);
@@ -425,6 +508,7 @@ export class RecommendationPipeline {
 	private async runSearch(
 		snapshot: PositionSnapshot,
 		budget: SearchBudget,
+		targetElo: number,
 		signal: AbortSignal | undefined,
 		history?: PositionHistory
 	): Promise<AnalysisResult | null> {
@@ -437,7 +521,7 @@ export class RecommendationPipeline {
 			limit: { movetimeMs: Math.round(budget.movetimeMs), depth: budget.depthCap },
 			priority: "move",
 		};
-		const elo = this.engine.engineElo();
+		const elo = requestEloForTarget(targetElo);
 		if (elo !== undefined) req.elo = elo;
 		let handle: AnalysisHandle;
 		try {
@@ -461,14 +545,13 @@ export class RecommendationPipeline {
 
 	/**
 	 * §3.2 step 2. The book wins unless the trap check (§7.3, `E ≥ 2000`) vetoes it
-	 * with the engine's lines; otherwise `selectMove`, with the §7.5 shallow guard.
+	 * with the engine's lines; otherwise `selectMove` uses the available searched candidates.
 	 */
 	private choose(
 		input: RecommendationInput,
 		lines: EvalLine[],
 		bookMove: ChosenMove | null,
-		analysis: AnalysisResult | null,
-		shallow: boolean
+		analysis: AnalysisResult | null
 	): ChosenMove | null {
 		const E = effectiveElo(input.targetElo, input.form);
 		let book = bookMove;
@@ -496,8 +579,7 @@ export class RecommendationPipeline {
 						},
 					]
 				: lines;
-		const guarded =
-			book || shallow ? avoidRepetition(guardLines, input.snapshot.fen, input.history) : null;
+		const guarded = book ? avoidRepetition(guardLines, input.snapshot.fen, input.history) : null;
 		if (book && guarded?.avoided && input.history && repetitionRisk(input.history, book.uci) > 0)
 			book = null;
 		if (book) {
@@ -508,11 +590,9 @@ export class RecommendationPipeline {
 				loss: facts.lossLowerBound,
 			});
 		}
-		// A viable escape found at rank three or later must survive the shallow-device truncation.
-		const pool =
-			shallow && !guarded?.avoided && !converting && !mateAvailable
-				? lines.slice(0, SEARCH_BUDGET.shallowLines)
-				: lines;
+		// Short searches keep their alternatives. Restricting to the top two and halving
+		// sampling noise made fast moves substantially stronger than the requested rating.
+		const pool = lines;
 		if (pool.length === 0) {
 			const fen = input.snapshot.fen;
 			const color = input.snapshot.myColor;
@@ -537,7 +617,13 @@ export class RecommendationPipeline {
 				...parts,
 				source: "sampled",
 				rankInLines: 0,
-				cpLoss: 0,
+				quality: {
+					kind: "search",
+					eligible: false,
+					reason: "unknown",
+					depth: analysis?.final.depth ?? 0,
+					candidates: 0,
+				},
 				rationale: [
 					engineMove === uci
 						? "search: legal bestmove before a complete PV"
@@ -573,7 +659,6 @@ export class RecommendationPipeline {
 		if (last !== undefined) ctx.lastMove = last;
 		const bestmove = analysis?.bestmove;
 		if (bestmove) ctx.engineBestmove = bestmove;
-		if (shallow) ctx.tauScale = SEARCH_BUDGET.shallowTauScale;
 		try {
 			return selectMove(pool, ctx);
 		} catch (error) {

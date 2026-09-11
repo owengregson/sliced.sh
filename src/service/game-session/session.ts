@@ -59,6 +59,7 @@ import type { GamePortCommand, GamePortMessage } from "@core/constants/messages"
 import { LOCAL_KEYS } from "@core/constants/storage-keys";
 import { TELEMETRY_BANDS } from "@core/constants/telemetry";
 import { TIMINGS, type TimingProfile } from "@core/constants/timings";
+import { requestEloForTarget } from "@core/engine/options";
 import type { AnalysisHandle, AnalysisRequest } from "@core/engine/types";
 import { log } from "@core/logger";
 import { opponentExplorationCandidates } from "@core/motor/opponent-candidates";
@@ -69,6 +70,7 @@ import { createSelectionState } from "@core/strength/move-selector";
 import { createFormLatent, type FormLatent } from "@core/strength/persona";
 import type { PremoveReason } from "@core/strength/premove";
 import { isPremoveSpeed, isQueueableCandidate, premoveCandidate } from "@core/strength/premove";
+import { type QualityContext, qualityCohortKey } from "@core/strength/session-quality";
 import type { SelectionState } from "@core/strength/types";
 import { TIMING_CONSTANTS } from "@core/timing/constants";
 import { tcClass } from "@core/timing/features";
@@ -149,7 +151,13 @@ function queueStatsWrite(fold: (stats: SessionStats) => SessionStats): Promise<v
  * move and pull `top1Pct` *and* `acpl` down in exactly the speed classes §7.4 premoves in.
  */
 function isScoredMove(chosen: ChosenMove): boolean {
-	return chosen.source !== "premove" && chosen.rankInLines >= TOP_LINE_RANK;
+	return (
+		chosen.quality?.eligible === true &&
+		chosen.source !== "premove" &&
+		chosen.rankInLines >= TOP_LINE_RANK &&
+		Number.isFinite(chosen.cpLoss) &&
+		(chosen.cpLoss ?? -1) >= 0
+	);
 }
 
 /**
@@ -219,7 +227,7 @@ export interface GameSessionDeps {
 	debugger: Pick<DebuggerManager, "isAttached" | "detach" | "onDetached">;
 	focus: Pick<FocusGate, "positionArrived" | "onEdge" | "snapshot">;
 	ownership: Pick<HandOwnership, "realPointerCount">;
-	timingLog: Pick<TimingLogWriter, "append" | "upsert" | "markActual" | "attachTelemetry">;
+	timingLog: Pick<TimingLogWriter, "append" | "upsert" | "markActual" | "attachTelemetry" | "flush">;
 	autoQueue: Pick<AutoQueue, "schedule" | "cancel" | "view" | "observedGame">;
 	createExecutor: ExecutorFactory;
 	/**
@@ -359,6 +367,8 @@ export class GameSession implements SessionSource {
 	private game: GameMeta | null = null;
 	private snapshot: PositionSnapshot | null = null;
 	private rec: Recommendation | null = null;
+	private readonly qualityContexts = new WeakMap<ChosenMove, QualityContext>();
+	private readonly movePositions = new WeakMap<ChosenMove, { gameId: string; ply: number }>();
 	private recNReasonable = 1;
 	/**
 	 * The recommendation whose mark is currently drawn through the bridge's own SVG overlay
@@ -944,10 +954,11 @@ export class GameSession implements SessionSource {
 		if (this.state === "game-over") return this.finishingGame ?? Promise.resolve();
 		if (!this.apply("gameEnded")) return Promise.resolve();
 		this.cancelInFlight();
+		const executionSettled = this.executorHandle?.whenIdle() ?? Promise.resolve();
 		this.rec = null;
 		this.forgetPremove("the game ended");
 		this.clearBoardMarks();
-		this.finishingGame = replayed ? Promise.resolve() : this.finishGame(result);
+		this.finishingGame = replayed ? Promise.resolve() : this.finishGame(result, executionSettled);
 		this.deps.notify();
 		return this.finishingGame;
 	}
@@ -1294,6 +1305,8 @@ export class GameSession implements SessionSource {
 			{
 				fen: predicted,
 				ply: snapshot.ply + 1,
+				targetElo: this.targetElo(),
+				form: this.form.value,
 				myClockMs: this.remainingClockMs(snapshot, myColor),
 				oppClockMs: this.remainingClockMs(snapshot, myColor === "w" ? "b" : "w"),
 				timeControl: this.currentTimeControl(),
@@ -1310,7 +1323,7 @@ export class GameSession implements SessionSource {
 			limit: { movetimeMs: Math.round(budget.movetimeMs), depth: budget.depthCap },
 			priority: "ponder",
 		};
-		const elo = engine.engineElo();
+		const elo = requestEloForTarget(this.targetElo());
 		if (elo !== undefined) request.elo = elo;
 		try {
 			const handle = engine.analyse(request);
@@ -1374,12 +1387,18 @@ export class GameSession implements SessionSource {
 		await this.ponderer?.stop();
 		const settings = this.deps.getSettings();
 		const expected = this.ponderer?.expectedReply(snapshot.fen) ?? null;
+		const targetElo = this.targetElo();
+		const qualityContext: QualityContext = {
+			gameId: snapshot.gameId,
+			targetElo,
+			cohortKey: qualityCohortKey(targetElo, settings.strength, this.currentTimeControl()),
+		};
 		let outcome: RecommendationOutcome | null = null;
 		try {
 			outcome = await pipeline.run({
 				snapshot,
 				settings,
-				targetElo: this.targetElo(),
+				targetElo,
 				persona: settings.strength.persona,
 				form: this.form.value,
 				tau: timing.persona.tau,
@@ -1412,6 +1431,8 @@ export class GameSession implements SessionSource {
 			return;
 		}
 		this.rec = outcome.rec;
+		this.qualityContexts.set(outcome.rec.chosen, qualityContext);
+		this.movePositions.set(outcome.rec.chosen, { gameId: snapshot.gameId, ply: snapshot.ply });
 		this.recNReasonable = outcome.nReasonable;
 		this.apply("recommended");
 		this.postHighlight(outcome.rec);
@@ -1733,7 +1754,7 @@ export class GameSession implements SessionSource {
 						// The same strength as every other search this session issues (the ponder sets
 						// it too). Without it these results are keyed at a different strength from the
 						// own-move search that would reuse them, so they could never be a cache hit.
-						const elo = engine.engineElo();
+						const elo = requestEloForTarget(this.targetElo());
 						if (elo !== undefined) request.elo = elo;
 						const handle = engine.analyse(request);
 						const result = await handle.result;
@@ -1828,6 +1849,7 @@ export class GameSession implements SessionSource {
 			fen: snapshot.fen,
 		};
 		this.rec = rec;
+		this.movePositions.set(rec.chosen, { gameId: snapshot.gameId, ply: snapshot.ply });
 		this.recNReasonable = 1;
 		// §8.6 wants a row per *played* move, and a premove never goes through `planMove` (it was
 		// decided during the opponent's turn), so the session writes its row itself — otherwise
@@ -2232,14 +2254,9 @@ export class GameSession implements SessionSource {
 	 * saw, because the site played our move in it.
 	 */
 	private recordQueuedPremove(entry: PremoveEntry, result: ExecutionResult): void {
-		// `TimingModel.observe` is deliberately *not* called. It writes `actualMs` onto the entry it
-		// keyed under its own `state.ply` — the ply of the last `planMove` — and a premove's plan is
-		// hand-built and never went through `planMove`, so the ply is still our previous *searched*
-		// move's and the write lands on that row. Measured by the review: a scored row's `actualMs`
-		// overwritten with the premove drag's elapsed. The session's own `myThinkMs` (below) is what
-		// the features read, so nothing is lost. (`recordMove` has the same shape on the reactive
-		// premove path — pre-existing, and fixing it properly needs `src/core/timing/**`.)
-		this.myThinkMs.push(result.elapsedMs);
+		// The gesture happened before the opponent moved, and the two accepted plies may arrive
+		// in one snapshot. Keep its physical duration without inventing a turn-to-acceptance time
+		// or teaching the timing model that entry gesture as an ordinary own-turn observation.
 		const gameId = this.game?.gameId ?? "";
 		this.deps.timingLog.append(
 			buildTimingLogEntry({
@@ -2255,14 +2272,14 @@ export class GameSession implements SessionSource {
 				persona: this.deps.getSettings().strength.persona,
 			})
 		);
-		this.deps.timingLog.markActual(gameId, entry.ply, result.elapsedMs);
+		this.deps.timingLog.markActual(gameId, entry.ply, null, result.elapsedMs);
 		if (entry.record) this.deps.timingLog.attachTelemetry(gameId, entry.ply, entry.record);
 		void this.updateStats((stats) =>
 			foldMove(stats, {
-				thinkMs: result.elapsedMs,
 				scored: isScoredMove(entry.chosen),
 				top1: entry.chosen.rankInLines === TOP_LINE_RANK,
-				cpLoss: entry.chosen.cpLoss,
+				cpLoss: entry.chosen.cpLoss ?? Number.NaN,
+				qualityContext: this.qualityContexts.get(entry.chosen),
 			})
 		);
 	}
@@ -2474,6 +2491,7 @@ export class GameSession implements SessionSource {
 				.catch((error: unknown) => log.warn("game-session: ucinewgame failed", error));
 			this.ponderer?.dispose();
 			this.ponderer = new PonderController({
+				getTargetElo: () => this.targetElo(),
 				engine,
 				scheduler: this.scheduler,
 				now: this.now,
@@ -2502,9 +2520,8 @@ export class GameSession implements SessionSource {
 		});
 	}
 
-	private async finishGame(result: GameResult): Promise<void> {
+	private async finishGame(result: GameResult, executionSettled: Promise<void>): Promise<void> {
 		const settings = this.deps.getSettings();
-		const targetElo = this.targetElo();
 		const finishedGameId = this.game?.gameId ?? null;
 		// §4.4: the auto-queue asks the *page* for a new game, so the switch gates it like the rest.
 		if (this.mayAct() && settings.automation.autoQueue)
@@ -2514,7 +2531,15 @@ export class GameSession implements SessionSource {
 				settings.automation
 			);
 		// Statistics must not delay queuing or enqueue an obsolete game after a slow storage write.
-		await this.updateStats((stats) => foldGame(stats, targetElo, finishedGameId));
+		// Cancellation may be verifying a move that already landed. Its terminal event records
+		// the final sample before the serialized game fold; matchmaking need not wait for it.
+		await executionSettled;
+		await this.updateStats((stats) => foldGame(stats, finishedGameId));
+		try {
+			await this.deps.timingLog.flush();
+		} catch (error) {
+			log.warn("game-session: timing log could not be saved", { error: errorMessage(error) });
+		}
 		log.info("game-session: game over", { tabId: this.deps.tabId, result });
 	}
 
@@ -2672,17 +2697,27 @@ export class GameSession implements SessionSource {
 		// this move, so it is one of the pieces it saw selected (Fix F).
 		const alsoPressed = current ? this.droppedPremoveFrom : null;
 		if (current) this.droppedPremoveFrom = null;
-		if (timing) timing.observe(result.elapsedMs, rec.plan);
-		this.myThinkMs.push(result.elapsedMs);
+		const submittedAt =
+			result.submittedAt ??
+			(result.startedAt === undefined
+				? (result.at ?? this.now())
+				: result.startedAt + result.elapsedMs);
+		// The plan starts before search/setup. Feeding only the remaining hand window back into
+		// it makes an on-time move look too fast and drives subsequent plans shorter.
+		const thinkMs = Math.max(result.elapsedMs, submittedAt - rec.computedAt);
+		const qualityContext = this.qualityContexts.get(rec.chosen);
+		const origin = this.movePositions.get(rec.chosen);
+		const gameId = origin?.gameId ?? qualityContext?.gameId ?? this.game?.gameId ?? "";
+		const original = parseFen(rec.fen);
+		const ply =
+			origin?.ply ?? (current ? snapshot?.ply : undefined) ?? (original ? plyOf(original) : 0);
+		if (timing)
+			timing.observe(thinkMs, rec.plan, { gameId, ply, adaptPace: result.paceOverride !== true });
+		if (gameId === this.game?.gameId) this.myThinkMs.push(thinkMs);
 		// A late confirmation belongs to its original ply, never the new position's open
 		// telemetry window. Keep its timing/statistics without closing the newer window.
-		if (!current && this.game) {
-			const original = parseFen(rec.fen);
-			if (original)
-				this.deps.timingLog.markActual(this.game.gameId, plyOf(original), result.elapsedMs);
-		}
+		this.deps.timingLog.markActual(gameId, ply, thinkMs, result.elapsedMs);
 		if (current && snapshot && this.game) {
-			this.deps.timingLog.markActual(this.game.gameId, snapshot.ply, result.elapsedMs);
 			const record = this.window.close({
 				elapsedMs: result.elapsedMs,
 				pointerOffsetPx: result.pointerOffsetPx ?? 0,
@@ -2694,18 +2729,21 @@ export class GameSession implements SessionSource {
 				nReasonable: this.recNReasonable,
 				// §13.6: only a move the engine actually ranked carries a quality pair.
 				quality: isScoredMove(rec.chosen)
-					? { top1: rec.chosen.rankInLines === TOP_LINE_RANK, cpLoss: rec.chosen.cpLoss }
+					? { top1: rec.chosen.rankInLines === TOP_LINE_RANK, cpLoss: rec.chosen.cpLoss ?? Number.NaN }
 					: undefined,
+				searchQuality: rec.chosen.quality,
+				qualityContext: this.qualityContexts.get(rec.chosen),
 				at: result.at ?? this.now(),
 			});
 			if (record) this.deps.timingLog.attachTelemetry(this.game.gameId, snapshot.ply, record);
 		}
 		void this.updateStats((stats) =>
 			foldMove(stats, {
-				thinkMs: result.elapsedMs,
+				thinkMs,
 				scored: isScoredMove(rec.chosen),
 				top1: rec.chosen.rankInLines === TOP_LINE_RANK,
-				cpLoss: rec.chosen.cpLoss,
+				cpLoss: rec.chosen.cpLoss ?? Number.NaN,
+				qualityContext: this.qualityContexts.get(rec.chosen),
 			})
 		);
 	}

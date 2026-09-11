@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { LIMITS, MSG, TIMINGS } from "@core/constants";
 import { __setLogSinkOutsideServiceWorker, type LogEntry, log, setLogLevel } from "@core/logger";
 import { installMessageRouter, type MessageRouter } from "@core/messaging/router";
+import { buildTimingLogEntry, TimingLogWriter } from "@core/timing/timing-log";
 import { createLoggingBridge, type LoggingBridge } from "@panel/logging-bridge";
 import { registerLogHandlers } from "@service/handlers/log";
 import { installLogBridge, type LogBridge } from "@service/log-bridge";
@@ -17,6 +18,7 @@ let sw: SwContext;
 let panel: PanelContext;
 let router: MessageRouter;
 let bridge: LogBridge;
+let timingLog: TimingLogWriter;
 let panelBridge: LoggingBridge | null = null;
 
 function entry(level: LogEntry["level"], text: string, at = 1): LogEntry {
@@ -28,7 +30,8 @@ async function bootSw(): Promise<SwContext> {
 		entry: () => {
 			router = installMessageRouter();
 			bridge = installLogBridge(router);
-			registerLogHandlers(router, bridge);
+			timingLog = new TimingLogWriter();
+			registerLogHandlers(router, bridge, timingLog);
 			router.install();
 		},
 	});
@@ -223,22 +226,41 @@ describe("SW log bridge + panel logging bridge", () => {
 		expect(sim.bus.openPortCount()).toBe(0);
 	});
 
-	it("PANEL_EXPORT_TIMING_LOG / PANEL_CLEAR_TIMING_LOG read and clear LOCAL_KEYS.timingLog", async () => {
+	it("exports live rows before the flush alarm, and clearing cannot revive buffered rows", async () => {
 		const { LOCAL_KEYS } = await import("@core/constants");
 		const empty = (await panel.send({ type: MSG.PANEL_EXPORT_TIMING_LOG })) as {
 			success: boolean;
 			response: unknown[];
 		};
 		expect(empty).toEqual({ success: true, response: [] });
-		sim.storage.data.local[LOCAL_KEYS.timingLog] = [{ gameId: "g", ply: 1 }];
+		const row = buildTimingLogEntry({
+			gameId: "g",
+			ply: 1,
+			mode: "normal",
+			plannedMs: 500,
+			alloc: 1,
+			clockMs: 30_000,
+			comp: 1,
+			eps: 0,
+			terms: [],
+			persona: "balanced",
+		});
+		timingLog.append(row);
+		expect(sim.storage.data.local[LOCAL_KEYS.timingLog]).toBeUndefined();
 		const full = (await panel.send({ type: MSG.PANEL_EXPORT_TIMING_LOG })) as {
 			success: boolean;
 			response: unknown[];
 		};
-		expect(full.response).toEqual([{ gameId: "g", ply: 1 }]);
+		expect(full.response).toEqual([row]);
+		expect(sim.storage.data.local[LOCAL_KEYS.timingLog]).toEqual([row]);
 		const cleared = await panel.send({ type: MSG.PANEL_CLEAR_TIMING_LOG });
 		expect(cleared).toMatchObject({ success: true });
-		expect(sim.storage.data.local[LOCAL_KEYS.timingLog]).toBeUndefined();
+		expect(timingLog.entries()).toEqual([]);
+		expect(sim.storage.data.local[LOCAL_KEYS.timingLog]).toEqual([]);
+		const next = { ...row, ply: 2 };
+		timingLog.append(next);
+		await sw.run(() => timingLog.flush());
+		expect(sim.storage.data.local[LOCAL_KEYS.timingLog]).toEqual([next]);
 	});
 
 	it("PANEL_RESET_SESSION zeroes LOCAL_KEYS.sessionStats", async () => {

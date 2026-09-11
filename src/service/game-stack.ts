@@ -115,10 +115,9 @@ export function createGameStack(options: GameStackOptions): GameStack {
 	const ownership = new HandOwnership(link);
 	// §9.5: the board's viewport rect per tab, as the content script reports it.
 	const board = new BoardWatch(link);
-	const timingLog = new TimingLogWriter();
+	const timingLog = new TimingLogWriter(undefined, (entry) => broadcaster.timingEntry(entry));
 
 	const inferPort = createTimingInferPort(transport);
-	const head = new ChessMimicHead({ infer: inferPort.infer, fallback: new V1ParametricHead() });
 
 	const book = createBookPolicy();
 
@@ -126,7 +125,8 @@ export function createGameStack(options: GameStackOptions): GameStack {
 		link,
 		engine: controller,
 		book,
-		head,
+		createHead: () =>
+			new ChessMimicHead({ infer: inferPort.infer, fallback: new V1ParametricHead() }),
 		debugger: debuggerManager,
 		focus,
 		ownership,
@@ -203,8 +203,10 @@ export function createGameStack(options: GameStackOptions): GameStack {
 			detachEngineHandlers();
 			registry.dispose();
 			board.dispose();
-			void timingLog.flush().catch(() => {});
-			timingLog.dispose();
+			void timingLog
+				.flush()
+				.catch(() => {})
+				.finally(() => timingLog.dispose());
 			inferPort.dispose();
 			book.dispose();
 			focus.dispose();

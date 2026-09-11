@@ -15,7 +15,9 @@
  * the path the hand dispatched inside the window.
  */
 
-import type { ExecutionResult } from "@typedefs/game";
+import { QUALITY_STATISTICS } from "@core/constants/telemetry";
+import type { QualityContext } from "@core/strength/session-quality";
+import type { ChosenMove, ExecutionResult } from "@typedefs/game";
 import type { AcBlob, LichessBlurBit, MoveTelemetryRecord } from "@typedefs/telemetry";
 
 /** Timeline phase the hand records for one preview selection (§9.3a). */
@@ -49,6 +51,8 @@ export interface MoveWindowClose {
 	nReasonable: number;
 	/** The §13.6 pair, omitted for a move with no engine evaluation (§13.6 / `isScoredMove`). */
 	quality?: { top1: boolean; cpLoss: number } | undefined;
+	searchQuality?: ChosenMove["quality"];
+	qualityContext?: QualityContext | undefined;
 	/**
 	 * The caller states that this window spans a period the **owner** owns rather than one of ours —
 	 * true only for a premove sent during the opponent's turn (Fix F). It is never inferred: a
@@ -178,6 +182,12 @@ export class MoveWindow {
 		if (c.quality) {
 			record.top1 = c.quality.top1;
 			record.cpLoss = c.quality.cpLoss;
+		}
+		if (c.searchQuality) record.searchQuality = { ...c.searchQuality };
+		if (c.qualityContext) {
+			record.qualityVersion = QUALITY_STATISTICS.version;
+			record.qualityTargetElo = c.qualityContext.targetElo;
+			record.qualityCohort = c.qualityContext.cohortKey;
 		}
 		return record;
 	}

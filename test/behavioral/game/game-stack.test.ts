@@ -2,12 +2,15 @@
 // `createGameStack` exactly as `service-worker.ts` builds it, against a fake offscreen engine host.
 // The other behavioural files hand-assemble an equivalent stack so they can script the engine at
 // the UCI level; this one exists so the two cannot silently diverge.
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { LOCAL_KEYS } from "@core/constants/storage-keys";
 import { installMessageRouter, type MessageRouter } from "@core/messaging/router";
 import { setSettings } from "@core/storage/settings-storage";
+import { TimingModel } from "@core/timing/timing-model";
+import type { GameMeta as TimingGameMeta } from "@core/timing/types";
 import { type BootHooks, EngineHost, serveEnginePort } from "@offscreen/engine-host";
 import type { BootedEngine } from "@offscreen/stockfish-loader";
+import type { TimingCommand, TimingResultMessage } from "@offscreen/timing-inference";
 import { __resetServiceSystemsCache, bootstrapServiceSystems } from "@service/bootstrap";
 import { createGameStack, type GameStack } from "@service/game-stack";
 import { PanelBroadcaster, type SnapshotSources } from "@service/panel-broadcaster";
@@ -16,6 +19,7 @@ import { bootOffscreenContext, type OffscreenContext } from "@test/sim/contexts/
 import { bootSwContext, type SwContext } from "@test/sim/contexts/sw-context";
 import { createSimulatedSite, type SimulatedSite } from "@test/sim/telemetry/sim-site";
 import type { EngineVariant } from "@typedefs/engine";
+import { ctx } from "../../core/timing/helpers";
 import { FAKE_ID_LINES } from "../../fakes/engine-transport";
 import { FakeStockfishWeb } from "../../fakes/stockfish";
 
@@ -30,6 +34,8 @@ let broadcaster: PanelBroadcaster | undefined;
 let router: MessageRouter | undefined;
 let tabId = 0;
 let hostedEngines: FakeStockfishWeb[] = [];
+let timingRequests: Array<{ command: TimingCommand; resolve(result: TimingResultMessage): void }> =
+	[];
 
 /** This integration fixture must complete actual UCI handshakes, not only report host ready. */
 class RespondingStockfish extends FakeStockfishWeb {
@@ -55,6 +61,12 @@ async function bootOffscreen(): Promise<void> {
 		entry: () => {
 			serveEnginePort({
 				createStore: () => ({ handleChunk: () => {}, abortAll: () => {} }),
+				createModelStore: () => ({ handleChunk: () => {}, abortAll: () => {} }),
+				createTiming: () => ({
+					warm: async () => {},
+					dispose: () => {},
+					handle: (command) => new Promise((resolve) => timingRequests.push({ command, resolve })),
+				}),
 				createHost: (post) =>
 					new EngineHost({ boot, nnueStore: { get: async () => new Uint8Array(1) }, post }),
 			});
@@ -68,6 +80,7 @@ const settle = async (): Promise<void> => {
 
 beforeEach(async () => {
 	hostedEngines = [];
+	timingRequests = [];
 	// §4.4: the session gates every acting path (and the content-side `highlightMoves` gate) on the
 	// switch, so the stored fixture says what it means — a user with the assistant on — instead of
 	// inheriting `DEFAULT_SETTINGS` and changing meaning when that moves. Same seed as
@@ -130,6 +143,80 @@ afterEach(async () => {
 });
 
 describe("createGameStack: the real service-worker stack", () => {
+	it("isolates same-position timing inference and reset generations between game sessions", async () => {
+		const built = stack as GameStack;
+		const models = new Map<string, TimingModel>();
+		const original = TimingModel.prototype.startGame;
+		const spy = spyOn(TimingModel.prototype, "startGame").mockImplementation(function (
+			this: TimingModel,
+			meta: TimingGameMeta
+		) {
+			original.call(this, meta);
+			models.set(meta.gameId, this);
+		});
+		const secondTab = sim.openTab("https://www.chess.com/game/174252022573").tabId;
+		const second = await createSimulatedSite(sim, secondTab, { gameId: "timing-b", myColor: "w" });
+		try {
+			await (sw as SwContext).run(async () => {
+				(site as SimulatedSite).hello();
+				(site as SimulatedSite).startGame({ gameId: "timing-a" });
+				second.hello();
+				second.startGame();
+				await settle();
+				const a = models.get("timing-a")!;
+				const b = models.get("timing-b")!;
+				expect(a).toBeDefined();
+				expect(b).toBeDefined();
+				expect(built.registry.sessionFor(secondTab)).not.toBe(built.registry.sessionFor(tabId));
+				const ca = ctx({ targetElo: 1650, myClockMs: 180_000, oppClockMs: 170_000 });
+				const cb = ctx({ targetElo: 2300, myClockMs: 30_000, oppClockMs: 50_000 });
+				const answer = (at: number, bucket: number) => {
+					const request = timingRequests[at]!;
+					request.resolve({
+						kind: "timing-result",
+						id: request.command.id,
+						band: request.command.inputs.band,
+						probs: Array.from({ length: 30 }, (_, i) => (i === bucket ? 1 : 0)),
+						ms: 1,
+					});
+				};
+				const first = a.prepare(ca);
+				await settle();
+				answer(0, 6);
+				await first;
+				// A's inference is ready while its independent engine search could still be running.
+				const other = b.prepare(cb);
+				await settle();
+				answer(1, 8);
+				await other;
+				expect(timingRequests.map(({ command }) => command.inputs)).toMatchObject([
+					{ rating: 1650, band: "1500_1600", playerClockS: 180, opponentClockS: 170 },
+					{ rating: 2300, band: "1800_1900", playerClockS: 30, opponentClockS: 50 },
+				]);
+				expect(a.planMove(ca).rationale.join(" ")).toContain("chessmimic band=1500_1600 bucket 6");
+				expect(b.planMove(cb).rationale.join(" ")).toContain("chessmimic band=1800_1900 bucket 8");
+				// Restart A while its next request is pending; late completion must not revive it,
+				// and A's reset must not invalidate B's already prepared distribution.
+				const cancelled = a.prepare(ca);
+				await settle();
+				a.startGame({
+					gameId: "timing-a-next",
+					site: "chesscom",
+					targetElo: 1650,
+					profile: "balanced",
+					baseSec: 180,
+					incSec: 0,
+				});
+				answer(2, 6);
+				await cancelled;
+				expect(a.planMove(ca).rationale.join(" ")).toContain("fallback");
+				expect(b.planMove(cb).rationale.join(" ")).toContain("chessmimic band=1800_1900 bucket 8");
+			});
+		} finally {
+			spy.mockRestore();
+			await second.dispose();
+		}
+	});
 	it("builds the whole stack and opens a session for a connected game port", async () => {
 		const built = stack as GameStack;
 		// The port connect alone opens the session; `hello` is what moves it out of `idle`.

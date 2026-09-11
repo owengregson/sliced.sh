@@ -10,6 +10,13 @@ import type { MoveTelemetryRecord } from "@typedefs/telemetry";
 
 export type TimingMode = "premove" | "instant" | "normal" | "long";
 
+export interface TimingModelSource {
+	head: "v1-parametric" | "chessmimic";
+	requestedHead?: "v1-parametric" | "chessmimic";
+	band?: string;
+	fallbackReason?: string;
+}
+
 /**
  * §8.4b item 3: the move window as one generative process. The phase budgets
  * sum exactly to `thinkMs`; the approach (grab → drag → release) is always
@@ -45,14 +52,21 @@ export interface TimingLogEntry {
 	ply: number;
 	mode: TimingMode;
 	plannedMs: number;
-	/** Null until `observe()` records the realised think time. */
+	/** Full turn-to-submission duration; null when pending or unavailable for a queued premove. */
 	actualMs: number | null;
+	/** Hand-window duration, excluding engine/pre-hand setup; actualMs is full turn-to-submission. */
+	executionMs?: number;
 	alloc: number;
 	clockMs: number;
 	comp: number;
 	eps: number;
 	topTerms: Array<[string, number]>;
 	persona: PersonaId;
+	/** Inference provenance and the effective context used for this position. */
+	model?: TimingModelSource;
+	targetElo?: number;
+	opponentClockMs?: number;
+	rationale?: string[];
 	/**
 	 * Task 33 / Task 30: the move's `ac`-equivalent telemetry, filled by the `GameSession`
 	 * once the execution result is in; absent in exports written before Task 30.

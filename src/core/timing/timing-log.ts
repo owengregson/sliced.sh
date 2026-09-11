@@ -11,7 +11,7 @@ import { LIMITS } from "@core/constants/limits";
 import { LOCAL_KEYS } from "@core/constants/storage-keys";
 import type { PersonaId } from "@typedefs/settings";
 import type { MoveTelemetryRecord } from "@typedefs/telemetry";
-import type { TimingLogEntry, TimingMode } from "@typedefs/timing";
+import type { TimingLogEntry, TimingMode, TimingModelSource } from "@typedefs/timing";
 
 const TOP_TERMS = 5;
 
@@ -27,6 +27,10 @@ export interface TimingLogInput {
 	/** All `β_i f_i` contributions; the entry keeps the top 5 by |value|. */
 	terms: ReadonlyArray<readonly [string, number]>;
 	persona: PersonaId;
+	model?: TimingModelSource;
+	targetElo?: number;
+	opponentClockMs?: number;
+	rationale?: string[];
 }
 
 export function buildTimingLogEntry(input: TimingLogInput): TimingLogEntry {
@@ -46,6 +50,10 @@ export function buildTimingLogEntry(input: TimingLogInput): TimingLogEntry {
 		eps: input.eps,
 		topTerms,
 		persona: input.persona,
+		...(input.model ? { model: { ...input.model } } : {}),
+		...(input.targetElo !== undefined ? { targetElo: input.targetElo } : {}),
+		...(input.opponentClockMs !== undefined ? { opponentClockMs: input.opponentClockMs } : {}),
+		...(input.rationale ? { rationale: [...input.rationale] } : {}),
 	};
 }
 
@@ -53,13 +61,22 @@ export function buildTimingLogEntry(input: TimingLogInput): TimingLogEntry {
 export class TimingLogWriter {
 	private buffer: TimingLogEntry[] = [];
 	private dirty = false;
+	private revision = 0;
+	private clearRevision = 0;
+	private loading: Promise<void> | null = null;
+	private writes: Promise<unknown> = Promise.resolve();
 
-	constructor(private readonly max: number = LIMITS.timingLogMax) {}
+	constructor(
+		private readonly max: number = LIMITS.timingLogMax,
+		private readonly onEntry?: (entry: TimingLogEntry) => void
+	) {}
 
 	append(entry: TimingLogEntry): void {
 		this.buffer.push(entry);
 		if (this.buffer.length > this.max) this.buffer.splice(0, this.buffer.length - this.max);
 		this.dirty = true;
+		this.revision++;
+		this.onEntry?.(entry);
 	}
 
 	/**
@@ -73,6 +90,8 @@ export class TimingLogWriter {
 		const at = this.buffer.lastIndexOf(entry);
 		if (at >= 0) {
 			this.dirty = true;
+			this.revision++;
+			this.onEntry?.(entry);
 			return;
 		}
 		for (let i = this.buffer.length - 1; i >= 0; i--) {
@@ -80,6 +99,8 @@ export class TimingLogWriter {
 			if (e && e.gameId === entry.gameId && e.ply === entry.ply) {
 				this.buffer[i] = entry;
 				this.dirty = true;
+				this.revision++;
+				this.onEntry?.(entry);
 				return;
 			}
 		}
@@ -87,12 +108,15 @@ export class TimingLogWriter {
 	}
 
 	/** Record the realised think time on the entry for `(gameId, ply)` (latest match). */
-	markActual(gameId: string, ply: number, actualMs: number): boolean {
+	markActual(gameId: string, ply: number, actualMs: number | null, executionMs?: number): boolean {
 		for (let i = this.buffer.length - 1; i >= 0; i--) {
 			const e = this.buffer[i];
 			if (e && e.gameId === gameId && e.ply === ply) {
 				e.actualMs = actualMs;
+				if (executionMs !== undefined) e.executionMs = executionMs;
 				this.dirty = true;
+				this.revision++;
+				this.onEntry?.(e);
 				return true;
 			}
 		}
@@ -109,6 +133,8 @@ export class TimingLogWriter {
 			if (e && e.gameId === gameId && e.ply === ply) {
 				e.telemetry = telemetry;
 				this.dirty = true;
+				this.revision++;
+				this.onEntry?.(e);
 				return true;
 			}
 		}
@@ -120,26 +146,56 @@ export class TimingLogWriter {
 	}
 
 	/** Persist when something changed; resolves `true` if a write happened. */
-	async flush(): Promise<boolean> {
-		if (!this.dirty) return false;
-		await chromeLocalSet(
-			LOCAL_KEYS.timingLog,
-			this.buffer.map((e) => ({ ...e }))
-		);
-		this.dirty = false;
-		return true;
+	flush(): Promise<boolean> {
+		const write = this.writes.then(async () => {
+			await this.loading;
+			if (!this.dirty) return false;
+			const revision = this.revision;
+			await chromeLocalSet(
+				LOCAL_KEYS.timingLog,
+				this.buffer.map((e) => ({ ...e }))
+			);
+			// A move or Clear arriving during storage I/O must remain dirty for the next flush.
+			if (this.revision === revision) this.dirty = false;
+			return true;
+		});
+		this.writes = write.catch(() => {});
+		return write;
 	}
 
 	/** Replace the buffer with what is stored (call once at start-up). */
-	async load(): Promise<void> {
-		const stored = await chromeLocalGet(LOCAL_KEYS.timingLog);
-		this.buffer = Array.isArray(stored) ? stored.slice(-this.max) : [];
-		this.dirty = false;
+	load(): Promise<void> {
+		if (this.loading) return this.loading;
+		const revision = this.revision;
+		const cleared = this.clearRevision;
+		const read = chromeLocalGet(LOCAL_KEYS.timingLog).then((stored) => {
+			if (this.clearRevision !== cleared) return;
+			const saved = Array.isArray(stored) ? stored : [];
+			if (this.revision === revision) {
+				this.buffer = saved.slice(-this.max);
+				this.dirty = false;
+			} else {
+				// Startup can already receive moves while the storage read is pending.
+				const fresh = this.buffer;
+				this.buffer = [
+					...saved.filter(
+						(old) => !fresh.some((row) => row.gameId === old.gameId && row.ply === old.ply)
+					),
+					...fresh,
+				].slice(-this.max);
+			}
+		});
+		this.loading = read.finally(() => {
+			this.loading = null;
+		});
+		return this.loading;
 	}
 
 	clear(): void {
 		this.buffer = [];
 		this.dirty = true;
+		this.revision++;
+		this.clearRevision++;
 	}
 
 	dispose(): void {

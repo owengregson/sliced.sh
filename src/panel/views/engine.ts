@@ -22,6 +22,7 @@ import { LIMITS } from "@core/constants/limits";
 import { type LogStreamMessage, MSG, type PanelSnapshot } from "@core/constants/messages";
 import { UI_TIMINGS } from "@core/constants/ui";
 import { LOG_LEVELS, type LogEntry, levelAllows, log } from "@core/logger";
+import { normalizeTimingStats } from "@core/timing/session-stats";
 import { TOKENS } from "@design/tokens.generated";
 import type { ExecutionResult } from "@typedefs/game";
 import type { LogLevel } from "@typedefs/settings";
@@ -94,11 +95,19 @@ export function rationaleRows(entry: TimingLogEntry): RationaleRow[] {
 		kind: "plan",
 		time,
 		lines: [
+			...(entry.model ? [COPY.engineView.rationale.model(entry.model.head, entry.model.band)] : []),
+			...(entry.model?.fallbackReason
+				? [COPY.engineView.rationale.fallback(entry.model.fallbackReason)]
+				: []),
+			...(entry.targetElo !== undefined && entry.opponentClockMs !== undefined
+				? [COPY.engineView.rationale.context(entry.targetElo, seconds(entry.opponentClockMs))]
+				: []),
 			COPY.engineView.rationale.base(entry.alloc.toFixed(1), entry.mode, persona),
 			...entry.topTerms.map(([name, value]) =>
 				COPY.engineView.rationale.term(name, `${value >= 0 ? "+" : "−"}${Math.abs(value).toFixed(1)}`)
 			),
 			COPY.engineView.rationale.factors(entry.comp.toFixed(2), entry.eps.toFixed(2)),
+			...(entry.rationale ?? []),
 			COPY.engineView.rationale.total(seconds(entry.plannedMs), entry.mode),
 		],
 	};
@@ -235,6 +244,7 @@ export function createEngineView(deps: EngineViewDeps = {}): View {
 			let handsOff = false;
 			let attached = false;
 			let timingEntries: TimingLogEntry[] = [];
+			let timingCleared = false;
 			let lastSampleAt = Number.NEGATIVE_INFINITY;
 			/** The game tab the debugger commands target (the active tab of this window). */
 			let tabId: number | null = null;
@@ -355,6 +365,7 @@ export function createEngineView(deps: EngineViewDeps = {}): View {
 				size: "sm",
 				onClick: () => {
 					timingEntries = [];
+					timingCleared = true;
 					renderTimingLog();
 					dispatch(MSG.PANEL_CLEAR_TIMING_LOG);
 				},
@@ -448,10 +459,11 @@ export function createEngineView(deps: EngineViewDeps = {}): View {
 					raw,
 					snapshot.license.rawStatus !== undefined && raw !== snapshot.license.status
 				);
+				const measuredTiming = normalizeTimingStats(snapshot.stats);
 				session.textContent = COPY.engineView.session(
 					snapshot.stats.games,
 					snapshot.stats.moves,
-					seconds(snapshot.stats.avgThinkMs)
+					measuredTiming.timingSamples ? seconds(measuredTiming.avgThinkMs) : null
 				);
 				applyCommandState();
 			}
@@ -481,6 +493,14 @@ export function createEngineView(deps: EngineViewDeps = {}): View {
 			}
 
 			function pushTiming(entry: TimingLogEntry): void {
+				const existing = timingEntries.findIndex(
+					(row) => row.gameId === entry.gameId && row.ply === entry.ply
+				);
+				if (existing >= 0) {
+					timingEntries[existing] = entry;
+					renderTimingLog();
+					return;
+				}
 				timingEntries.push(entry);
 				if (timingEntries.length > LIMITS.timingLogMax) {
 					timingEntries = timingEntries.slice(timingEntries.length - LIMITS.timingLogMax);
@@ -495,8 +515,11 @@ export function createEngineView(deps: EngineViewDeps = {}): View {
 			store
 				.dispatch({ type: MSG.PANEL_EXPORT_TIMING_LOG })
 				.then((entries) => {
-					if (disposed || !Array.isArray(entries)) return;
-					timingEntries = entries.slice(-LIMITS.timingLogMax).concat(timingEntries);
+					if (disposed || timingCleared || !Array.isArray(entries)) return;
+					const merged = new Map<string, TimingLogEntry>();
+					for (const entry of [...entries, ...timingEntries])
+						merged.set(`${entry.gameId}:${entry.ply}`, entry);
+					timingEntries = [...merged.values()].slice(-LIMITS.timingLogMax);
 					renderTimingLog();
 				})
 				.catch((error: unknown) => log.debug("engine view: timing log unavailable", error));

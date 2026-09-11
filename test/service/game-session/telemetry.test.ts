@@ -8,6 +8,22 @@ import { MoveWindow } from "@service/game-session/telemetry";
 
 const AT = 1_000_000;
 
+it("exports search provenance and the actual target even for an excluded quality sample", () => {
+	const window = new MoveWindow();
+	window.open(AT, true);
+	const record = window.close(
+		closeArgs({
+			searchQuality: { kind: "search", eligible: false, reason: "forced", depth: 12, candidates: 1 },
+			qualityContext: { gameId: "g1", cohortKey: "blitz-1600", targetElo: 1673 },
+		})
+	);
+	expect(record?.searchQuality).toMatchObject({ eligible: false, reason: "forced" });
+	expect(record?.qualityTargetElo).toBe(1673);
+	expect(record?.qualityCohort).toBe("blitz-1600");
+	expect(record?.top1).toBeUndefined();
+	expect(record?.cpLoss).toBeUndefined();
+});
+
 function closeArgs(over: Partial<MoveWindowClose> = {}): MoveWindowClose {
 	return {
 		elapsedMs: 500,

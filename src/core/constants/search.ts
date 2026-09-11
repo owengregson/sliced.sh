@@ -2,7 +2,7 @@
  * Engine search-budget registry (Part I §7.5, Appendix E §4). Every number the
  * `GameSession`'s recommendation pipeline uses to size one search lives here:
  * the think→engine fraction, the per-speed depth caps, the adaptive MultiPV
- * ladder, the shallow-device quality guard and the ponder shape.
+ * ladder, candidate breadth, bounded shallow retry and the ponder shape.
  */
 
 /** Time-control classes the caps are keyed by (the timing model's `TcClass`). */
@@ -51,18 +51,23 @@ export const SEARCH_BUDGET = {
 	multiPvMediumMs: 1_500,
 	multiPvLarge: 8,
 	/**
+	 * Persona sampling needs alternatives beyond the engine's best few near-equal moves.
+	 * These are internal candidate counts, independent of how many panel lines are shown.
+	 * Keep the same wall-clock budget; stronger targets concentrate search on fewer roots.
+	 */
+	selectionCandidates: [
+		{ maxElo: 1800, count: 20 },
+		{ maxElo: 2200, count: 16 },
+		{ maxElo: 2600, count: 12 },
+	],
+	/**
 	 * Appendix E §4.5: a cached result within this many plies of the requested `depthCap` skips the
 	 * search. Requiring the cap exactly meant nothing ever hit — a `movetime` search stops where it
 	 * stops, so a pondered position was re-searched from scratch however deep it already was.
 	 */
 	cacheDepthSlack: 2,
-	/** Quality guard: a result shallower than this is retried once with `retryExtraMs` more. */
+	/** A shallower result may retry once, using only time left in its original budget. */
 	retryDepth: 8,
-	retryExtraMs: 300,
-	/** Below this depth the selector sees the top two lines only, with τ halved. */
-	shallowDepth: 6,
-	shallowLines: 2,
-	shallowTauScale: 0.5,
 	/** Appendix E §4.2: `go infinite` MultiPV 3 on the opponent's position. */
 	ponderMultiPv: 3,
 	/** Panel-only deepening on our own position while nothing is armed (§7.5). */

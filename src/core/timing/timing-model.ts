@@ -37,6 +37,7 @@ import type {
 	TimingLogEntry,
 	TimingMode,
 	TimingPlan,
+	TimingPreparation,
 } from "./types";
 
 const C = TIMING_CONSTANTS;
@@ -58,6 +59,13 @@ export { isBotPace };
 export interface TimingModelOptions {
 	/** Receives every `TimingLogEntry` (creation and `observe()` updates re-send the same object). */
 	onEntry?: (entry: TimingLogEntry) => void;
+}
+
+export interface TimingObservation {
+	gameId: string;
+	ply: number;
+	/** Manual acceleration is observed for reporting without teaching the natural pace. */
+	adaptPace?: boolean;
 }
 
 export function knobsFromSettings(settings: TimingSettings): TimingKnobs {
@@ -205,7 +213,7 @@ export class TimingModel {
 	}
 
 	/** Kick off head-side inference for the position (no-op for the v1 head). */
-	prepare(ctx: TimingContext): Promise<void> {
+	prepare(ctx: TimingContext, options?: TimingPreparation): Promise<void> {
 		if (
 			clockRacePolicy({
 				ownClockMs: ctx.myClockMs,
@@ -216,7 +224,7 @@ export class TimingModel {
 			})
 		)
 			return Promise.resolve();
-		return this.head.prepare?.(ctx) ?? Promise.resolve();
+		return this.head.prepare?.(ctx, options) ?? Promise.resolve();
 	}
 
 	private allocFor(f: Features): number {
@@ -458,6 +466,10 @@ export class TimingModel {
 			eps: this._state.eps,
 			terms,
 			persona: this.meta?.profile ?? ctx.profile,
+			model: this.head.diagnostics?.(ctx.fen) ?? { head: this.head.id },
+			targetElo: ctx.targetElo,
+			opponentClockMs: ctx.oppClockMs,
+			rationale: plan.rationale,
 		});
 		this.entries.set(`${entry.gameId}:${entry.ply}`, entry);
 		this.onEntry?.(entry);
@@ -616,11 +628,18 @@ export class TimingModel {
 	}
 
 	/** Feed the realised think time back into ε_t, the pace residual and the log. */
-	observe(actualThinkMs: number, plan: TimingPlan): void {
+	observe(actualThinkMs: number, plan: TimingPlan, observation?: TimingObservation): void {
 		const st = this._state;
+		const gameId = this.meta?.gameId ?? st.gameId;
+		if (observation && observation.gameId !== gameId) return;
 		st.myThinkMs.push(actualThinkMs);
 		if (st.tilt > 0) st.tilt--;
-		if ((plan.mode === "normal" || plan.mode === "long") && actualThinkMs > 0 && plan.thinkMs > 0) {
+		if (
+			observation?.adaptPace !== false &&
+			(plan.mode === "normal" || plan.mode === "long") &&
+			actualThinkMs > 0 &&
+			plan.thinkMs > 0
+		) {
 			const shift = clamp(
 				Math.log(actualThinkMs / plan.thinkMs),
 				-C.replan.observeShiftClamp,
@@ -631,8 +650,7 @@ export class TimingModel {
 			if (bodyMs !== undefined && bodyMs > 0)
 				st.paceResiduals.push(Math.log(actualThinkMs) - Math.log(bodyMs));
 		}
-		const gameId = this.meta?.gameId ?? st.gameId;
-		const entry = this.entries.get(`${gameId}:${st.ply}`);
+		const entry = this.entries.get(`${gameId}:${observation?.ply ?? st.ply}`);
 		if (entry) {
 			entry.actualMs = actualThinkMs;
 			this.onEntry?.(entry);

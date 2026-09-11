@@ -110,7 +110,5 @@ export function conversionPool(
 		(line) => legal.has(line) && !drawn.has(line) && searchedCp(line) >= C.conversion.keepCp
 	);
 	if (!safe.length) return unchanged;
-	const bestSafe = Math.max(...safe.map(searchedCp));
-	const bounded = safe.filter((line) => searchedCp(line) >= bestSafe - C.conversion.maxLossCp);
-	return { lines: bounded, active: true, avoidedDraw: drawn.size > 0, progress };
+	return { lines: safe, active: true, avoidedDraw: drawn.size > 0, progress };
 }

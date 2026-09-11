@@ -190,7 +190,7 @@ export async function createGameHarness(options: GameHarnessOptions = {}): Promi
 				link,
 				engine: controller,
 				book: null,
-				head: options.head ?? new V1ParametricHead(),
+				createHead: () => options.head ?? new V1ParametricHead(),
 				debugger: debuggerManager,
 				focus,
 				ownership,

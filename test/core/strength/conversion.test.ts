@@ -72,7 +72,7 @@ describe("winning-position conversion", () => {
 		}
 	});
 
-	it("prefers pawn progress within a small searched loss, without inventing a win from equality", () => {
+	it("retains the engine's limited choice when safe, without inventing a win from equality", () => {
 		const fen = "7k/8/8/8/8/5K2/6P1/8 w - - 0 1";
 		const lines = [line(fen, "f3f4", { cp: 500 }, 1), line(fen, "g2g3", { cp: 480 }, 2)];
 		expect(
@@ -80,7 +80,7 @@ describe("winning-position conversion", () => {
 				lines,
 				ctx({ fen, phase: "endgame", selectionMode: "engine-elo", engineBestmove: "f3f4" })
 			).uci
-		).toBe("g2g3");
+		).toBe("f3f4");
 		expect(
 			conversionPool(
 				lines.map((l) => ({ ...l, score: { cp: 0 } })),
@@ -105,7 +105,7 @@ describe("clock-race strength", () => {
 				ctx({ ...race, targetElo: 3800, rng: createRng(seed), blunderScale: 100 })
 			);
 			picks.add(chosen.uci);
-			expect(chosen.cpLoss).toBeLessThanOrEqual(60);
+			expect(chosen.cpLoss ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(60);
 			expect(chosen.source).not.toBe("blunder");
 		}
 		expect([...picks].sort()).toEqual(["d2d4", "e2e4"]);

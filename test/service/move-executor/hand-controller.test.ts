@@ -877,6 +877,23 @@ describe("HandController: the committed touch is always a drag", () => {
 });
 
 describe("HandController promotion", () => {
+	it("timestamps a recovered promotion-picker release after an abort during its press", async () => {
+		promotionRect = { left: 420, top: 60, width: 80, height: 80 };
+		const ac = new AbortController();
+		let presses = 0;
+		sim.debugger.respond(CDP.inputDispatchMouseEvent, (params, id) => {
+			if (params?.type === "mousePressed" && ++presses === 2) ac.abort();
+			return sim.input.send(id, CDP.inputDispatchMouseEvent, params);
+		});
+		const result = await run(makeController(5), makePlan({ promotion: "q" }), makeTiming(), ac);
+		expect(result.outcome).toBe("aborted");
+		const releases = commands().filter((c) => c.type === "mouseReleased");
+		expect(releases).toHaveLength(2);
+		expect(result.elapsedMs).toBeCloseTo(releases[0]!.at, 6);
+		expect(result.submittedAt).toBeCloseTo(START + releases[1]!.at, 6);
+		expect(result.submittedAt!).toBeGreaterThan(result.startedAt! + result.elapsedMs);
+	});
+
 	it("waits the look-delay after the drop, then clicks inside the picker rect", async () => {
 		promotionRect = { left: 420, top: 60, width: 80, height: 80 };
 		const ctrl = makeController(5);
@@ -890,6 +907,10 @@ describe("HandController promotion", () => {
 		expect(releases).toHaveLength(2);
 		const drop = releases[0] as Cmd;
 		const pick = presses[1] as Cmd;
+		expect(result.startedAt).toBe(START);
+		expect(result.elapsedMs).toBeCloseTo(drop.at, 6);
+		expect(result.submittedAt).toBeCloseTo(START + releases[1]!.at, 6);
+		expect(result.submittedAt!).toBeGreaterThan(result.startedAt! + result.elapsedMs);
 		expect(inside(pick, promotionRect)).toBe(true);
 		expect(inside(releases[1] as Cmd, promotionRect)).toBe(true);
 		const firstMoveAfterDrop = cmds
@@ -907,6 +928,7 @@ describe("HandController promotion", () => {
 		const result = await run(ctrl, makePlan({ promotion: "q" }), makeTiming());
 		expect(result.outcome).toBe("executed");
 		expect(commands().filter((c) => c.type === "mousePressed")).toHaveLength(1);
+		expect(result.submittedAt).toBeCloseTo(result.startedAt! + result.elapsedMs, 6);
 	});
 
 	it("a failed picker read never fails the move: the drop stands, a timeline note is recorded, verification decides", async () => {

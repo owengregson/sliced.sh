@@ -1,3 +1,5 @@
+import type { ChosenMove } from "@typedefs/game";
+
 /**
  * Per-move telemetry shapes (Part I §13.2, Appendix I `fps` plugin). `AcBlob`
  * is the chess.com `ac` object exactly as the shipped client computes it
@@ -68,4 +70,9 @@ export interface MoveTelemetryRecord {
 	top1?: boolean;
 	/** Absent with `top1`. */
 	cpLoss?: number;
+	/** Search provenance is retained even when this row cannot enter the quality pair. */
+	searchQuality?: ChosenMove["quality"];
+	qualityVersion?: number;
+	qualityTargetElo?: number;
+	qualityCohort?: string;
 }

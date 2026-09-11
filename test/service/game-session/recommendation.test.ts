@@ -8,6 +8,7 @@ import type { AnalysisHandle, AnalysisRequest, AnalysisResult } from "@core/engi
 import { createRng } from "@core/rng";
 import type { BookPolicy } from "@core/strength/book/book-policy";
 import { createSelectionState } from "@core/strength/move-selector";
+import { ChessMimicHead, type ChessMimicInputs } from "@core/timing/chessmimic-head";
 import { TimingModel } from "@core/timing/timing-model";
 import { V1ParametricHead } from "@core/timing/v1-head";
 import {
@@ -217,13 +218,31 @@ describe("§6.4 / §7.5 search budget", () => {
 		expect(searchBudget(comfortable("rapid"), settings({ depthCap: 10 })).depthCap).toBe(10);
 	});
 
-	it("K = 3 / 6 / 8 by budget, never below the user's MultiPV nor above 8", () => {
+	it("native engine mode retains its budget-dependent MultiPV floor", () => {
+		const native = (multiPv: number): Settings => ({
+			...settings({ multiPv }),
+			strength: { ...DEFAULT_SETTINGS.strength, selectionMode: "engine-elo" },
+		});
 		const tiny = { ...comfortable("bullet"), plannedThinkMs: 400 }; // 240 ms → K = 3
-		expect(searchBudget(tiny, settings({ multiPv: 1 })).multiPv).toBe(3);
-		expect(searchBudget(comfortable("blitz"), settings({ multiPv: 1 })).multiPv).toBe(6);
-		expect(searchBudget(comfortable("classical"), settings({ multiPv: 1 })).multiPv).toBe(8);
-		expect(searchBudget(tiny, settings({ multiPv: 4 })).multiPv).toBe(4);
-		expect(searchBudget(comfortable("classical"), settings({ multiPv: 8 })).multiPv).toBe(8);
+		expect(searchBudget(tiny, native(1)).multiPv).toBe(3);
+		expect(searchBudget(comfortable("blitz"), native(1)).multiPv).toBe(6);
+		expect(searchBudget(comfortable("classical"), native(1)).multiPv).toBe(8);
+		expect(searchBudget(tiny, native(4)).multiPv).toBe(4);
+		expect(searchBudget(comfortable("classical"), native(8)).multiPv).toBe(8);
+	});
+
+	it("1650 sampling gets meaningful alternatives without increasing its search budget or panel line setting", () => {
+		const s = settings({ multiPv: 4 });
+		const budget = searchBudget({ ...comfortable("blitz"), targetElo: 1650 }, s);
+		expect(budget).toEqual({ movetimeMs: 600, depthCap: 18, multiPv: 20 });
+		expect(s.engine.multiPv).toBe(4);
+		expect(searchBudget({ ...comfortable("blitz"), targetElo: 3800 }, s).multiPv).toBe(6);
+		expect(searchBudget({ ...comfortable("blitz"), targetElo: 1650, legalMoves: 2 }, s).multiPv).toBe(
+			2
+		);
+		expect(searchBudget({ ...comfortable("blitz"), targetElo: 1650, legalMoves: 1 }, s).multiPv).toBe(
+			1
+		);
 	});
 
 	it("the estimate scales with the clock and the speed knob", () => {
@@ -247,6 +266,186 @@ describe("§6.4 / §7.5 search budget", () => {
 });
 
 describe("recommendation pipeline (§3.2)", () => {
+	it("prepares native timing alongside search and uses that position's distribution", async () => {
+		const requests: ChessMimicInputs[] = [];
+		let finishInference: () => void = () => {
+			throw new Error("inference not started");
+		};
+		const head = new ChessMimicHead({
+			infer: async (request) => {
+				requests.push(request);
+				await new Promise<void>((resolve) => {
+					finishInference = resolve;
+				});
+				return { band: request.band, probs: Array.from({ length: 30 }, (_, i) => Number(i === 6)) };
+			},
+			fallback: new V1ParametricHead(),
+		});
+		const timing = new TimingModel(head, DEFAULT_SETTINGS.timing, createRng("native-timing"));
+		timing.startGame({
+			targetElo: 1650,
+			profile: "balanced",
+			baseSec: 180,
+			incSec: 0,
+			site: "chesscom",
+			gameId: "g1",
+		});
+		const engine = fakeEngine((req) => analysisOf(req, ["e2e4", "d2d4"], 14));
+		let finishSearch: () => void = () => {
+			throw new Error("search not started");
+		};
+		const originalAnalyse = engine.analyse;
+		engine.analyse = (request) => {
+			const handle = originalAnalyse(request);
+			return {
+				...handle,
+				result: handle.result.then(
+					(result) =>
+						new Promise<AnalysisResult>((resolve) => {
+							finishSearch = () => resolve(result);
+						})
+				),
+			};
+		};
+		const pipeline = new RecommendationPipeline({ engine, timing, book: null });
+		const pending = pipeline.run(input({ targetElo: 1650 }));
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(engine.requests).toHaveLength(1);
+		expect(requests).toHaveLength(1);
+		expect(requests[0]).toMatchObject({
+			band: "1500_1600",
+			rating: 1650,
+			playerClockS: 180,
+			opponentClockS: 180,
+		});
+		expect(timing.state.lastPlan).toBeNull();
+		finishInference();
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		finishSearch();
+		const out = await pending;
+		expect(out?.rec.plan.rationale.join(" ")).toContain("chessmimic band=1500_1600 bucket 6");
+		expect(out?.rec.plan.rationale.join(" ")).not.toContain("fallback");
+		expect(head.diagnostics(START)).toEqual({ head: "chessmimic", band: "1500_1600" });
+	});
+	it("a quick cached search gives warmed timing its short grace window", async () => {
+		const head = new ChessMimicHead({
+			infer: async () => {
+				await new Promise((resolve) => setTimeout(resolve, 5));
+				return { band: "1500_1600", probs: Array.from({ length: 30 }, (_, i) => Number(i === 5)) };
+			},
+			fallback: new V1ParametricHead(),
+		});
+		const timing = new TimingModel(head, DEFAULT_SETTINGS.timing, createRng("cached-native"));
+		const engine = fakeEngine((req) => analysisOf(req, ["e2e4", "d2d4"], 14));
+		const pipeline = new RecommendationPipeline({ engine, timing, book: null });
+		const out = await pipeline.run(input());
+		expect(out?.rec.plan.rationale.join(" ")).toContain("chessmimic band=1500_1600 bucket 5");
+	});
+	it("a quick cached search cancels unfinished inference after its bounded grace", async () => {
+		const head = new ChessMimicHead({
+			infer: () => new Promise(() => {}),
+			fallback: new V1ParametricHead(),
+			budgetMs: 5,
+		});
+		const timing = new TimingModel(head, DEFAULT_SETTINGS.timing, createRng("timing-timeout"));
+		const engine = fakeEngine((req) => analysisOf(req, ["e2e4", "d2d4"], 14));
+		const pipeline = new RecommendationPipeline({ engine, timing, book: null });
+		const out = await pipeline.run(input());
+		expect(out).not.toBeNull();
+		expect(head.diagnostics(START)).toMatchObject({
+			head: "v1-parametric",
+			requestedHead: "chessmimic",
+			fallbackReason: "search preparation ended before inference was ready",
+		});
+	});
+	it("late-clock moves bypass timing inference and cancelled preparations never publish a plan", async () => {
+		let calls = 0;
+		const controller = new AbortController();
+		const head = new ChessMimicHead({
+			infer: async () => {
+				calls++;
+				controller.abort();
+				return null;
+			},
+			fallback: new V1ParametricHead(),
+		});
+		const timing = new TimingModel(head, DEFAULT_SETTINGS.timing, createRng("timing-urgent"));
+		const engine = fakeEngine((req) => analysisOf(req, ["e2e4", "d2d4"], 14));
+		const pipeline = new RecommendationPipeline({ engine, timing, book: null });
+		const race = await pipeline.run(
+			input({
+				snapshot: snapshot({
+					clocks: { w: { ms: 3000, running: true }, b: { ms: 90000, running: false } },
+				}),
+			})
+		);
+		expect(race?.rec.plan.features.clockRace).toBeGreaterThan(0);
+		expect(calls).toBe(0);
+		const previous = timing.state.lastPlan;
+		expect(await pipeline.run(input({ signal: controller.signal }))).toBeNull();
+		expect(calls).toBe(1);
+		expect(timing.state.lastPlan).toBe(previous);
+	});
+	it("keeps partial search choices playable but outside comparable quality samples", async () => {
+		const engine = fakeEngine((req) => {
+			const result = analysisOf(req, ["e2e4", "d2d4"], 14);
+			result.final.complete = false;
+			return result;
+		});
+		const pipeline = new RecommendationPipeline({ engine, timing: model(), book: null });
+		const out = await pipeline.run(input());
+		expect(out).not.toBeNull();
+		expect(["e2e4", "d2d4"]).toContain(out!.rec.chosen.uci);
+		expect(out!.rec.chosen.cpLoss).toBeUndefined();
+		expect(out!.rec.chosen.quality).toEqual({
+			kind: "search",
+			eligible: false,
+			reason: "incomplete",
+			depth: 14,
+			candidates: 2,
+		});
+	});
+	it("preserves an unscored legal native choice from a partial final frame", async () => {
+		const engine = fakeEngine((req) => {
+			const result = analysisOf(req, ["e2e4", "d2d4"], 14);
+			result.final.complete = false;
+			result.bestmove = "a2a3";
+			return result;
+		});
+		const s = settings();
+		s.strength = { ...s.strength, selectionMode: "engine-elo", useOpeningBook: false };
+		const pipeline = new RecommendationPipeline({ engine, timing: model(), book: null });
+		const out = await pipeline.run(input({ settings: s }));
+		expect(out?.rec.chosen.uci).toBe("a2a3");
+		expect(out?.rec.chosen.rankInLines).toBe(0);
+		expect(out?.rec.chosen.cpLoss).toBeUndefined();
+		expect(out?.rec.chosen.quality?.reason).toBe("incomplete");
+	});
+	it("sends the active persona target rather than the saved fixed engine strength", async () => {
+		const engine = fakeEngine((req) => analysisOf(req, ["e2e4", "d2d4"], 14), 2800);
+		const pipeline = new RecommendationPipeline({ engine, timing: model(), book: null });
+		const fixed = settings();
+		fixed.strength = { ...fixed.strength, targetElo: 3800 };
+		await pipeline.run(input({ settings: fixed, targetElo: 1650 }));
+		expect(engine.requests[0]?.elo).toBe(1650);
+		expect(engine.requests[0]?.multiPv).toBe(20);
+		await pipeline.run(input({ settings: settings(), targetElo: 3800 }));
+		expect(engine.requests[1]?.elo).toBeUndefined();
+	});
+
+	it("a short search preserves an evaluated lower-ranked native choice instead of forcing the top two", async () => {
+		const engine = fakeEngine((req) => ({
+			...analysisOf(req, ["e2e4", "d2d4", "a2a3"], 4, [30, 20, 0]),
+			bestmove: "a2a3",
+		}));
+		const pipeline = new RecommendationPipeline({ engine, timing: model(), book: null });
+		const s = settings();
+		s.strength = { ...s.strength, selectionMode: "engine-elo", useOpeningBook: false };
+		const out = await pipeline.run(input({ settings: s }));
+		expect(out?.rec.chosen.uci).toBe("a2a3");
+		expect(out?.rec.chosen.rankInLines).toBe(3);
+	});
 	it("vetoes an unsearched book repetition when an evaluated continuation preserves the win", async () => {
 		const history = {
 			fen: "6k1/8/8/8/8/8/PPPP4/6K1 b - - 0 1",
@@ -397,19 +596,23 @@ describe("recommendation pipeline (§3.2)", () => {
 		expect(elapsed).toBeLessThanOrEqual(200);
 	});
 
-	it("falls back to the top two lines with τ halved below depth 6", async () => {
+	it("retains the full shallow candidate pool without presenting it as measured quality", async () => {
 		const engine = fakeEngine((req) => analysisOf(req, ["e2e4", "d2d4", "g1f3", "c2c4"], 4));
 		const pipeline = new RecommendationPipeline({ engine, timing: model(), book: null });
-		const out = await pipeline.run(input());
-		expect(out).not.toBeNull();
-		expect(["e2e4", "d2d4"]).toContain(out?.rec.chosen.uci ?? "");
-		// The full line set still reaches the panel; only the selector's pool was trimmed.
-		expect(out?.rec.lines.length).toBe(4);
+		const selected = new Set<string>();
+		for (let seed = 0; seed < 24; seed++) {
+			const out = await pipeline.run(input({ rng: createRng(`shallow-pool-${seed}`) }));
+			expect(out?.rec.lines).toHaveLength(4);
+			expect(out?.rec.chosen.quality?.eligible).toBe(false);
+			expect(out?.rec.chosen.quality?.reason).toBe("shallow");
+			selected.add(out?.rec.chosen.uci ?? "");
+		}
+		expect([...selected].some((move) => move === "g1f3" || move === "c2c4")).toBe(true);
 	});
 
 	it("nReasonable is the position's `n_reasonable` feature, not the MultiPV count", async () => {
 		// Six lines, but only the top two are inside `TIMING_CONSTANTS.features.nReasonableCp`
-		// (40 cp) of the best — `K` is a function of the *time budget* (§7.5's 3/6/8 ladder), so
+		// (40 cp) of the best — `K` depends on the target and the time budget, so
 		// reporting it as `n_reasonable` would put a driver of the think time on the complexity
 		// axis and make `report.py`'s `ln(hold) vs ln(n_reasonable)` correlation spurious.
 		const uci = ["e2e4", "d2d4", "g1f3", "c2c4", "b1c3", "a2a3"];

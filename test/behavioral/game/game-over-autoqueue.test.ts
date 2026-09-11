@@ -72,7 +72,15 @@ describe("game session: game over and the auto-queue (Step 2d)", () => {
 			() => chromeLocalGet(LOCAL_KEYS.sessionStats) as Promise<SessionStats | undefined>
 		);
 		expect(afterGame?.games).toBe(1);
-		expect(typeof afterGame?.outOfBandStreak).toBe("number");
+		expect(afterGame?.qualityCohorts?.[0]).toMatchObject({
+			scoredMoves: 1,
+			eligibleGames: 0,
+			outOfBandStreak: 0,
+		}); // A one-choice game cannot establish a strength warning.
+		expect(afterGame?.qualityGames).toEqual([]);
+		const savedLog = await h.sw.run(() => chromeLocalGet(LOCAL_KEYS.timingLog));
+		expect(savedLog?.length).toBeGreaterThan(0);
+		expect(savedLog?.[0]?.actualMs).toBeGreaterThan(0);
 	});
 
 	it("a new game on the same tab starts a fresh session state and cancels a pending queue", async () => {

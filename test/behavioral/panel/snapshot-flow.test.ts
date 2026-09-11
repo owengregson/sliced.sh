@@ -102,6 +102,31 @@ async function connectPanel(): Promise<PanelSnapshot[]> {
 const currentStore = (): PanelStore | null => store;
 
 describe("panel ↔ service worker: snapshot flow", () => {
+	it("streams timing diagnostics over the production panel port", async () => {
+		await connectPanel();
+		await sim.time.advance(0);
+		const seen: unknown[] = [];
+		store?.onPortMessage((message) => {
+			if (message.kind === "timingLog") seen.push(message.entry);
+		});
+		const entry = {
+			gameId: "g",
+			ply: 8,
+			mode: "normal" as const,
+			plannedMs: 4000,
+			actualMs: null,
+			alloc: 4,
+			clockMs: 180_000,
+			comp: 1,
+			eps: 0,
+			topTerms: [],
+			persona: "balanced" as const,
+			model: { head: "chessmimic" as const, band: "1500_1600" },
+		};
+		await sw.run(() => broadcaster.timingEntry(entry));
+		await sim.time.advance(0);
+		expect(seen).toEqual([entry]);
+	});
 	it("refreshes live progress when returning from another tab without needing a new game event", async () => {
 		session.recommend(makeRecommendation(makePlan(sim.now()), sim.now()), 8);
 		const other = sim.openTab("https://example.com", { active: true }).tabId;

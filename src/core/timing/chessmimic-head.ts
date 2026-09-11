@@ -17,6 +17,7 @@
 import type { TimingInferenceInputs } from "@core/constants/messages";
 import type { ChessMimicBand } from "@core/constants/models";
 import type { Rng } from "@core/rng";
+import type { TimingModelSource } from "@typedefs/timing";
 import {
 	bucketMask,
 	CHESSMIMIC_BUCKETS,
@@ -39,6 +40,7 @@ import type {
 	HeadSample,
 	Persona,
 	TimingContext,
+	TimingPreparation,
 } from "./types";
 
 const CM = TIMING_CONSTANTS.chessmimic;
@@ -174,7 +176,10 @@ export interface InferResult {
 }
 
 /** Inference port: resolves the bucket probabilities, or `null` on failure. */
-export type InferPort = (inputs: ChessMimicInputs) => Promise<InferResult | null>;
+export type InferPort = (
+	inputs: ChessMimicInputs,
+	options?: TimingPreparation
+) => Promise<InferResult | null>;
 
 export interface ChessMimicHeadOptions {
 	infer: InferPort;
@@ -190,28 +195,25 @@ interface CachedDistribution {
 	probs: number[];
 }
 
-function withBudget<T>(p: Promise<T | null>, budgetMs: number): Promise<T | null> {
+function withBudget<T>(
+	p: Promise<T | null>,
+	budgetMs: number,
+	signal?: AbortSignal
+): Promise<T | null> {
 	return new Promise((resolve) => {
 		let done = false;
-		const timer = setTimeout(() => {
+		const finish = (value: T | null) => {
 			if (done) return;
 			done = true;
-			resolve(null);
-		}, budgetMs);
-		p.then(
-			(v) => {
-				if (done) return;
-				done = true;
-				clearTimeout(timer);
-				resolve(v);
-			},
-			() => {
-				if (done) return;
-				done = true;
-				clearTimeout(timer);
-				resolve(null);
-			}
-		);
+			clearTimeout(timer);
+			signal?.removeEventListener("abort", abort);
+			resolve(value);
+		};
+		const abort = () => finish(null);
+		const timer = setTimeout(abort, budgetMs);
+		signal?.addEventListener("abort", abort, { once: true });
+		if (signal?.aborted) abort();
+		p.then(finish, abort);
 	});
 }
 
@@ -241,7 +243,7 @@ export class ChessMimicHead implements DistributionHead {
 	}
 
 	/** Issue inference for `ctx` (called as soon as the opponent's move arrives); resolves when cached. */
-	async prepare(ctx: TimingContext): Promise<void> {
+	async prepare(ctx: TimingContext, options?: TimingPreparation): Promise<void> {
 		const gen = ++this.generation;
 		this.cache = null;
 		let inputs: ChessMimicInputs;
@@ -251,13 +253,17 @@ export class ChessMimicHead implements DistributionHead {
 			this.lastFailure = `inputs: ${e instanceof Error ? e.message : String(e)}`;
 			return;
 		}
+		const budgetMs = options?.budgetMs ?? this.budgetMs;
 		const result = await withBudget(
-			Promise.resolve().then(() => this.infer(inputs)),
-			this.budgetMs
+			Promise.resolve().then(() => (options?.signal?.aborted ? null : this.infer(inputs, options))),
+			budgetMs,
+			options?.signal
 		);
 		if (gen !== this.generation) return;
-		if (!result) {
-			this.lastFailure = `timeout/null after ${this.budgetMs} ms`;
+		if (!result || options?.signal?.aborted) {
+			this.lastFailure = options?.signal?.aborted
+				? "search preparation ended before inference was ready"
+				: `timeout/null after ${budgetMs} ms`;
 			return;
 		}
 		if (!Array.isArray(result.probs) || result.probs.length !== CM.nBuckets) {
@@ -274,6 +280,17 @@ export class ChessMimicHead implements DistributionHead {
 
 	private cached(st: Pick<GameTimingState, "fen">): CachedDistribution | null {
 		return this.cache && this.cache.fen === st.fen ? this.cache : null;
+	}
+
+	diagnostics(fen: string): TimingModelSource {
+		const cached = this.cached({ fen });
+		return cached
+			? { head: this.id, band: cached.band }
+			: {
+					head: this.fallback.id,
+					requestedHead: this.id,
+					fallbackReason: this.lastFailure ?? "not prepared",
+				};
 	}
 
 	median(f: Features, p: Persona, st: GameTimingState, allocSec: number): number {

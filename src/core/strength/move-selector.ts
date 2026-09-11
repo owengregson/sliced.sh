@@ -9,6 +9,7 @@ import { classifyMove } from "@core/chess/move-classify";
 import type { Phase } from "@core/chess/phase";
 import { applyMoves, parseUci, uciToSan } from "@core/chess/san";
 import { LIMITS } from "@core/constants/limits";
+import { requestEloForTarget } from "@core/engine/options";
 import { clockRacePolicy, opponentClockPressure } from "@core/timing/opponent-pressure";
 import type { EvalLine } from "@typedefs/engine";
 import type { ChosenMove } from "@typedefs/game";
@@ -17,7 +18,9 @@ import { SELECTION_CONSTANTS as C } from "./constants";
 import { conversionPool, isImmediateMate, searchedCp } from "./conversion";
 import { betaFor, cpEffective, effectiveElo, gapFor, sigmaFor, tauFor, winProb } from "./elo-map";
 import { heuristicPriorDetailed, type PriorTerm } from "./prior";
+import { compareLines, moveQuality, rankedLines } from "./quality";
 import { avoidRepetition } from "./repetition";
+import { usesNativeSelection } from "./selection-mode";
 import type { SelectionContext, SelectionState } from "./types";
 
 export { cpEffective, winProb } from "./elo-map";
@@ -136,7 +139,7 @@ export function hangsPiece(line: EvalLine, loss: number, fen: string): boolean {
 interface Candidate {
 	line: EvalLine;
 	uci: string;
-	/** 1-based rank by raw `cpEff` (1 = the engine's best line). */
+	/** 1-based rank by original raw engine score; 0 when there is no credible score. */
 	rank: number;
 	cpRaw: number;
 	cpEff: number;
@@ -167,7 +170,7 @@ function fmt(n: number, digits = 3): string {
 function finish(
 	pick: Candidate,
 	source: ChosenMove["source"],
-	topCpRaw: number,
+	reference: readonly EvalLine[],
 	ctx: SelectionContext,
 	rationale: string[]
 ): ChosenMove {
@@ -183,6 +186,12 @@ function finish(
 	if (pick.terms.length > 0)
 		rationale.push(`prior: ${pick.terms.map((t) => `${t.rule} ×${fmt(t.factor)}`).join(", ")}`);
 	const san = pick.line.pvSan[0] ?? uciToSan(ctx.fen, pick.uci) ?? pick.uci;
+	const measured = moveQuality(reference, pick.line);
+	if (source === "mate") {
+		delete measured.cpLoss;
+		measured.quality.eligible = false;
+		measured.quality.reason = "mate";
+	}
 	const chosen: ChosenMove = {
 		uci: pick.uci,
 		san,
@@ -190,7 +199,7 @@ function finish(
 		to: parts.to,
 		source,
 		rankInLines: pick.rank,
-		cpLoss: Math.max(0, topCpRaw - pick.cpRaw),
+		...measured,
 		rationale,
 	};
 	if (parts.promotion !== undefined) chosen.promotion = parts.promotion;
@@ -206,37 +215,55 @@ export function selectMove(
 	ctx: SelectionContext,
 	prior?: ReadonlyMap<string, number>
 ): ChosenMove {
+	const clockContext = {
+		ownClockMs: ctx.myClockMs,
+		opponentClockMs: ctx.oppClockMs,
+		baseMs: ctx.baseMs ?? 0,
+		incrementMs: ctx.incrementMs ?? 0,
+	};
+	const race = clockRacePolicy(clockContext);
+	const pressure = Math.max(opponentClockPressure(clockContext), race?.opponentUrgency ?? 0);
+	const pressureReduction =
+		pressure >= C.opponentPressure.min ? C.opponentPressure.eloReduction * pressure : 0;
+	const E = effectiveElo(ctx.targetElo - pressureReduction, ctx.form);
 	const repetition = avoidRepetition(lines, ctx.fen, ctx.history);
 	const conversion = conversionPool(repetition.lines, ctx);
-	const usable = conversion.lines.filter((l) => l.pvUci[0] !== undefined);
+	const bestConversionCp = Math.max(...conversion.lines.map(searchedCp));
+	const usable = conversion.lines.filter(
+		(line) =>
+			line.pvUci[0] !== undefined &&
+			(!conversion.active ||
+				searchedCp(line) >= bestConversionCp - Math.max(C.conversion.maxLossCp, gapFor(E)))
+	);
 	if (usable.length === 0) throw new RangeError("selectMove: no lines with a move");
 	const { rng, state } = ctx;
 	const NP = C.neverPlay;
 
 	// Step 1: effective Elo.
-	const E = effectiveElo(ctx.targetElo, ctx.form);
 	const rationale: string[] = [`E=${fmt(E, 1)} (target ${ctx.targetElo}, form ${fmt(ctx.form)})`];
 	if (repetition.avoided) rationale.push("repetition: preserving the advantage with a new position");
 	if (conversion.avoidedDraw)
 		rationale.push("conversion: avoiding a searched stalemate or dead position");
 
-	// Rank by raw cpEff (1 = best); stable, so engine order breaks ties.
+	// Rank by actual engine score; clamped policy scores are only used for sampling.
 	const ranked = usable
 		.map((line, i) => ({ line, i, cpRaw: cpEffective(line.score) }))
-		.sort((a, b) => b.cpRaw - a.cpRaw || a.i - b.i);
-	const originalRanks = lines
-		.filter((line) => line.pvUci[0] !== undefined)
-		.sort((a, b) => cpEffective(b.score) - cpEffective(a.score));
+		.sort((a, b) => compareLines(a.line, b.line) || a.i - b.i);
+	const originalRanks = rankedLines(lines);
 	const topCpRaw = cpEffective(originalRanks[0]?.score ?? { cp: 0 });
 	const winTopRaw = winProb(topCpRaw);
-	const priors = resolvePriorsDetailed(usable, ctx, prior);
+	const priors = resolvePriorsDetailed(
+		usable,
+		{ ...ctx, targetElo: ctx.targetElo - pressureReduction },
+		prior
+	);
 
-	const toCandidate = (r: (typeof ranked)[number], rank: number): Candidate => {
+	const toCandidate = (r: (typeof ranked)[number]): Candidate => {
 		const uci = r.line.pvUci[0] ?? "";
 		return {
 			line: r.line,
 			uci,
-			rank: originalRanks.indexOf(r.line) + 1 || rank,
+			rank: originalRanks.findIndex((line) => line.pvUci[0] === uci) + 1,
 			cpRaw: r.cpRaw,
 			cpEff: r.cpRaw,
 			loss: 0,
@@ -259,113 +286,103 @@ export function selectMove(
 				? "mate: immediate legal checkmate"
 				: `mate: preserving forced mate-in-${mate.line.score.mate}`
 		);
-		return finish(toCandidate(mate, 1), "mate", topCpRaw, ctx, rationale);
+		return finish(toCandidate(mate), "mate", lines, ctx, rationale);
 	}
-	const pressure = opponentClockPressure({
-		ownClockMs: ctx.myClockMs,
-		opponentClockMs: ctx.oppClockMs,
-		baseMs: ctx.baseMs ?? 0,
-		incrementMs: ctx.incrementMs ?? 0,
-	});
-	const finishPick = (pick: Candidate, source: ChosenMove["source"]): ChosenMove => {
-		let chosen = pick;
-		if (pressure >= C.opponentPressure.min && !ranked.some((r) => (r.line.score.mate ?? 0) > 0)) {
-			const forcing = (uci: string): number => {
-				const facts = classifyMove(ctx.fen, uci, ctx.lastMove);
-				if (!facts) return 0;
-				return facts.isCheck
-					? C.opponentPressure.checkWeight
-					: facts.isRecapture
-						? C.opponentPressure.recaptureWeight
-						: facts.isCapture
-							? C.opponentPressure.captureWeight
-							: 0;
-			};
-			const safe = ranked
-				.map((r, i) => toCandidate(r, i + 1))
-				.filter(
-					(c) =>
-						c.mate === undefined &&
-						Math.max(...usable.map(searchedCp)) - searchedCp(c.line) <= C.opponentPressure.maxLossCp &&
-						forcing(c.uci) > 0
-				)
-				.sort((a, b) => forcing(b.uci) - forcing(a.uci) || b.cpRaw - a.cpRaw);
-			const alternative = safe[0];
-			if (
-				alternative &&
-				alternative.uci !== pick.uci &&
-				(forcing(alternative.uci) > forcing(pick.uci) ||
-					topCpRaw - pick.cpRaw > C.opponentPressure.maxLossCp) &&
-				rng.chance(pressure)
-			) {
-				chosen = alternative;
-				rationale.push(
-					`opponent clock pressure: safe forcing move (${Math.round(pressure * 100)}%, ≤${C.opponentPressure.maxLossCp} cp loss)`
-				);
-			}
+	if (pressureReduction > 0)
+		rationale.push(`opponent clock pressure: accuracy −${fmt(pressureReduction, 0)} Elo`);
+	if (conversion.active)
+		rationale.push("conversion: retaining the win with rating-sensitive progress");
+	const bestProgress = Math.max(...usable.map((line) => conversion.progress.get(line) ?? 0));
+	for (const line of usable) {
+		const uci = line.pvUci[0] ?? "";
+		const terms = priors.terms.get(uci) ?? [];
+		let value = priors.values.get(uci) ?? 1;
+		if (
+			conversion.active &&
+			bestProgress > 0 &&
+			conversion.progress.get(line) === bestProgress &&
+			searchedCp(line) >= bestConversionCp - C.conversion.progressLossCp
+		) {
+			value *= C.endgame.wonTechnique;
+			terms.push({ rule: "conversion-progress", factor: C.endgame.wonTechnique });
 		}
-		return finish(
-			chosen,
-			chosen !== pick && source === "blunder" ? "sampled" : source,
-			topCpRaw,
-			ctx,
-			rationale
-		);
-	};
-
-	if (conversion.active) {
-		const bestCp = Math.max(...usable.map(searchedCp));
-		const progress = ranked
-			.filter((r) => searchedCp(r.line) >= bestCp - C.conversion.progressLossCp)
-			.sort(
-				(a, b) =>
-					(conversion.progress.get(b.line) ?? 0) - (conversion.progress.get(a.line) ?? 0) ||
-					searchedCp(b.line) - searchedCp(a.line)
-			)[0];
-		if (progress) {
-			rationale.push("conversion: preserving the win and making safe progress");
-			return finish(toCandidate(progress, 1), "sampled", topCpRaw, ctx, rationale);
+		const facts = pressureReduction > 0 ? classifyMove(ctx.fen, uci, ctx.lastMove) : null;
+		if (facts?.isCheck || facts?.isRecapture) {
+			const factor = 1 + (C.opponentPressure.forcingPrior - 1) * pressure;
+			value *= factor;
+			terms.push({ rule: "clock-forcing", factor });
 		}
+		priors.values.set(uci, value);
+		priors.terms.set(uci, terms);
 	}
-
-	const race = clockRacePolicy({
-		ownClockMs: ctx.myClockMs,
-		opponentClockMs: ctx.oppClockMs,
-		baseMs: ctx.baseMs ?? 0,
-		incrementMs: ctx.incrementMs ?? 0,
-	});
-	if (race && race.opponentUrgency >= C.opponentPressure.min) {
-		const bestCp = Math.max(...usable.map(searchedCp));
-		const maxLoss = C.clockRace.maxLossCp * race.opponentUrgency;
-		const safe = ranked.filter((r) => {
-			if (r.line.score.mate !== undefined || bestCp - searchedCp(r.line) > maxLoss) return false;
-			const next = applyMoves(ctx.fen, [r.line.pvUci[0] ?? ""]);
-			const board = next ? loadPosition(next) : null;
-			return board !== null && !(bestCp > 0 && board.isDraw());
-		});
-		if (safe.length) {
-			const weights = safe.map((r) =>
-				Math.exp((searchedCp(r.line) - bestCp) / C.clockRace.temperatureCp)
-			);
-			const pick = rng.weighted(safe, weights);
-			rationale.push(`clock race: bounded quick choice (≤${fmt(maxLoss, 0)} cp loss)`);
-			return finishPick(toCandidate(pick, 1), "sampled");
-		}
-	}
+	const finishPick = (pick: Candidate, source: ChosenMove["source"]): ChosenMove =>
+		finish(pick, source, lines, ctx, rationale);
 	// The top product setting requests the strongest searched move, without injected mistakes.
-	if (ctx.targetElo >= LIMITS.eloMax) {
+	if (ctx.targetElo >= LIMITS.eloMax && pressureReduction === 0) {
 		const best = ranked[0];
 		if (!best) throw new RangeError("selectMove: no lines");
 		rationale.push("maximum strength: strongest searched continuation");
-		return finish(toCandidate(best, 1), "engine-elo", topCpRaw, ctx, rationale);
+		return finish(toCandidate(best), "engine-elo", lines, ctx, rationale);
 	}
-	// §7.1 `engine-elo`: play the engine's Elo-limited bestmove verbatim.
-	if (ctx.selectionMode === "engine-elo") {
-		const idx = ranked.findIndex((r) => r.line.pvUci[0] === ctx.engineBestmove);
+	// Retain native rating variation when Hybrid's custom parameters have saturated;
+	// the ordinary gap and explicit-error thresholds can otherwise both reject its choice.
+	if (usesNativeSelection(ctx.selectionMode, E) && pressureReduction === 0) {
+		if (ctx.selectionMode === "hybrid")
+			rationale.push(
+				`hybrid: native selection at E≥${C.tau.pivotElo} (UCI_Elo ${requestEloForTarget(ctx.targetElo) ?? "unlimited"})`
+			);
+		const native = ctx.engineBestmove;
+		const hasUnmated = ranked.some((r) => (r.line.score.mate ?? 0) >= 0);
+		const idx = ranked.findIndex(
+			(r) =>
+				native !== undefined &&
+				r.line.pvUci[0] === native &&
+				!!applyMoves(ctx.fen, [native]) &&
+				!(ctx.selectionMode === "hybrid" && hasUnmated && (r.line.score.mate ?? 0) < 0)
+		);
+		// Stockfish's strength limiter can choose outside the completed MultiPV set.
+		// Preserve that legal choice, but never resurrect an evaluated move that a
+		// guard removed. Its unknown score must not become a zero-loss observation.
+		if (idx < 0 && native && !lines.some((line) => line.pvUci[0] === native)) {
+			const next = applyMoves(ctx.fen, [native]);
+			const board = next ? loadPosition(next) : null;
+			const probe: EvalLine = {
+				multipv: 0,
+				depth: 0,
+				score: originalRanks[0]?.score ?? {},
+				pvUci: [native],
+				pvSan: [],
+			};
+			// An optimistic score lets the existing repetition guard assess the move
+			// without rejecting it merely for lacking a score; it is not used to select.
+			const guard = avoidRepetition([...lines, probe], ctx.fen, ctx.history);
+			const repetitionVeto = guard.avoided && !guard.lines.includes(probe);
+			const drawVeto = bestConversionCp >= C.repetition.aheadCp && board?.isDraw();
+			if (board && !repetitionVeto && !drawVeto) {
+				rationale.push("engine-elo: legal native bestmove outside the scored candidates");
+				return finishPick(
+					{
+						line: { ...probe, score: {} },
+						uci: native,
+						rank: 0,
+						cpRaw: 0,
+						cpEff: 0,
+						loss: 0,
+						lossRaw: 0,
+						prior: 1,
+						terms: [],
+						mate: undefined,
+					},
+					"engine-elo"
+				);
+			}
+		}
 		const r = ranked[idx >= 0 ? idx : 0];
 		if (r === undefined) throw new RangeError("selectMove: no lines");
-		rationale.push(idx >= 0 ? "engine-elo: bestmove" : "engine-elo: bestmove absent, top line");
-		return finishPick(toCandidate(r, (idx >= 0 ? idx : 0) + 1), "engine-elo");
+		rationale.push(
+			idx >= 0 ? "engine-elo: bestmove" : "engine-elo: bestmove unavailable or vetoed, top line"
+		);
+		return finishPick(toCandidate(r), "engine-elo");
 	}
 
 	const params = selectionParams(E, state, ctx.phase, ctx.tauScale ?? 1);
@@ -379,8 +396,8 @@ export function selectMove(
 		rationale.push(`hybrid: prior(${ctx.engineBestmove}) ×${C.hybridBestmovePrior}`);
 
 	// Steps 2–4: cpEff, jitter, win-probability loss.
-	const cands = ranked.map((r, i) => {
-		const c = toCandidate(r, i + 1);
+	const cands = ranked.map((r) => {
+		const c = toCandidate(r);
 		c.cpEff = c.cpRaw + rng.normal(0, params.sigma);
 		return c;
 	});
@@ -414,7 +431,7 @@ export function selectMove(
 	const terms = blunderTerms(E, {
 		myClockMs: ctx.myClockMs,
 		cpStd,
-		blunderScale: pressure >= C.opponentPressure.min ? 0 : ctx.blunderScale,
+		blunderScale: ctx.targetElo >= LIMITS.eloMax ? 0 : ctx.blunderScale,
 		state,
 		...(ctx.baseMs === undefined ? {} : { baseMs: ctx.baseMs }),
 	});
@@ -423,7 +440,9 @@ export function selectMove(
 	);
 	if (terms.b > 0 && rng.chance(terms.b)) {
 		const { kind, target } = drawTargetLoss(rng);
-		const pool = cands.filter((c) => !getsMated(c) && c.loss >= C.blunder.minLoss);
+		const pool = cands
+			.filter((c) => !getsMated(c) && c.lossRaw >= C.blunder.minLoss)
+			.map((c) => ({ ...c, loss: c.lossRaw }));
 		const pick = pickBlunder(pool, target);
 		if (pick) {
 			rationale.push(`blunder: ${kind} target ${fmt(target)} → loss ${fmt(pick.loss)}`);

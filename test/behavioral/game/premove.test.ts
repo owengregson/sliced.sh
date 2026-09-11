@@ -2,10 +2,12 @@
 // session pre-computes a premove conditioned on their expected reply; when that reply actually
 // lands the move is played straight away (`t_premove ~ U(0, TIMING_CONSTANTS.premove.maxS)` =
 // within 120 ms), with no fresh search. Any other reply falls back to the normal pipeline.
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import { chromeLocalGet } from "@core/chrome/storage";
 import { LOCAL_KEYS } from "@core/constants/storage-keys";
 import { TIMING_CONSTANTS } from "@core/timing/constants";
+import { TimingModel } from "@core/timing/timing-model";
+import type { ExecutionReport, ExecutorEvent, ExecutorEvents } from "@service/move-executor";
 import type { SessionStats } from "@typedefs/game";
 import { createGameHarness, type GameHarness } from "./harness";
 
@@ -50,6 +52,81 @@ async function playThenReply(o: PremoveOptions): Promise<{
 }
 
 describe("game session: premove (Step 2c)", () => {
+	it("keeps a delayed reactive-premove receipt on its original game and ply", async () => {
+		type EventPort = { emit(event: ExecutorEvent, payload: ExecutorEvents[ExecutorEvent]): void };
+		let checked = false;
+		for (let seed = 0; seed < SEEDS && !checked; seed++) {
+			await h?.dispose();
+			const oldGameId = `premove-${seed}`;
+			h = await createGameHarness({
+				settings: {
+					automation: { autoMove: true },
+					strength: { matchOpponentRating: false, targetElo: 3000 },
+				},
+				timeControl: { baseMs: 180_000, incMs: 0 },
+				script: { bestCp: 900, stepCp: 900 },
+				gameId: oldGameId,
+			});
+			await playThenReply({ gameId: oldGameId });
+			const rec = h.session().recommendation();
+			if (rec?.chosen.source !== "premove") continue;
+			const emitter = h.executor() as unknown as EventPort;
+			const emit = emitter.emit.bind(emitter);
+			let delayed: ExecutionReport | null = null;
+			// Delay only the terminal event at the executor/service boundary, after real input.
+			const hold = spyOn(emitter, "emit").mockImplementation((event, payload) => {
+				if (event === "executed" && (payload as ExecutionReport).rec === rec) {
+					delayed = payload as ExecutionReport;
+					return;
+				}
+				emit(event, payload);
+			});
+			try {
+				expect(await h.until(() => delayed !== null, 30_000)).toBe(true);
+			} finally {
+				hold.mockRestore();
+			}
+			const row = h.timingLog.entries().find((e) => e.gameId === oldGameId && e.ply === 2)!;
+			expect(row.actualMs).toBeNull();
+			await h.drive(() => h.site.startGame({ gameId: "replacement-game" }));
+			const observations: Array<{
+				gameId: string | undefined;
+				before: number;
+				after: number;
+				active: string;
+			}> = [];
+			const original = TimingModel.prototype.observe;
+			const observe = spyOn(TimingModel.prototype, "observe").mockImplementation(function (
+				this: TimingModel,
+				actual,
+				plan,
+				attribution
+			) {
+				const before = this.state.myThinkMs.length;
+				original.call(this, actual, plan, attribution);
+				observations.push({
+					gameId: attribution?.gameId,
+					before,
+					after: this.state.myThinkMs.length,
+					active: this.state.gameId,
+				});
+			});
+			try {
+				// Model a factory retaining one event source for the tab across the game boundary.
+				await h.drive(() => (h.executor() as unknown as EventPort).emit("executed", delayed!));
+			} finally {
+				observe.mockRestore();
+			}
+			expect(observations).toEqual([
+				{ gameId: oldGameId, before: 0, after: 0, active: "replacement-game" },
+			]);
+			expect(row.actualMs).toBeGreaterThan(0);
+			expect(h.timingLog.entries().filter((e) => e.gameId === "replacement-game")).toHaveLength(0);
+			checked = true;
+		}
+		expect(checked).toBe(true);
+	}, 120_000);
+
 	it("fires the armed premove within the §7.4 window when the opponent plays the expected reply", async () => {
 		let fired = false;
 		for (let seed = 0; seed < SEEDS && !fired; seed++) {

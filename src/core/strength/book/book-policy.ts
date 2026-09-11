@@ -21,6 +21,7 @@ import { clamp } from "@core/util/clamp";
 import type { EvalLine } from "@typedefs/engine";
 import type { ChosenMove } from "@typedefs/game";
 import { cpEffective, winProb } from "../elo-map";
+import { moveQuality, rankedLines } from "../quality";
 import { type BookMove, loadBook, type PolyglotBook } from "./polyglot";
 
 /** `γ(E) = 0.75 + 0.25·clamp((E − 1200)/1200, 0, 1)`: weaker targets sample flatter. */
@@ -95,7 +96,7 @@ export function bookNameFor(E: number): BookName {
 
 export interface LineFacts {
 	rank: number;
-	cpLoss: number;
+	cpLoss?: number;
 	/** Win-fraction loss vs the best line; `null` when the move is not among the lines. */
 	loss: number | null;
 	/**
@@ -107,7 +108,7 @@ export interface LineFacts {
 
 /** Rank, cp loss and win-fraction loss of `uci` relative to the best of `lines`. */
 export function lineFacts(uci: string, lines: readonly EvalLine[] | undefined): LineFacts {
-	if (!lines || lines.length === 0) return { rank: 0, cpLoss: 0, loss: null, lossLowerBound: 0 };
+	if (!lines || lines.length === 0) return { rank: 0, loss: null, lossLowerBound: 0 };
 	let bestCp = Number.NEGATIVE_INFINITY;
 	let worstCp = Number.POSITIVE_INFINITY;
 	for (const line of lines) {
@@ -115,14 +116,21 @@ export function lineFacts(uci: string, lines: readonly EvalLine[] | undefined): 
 		bestCp = Math.max(bestCp, cp);
 		worstCp = Math.min(worstCp, cp);
 	}
-	const index = lines.findIndex((line) => line.pvUci[0] === uci);
+	const ranked = rankedLines(lines);
+	const index = ranked.findIndex((line) => line.pvUci[0] === uci);
 	if (index < 0) {
 		const bound = Math.max(0, winProb(bestCp) - winProb(worstCp));
-		return { rank: 0, cpLoss: 0, loss: null, lossLowerBound: bound };
+		return { rank: 0, loss: null, lossLowerBound: bound };
 	}
-	const cp = cpEffective(lines[index]?.score ?? {});
+	const cp = cpEffective(ranked[index]?.score ?? {});
 	const loss = Math.max(0, winProb(bestCp) - winProb(cp));
-	return { rank: index + 1, cpLoss: Math.max(0, bestCp - cp), loss, lossLowerBound: loss };
+	const measured = moveQuality(lines, ranked[index]);
+	return {
+		rank: index + 1,
+		...(measured.cpLoss === undefined ? {} : { cpLoss: measured.cpLoss }),
+		loss,
+		lossLowerBound: loss,
+	};
 }
 
 /**
@@ -176,7 +184,16 @@ export function createBookPolicy(deps: BookPolicyDeps = {}): BookPolicy {
 			to: parts.to,
 			source: "book",
 			rankInLines: facts.rank,
-			cpLoss: facts.cpLoss,
+			...(facts.cpLoss === undefined ? {} : { cpLoss: facts.cpLoss }),
+			quality: {
+				...moveQuality(
+					ctx.lines ?? [],
+					ctx.lines?.find((line) => line.pvUci[0] === uci)
+				).quality,
+				kind: "book",
+				eligible: false,
+				reason: "book",
+			},
 			rationale,
 		};
 		if (parts.promotion !== undefined) chosen.promotion = parts.promotion;

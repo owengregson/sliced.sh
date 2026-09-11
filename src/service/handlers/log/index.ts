@@ -5,15 +5,20 @@
  */
 
 import type { MessageRouter } from "@core/messaging/router";
+import type { TimingLogWriter } from "@core/timing/timing-log";
 import { registerSessionResetHandler } from "@service/handlers/log/session-reset";
 import { registerLogStreamPort } from "@service/handlers/log/stream";
 import { registerTimingLogHandlers } from "@service/handlers/log/timing-log";
 import type { LogBridge } from "@service/log-bridge";
 
 /** Returns the unsubscribe for the port acceptance (message handlers live on the router). */
-export function registerLogHandlers(router: MessageRouter, bridge: LogBridge): () => void {
+export function registerLogHandlers(
+	router: MessageRouter,
+	bridge: LogBridge,
+	timingLog: TimingLogWriter
+): () => void {
 	const stopAccepting = registerLogStreamPort(bridge);
-	registerTimingLogHandlers(router);
+	registerTimingLogHandlers(router, timingLog);
 	registerSessionResetHandler(router);
 	return stopAccepting;
 }

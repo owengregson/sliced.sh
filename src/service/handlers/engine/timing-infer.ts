@@ -19,6 +19,7 @@ import type { EnginePortCommand, EnginePortMessage } from "@core/constants/messa
 import { log } from "@core/logger";
 import type { ChessMimicInputs, InferPort, InferResult } from "@core/timing/chessmimic-head";
 import { TIMING_CONSTANTS } from "@core/timing/constants";
+import type { TimingPreparation } from "@core/timing/types";
 import { DEFAULT_SCHEDULER, type TimerScheduler } from "@core/util/scheduler";
 
 /** The engine port as seen from the SW (`RemoteEngine` satisfies it). */
@@ -48,6 +49,7 @@ const ID_PREFIX = "t";
 interface PendingQuery {
 	resolve: (r: InferResult | null) => void;
 	timer: unknown;
+	cleanup: () => void;
 }
 
 export function createTimingInferPort(
@@ -66,6 +68,7 @@ export function createTimingInferPort(
 		if (!q) return undefined;
 		pending.delete(id);
 		sched.clearTimeout(q.timer);
+		q.cleanup();
 		return q;
 	}
 
@@ -83,16 +86,23 @@ export function createTimingInferPort(
 		q.resolve(result);
 	});
 	return {
-		infer(inputs: ChessMimicInputs): Promise<InferResult | null> {
-			if (disposed) return Promise.resolve(null);
+		infer(inputs: ChessMimicInputs, preparation?: TimingPreparation): Promise<InferResult | null> {
+			if (disposed || preparation?.signal?.aborted) return Promise.resolve(null);
 			const id = `${ID_PREFIX}${++seq}`;
+			const expiresMs = preparation?.budgetMs ?? budgetMs;
 			return new Promise((resolve) => {
+				const abort = () => take(id)?.resolve(null);
 				const timer = sched.setTimeout(() => {
 					if (!take(id)) return;
-					log.debug("timing-infer: query expired unanswered", { id, budgetMs });
+					log.debug("timing-infer: query expired unanswered", { id, budgetMs: expiresMs });
 					resolve(null);
-				}, budgetMs);
-				pending.set(id, { resolve, timer });
+				}, expiresMs);
+				pending.set(id, {
+					resolve,
+					timer,
+					cleanup: () => preparation?.signal?.removeEventListener("abort", abort),
+				});
+				preparation?.signal?.addEventListener("abort", abort, { once: true });
 				port.post({ kind: "timing", id, inputs });
 			});
 		},
@@ -109,6 +119,7 @@ export function createTimingInferPort(
 			pending.clear();
 			for (const q of waiting) {
 				sched.clearTimeout(q.timer);
+				q.cleanup();
 				q.resolve(null);
 			}
 		},

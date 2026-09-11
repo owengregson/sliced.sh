@@ -51,7 +51,8 @@ export interface SessionRegistryDeps {
 	link: ContentLink;
 	engine: EngineController | null;
 	book: BookPolicy | null;
-	head: DistributionHead;
+	/** Each session owns its inference generation/cache; only the inference transport is shared. */
+	createHead(): DistributionHead;
 	debugger: DebuggerManager;
 	focus: FocusGate;
 	ownership: HandOwnership;
@@ -288,7 +289,7 @@ export class SessionRegistry implements GameSessionRegistry, SnapshotSources {
 			link: this.deps.link,
 			engine: this.deps.engine,
 			book: this.deps.book,
-			head: this.deps.head,
+			head: this.deps.createHead(),
 			debugger: this.deps.debugger,
 			focus: this.deps.focus,
 			ownership: this.deps.ownership,

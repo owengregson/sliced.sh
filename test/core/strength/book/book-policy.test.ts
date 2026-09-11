@@ -173,6 +173,7 @@ describe("bookMove exit conditions", () => {
 		expect(chosen?.uci).toBe("d2d4");
 		expect(chosen?.rankInLines).toBe(2);
 		expect(chosen?.cpLoss).toBe(10);
+		expect(chosen?.quality).toMatchObject({ kind: "book", eligible: false, reason: "book" });
 		policy.dispose();
 	});
 

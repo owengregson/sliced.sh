@@ -161,7 +161,7 @@ export const COPY = {
 		locked: "Locked",
 	},
 	session: (games: number, pct: number, avg: string): string =>
-		`${games} games · ${pct}% vs target · ${avg}s avg move`,
+		`${games} games · ${pct}% top-1 · ${avg}s avg move`,
 	telemetry: { clean: "clean", blur: "blur seen", mouse: "mouse touched", label: "Telemetry" },
 	executor: { attached: "Attached", detached: "Detached", notStarted: "Not started" },
 	engine: {
@@ -365,6 +365,10 @@ export const COPY = {
 		licenseVerdict: (raw: string, forced: boolean): string =>
 			forced ? `${raw} (forced valid)` : raw,
 		rationale: {
+			model: (head: string, band?: string): string => `model ${head}${band ? ` · ${band}` : ""}`,
+			fallback: (reason: string): string => `fallback: ${reason}`,
+			context: (elo: number, opponentSeconds: string): string =>
+				`target ${elo} · opponent ${opponentSeconds}s`,
 			base: (seconds: string, mode: string, persona: string): string =>
 				`base ${seconds}s (${mode} · ${persona})`,
 			term: (name: string, seconds: string): string => `${seconds}s ${name}`,
@@ -380,8 +384,8 @@ export const COPY = {
 		copied: "Log copied",
 		copyFailed: "Copy failed",
 		logEmpty: "No timing entries",
-		session: (games: number, moves: number, avg: string): string =>
-			`${games} games · ${moves} moves · ${avg}s avg move`,
+		session: (games: number, moves: number, avg: string | null): string =>
+			`${games} games · ${moves} moves · ${avg === null ? "—" : `${avg}s`} avg move`,
 		reset: "Reset session",
 		level: "Level",
 		levels: { silent: "Silent", error: "Error", warn: "Warn", info: "Info", debug: "Debug" },
@@ -661,13 +665,17 @@ export const COPY_LIVE = {
 		detached: "detached",
 	},
 	band: {
-		stats: (top1: number, acpl: number): string => `${top1}% top-1 · ${acpl} ACPL`,
-		target: (lo: number, hi: number, acplLo: number, acplHi: number): string =>
-			`band ${lo}–${hi}% · ${acplLo}–${acplHi}`,
-		warning: (games: number): string => `Outside the band for ${games} games`,
+		stats: (top1: number, loss: number, moves: number): string =>
+			`${top1}% top-1 · ${loss} cp search loss · ${moves} moves`,
+		target: (lo: number, hi: number, lossLo: number, lossHi: number, minMoves: number): string =>
+			`Search-time root comparisons, not post-game ACPL or measured Elo. Reference ${lo}–${hi}% top-1 · ${lossLo}–${lossHi} cp. Warnings require ${minMoves}+ comparable choices per game and an uncertainty interval wholly outside the reference. Intervals are approximate noise guards; chess moves are correlated. Same rating band, strength settings and time control only.`,
+		warning: (games: number): string => `${games} sampled games outside reference`,
 	},
 	clock: { opponent: "Opponent clock", you: "Your clock" },
 	executorLabel: "Executor",
 	/** Session strip before the first measured move: no "% vs target" figure yet. */
-	sessionNoStats: (games: number, avg: string): string => `${games} games · ${avg}s avg move`,
+	sessionNoStats: (games: number, avg: string | null): string =>
+		`${games} games · ${avg === null ? "—" : `${avg}s`} avg move`,
+	timingSampleCount: (n: number): string =>
+		`${n} measured turns, including analysis and input. Historical hand-only timing and queued premoves are excluded.`,
 } as const;

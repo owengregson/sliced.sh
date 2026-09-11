@@ -109,6 +109,30 @@ describe("createTimingInferPort", () => {
 		expect(client.pendingCount()).toBe(0);
 		expect(sched.count()).toBe(0);
 	});
+	it("uses the running search budget for a slower inference and cancels promptly when search ends", async () => {
+		const port = fakePort();
+		const sched = makeScheduler();
+		const client = createTimingInferPort(port, { scheduler: sched, budgetMs: 100 });
+		const first = client.infer(inputs, { budgetMs: 600 });
+		sched.advance(200);
+		expect(client.pendingCount()).toBe(1);
+		const cmd = port.posted[0];
+		if (cmd?.kind !== "timing") throw new Error("missing request");
+		const probs = Array.from({ length: 30 }, () => 1 / 30);
+		port.emit({ kind: "timing-result", id: cmd.id, band: "1500_1600", probs, ms: 200 });
+		expect((await first)?.probs).toEqual(probs);
+		const controller = new AbortController();
+		const second = client.infer(inputs, { budgetMs: 600, signal: controller.signal });
+		expect(client.pendingCount()).toBe(1);
+		controller.abort();
+		expect(await second).toBeNull();
+		expect(client.pendingCount()).toBe(0);
+		expect(sched.count()).toBe(0);
+		const count = port.posted.length;
+		expect(await client.infer(inputs, { signal: controller.signal })).toBeNull();
+		expect(port.posted).toHaveLength(count);
+		client.dispose();
+	});
 	it("a query answered inside the budget clears its expiry and keeps its result", async () => {
 		const port = fakePort();
 		const sched = makeScheduler();

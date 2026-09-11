@@ -3,6 +3,8 @@
 // (§8.5: "Auto-move disarmed → `planMove` is still computed and shown in the panel").
 import { afterEach, describe, expect, it } from "bun:test";
 import { CDP } from "@core/constants/cdp";
+import { TIMING_PROFILE_KNOBS } from "@core/constants/timings";
+import type { DistributionHead, TimingPlan } from "@core/timing/types";
 import { createGameHarness, type GameHarness } from "./harness";
 
 let h: GameHarness;
@@ -14,6 +16,14 @@ afterEach(async () => {
 });
 
 const BULLET = { baseMs: 60_000, incMs: 0 };
+// Exercise the preset's discretionary think, above the physical gesture floor and below
+// the bullet budget cap. A seeded V1 opening draw can fall below the floor in both profiles,
+// correctly producing equal durations even though the preset reached the timing model.
+const NORMAL_HEAD: DistributionHead = {
+	id: "v1-parametric",
+	sample: () => ({ tSec: 2, mode: "normal", why: ["preset fixture: normal body"] }),
+	median: () => 2,
+};
 
 const presses = (harness: GameHarness): unknown[] =>
 	harness.sim.debugger.commands.filter(
@@ -22,11 +32,11 @@ const presses = (harness: GameHarness): unknown[] =>
 			(c.params as { type: string }).type === "mousePressed"
 	);
 
-/** The think time the first plan of a seeded game asks for. */
-async function firstThinkMs(harness: GameHarness): Promise<number> {
+/** The first plan of a seeded game, including evidence that no floor/cap hid the preset. */
+async function firstPlan(harness: GameHarness): Promise<TimingPlan> {
 	await harness.arrive();
 	expect(await harness.until(() => harness.session().recommendation() !== null, 10_000)).toBe(true);
-	return harness.session().recommendation()?.plan.thinkMs ?? 0;
+	return harness.session().recommendation()!.plan;
 }
 
 describe("game session: timing presets (§4.6, checklist 8)", () => {
@@ -35,21 +45,28 @@ describe("game session: timing presets (§4.6, checklist 8)", () => {
 		h = await createGameHarness({
 			timeControl: BULLET,
 			gameId: "preset-game",
+			head: NORMAL_HEAD,
 			settings: { timing: { profile: "natural", speedScale: 1 } },
 		});
-		const withPreset = await firstThinkMs(h);
+		const withPreset = await firstPlan(h);
 
 		// `custom` is the user's own choice and is never overridden: the sliders stand.
 		other = await createGameHarness({
 			timeControl: BULLET,
 			gameId: "preset-game",
+			head: NORMAL_HEAD,
 			settings: { timing: { profile: "custom", speedScale: 1 } },
 		});
-		const noPreset = await firstThinkMs(other);
+		const noPreset = await firstPlan(other);
 
-		expect(withPreset).toBeGreaterThan(0);
-		expect(noPreset).toBeGreaterThan(0);
-		expect(withPreset).toBeLessThan(noPreset);
+		for (const plan of [withPreset, noPreset]) {
+			expect(plan.mode).toBe("normal");
+			expect(plan.thinkMs).toBeGreaterThan(0);
+			expect(plan.window.decisionMs).toBeGreaterThan(0);
+			expect(plan.thinkMs).toBeLessThan(plan.features.capSec! * 1000);
+		}
+		expect(withPreset.thinkMs).toBeLessThan(noPreset.thinkMs);
+		expect(withPreset.thinkMs / noPreset.thinkMs).toBeCloseTo(TIMING_PROFILE_KNOBS.fast.speedScale);
 	});
 
 	it("`manual` computes and shows the plan but never plays it", async () => {

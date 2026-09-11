@@ -1,5 +1,6 @@
 // test/core/strength/move-selector.test.ts
 import { describe, expect, it } from "bun:test";
+import { applyMoves } from "@core/chess/san";
 import { createRng } from "@core/rng";
 import { SELECTION_CONSTANTS } from "@core/strength/constants";
 import { tauFor } from "@core/strength/elo-map";
@@ -129,6 +130,52 @@ describe("selectMove — selection modes", () => {
 		const m = selectMove(TWO, ctx({ selectionMode: "engine-elo" }), flatPrior(TWO));
 		expect(m.uci).toBe("e2e4");
 		expect(m.source).toBe("engine-elo");
+	});
+	it("retains a legal native choice outside the scored pool without inventing a rank or loss", () => {
+		const chosen = selectMove(TWO, ctx({ selectionMode: "engine-elo", engineBestmove: "a2a3" }));
+		expect(chosen.uci).toBe("a2a3");
+		expect(chosen.source).toBe("engine-elo");
+		expect(chosen.rankInLines).toBe(0);
+		expect(chosen.cpLoss).toBeUndefined();
+		expect(chosen.quality).toEqual({
+			kind: "search",
+			eligible: false,
+			reason: "unknown",
+			depth: 0,
+			candidates: 2,
+		});
+	});
+	it("rejects illegal unscored native moves and preserves searched mates", () => {
+		for (const engineBestmove of ["e2e5", "a9a8", "0000"]) {
+			expect(selectMove(TWO, ctx({ selectionMode: "engine-elo", engineBestmove })).uci).toBe("e2e4");
+		}
+		const mate = [line(START, "e2e4", { mate: 5 }, 1), TWO[1]!];
+		expect(
+			selectMove(mate, ctx({ selectionMode: "engine-elo", engineBestmove: "a2a3" })).source
+		).toBe("mate");
+	});
+	it("does not reintroduce a native stalemate, whether unscored or already vetoed", () => {
+		const fen = "7k/5K2/6Q1/8/8/8/8/8 w - - 0 1";
+		const safe = line(fen, "g6g5", { cp: 1500 }, 2);
+		for (const pool of [[safe], [line(fen, "f7e6", { cp: 1600 }, 1), safe]]) {
+			const chosen = selectMove(
+				pool,
+				ctx({ fen, selectionMode: "engine-elo", engineBestmove: "f7e6" })
+			);
+			expect(chosen.uci).toBe("g6g5");
+		}
+	});
+	it("rejects an unscored native repetition when a searched move retains the advantage", () => {
+		const history = {
+			fen: "6k1/8/8/8/8/8/PPPP4/6K1 b - - 0 1",
+			moves: ["g8h8", "g1h1", "h8g8", "h1g1", "g8h8", "g1h1", "h8g8"],
+		};
+		const fen = applyMoves(history.fen, history.moves)!;
+		const chosen = selectMove(
+			[line(fen, "a2a3", { cp: 775 }, 1)],
+			ctx({ fen, history, selectionMode: "engine-elo", engineBestmove: "h1g1" })
+		);
+		expect(chosen.uci).toBe("a2a3");
 	});
 	it("(e) hybrid boosts the engine bestmove prior ×2.0; persona-sampling does not", () => {
 		const hybrid = resolvePriors(
@@ -351,15 +398,17 @@ describe("selectMove — endgame technique by Elo (Appendix E §3.5)", () => {
 			ctx({ fen: ROOK_ENDGAME, targetElo: 2000, ply: 70, phase: "endgame", rng: createRng("won") })
 		);
 		const text = m.rationale.join(" ");
-		expect(text).toContain("conversion: preserving the win");
-		expect(m.uci).toBe("e2e4");
+		expect(text).toContain("conversion: retaining the win");
+		expect(["e2e4", "e1d2"]).toContain(m.uci);
+		expect(text).toContain("τ=");
 		expect(text).toContain("won-endgame-technique ×1.5");
 		const weak = selectMove(
 			WON,
 			ctx({ fen: ROOK_ENDGAME, targetElo: 1000, ply: 70, phase: "endgame", rng: createRng("won") })
 		);
-		expect(weak.rationale.join(" ")).toContain("conversion: preserving the win");
-		expect(weak.uci).toBe("e2e4");
+		expect(weak.rationale.join(" ")).toContain("conversion: retaining the win");
+		expect(weak.rationale.join(" ")).toContain("τ=");
+		expect(["e2e4", "e1d2"]).toContain(weak.uci);
 	});
 });
 

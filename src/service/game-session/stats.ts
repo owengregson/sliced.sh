@@ -1,19 +1,14 @@
 /**
- * Session statistics (`LOCAL_KEYS.sessionStats`, §13.6 session strip). The
- * `GameSession` folds every played move into the running totals and every
- * finished game into `games` / `outOfBandStreak`; the panel broadcaster reads
- * the key back (a storage write pushes a snapshot on its own).
- *
- * `top1Pct` and `acpl` are the Appendix E §1.6 agreement pair for the derived
- * target: the share of played moves that were the engine's first line, and the
- * mean centipawn loss of the chosen moves. `outOfBandStreak` counts consecutive
- * *finished games* whose end-of-game pair sat outside the band
- * (`checkBand`), and the Live view warns after three.
+ * Activity totals remain global. Search-quality diagnostics are versioned and grouped by
+ * the reference rating band/settings/time control captured when the recommendation was produced.
+ * Each finished game is judged on its own eligible sample, never a cumulative mixed pair.
  */
-
 import { LIMITS } from "@core/constants/limits";
-import { checkBand } from "@core/strength/bands";
-import type { SessionStats } from "@typedefs/game";
+import { QUALITY_STATISTICS, TIMING_STATISTICS } from "@core/constants/telemetry";
+import { checkQualityBand } from "@core/strength/quality-band";
+import { normalizeQualityStats, type QualityContext } from "@core/strength/session-quality";
+import { normalizeTimingStats } from "@core/timing/session-stats";
+import type { SessionQualitySample, SessionStats } from "@typedefs/game";
 
 const PERCENT = 100;
 
@@ -21,64 +16,111 @@ export const EMPTY_STATS: Readonly<SessionStats> = Object.freeze({
 	games: 0,
 	moves: 0,
 	avgThinkMs: 0,
+	timingVersion: TIMING_STATISTICS.version,
+	timingSamples: 0,
+	qualityVersion: QUALITY_STATISTICS.version,
 });
 
 export interface MoveOutcome {
-	/** Realised think time of the move (ms). */
-	thinkMs: number;
-	/**
-	 * The move carries an engine evaluation, so it belongs in the §13.6 quality pair. A premove
-	 * (decided before the position existed) and a book move the engine's lines never ranked do
-	 * not: scoring them as zero-loss non-top-1 moves would drag both numbers down.
-	 */
+	/** Absent for queued premoves whose acceptance cannot be timed from the opponent's move. */
+	thinkMs?: number;
+	/** True only for comparable, sufficiently searched non-forced root evaluations. */
 	scored: boolean;
-	/** The played move was the engine's first line (only read when `scored`). */
 	top1: boolean;
-	/** Centipawn loss of the played move (only read when `scored`). */
 	cpLoss: number;
+	/** Captured at search time, not from mutable settings at execution/game end. */
+	qualityContext?: QualityContext | undefined;
 }
 
-/**
- * Running per-move accumulator. `moves` counts every move played and is the divisor for
- * `avgThinkMs`; `scoredMoves` counts the evaluated ones and is the divisor for the §13.6 pair,
- * so a `SessionStats` read back from storage resumes exactly where it left off on both axes.
- */
-export function foldMove(stats: SessionStats, move: MoveOutcome): SessionStats {
+function addSample(sample: Partial<SessionQualitySample>, move: MoveOutcome): SessionQualitySample {
+	const previous = sample.scoredMoves ?? 0;
+	const scoredMoves = previous + 1;
+	const priorLoss = sample.acpl ?? 0;
+	const delta = move.cpLoss - priorLoss;
+	const acpl = priorLoss + delta / scoredMoves;
+	return {
+		scoredMoves,
+		top1Pct: ((sample.top1Pct ?? 0) * previous + (move.top1 ? PERCENT : 0)) / scoredMoves,
+		acpl,
+		lossM2: Math.max(0, (sample.lossM2 ?? 0) + delta * (move.cpLoss - acpl)),
+	};
+}
+
+export function foldMove(stored: SessionStats, move: MoveOutcome): SessionStats {
+	const stats = normalizeTimingStats(normalizeQualityStats(stored));
 	const moves = stats.moves + 1;
+	const measuredMs =
+		move.thinkMs !== undefined && Number.isFinite(move.thinkMs) && move.thinkMs >= 0
+			? move.thinkMs
+			: null;
+	const timingSamples = (stats.timingSamples ?? 0) + (measuredMs === null ? 0 : 1);
 	const next: SessionStats = {
 		...stats,
 		moves,
-		avgThinkMs: ((stats.avgThinkMs ?? 0) * stats.moves + move.thinkMs) / moves,
+		timingSamples,
+		avgThinkMs:
+			measuredMs !== null
+				? stats.avgThinkMs + (measuredMs - stats.avgThinkMs) / timingSamples
+				: stats.avgThinkMs,
 	};
-	if (!move.scored) return next;
-	const scored = (stats.scoredMoves ?? 0) + 1;
-	const mean = (previous: number | undefined, value: number): number =>
-		((previous ?? 0) * (scored - 1) + value) / scored;
-	next.scoredMoves = scored;
-	next.top1Pct = mean(stats.top1Pct, move.top1 ? PERCENT : 0);
-	next.acpl = mean(stats.acpl, Math.max(0, move.cpLoss));
+	const context = move.qualityContext;
+	if (
+		!move.scored ||
+		!Number.isFinite(move.cpLoss) ||
+		move.cpLoss < 0 ||
+		!context?.gameId ||
+		!Number.isFinite(context.targetElo) ||
+		stats.finishedGameIds?.includes(context.gameId)
+	)
+		return next;
+	// Retained for aggregate exports; the live view and warnings use only the matching cohort.
+	Object.assign(next, addSample(stats, move));
+	const cohorts = [...(stats.qualityCohorts ?? [])];
+	const oldCohort = cohorts.find((c) => c.key === context.cohortKey);
+	next.qualityCohorts = [
+		...cohorts.filter((c) => c.key !== context.cohortKey),
+		{
+			key: context.cohortKey,
+			targetElo: context.targetElo,
+			eligibleGames: oldCohort?.eligibleGames ?? 0,
+			outOfBandStreak: oldCohort?.outOfBandStreak ?? 0,
+			...addSample(oldCohort ?? {}, move),
+		},
+	].slice(-QUALITY_STATISTICS.maxCohorts);
+	const games = stats.qualityGames ?? [];
+	const sameSample = (game: (typeof games)[number]): boolean =>
+		game.gameId === context.gameId && game.cohortKey === context.cohortKey;
+	next.qualityGames = [
+		...games.filter((game) => !sameSample(game)),
+		{ ...context, ...addSample(games.find(sameSample) ?? {}, move) },
+	].slice(-QUALITY_STATISTICS.maxPendingGames);
 	return next;
 }
 
-/**
- * Fold a finished game: `games` goes up and `outOfBandStreak` either grows or
- * resets, judged on the session's running pair against `targetElo`'s band. A
- * session with no moves yet counts as in band (`checkBand`'s rule).
- */
-export function foldGame(
-	stats: SessionStats,
-	targetElo: number,
-	gameId?: string | null
-): SessionStats {
+/** Short/unscored games are excluded from the diagnostic streak, not treated as failures. */
+export function foldGame(stored: SessionStats, gameId?: string | null): SessionStats {
+	const stats = normalizeTimingStats(normalizeQualityStats(stored));
 	const knownGames = Array.isArray(stats.finishedGameIds)
 		? stats.finishedGameIds.filter((id) => typeof id === "string" && id.length > 0)
 		: [];
 	if (gameId && knownGames.includes(gameId)) return stats;
-	const verdict = checkBand(targetElo, stats);
+	const samples = (stats.qualityGames ?? []).filter((game) => game.gameId === gameId);
+	const cohorts = (stats.qualityCohorts ?? []).map((cohort) => {
+		const sample = samples.find((game) => game.cohortKey === cohort.key);
+		if (!sample || sample.scoredMoves < QUALITY_STATISTICS.minGameMoves) return cohort;
+		const verdict = checkQualityBand(sample.targetElo, sample);
+		if (verdict.state === "insufficient") return cohort;
+		return {
+			...cohort,
+			eligibleGames: cohort.eligibleGames + 1,
+			outOfBandStreak: verdict.state === "outside" ? cohort.outOfBandStreak + 1 : 0,
+		};
+	});
 	return {
 		...stats,
 		games: stats.games + 1,
-		outOfBandStreak: verdict.inBand ? 0 : (stats.outOfBandStreak ?? 0) + 1,
+		qualityCohorts: cohorts,
+		qualityGames: (stats.qualityGames ?? []).filter((game) => game.gameId !== gameId),
 		...(gameId
 			? { finishedGameIds: [...knownGames, gameId].slice(-LIMITS.finishedGameHistorySize) }
 			: {}),

@@ -1,0 +1,315 @@
+{
+	"provenance": {
+		"engine": "Stockfish18 smallnet",
+		"nativeElo": 2800,
+		"threads": 1,
+		"hashMb": 32,
+		"budget": {
+			"movetimeMs": 600,
+			"depthCap": 18,
+			"multiPv": 6
+		},
+		"capturedOn": "2026-09-11",
+		"note": "Actual completed MultiPV frame and native bestmove; fixed policy regression, not a human Elo calibration."
+	},
+	"fen": "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+	"bestmove": "d5e6",
+	"lines": [
+		{
+			"multipv": 1,
+			"score": {
+				"cp": -93
+			},
+			"depth": 13,
+			"pvUci": [
+				"e2a6",
+				"h3g2",
+				"f3g2",
+				"b4c3",
+				"d2c3",
+				"e6d5",
+				"e4d5",
+				"f6d5",
+				"e1g1",
+				"d5c3",
+				"e5g6",
+				"c3e2",
+				"a6e2",
+				"f7g6",
+				"e2f3",
+				"e8g8",
+				"f3a8",
+				"b6a8",
+				"g2g6"
+			],
+			"pvSan": [
+				"Bxa6",
+				"hxg2",
+				"Qxg2",
+				"bxc3",
+				"Bxc3",
+				"exd5",
+				"exd5",
+				"Nfxd5",
+				"O-O",
+				"Nxc3",
+				"Nxg6",
+				"Ne2+",
+				"Bxe2",
+				"fxg6",
+				"Bf3",
+				"O-O",
+				"Bxa8",
+				"Nxa8",
+				"Qxg6"
+			],
+			"seldepth": 22,
+			"wdl": [
+				1,
+				570,
+				429
+			]
+		},
+		{
+			"multipv": 2,
+			"score": {
+				"cp": -198
+			},
+			"depth": 13,
+			"pvUci": [
+				"d5e6",
+				"a6e2",
+				"c3e2",
+				"e7e6",
+				"e5d3",
+				"e6e4",
+				"h1g1",
+				"a7a5",
+				"e1c1",
+				"h3g2",
+				"f3g2",
+				"e8f8",
+				"g2e4",
+				"f6e4"
+			],
+			"pvSan": [
+				"dxe6",
+				"Bxe2",
+				"Nxe2",
+				"Qxe6",
+				"Nd3",
+				"Qxe4",
+				"Rg1",
+				"a5",
+				"O-O-O",
+				"hxg2",
+				"Qxg2",
+				"Kf8",
+				"Qxe4",
+				"Nxe4"
+			],
+			"seldepth": 18,
+			"wdl": [
+				0,
+				23,
+				977
+			]
+		},
+		{
+			"multipv": 3,
+			"score": {
+				"cp": -288
+			},
+			"depth": 13,
+			"pvUci": [
+				"d2g5",
+				"b4c3",
+				"e5g4",
+				"c3b2",
+				"a1b1",
+				"a6e2",
+				"e1e2",
+				"h3g2",
+				"h1g1",
+				"e8c8",
+				"g5f6",
+				"g7f6",
+				"f3f6",
+				"e7f6",
+				"g4f6",
+				"h8h2",
+				"d5e6",
+				"d7e6",
+				"b1b2"
+			],
+			"pvSan": [
+				"Bg5",
+				"bxc3",
+				"Ng4",
+				"cxb2",
+				"Rb1",
+				"Bxe2",
+				"Kxe2",
+				"hxg2",
+				"Rhg1",
+				"O-O-O",
+				"Bxf6",
+				"Bxf6",
+				"Qxf6",
+				"Qxf6",
+				"Nxf6",
+				"Rxh2",
+				"dxe6",
+				"dxe6",
+				"Rxb2"
+			],
+			"seldepth": 20,
+			"wdl": [
+				0,
+				1,
+				999
+			]
+		},
+		{
+			"multipv": 4,
+			"score": {
+				"cp": -324
+			},
+			"depth": 13,
+			"pvUci": [
+				"e5g6",
+				"f7g6",
+				"e2a6",
+				"b4c3",
+				"d2c3",
+				"e6d5",
+				"e1c1",
+				"f6e4",
+				"c3g7",
+				"e7g7"
+			],
+			"pvSan": [
+				"Nxg6",
+				"fxg6",
+				"Bxa6",
+				"bxc3",
+				"Bxc3",
+				"exd5",
+				"O-O-O",
+				"Nxe4",
+				"Bxg7",
+				"Qxg7"
+			],
+			"seldepth": 24,
+			"wdl": [
+				0,
+				0,
+				1000
+			]
+		},
+		{
+			"multipv": 5,
+			"score": {
+				"cp": -342
+			},
+			"depth": 13,
+			"pvUci": [
+				"e5d7",
+				"b4c3",
+				"d2c3",
+				"b6d7",
+				"e2a6",
+				"e6d5",
+				"e1c1",
+				"d5e4",
+				"f3g3",
+				"h3g2",
+				"g3g2",
+				"h8h5",
+				"a6b7"
+			],
+			"pvSan": [
+				"Nxd7",
+				"bxc3",
+				"Bxc3",
+				"Nbxd7",
+				"Bxa6",
+				"exd5",
+				"O-O-O",
+				"dxe4",
+				"Qg3",
+				"hxg2",
+				"Qxg2",
+				"Rh5",
+				"Bb7"
+			],
+			"seldepth": 21,
+			"wdl": [
+				0,
+				0,
+				1000
+			]
+		},
+		{
+			"multipv": 6,
+			"score": {
+				"cp": -356
+			},
+			"depth": 13,
+			"pvUci": [
+				"c3b5",
+				"a6b5",
+				"e2b5",
+				"e6d5",
+				"e5c6",
+				"d7c6",
+				"b5c6",
+				"e8f8",
+				"c6a8",
+				"b6a8",
+				"e1c1",
+				"f6e4",
+				"f3b3",
+				"e4d2",
+				"b3d5",
+				"a8b6",
+				"d5d2",
+				"h3g2",
+				"d2d8",
+				"e7d8",
+				"d1d8",
+				"f8e7"
+			],
+			"pvSan": [
+				"Nb5",
+				"Bxb5",
+				"Bxb5",
+				"exd5",
+				"Nc6",
+				"dxc6",
+				"Bxc6+",
+				"Kf8",
+				"Bxa8",
+				"Nxa8",
+				"O-O-O",
+				"Nxe4",
+				"Qb3",
+				"Nxd2",
+				"Qxd5",
+				"Nb6",
+				"Qxd2",
+				"hxg2",
+				"Qd8+",
+				"Qxd8",
+				"Rxd8+",
+				"Ke7"
+			],
+			"seldepth": 24,
+			"wdl": [
+				0,
+				0,
+				1000
+			]
+		}
+	]
+}

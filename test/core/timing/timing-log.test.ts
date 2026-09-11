@@ -1,6 +1,6 @@
 // test/core/timing/timing-log.test.ts — §8.6 ring buffer over LOCAL_KEYS.timingLog.
 import { beforeEach, describe, expect, it } from "bun:test";
-import { chromeLocalGet } from "@core/chrome/storage";
+import { chromeLocalGet, chromeLocalSet } from "@core/chrome/storage";
 import { LIMITS } from "@core/constants/limits";
 import { LOCAL_KEYS } from "@core/constants/storage-keys";
 import { buildTimingLogEntry, TimingLogWriter } from "@core/timing/timing-log";
@@ -34,6 +34,17 @@ function entry(ply: number) {
 }
 
 describe("timing log", () => {
+	it("streams plan and receipt updates with independent turn and execution durations", () => {
+		const published: TimingLogEntry[] = [];
+		const writer = new TimingLogWriter(undefined, (row) => published.push(structuredClone(row)));
+		const row = entry(8);
+		writer.upsert(row);
+		writer.markActual("g1", 8, 4000, 3500);
+		expect(published).toHaveLength(2);
+		expect(published[0]?.actualMs).toBeNull();
+		expect(published[1]).toMatchObject({ actualMs: 4000, executionMs: 3500 });
+		expect(writer.entries()).toHaveLength(1);
+	});
 	it("builds an entry with the top-5 |terms| and a null actualMs", () => {
 		const e = entry(1);
 		expect(e.actualMs).toBeNull();
@@ -111,5 +122,74 @@ describe("TimingLogWriter.upsert (Task 30)", () => {
 		w.upsert(row(1));
 		w.upsert(row(2));
 		expect(w.entries().map((e) => e.ply)).toEqual([1, 2]);
+	});
+});
+
+describe("timing-log storage races", () => {
+	async function pending(callbacks: Array<() => void>): Promise<() => void> {
+		for (let i = 0; i < 20 && callbacks.length === 0; i++) await Promise.resolve();
+		expect(callbacks.length).toBeGreaterThan(0);
+		return callbacks.shift()!;
+	}
+
+	it("retains a move appended during a pending flush for the next write", async () => {
+		const callbacks: Array<() => void> = [];
+		const set = chrome.storage.local.set.bind(chrome.storage.local);
+		chrome.storage.local.set = ((items: Record<string, unknown>, callback: () => void) => {
+			set(items, () => callbacks.push(callback));
+		}) as typeof chrome.storage.local.set;
+		const w = new TimingLogWriter();
+		w.append(entry(1));
+		const first = w.flush();
+		const finishFirst = await pending(callbacks);
+		w.append(entry(2));
+		finishFirst();
+		await first;
+		const second = w.flush();
+		(await pending(callbacks))();
+		expect(await second).toBe(true);
+		expect((await chromeLocalGet(LOCAL_KEYS.timingLog))?.map((e) => e.ply)).toEqual([1, 2]);
+		expect(await w.flush()).toBe(false);
+	});
+
+	it("serializes Clear behind an outstanding write so old rows cannot reappear", async () => {
+		const callbacks: Array<() => void> = [];
+		const set = chrome.storage.local.set.bind(chrome.storage.local);
+		chrome.storage.local.set = ((items: Record<string, unknown>, callback: () => void) => {
+			set(items, () => callbacks.push(callback));
+		}) as typeof chrome.storage.local.set;
+		const w = new TimingLogWriter();
+		w.append(entry(1));
+		const first = w.flush();
+		const finishFirst = await pending(callbacks);
+		w.clear();
+		const clear = w.flush();
+		finishFirst();
+		await first;
+		(await pending(callbacks))();
+		await clear;
+		expect(await chromeLocalGet(LOCAL_KEYS.timingLog)).toEqual([]);
+		expect(w.entries()).toEqual([]);
+	});
+
+	it("merges startup data with fresh moves and honors Clear during a pending load", async () => {
+		await chromeLocalSet(LOCAL_KEYS.timingLog, [entry(1)]);
+		const callbacks: Array<() => void> = [];
+		const get = chrome.storage.local.get.bind(chrome.storage.local);
+		chrome.storage.local.get = ((key: string, callback: (items: Record<string, unknown>) => void) => {
+			get(key, (items) => callbacks.push(() => callback(items)));
+		}) as typeof chrome.storage.local.get;
+		const w = new TimingLogWriter();
+		const load = w.load();
+		w.append(entry(2));
+		(await pending(callbacks))();
+		await load;
+		expect(w.entries().map((e) => e.ply)).toEqual([1, 2]);
+		const reloaded = new TimingLogWriter();
+		const secondLoad = reloaded.load();
+		reloaded.clear();
+		(await pending(callbacks))();
+		await secondLoad;
+		expect(reloaded.entries()).toEqual([]);
 	});
 });

@@ -863,6 +863,8 @@ export class MoveExecutor {
 			result = fail(EXECUTOR.reasons.dispatchFailed, errorMessage(error));
 		}
 		this.setHand("rest");
+		if (timing.mode !== rec.plan.mode || result.attempts > 1 || this.fastForward?.rec === rec)
+			result = { ...result, paceOverride: true };
 		this.lastSkipReason = result.outcome === "skipped" ? (result.reason ?? null) : null;
 		result = this.stamp(rec, result);
 		this.emit(

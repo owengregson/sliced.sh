@@ -124,7 +124,9 @@ function pressCount(from = 0): number {
  * keeps its pair, so the mode alone would not discriminate).
  */
 function unscoredRows(): TimingLogEntry[] {
-	return h.timingLog.entries().filter((e) => e.actualMs !== null && e.telemetry?.top1 === undefined);
+	return h.timingLog
+		.entries()
+		.filter((e) => e.executionMs !== undefined && e.telemetry?.top1 === undefined);
 }
 
 /**
@@ -140,7 +142,9 @@ function unscoredRows(): TimingLogEntry[] {
  * then (review Minor N4). These cases assert it over runs that do not contain that ordering.
  */
 function playedRowsWithoutTelemetry(): TimingLogEntry[] {
-	return h.timingLog.entries().filter((e) => e.actualMs !== null && e.telemetry === undefined);
+	return h.timingLog
+		.entries()
+		.filter((e) => (e.actualMs !== null || e.executionMs !== undefined) && e.telemetry === undefined);
 }
 
 /**
@@ -164,7 +168,11 @@ function rowsWithBlobs(only?: (e: TimingLogEntry) => boolean): {
 		const t = e.telemetry;
 		if (!t || (only !== undefined && !only(e))) continue;
 		acs.push(t.ac);
-		const meta: AcMoveMeta = { mode: e.mode, thinkMs: e.actualMs ?? e.plannedMs, clockMs: e.clockMs };
+		const meta: AcMoveMeta = {
+			mode: e.mode,
+			thinkMs: e.executionMs ?? e.actualMs ?? e.plannedMs,
+			clockMs: e.clockMs,
+		};
 		if (t.nReasonable !== undefined) meta.nReasonable = t.nReasonable;
 		// The row states whose window it was; the model is never told to infer it from the mode.
 		if (t.ownerOwnsWindow === true) meta.ownerOwnsWindow = true;
@@ -192,12 +200,14 @@ function assertRowsHumanShaped(): void {
  */
 function assertQueuedPremoveRows(): void {
 	const isQueued = (e: TimingLogEntry): boolean =>
-		e.actualMs !== null && e.telemetry?.top1 === undefined;
+		e.executionMs !== undefined && e.telemetry?.top1 === undefined;
 	const rows = h.timingLog.entries().filter(isQueued);
 	const { acs, moves } = rowsWithBlobs(isQueued);
 	expect(acs.length).toBeGreaterThan(0);
 	assertWellFormedAc(acs, { moves });
 	for (const e of rows) {
+		expect(e.actualMs).toBeNull();
+		expect(e.executionMs).toBe(e.telemetry?.ac.MoveHoldTime);
 		// The owner's first ruling, enforced: a premove press is a committed move attempt, not a
 		// §9.3a preview touch, and `multiSelectEligible` is the *only* thing keeping it out of the
 		// preview-rate band — `report.py` takes that band's denominator from this field, and the band

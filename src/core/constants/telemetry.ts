@@ -43,6 +43,23 @@ const MAX_HAND_STEP_PX = Math.ceil(
  */
 const MAX_PRESS_HOLD_MS = Math.ceil(MOTOR_DEFAULTS.pressHoldMs[1] * MAX_PROFILE_STRETCH);
 
+/** Full turn-to-submission timing replaced the old hand-only average. */
+export const TIMING_STATISTICS = { version: 1 } as const;
+
+/** Search-loss diagnostics, not an empirical Elo calibration or statistical confidence claim. */
+export const QUALITY_STATISTICS = {
+	version: 3,
+	/** Require a substantial part of one game; shorter samples never advance a warning. */
+	minGameMoves: 20,
+	warningGames: 3,
+	maxCohorts: 32,
+	maxPendingGames: 32,
+	/** Nominal 95% Wilson interval; moves are correlated, so this is a noise guard. */
+	wilsonZ: 1.959963984540054,
+	/** Slightly wider than a two-sided t critical at n=20; conservative for larger n. */
+	lossStandardErrors: 2.1,
+} as const;
+
 export const TELEMETRY_BANDS = {
 	/** §13.2: zero blur events for the entire game; `DidToggle` never. */
 	blurCountMax: 0,

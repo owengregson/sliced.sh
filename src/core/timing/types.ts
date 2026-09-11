@@ -9,7 +9,13 @@ import type { Rng } from "@core/rng";
 import type { EvalLine } from "@typedefs/engine";
 import type { Site, Square } from "@typedefs/game";
 import type { PersonaId } from "@typedefs/settings";
-import type { MoveWindowBudget, TimingLogEntry, TimingMode, TimingPlan } from "@typedefs/timing";
+import type {
+	MoveWindowBudget,
+	TimingLogEntry,
+	TimingMode,
+	TimingModelSource,
+	TimingPlan,
+} from "@typedefs/timing";
 
 export type { MoveWindowBudget, TimingLogEntry, TimingMode, TimingPlan };
 
@@ -202,6 +208,12 @@ export interface HeadSample {
 	terms?: Array<[string, number]>;
 }
 
+export interface TimingPreparation {
+	/** May use the already-running search window; never extends the search deadline. */
+	budgetMs?: number;
+	signal?: AbortSignal;
+}
+
 export interface DistributionHead {
 	readonly id: "v1-parametric" | "chessmimic";
 	sample(
@@ -214,7 +226,9 @@ export interface DistributionHead {
 	/** Model median think time for the position without residual/mirroring (bot-pace floor). */
 	median(f: Features, persona: Persona, state: GameTimingState, allocSec: number): number;
 	/** Issue asynchronous inference for `ctx` ahead of `sample` (ChessMimic); resolves when cached. */
-	prepare?(ctx: TimingContext): Promise<void>;
+	prepare?(ctx: TimingContext, options?: TimingPreparation): Promise<void>;
+	/** Source actually available for this position, including fallback failures. */
+	diagnostics?(fen: string): TimingModelSource;
 	/** Drop any per-game cache (called from `startGame`). */
 	reset?(): void;
 }

@@ -41,7 +41,7 @@ describe("opponent clock selection post-layer", () => {
 		).toBe("a1b1");
 	});
 
-	it("suppresses injected blunders under substantial pressure while retaining forced mate", () => {
+	it("keeps rating errors active under pressure while retaining forced mate", () => {
 		const withBlunder = [...lines, line(FEN, "g1f1", { cp: -900 }, 3)];
 		const ordinary = selectMove(
 			withBlunder,
@@ -49,8 +49,8 @@ describe("opponent clock selection post-layer", () => {
 		);
 		expect(ordinary.source).toBe("blunder");
 		const pressured = selectMove(withBlunder, ctx({ ...clocks, rng: rng(), blunderScale: 100 }));
-		expect(pressured.source).not.toBe("blunder");
-		expect(pressured.cpLoss).toBeLessThanOrEqual(35);
+		expect(pressured.source).toBe("blunder");
+		expect(pressured.rationale.join(" ")).toContain("accuracy −");
 		const mating = [line(FEN, "a1a8", { mate: 2 }, 1), lines[0]!];
 		const mate = selectMove(mating, ctx({ ...clocks, targetElo: 2000, rng: rng() }));
 		expect(mate.uci).toBe("a1a8");

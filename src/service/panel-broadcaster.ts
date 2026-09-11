@@ -60,6 +60,7 @@ import type {
 	SessionStats,
 } from "@typedefs/game";
 import type { LicenseState } from "@typedefs/settings";
+import type { TimingLogEntry } from "@typedefs/timing";
 
 // ── read interfaces (Task 30 implements) ────────────────────────────────
 
@@ -255,6 +256,12 @@ export class PanelBroadcaster {
 	/** The snapshot for a panel's window (`PANEL_GET_SNAPSHOT`); `null` → the last-focused one. */
 	snapshotFor(windowId: number | null): Promise<PanelSnapshot> {
 		return this.build(windowId);
+	}
+
+	/** The timing log is global, like its export; publish row updates to connected panels. */
+	timingEntry(entry: TimingLogEntry): void {
+		if (this.disposed) return;
+		for (const conn of this.conns) conn.port.post({ kind: "timingLog", entry });
 	}
 
 	/**

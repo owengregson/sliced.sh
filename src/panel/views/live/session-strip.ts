@@ -1,15 +1,17 @@
 /**
- * Session strip (Appendix F §4.4 item 9, §10.4 amendment, §9.7, Part I §13.6): three stats in
- * `label` ("6 games · 84% vs target · 3.1s avg move"), the running top-1 % / ACPL against the
- * Appendix E §1.6 band for the derived target (`opponent.derivedTargetElo`, else the slider),
- * the out-of-band warning after three consecutive games, and the pills on the right:
+ * Session strip: overall game/timing totals, comparable search loss with its sample count,
+ * and the diagnostic warning from sufficiently sampled games in the current reference cohort.
+ * This is not independently analysed ACPL or an estimate of playing Elo. The pills show:
  * Telemetry (`clean` / `blur seen` / `mouse touched` from `snapshot.focus`), hand state
  * (`session.hand`) and the executor (Attached / Detached / Not started — hidden until auto-play
  * has been used this panel session).
  */
 
 import type { PanelSnapshot } from "@core/constants/messages";
-import { checkBand } from "@core/strength/bands";
+import { QUALITY_STATISTICS } from "@core/constants/telemetry";
+import { checkQualityBand } from "@core/strength/quality-band";
+import { normalizeQualityStats, qualityCohortKey } from "@core/strength/session-quality";
+import { normalizeTimingStats } from "@core/timing/session-stats";
 import type { IconName } from "@design/icons";
 import { createPill, type PillHandle, type PillVariant } from "../../components/pill";
 import { COPY, COPY_LIVE } from "../../copy";
@@ -17,8 +19,6 @@ import { instantiate, part } from "../../template";
 import stripHtml from "../templates/live/session-strip.html?raw";
 
 const MS = 1000;
-/** §13.6: warn after this many consecutive out-of-band games. */
-const OUT_OF_BAND_GAMES = 3;
 
 export interface SessionStripState {
 	snapshot: PanelSnapshot;
@@ -99,32 +99,39 @@ export function createSessionStrip(host: HTMLElement): SessionStripHandle {
 
 	function update(state: SessionStripState): void {
 		const snap = state.snapshot;
-		const s = snap.stats;
-		const avg = (s.avgThinkMs / MS).toFixed(1);
-		// No "% vs target" figure until the first measured move.
-		stats.textContent =
-			s.top1Pct === undefined
-				? COPY_LIVE.sessionNoStats(s.games, avg)
-				: COPY.session(s.games, Math.round(s.top1Pct), avg);
-
-		const hasStats = s.top1Pct !== undefined && s.acpl !== undefined;
-		band.hidden = !hasStats;
-		if (hasStats) {
-			const check = checkBand(bandTargetElo(snap), s);
-			band.textContent = COPY_LIVE.band.stats(Math.round(s.top1Pct ?? 0), Math.round(s.acpl ?? 0));
-			band.dataset.band = check.inBand ? "in" : "out";
+		const s = normalizeTimingStats(normalizeQualityStats(snap.stats));
+		const avg = s.timingSamples ? (s.avgThinkMs / MS).toFixed(1) : null;
+		stats.textContent = COPY_LIVE.sessionNoStats(s.games, avg);
+		stats.title = COPY_LIVE.timingSampleCount(s.timingSamples ?? 0);
+		const key = qualityCohortKey(
+			bandTargetElo(snap),
+			snap.settings.strength,
+			snap.session.timeControl
+		);
+		const quality = s.qualityCohorts?.find((cohort) => cohort.key === key);
+		band.hidden = !quality;
+		if (quality) {
+			const check = checkQualityBand(bandTargetElo(snap), quality);
+			band.textContent = COPY_LIVE.band.stats(
+				Math.round(quality.top1Pct),
+				Math.round(quality.acpl),
+				quality.scoredMoves
+			);
+			band.dataset.band =
+				check.state === "outside" ? "out" : check.state === "inside" ? "in" : check.state;
 			band.setAttribute(
 				"title",
 				COPY_LIVE.band.target(
 					check.band.top1[0],
 					check.band.top1[1],
 					check.band.acpl[0],
-					check.band.acpl[1]
+					check.band.acpl[1],
+					QUALITY_STATISTICS.minGameMoves
 				)
 			);
 		} else band.removeAttribute("title");
-		const streak = s.outOfBandStreak ?? 0;
-		warning.hidden = streak < OUT_OF_BAND_GAMES;
+		const streak = quality?.outOfBandStreak ?? 0;
+		warning.hidden = streak < QUALITY_STATISTICS.warningGames;
 		warning.textContent = warning.hidden ? "" : COPY_LIVE.band.warning(streak);
 		el.classList.toggle("sl-live__strip-row--warn", !warning.hidden);
 

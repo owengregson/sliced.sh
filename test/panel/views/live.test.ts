@@ -9,6 +9,8 @@ import path from "node:path";
 import { chromeLocalGet } from "@core/chrome/storage";
 import { LOCAL_KEYS, MSG, TOAST_KEYS, UI_TIMINGS } from "@core/constants";
 import { LIMITS } from "@core/constants/limits";
+import { QUALITY_STATISTICS, TIMING_STATISTICS } from "@core/constants/telemetry";
+import { qualityCohortKey } from "@core/strength/session-quality";
 import { TOKENS } from "@design/tokens.generated";
 import { currentBannerKind } from "@panel/components/banner";
 import { COPY, COPY_LIVE } from "@panel/copy";
@@ -660,23 +662,71 @@ describe("toggles row (§6.1)", () => {
 });
 
 describe("session strip and detached banner (§4.4 item 9, §13.6, §9.7)", () => {
-	it("stats, band check against the derived target, warning after three games", async () => {
-		h = await mountLive(dom.sim, idleSnapshot({ stats: { top1Pct: 48, acpl: 52 } }));
-		expect(h.q(".sl-live__stats").textContent).toBe(COPY.session(6, 48, "3.1"));
-		expect(h.q(".sl-live__band").textContent).toBe(COPY_LIVE.band.stats(48, 52));
-		expect(h.q(".sl-live__band").dataset.band).toBe("in"); // 1893 → the 1600 knot: 47–53 %, 45–60
-		expect(h.q(".sl-live__band").getAttribute("title")).toBe(COPY_LIVE.band.target(47, 53, 45, 60));
+	it("hides legacy hand-only averages and shows the count behind corrected timing", async () => {
+		h = await mountLive(dom.sim, idleSnapshot());
+		expect(h.q(".sl-live__stats").textContent).toBe(COPY_LIVE.sessionNoStats(6, null));
+		expect(h.q(".sl-live__stats").title).toBe(COPY_LIVE.timingSampleCount(0));
+		h.store.emit(
+			idleSnapshot({
+				stats: {
+					timingVersion: TIMING_STATISTICS.version,
+					timingSamples: 2,
+					avgThinkMs: 4000,
+				},
+			})
+		);
+		expect(h.q(".sl-live__stats").textContent).toBe(COPY_LIVE.sessionNoStats(6, "4.0"));
+		expect(h.q(".sl-live__stats").title).toBe(COPY_LIVE.timingSampleCount(2));
+	});
+
+	it("shows matching cohort sample counts and warns only about sufficiently sampled games", async () => {
+		const sample = (top1Pct: number, acpl: number, outOfBandStreak = 0) => {
+			const snap = idleSnapshot();
+			const targetElo = snap.opponent?.derivedTargetElo ?? snap.settings.strength.targetElo;
+			snap.stats.timingVersion = TIMING_STATISTICS.version;
+			snap.stats.timingSamples = 80;
+			snap.stats.qualityVersion = QUALITY_STATISTICS.version;
+			snap.stats.qualityCohorts = [
+				{
+					key: qualityCohortKey(targetElo, snap.settings.strength, snap.session.timeControl),
+					targetElo,
+					scoredMoves: 80,
+					lossM2: 80 * 2704,
+					top1Pct,
+					acpl,
+					eligibleGames: 4,
+					outOfBandStreak,
+				},
+			];
+			return snap;
+		};
+		h = await mountLive(dom.sim, sample(48, 52));
+		expect(h.q(".sl-live__stats").textContent).toBe(COPY_LIVE.sessionNoStats(6, "3.1"));
+		expect(h.q(".sl-live__band").textContent).toBe(COPY_LIVE.band.stats(48, 52, 80));
+		expect(h.q(".sl-live__band").dataset.band).toBe("uncertain"); // Point matches, but this sample's intervals extend beyond the narrow reference.
+		expect(h.q(".sl-live__band").getAttribute("title")).toBe(
+			COPY_LIVE.band.target(47, 53, 45, 60, QUALITY_STATISTICS.minGameMoves)
+		);
 		expect(h.q(".sl-live__band-warning").hidden).toBe(true);
-		h.store.emit(idleSnapshot({ stats: { top1Pct: 70, acpl: 20, outOfBandStreak: 2 } }));
+		h.store.emit(sample(70, 20, 2));
 		expect(h.q(".sl-live__band").dataset.band).toBe("out");
 		expect(h.q(".sl-live__band-warning").hidden).toBe(true);
-		h.store.emit(idleSnapshot({ stats: { top1Pct: 70, acpl: 20, outOfBandStreak: 3 } }));
+		h.store.emit(sample(70, 20, 3));
 		expect(h.q(".sl-live__band-warning").hidden).toBe(false);
 		expect(h.q(".sl-live__band-warning").textContent).toBe(COPY_LIVE.band.warning(3));
+		const otherTarget = sample(70, 20, 3);
+		if (otherTarget.opponent) otherTarget.opponent.derivedTargetElo = 2400;
+		h.store.emit(otherTarget);
+		expect(h.q(".sl-live__band").hidden).toBe(true);
+		expect(h.q(".sl-live__band-warning").hidden).toBe(true);
+		// Legacy pooled quality is not relabelled as the new search-loss measurement.
+		h.store.emit(idleSnapshot({ stats: { top1Pct: 49, acpl: 24, outOfBandStreak: 5 } }));
+		expect(h.q(".sl-live__band").hidden).toBe(true);
+		expect(h.q(".sl-live__band-warning").hidden).toBe(true);
 		// Without an opponent the slider value is the target; without stats no band line.
 		h.store.emit(idleSnapshot({ opponent: null, stats: {} }));
 		expect(h.q(".sl-live__band").hidden).toBe(true);
-		expect(h.q(".sl-live__stats").textContent).toBe(COPY_LIVE.sessionNoStats(6, "3.1"));
+		expect(h.q(".sl-live__stats").textContent).toBe(COPY_LIVE.sessionNoStats(6, null));
 	});
 
 	it("detached banner with explicit Reattach and Dismiss during live play too", async () => {

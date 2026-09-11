@@ -94,7 +94,7 @@ describe("selectMove — blunder channel (d)", () => {
 			const m = selectMove(FOUR, c, prior);
 			if (m.source === "blunder") {
 				injected++;
-				cpLossSum += m.cpLoss;
+				cpLossSum += m.cpLoss ?? 0;
 			}
 		}
 		// Injected moves come from the ≥ 0.10 loss band: mostly f2f3 (270 cp), sometimes g1f3 after jitter.

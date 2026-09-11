@@ -50,7 +50,7 @@ systems.engine = game.engine;
 
 registerLicenseHandlers(router, systems);
 registerSettingsHandlers(router);
-registerLogHandlers(router, logBridge);
+registerLogHandlers(router, logBridge, game.timingLog);
 registerPanelHandlers(router, {
 	broadcaster: panel,
 	sources: game.registry,

@@ -302,6 +302,7 @@ export class HandController {
 	private previewed: Square[] = [];
 	/** Clock time of the drop (second click / release); `null` until then. */
 	private dropAt: number | null = null;
+	private submittedAt: number | null = null;
 
 	constructor(deps: HandControllerDeps) {
 		this.backend = deps.backend;
@@ -369,6 +370,7 @@ export class HandController {
 		this.pressedCommitted = false;
 		this.pressedAny = false;
 		this.dropAt = null;
+		this.submittedAt = null;
 		const startedPx = this.backend.travelledPx?.() ?? 0;
 		this.previewed = [];
 		const base = (): Pick<
@@ -376,6 +378,8 @@ export class HandController {
 			| "tier"
 			| "endPoint"
 			| "elapsedMs"
+			| "startedAt"
+			| "submittedAt"
 			| "timeline"
 			| "pressed"
 			| "san"
@@ -386,6 +390,8 @@ export class HandController {
 			tier: EXECUTOR.committedTier,
 			endPoint: this.backend.position(),
 			elapsedMs: (this.dropAt ?? this.now()) - t0,
+			startedAt: t0,
+			...(this.submittedAt === null ? {} : { submittedAt: this.submittedAt }),
 			timeline: tl.entries,
 			pressed: this.pressedCommitted,
 			pressedAny: this.pressedAny,
@@ -843,6 +849,7 @@ export class HandController {
 		}
 		await this.release(this.backend.position());
 		this.dropAt = this.now();
+		this.submittedAt = this.dropAt;
 	}
 
 	/**
@@ -969,6 +976,7 @@ export class HandController {
 		await this.press(pressAt, false, guard);
 		if (!urgent) await this.pause(sampleRange(m.pressHoldMs, this.rng), guard);
 		await this.release(clickReleasePoint(pressAt, this.rng));
+		this.submittedAt = this.now();
 	}
 
 	/**
@@ -1093,6 +1101,9 @@ export class HandController {
 		if (!this.backend.pressed()) return;
 		try {
 			await this.release(this.backend.position());
+			// This release can complete a drag or a held promotion-picker click. Only a
+			// subsequent successful verification turns this timestamp into an observation.
+			if (this.pressedCommitted) this.submittedAt = this.now();
 		} catch (error) {
 			log.warn("hand: release after abort failed", { tabId: this.tabId, error: errorMessage(error) });
 		}

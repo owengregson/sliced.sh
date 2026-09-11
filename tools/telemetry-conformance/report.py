@@ -87,11 +87,11 @@ def load_entries(paths: list[str]) -> list[dict[str, Any]]:
 
 
 def hold_ms(entry: dict[str, Any]) -> float | None:
-    """The move's realised hold time: the `ac` blob's when exported, else `actualMs`."""
+    """Physical hand duration; `actualMs` is only a legacy-export fallback."""
     ac = (entry.get("telemetry") or {}).get("ac")
     if isinstance(ac, dict) and isinstance(ac.get("MoveHoldTime"), (int, float)):
         return float(ac["MoveHoldTime"])
-    actual = entry.get("actualMs")
+    actual = entry.get("executionMs", entry.get("actualMs"))
     return float(actual) if isinstance(actual, (int, float)) else None
 
 
