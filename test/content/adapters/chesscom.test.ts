@@ -304,17 +304,18 @@ describe("ChessComAdapter — game over and new game", () => {
 	});
 	it("tryStartNewGame clicks the first matching ladder entry only", () => {
 		const { dom, adapter } = boot("chesscom-gameover");
+		dom.layout("button", { x: 200, y: 200, width: 150, height: 40 });
 		const clicked: string[] = [];
 		for (const b of dom.document.querySelectorAll("button"))
 			b.addEventListener("click", () =>
 				clicked.push(b.getAttribute("data-cy") ?? b.textContent ?? "")
 			);
-		expect(adapter.tryStartNewGame("new")).toBe(true);
+		expect(adapter.tryStartNewGame("new")).toBe("started");
 		expect(clicked).toEqual(["game-over-modal-new-game-button"]);
-		expect(adapter.tryStartNewGame("rematch")).toBe(true);
+		expect(adapter.tryStartNewGame("rematch")).toBe("started");
 		expect(clicked).toEqual(["game-over-modal-new-game-button", "game-over-modal-rematch-button"]);
 		const live = boot("chesscom-live");
-		expect(live.adapter.tryStartNewGame("new")).toBe(false);
+		expect(live.adapter.tryStartNewGame("new")).toBe("in-game");
 	});
 });
 

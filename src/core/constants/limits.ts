@@ -18,6 +18,8 @@ export const LIMITS = {
 	blunderScaleMax: 2,
 	previewSelectScaleMin: 0.5,
 	previewSelectScaleMax: 2,
+	autoQueueDelayMinutesMin: 1,
+	autoQueueDelayMinutesMax: 60,
 	timingLogMax: 200,
 	/** Task 26: SW-side ring of recent `LogEntry`s streamed to the panel (Appendix H.2). */
 	logRingMax: 500,
@@ -26,6 +28,8 @@ export const LIMITS = {
 	/** Task 26: |actual − planned| / planned above this renders a `warn` rationale row. */
 	timingLogDriftWarn: 0.5,
 	analysisCacheEntries: 256,
+	/** Finished game identities retained with statistics to ignore lost-receipt replays. */
+	finishedGameHistorySize: 256,
 	cpClamp: 1000,
 	/** Lichess win-probability logistic `win(cp) = 1/(1+e^(−k·cp))` (§7.2, Appendix E §7.2). */
 	winProbK: 0.00368208,

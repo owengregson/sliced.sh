@@ -458,6 +458,10 @@
 	gap: var(--sl-space-3);
 }
 
+.sl-waiting__status-text {
+	font-variant-numeric: tabular-nums;
+}
+
 .sl-waiting__opponent {
 	padding: var(--sl-space-4);
 	box-shadow: none;

@@ -158,6 +158,16 @@ export function normalizeSettings(raw: unknown): Settings {
 		automation: {
 			autoMove: bool(automation.autoMove, D.automation.autoMove),
 			autoQueue: bool(automation.autoQueue, D.automation.autoQueue),
+			autoQueueDelayEnabled: bool(
+				automation.autoQueueDelayEnabled,
+				D.automation.autoQueueDelayEnabled
+			),
+			autoQueueDelayMaxMinutes: intIn(
+				automation.autoQueueDelayMaxMinutes,
+				D.automation.autoQueueDelayMaxMinutes,
+				LIMITS.autoQueueDelayMinutesMin,
+				LIMITS.autoQueueDelayMinutesMax
+			),
 			highlightMoves: bool(automation.highlightMoves, D.automation.highlightMoves),
 			highlightStyle: oneOf(automation.highlightStyle, D.automation.highlightStyle, HIGHLIGHT_STYLES),
 		},

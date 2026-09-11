@@ -384,7 +384,18 @@ function bootContent(
 				highlights.setEnabled(cmd.highlightMoves);
 				return;
 			case "startNewGame":
-				if (!adapter.tryStartNewGame("new")) adapter.tryStartNewGame("rematch");
+				post({
+					kind: "startNewGameResult",
+					id: cmd.id,
+					status: adapter.tryStartNewGame(
+						"new",
+						() => {
+							virtualCursor.apply({ kind: "cursorHide" });
+							cursor.setVirtualActive(false);
+						},
+						cmd.gameId
+					),
+				});
 				return;
 			case "speak":
 				relaySpeak(cmd);

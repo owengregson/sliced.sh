@@ -27,3 +27,9 @@ export function maskLicenseKey(key: string): string {
 export function formatSeconds(ms: number): string {
 	return (ms / 1000).toFixed(1);
 }
+
+/** Remaining duration rounded up to whole seconds, keeping M:SS even below ten seconds. */
+export function formatCountdown(ms: number): string {
+	const seconds = Math.ceil(Math.max(0, ms) / 1000);
+	return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}

@@ -26,6 +26,7 @@ import {
 	type ClockReading,
 	type DrawOptions,
 	type MoveWatch,
+	type NewGameAttemptStatus,
 	type NewGameMode,
 	type Opponent,
 	type PositionInfo,
@@ -37,6 +38,7 @@ import {
 import { activeClockColor, bottomClockColor, readClock } from "./clocks";
 import { approximateFen, placementFromDom, placementOf, replayMoves } from "./dom-fen";
 import { type MoveList, readMoveList } from "./move-list";
+import { newGameControl, newGameSearchActive } from "./new-game";
 import { pageKindFromPath } from "./page-kind";
 import { queryAllSafe, queryFirst, queryFirstElement, querySafe } from "./query";
 import { PROMOTION_ORDER, SELECTORS } from "./selectors";
@@ -319,20 +321,32 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 	 * This is a button activation the page offers to the user — not board input —
 	 * and the one permitted synthetic action in the content script (§9.1, §13).
 	 */
-	tryStartNewGame(mode: NewGameMode): boolean {
-		const ladder = mode === "rematch" ? S.rematch : S.newGame;
-		for (const selector of ladder) {
-			for (const el of queryAllSafe(this.doc, selector)) {
-				const textOk =
-					mode === "rematch" ||
-					selector.includes("new-game") ||
-					S.newGameTextRe.test(el.textContent ?? "");
-				if (!textOk) continue;
-				(el as HTMLElement).click();
-				return true;
-			}
-		}
-		return false;
+	tryStartNewGame(
+		mode: NewGameMode,
+		beforeStart?: () => void,
+		expectedGameId?: string | null
+	): NewGameAttemptStatus {
+		const currentId = this.urlGameId() ?? this.readSnapshot()?.gameId;
+		if (expectedGameId && currentId && currentId !== expectedGameId) return "in-game";
+		const kind = pageKindFromPath(this.win.location.pathname);
+		if (kind !== "live-game" && kind !== "live-lobby" && kind !== "vs-computer") return "not-ready";
+		if (newGameSearchActive(this.doc, this.win)) return "searching";
+		const running = [this.getClock("w"), this.getClock("b")].some(
+			(clock) => clock?.running && clock.ms > 0
+		);
+		const playing = this.bridgeState?.mode === "playing" && this.bridgeState.gameOver === false;
+		if (
+			!this.isGameOver() &&
+			this.getMyColor() !== null &&
+			this.getFen() !== null &&
+			(running || playing)
+		)
+			return "in-game";
+		const control = newGameControl(this.doc, this.win, mode, kind === "vs-computer");
+		if (!control) return "not-ready";
+		beforeStart?.();
+		control.click();
+		return "started";
 	}
 
 	probe(): ProbeReport {

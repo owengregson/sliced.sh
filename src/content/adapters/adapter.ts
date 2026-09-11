@@ -134,6 +134,7 @@ export interface ProbeReport {
 }
 
 export type NewGameMode = "rematch" | "new";
+export type NewGameAttemptStatus = "started" | "searching" | "not-ready" | "in-game";
 
 export interface SiteAdapter {
 	readonly site: Site;
@@ -200,8 +201,12 @@ export interface SiteAdapter {
 	/** Resolves once the page side has answered (or the bridge call timed out / failed). */
 	clearHighlights(): Promise<void>;
 
-	/** Click the site's own new-game / rematch control; whether one was found. */
-	tryStartNewGame(mode: NewGameMode): boolean;
+	/** Activate one actionable site control, or report why this attempt should wait/stop. */
+	tryStartNewGame(
+		mode: NewGameMode,
+		beforeStart?: () => void,
+		expectedGameId?: string | null
+	): NewGameAttemptStatus;
 	/** True once the piece lands on `expected.to` (confirmed by the move list), false if it snaps back. */
 	observeMove(expected: UciParts, timeoutMs: number): Promise<boolean>;
 	probe(): ProbeReport;
@@ -498,7 +503,11 @@ export abstract class AdapterBase implements SiteAdapter {
 	abstract getBoardRect(): Rect | null;
 	abstract isFlipped(): boolean;
 	abstract getPromotionTargetRect(dest: Square, piece: PromoPiece): Rect | null;
-	abstract tryStartNewGame(mode: NewGameMode): boolean;
+	abstract tryStartNewGame(
+		mode: NewGameMode,
+		beforeStart?: () => void,
+		expectedGameId?: string | null
+	): NewGameAttemptStatus;
 	abstract probe(): ProbeReport;
 
 	// ---- shared behaviour --------------------------------------------------------

@@ -10,6 +10,12 @@
 
 import type { Color, PromoPiece } from "@typedefs/game";
 
+const NEW_GAME_IDENTITIES = [
+	'[data-cy="game-over-modal-new-game-button"]',
+	'[data-cy="sidebar-game-over-new-game-button"]',
+	'[aria-label="New Game"]',
+] as const;
+
 export const SELECTORS = {
 	// board + pieces (§1.2)
 	/** Custom-element tag the MAIN-world bridge awaits (`customElements.whenDefined`). */
@@ -107,15 +113,34 @@ export const SELECTORS = {
 	gameOverTitle: ".game-over-modal-title-component",
 	gameOverHeaderClassRe: /\bgame-over-modal-header-(userWon|userLost|whiteWon|blackWon|draw)\b/,
 	newGame: [
-		'[data-cy="game-over-modal-new-game-button"]',
-		'[data-cy="sidebar-game-over-new-game-button"]',
-		'[aria-label="New Game"]',
+		...NEW_GAME_IDENTITIES,
 		".game-over-modal-shell-buttons button",
 		".new-game-buttons-buttons button",
 		".new-game-buttons-component button",
 		".game-over-buttons-component button",
+		'[data-cy="game-over-modal-play-again-button"]',
 	],
-	newGameTextRe: /new\s*(game|\d)/i,
+	newGameIdentity: NEW_GAME_IDENTITIES.join(","),
+	newGameTextRe: /^new\s+(?:game\b|\d)/i,
+	playAgainTextRe: /^play\s+again\b/i,
+	rematchTextRe: /\brematch\b/i,
+	queueTextRe:
+		/^(?:cancel(?:\s+(?:search|game|challenge))?|searching\b.*|finding\s+(?:an?\s+)?opponent\b.*|looking\s+for\s+(?:an?\s+)?opponent\b.*|waiting\s+for\s+(?:an?\s+)?opponent\b.*)$/i,
+	queueCancel: [
+		'[data-cy="seek-cancel-button"]',
+		'[data-cy="cancel-seek-button"]',
+		'[data-cy="matchmaking-cancel-button"]',
+		'[aria-label="Cancel Search"]',
+	],
+	queueStatus: [
+		".seek-component",
+		".matchmaking-component",
+		".play-menu-component [role='status']",
+		".new-game-buttons-component [role='status']",
+	],
+	actionHidden: '[hidden], [aria-hidden="true"], [inert]',
+	actionDisabled: '[disabled], [aria-disabled="true"], [aria-busy="true"]',
+	actionNativeDisabled: ":disabled",
 	rematch: [
 		'[data-cy="game-over-modal-rematch-button"]',
 		'[data-cy="sidebar-game-over-rematch-button"]',

@@ -17,6 +17,7 @@
 import { tabsQuery } from "@core/chrome/tabs";
 import type { PanelSnapshot } from "@core/constants/messages";
 import { MSG } from "@core/constants/messages";
+import { UI_TIMINGS } from "@core/constants/ui";
 import { log } from "@core/logger";
 import { PLAY_URL } from "../actions";
 import { showBanner } from "../components/banner";
@@ -26,7 +27,7 @@ import { createPill } from "../components/pill";
 import { attachTooltip } from "../components/popover";
 import { createToggle, type ToggleUpdate } from "../components/toggle";
 import { COPY } from "../copy";
-import { formatSeconds } from "../format";
+import { formatCountdown, formatSeconds } from "../format";
 import { instantiate, part } from "../template";
 import type { View } from "../view";
 import html from "./templates/waiting.html?raw";
@@ -70,6 +71,7 @@ export function createWaitingView(options: WaitingViewOptions = {}): View {
 			part(el, ".sl-waiting__session-label").textContent = COPY.waitingView.lastSession;
 			const meta = part(el, ".sl-waiting__meta");
 			const dot = part(el, ".sl-waiting__dot");
+			const status = part(el, ".sl-waiting__status");
 			const statusText = part(el, ".sl-waiting__status-text");
 			const botHost = part(el, ".sl-waiting__bot");
 			const opponentName = part(el, ".sl-waiting__opponent-name");
@@ -148,8 +150,50 @@ export function createWaitingView(options: WaitingViewOptions = {}): View {
 
 			let renderedLocked: boolean | null = null;
 			let renderedHint: string | null = null;
+			let currentSnapshot: PanelSnapshot | null = ctx.snapshot;
+			let queueTimer: ReturnType<typeof setInterval> | null = null;
+
+			function stopQueueTimer(): void {
+				if (queueTimer !== null) clearInterval(queueTimer);
+				queueTimer = null;
+			}
+
+			function renderStatus(): void {
+				const snapshot = currentSnapshot;
+				if (!snapshot) return;
+				const assistantOff = !snapshot.settings.enabled;
+				const reading = snapshot.session.state === "idle";
+				const queue =
+					!assistantOff && snapshot.settings.automation.autoQueue
+						? snapshot.session.autoQueue
+						: undefined;
+				const remaining = queue ? queue.dueAt - Date.now() : 0;
+				const counting = queue?.status === "waiting" && queue.attempts === 0 && remaining > 0;
+				dot.dataset.state = assistantOff || reading || queue ? "warn" : "ok";
+				// The visible timer updates every second without announcing every tick.
+				status.setAttribute("role", counting ? "timer" : "status");
+				status.setAttribute("aria-live", counting ? "off" : "polite");
+				const nextText = assistantOff
+					? COPY.move.disabled
+					: queue
+						? counting
+							? COPY.waiting.queueDelay(formatCountdown(remaining))
+							: queue.status === "searching"
+								? COPY.waiting.queueSearching
+								: queue.status === "retrying"
+									? COPY.waiting.queueRetrying
+									: COPY.waiting.queueStarting
+						: reading
+							? COPY.waiting.reading
+							: COPY.waiting.watching;
+				if (statusText.textContent !== nextText) statusText.textContent = nextText;
+				if (counting && queueTimer === null) {
+					queueTimer = setInterval(renderStatus, UI_TIMINGS.ariaCountdownStepMs);
+				} else if (!counting) stopQueueTimer();
+			}
 
 			function render(snapshot: PanelSnapshot): void {
+				currentSnapshot = snapshot;
 				const site = snapshot.site ?? snapshot.session.site;
 				meta.hidden = site === null;
 				if (site) meta.textContent = COPY.waiting.meta(engineText(snapshot));
@@ -157,13 +201,7 @@ export function createWaitingView(options: WaitingViewOptions = {}): View {
 				// armed (the service worker refuses), so the view says so instead of offering a
 				// control that snaps back.
 				const assistantOff = !snapshot.settings.enabled;
-				const reading = snapshot.session.state === "idle";
-				dot.dataset.state = assistantOff || reading ? "warn" : "ok";
-				statusText.textContent = assistantOff
-					? COPY.move.disabled
-					: reading
-						? COPY.waiting.reading
-						: COPY.waiting.watching;
+				renderStatus();
 
 				const opponent = snapshot.opponent;
 				opponentName.textContent = opponent ? opponent.name : COPY.waitingView.noOpponent;
@@ -209,6 +247,7 @@ export function createWaitingView(options: WaitingViewOptions = {}): View {
 
 			return () => {
 				unsubscribe();
+				stopQueueTimer();
 				detachTooltip();
 				toggle.dispose();
 				settings.dispose();

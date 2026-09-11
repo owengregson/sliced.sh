@@ -53,6 +53,10 @@ export interface Settings {
 		 */
 		autoMove: boolean;
 		autoQueue: boolean;
+		/** Wait a uniformly sampled duration before automatically starting the next game. */
+		autoQueueDelayEnabled: boolean;
+		/** Integer maximum in minutes; the minimum delay is defined by LIMITS. */
+		autoQueueDelayMaxMinutes: number;
 		/**
 		 * Draws the recommendation on the board. Ships **on** so a fresh install shows
 		 * something; §13.3 rule 4 still holds at runtime — the content script draws
@@ -156,7 +160,14 @@ export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze<Settings>({
 		previewSelects: "auto",
 		previewSelectScale: 1,
 	},
-	automation: { autoMove: false, autoQueue: false, highlightMoves: true, highlightStyle: "both" },
+	automation: {
+		autoMove: false,
+		autoQueue: false,
+		autoQueueDelayEnabled: false,
+		autoQueueDelayMaxMinutes: 5,
+		highlightMoves: true,
+		highlightStyle: "both",
+	},
 	keybinds: { ...DEFAULT_KEYBINDS, global: false },
 	display: {
 		evalBar: true,

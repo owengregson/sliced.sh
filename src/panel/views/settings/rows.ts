@@ -287,6 +287,15 @@ export const ROWS: readonly RowSpec[] = [
 	// execution
 	toggle("automation.autoMove"),
 	toggle("automation.autoQueue"),
+	toggle("automation.autoQueueDelayEnabled"),
+	{
+		kind: "stepper",
+		path: "automation.autoQueueDelayMaxMinutes",
+		...rowCopy("automation.autoQueueDelayMaxMinutes"),
+		min: LIMITS.autoQueueDelayMinutesMin,
+		max: LIMITS.autoQueueDelayMinutesMax,
+		format: SETTINGS_COPY.format.minutes,
+	},
 	{
 		kind: "slider",
 		path: "execution.motorSpeed",

@@ -154,7 +154,7 @@ describe("FeedPort", () => {
 		expect(rt.ports[1]?.posted).toEqual([
 			hello,
 			newer,
-			{ kind: "gameEnded", result: "1-0" },
+			{ kind: "gameEnded", result: "1-0", gameId: "1", eventId: expect.any(String) },
 			{ kind: "focus", hasFocus: true, visibility: "visible", at: 9 },
 		]);
 		// the new port dies at once (SW still gone): Chrome loses what was flushed into it, so the
@@ -175,6 +175,7 @@ describe("FeedPort", () => {
 			hello,
 			{ kind: "focus", hasFocus: true, visibility: "visible", at: 9 },
 			newer,
+			{ ...(rt.ports[1]?.posted[2] as GamePortMessage), replayed: false },
 		]);
 		// …and the focus reading goes *before* the position, which is not cosmetic: a first reading
 		// fires a focus edge in the reconnected worker, and after the position that edge would land in
@@ -186,7 +187,7 @@ describe("FeedPort", () => {
 		expect(focusAt).toBeGreaterThanOrEqual(0);
 		expect(focusAt).toBeLessThan(positionAt);
 		feed.post({ kind: "focus", hasFocus: false, visibility: "hidden", at: 3 });
-		expect(rt.ports[2]?.posted).toHaveLength(4);
+		expect(rt.ports[2]?.posted).toHaveLength(5);
 		feed.dispose();
 	});
 	it("replays the last focus reading, and a newer one queued during the outage wins", async () => {
@@ -239,5 +240,120 @@ it("notifies pointer cleanup immediately when the game connection disconnects", 
 	await feed.ready;
 	rt.ports[0]?.emitDisconnect();
 	expect(disconnected).toBe(1);
+	feed.dispose();
+});
+
+it("keeps an old queued game's end scoped to that game when a new position replays first", async () => {
+	const rt = installFakeRuntime();
+	const scheduler = makeScheduler();
+	const feed = createFeedPort({ onCommand: () => {}, scheduler });
+	await feed.ready;
+	feed.post(hello);
+	feed.post(position);
+	rt.ports[0]?.emitDisconnect();
+	feed.post({ kind: "gameEnded", result: "1-0" });
+	const started: GamePortMessage = {
+		kind: "gameStarted",
+		game: { gameId: "2", site: "chesscom", pageKind: "live-game", myColor: "b", startedAt: 2 },
+	};
+	const next: GamePortMessage = {
+		...position,
+		snapshot: { ...position.snapshot, gameId: "2", capturedAt: 2 },
+	};
+	feed.post(started);
+	feed.post(next);
+	scheduler.fire();
+	const posted = rt.ports[1]?.posted as GamePortMessage[];
+	expect(posted[1]).toEqual(next);
+	expect(posted[2]).toEqual({
+		kind: "gameEnded",
+		result: "1-0",
+		gameId: "1",
+		eventId: expect.any(String),
+	});
+	expect(posted[3]).toEqual(started);
+	expect(posted[4]).toEqual(next);
+	// Once the outage outbox is gone, the finished prior game must not become this game's replay.
+	rt.ports[1]?.emitDisconnect();
+	scheduler.fire();
+	expect((rt.ports[2]!.posted as GamePortMessage[]).some((m) => m.kind === "gameEnded")).toBe(false);
+	feed.dispose();
+});
+
+it("keeps an unacknowledged end fresh through reconnects and marks only its receipt as replayed", async () => {
+	const rt = installFakeRuntime();
+	const scheduler = makeScheduler();
+	const commands: GamePortCommand[] = [];
+	const feed = createFeedPort({ onCommand: (cmd) => commands.push(cmd), scheduler });
+	await feed.ready;
+	feed.post(hello);
+	feed.post(position);
+	feed.post({ kind: "gameEnded", result: "0-1" });
+	const ended = rt.ports[0]?.posted[2] as Extract<GamePortMessage, { kind: "gameEnded" }>;
+	expect(ended.gameId).toBe("1");
+	expect(ended.eventId).toEqual(expect.any(String));
+	rt.ports[0]?.emitMessage({ kind: "gameEndReceived", eventId: "another-end" });
+	rt.ports[0]?.emitDisconnect();
+	scheduler.fire();
+	expect(rt.ports[1]?.posted[2]).toEqual({ ...ended, replayed: false });
+	// A reconnect that dies before its receipt also retains exactly the same identity.
+	rt.ports[1]?.emitDisconnect();
+	scheduler.fire();
+	expect(rt.ports[2]?.posted[2]).toEqual({ ...ended, replayed: false });
+	rt.ports[2]?.emitMessage({ kind: "gameEndReceived", eventId: ended.eventId });
+	expect(commands).toEqual([]);
+	rt.ports[2]?.emitDisconnect();
+	scheduler.fire();
+	expect(rt.ports[3]?.posted[2]).toEqual({ ...ended, replayed: true });
+	feed.dispose();
+});
+
+it("infers identity from gameStarted before a position and ignores an older game's receipt", async () => {
+	const rt = installFakeRuntime();
+	const scheduler = makeScheduler();
+	const feed = createFeedPort({ onCommand: () => {}, scheduler });
+	await feed.ready;
+	feed.post(hello);
+	const started: Extract<GamePortMessage, { kind: "gameStarted" }> = {
+		kind: "gameStarted",
+		game: { gameId: "a", site: "chesscom", pageKind: "live-game", myColor: "w", startedAt: 1 },
+	};
+	feed.post(started);
+	feed.post({ kind: "gameEnded", result: "1-0" });
+	const first = rt.ports[0]?.posted[2] as Extract<GamePortMessage, { kind: "gameEnded" }>;
+	expect(first.gameId).toBe("a");
+	feed.post({ ...started, game: { ...started.game, gameId: "b" } });
+	feed.post({ kind: "gameEnded", result: "0-1", gameId: "b", eventId: "supplied-event" });
+	rt.ports[0]?.emitMessage({ kind: "gameEndReceived", eventId: first.eventId });
+	rt.ports[0]?.emitDisconnect();
+	scheduler.fire();
+	expect(rt.ports[1]?.posted).toEqual([
+		hello,
+		{ ...started, game: { ...started.game, gameId: "b" } },
+		{ kind: "gameEnded", result: "0-1", gameId: "b", eventId: "supplied-event", replayed: false },
+	]);
+	feed.dispose();
+});
+
+it("rehydrates a newly started game before its first position instead of the previous game's board", async () => {
+	const rt = installFakeRuntime();
+	const scheduler = makeScheduler();
+	const feed = createFeedPort({ onCommand: () => {}, scheduler });
+	await feed.ready;
+	feed.post(hello);
+	feed.post(position);
+	const started: GamePortMessage = {
+		kind: "gameStarted",
+		game: { gameId: "next", site: "chesscom", pageKind: "live-game", myColor: "w", startedAt: 2 },
+	};
+	feed.post(started);
+	feed.post({ kind: "gameEnded", result: "1/2-1/2", eventId: "quick-end" });
+	rt.ports[0]?.emitDisconnect();
+	scheduler.fire();
+	expect(rt.ports[1]?.posted).toEqual([
+		hello,
+		started,
+		{ kind: "gameEnded", result: "1/2-1/2", gameId: "next", eventId: "quick-end", replayed: false },
+	]);
 	feed.dispose();
 });

@@ -1,5 +1,5 @@
 /**
- * Typed helpers over `SESSION_KEYS` (ephemeral, cleared on SW restart):
+ * Typed helpers over `SESSION_KEYS` (in memory, preserved across SW restarts):
  * per-tab auto-move / debugger flags and the persona sampled per game.
  */
 

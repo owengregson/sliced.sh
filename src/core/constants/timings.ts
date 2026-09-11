@@ -20,6 +20,11 @@ export const TIMINGS = {
 	debuggerIdleDetachMs: 180_000,
 	licenseValidateTimeoutMs: 8_000,
 	autoQueueDelayRangeMs: [900, 2_600],
+	autoQueueMinuteMs: 60_000,
+	autoQueueRequestTimeoutMs: 2_000,
+	autoQueueRetryMs: 2_000,
+	autoQueueRetryMaxMs: 15_000,
+	autoQueueSearchPollMs: 5_000,
 	keybindDebounceMs: 150,
 	/** MAIN-world bridge: board retry, doubling up to the cap (Task 21). */
 	bridgeRetryMs: 250,

@@ -180,6 +180,17 @@ if (state === "lowtime")
 	snapshot.session.clocks = { w: { ms: 8700, running: true }, b: { ms: 19300, running: false } };
 if (state === "crashed" || state === "error") snapshot.engine.state = "crashed";
 if (state === "disabled") snapshot.settings.enabled = false;
+if (state === "queue" || state === "queue-searching" || state === "queue-retrying") {
+	snapshot.session.state = "game-over";
+	snapshot.settings.enabled = true;
+	snapshot.settings.automation.autoQueue = true;
+	snapshot.settings.automation.autoQueueDelayEnabled = true;
+	snapshot.session.autoQueue = {
+		dueAt: Date.now() + 245_000,
+		attempts: state === "queue" ? 0 : 1,
+		status: state === "queue-searching" ? "searching" : state === "queue-retrying" ? "retrying" : "waiting",
+	};
+}
 if (state === "unsupported") {
 	snapshot.site = null;
 	snapshot.pageKind = "other";

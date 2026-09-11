@@ -1,5 +1,6 @@
 // test/service/game-session/stats.test.ts — Task 30: the §13.6 session pair the strip reads.
 import { describe, expect, it } from "bun:test";
+import { LIMITS } from "@core/constants/limits";
 import { AGREEMENT_BANDS } from "@core/strength/constants";
 import { EMPTY_STATS, foldGame, foldMove } from "@service/game-session/stats";
 import type { SessionStats } from "@typedefs/game";
@@ -81,5 +82,38 @@ describe("session stats", () => {
 
 	it("a session with no moves counts as in band", () => {
 		expect(foldGame({ ...EMPTY_STATS }, 1600).outOfBandStreak).toBe(0);
+	});
+});
+
+describe("finished game receipt recovery", () => {
+	it("does not count a replay again after storage serialization and worker restart", () => {
+		const stats: SessionStats = { ...EMPTY_STATS, moves: 10, top1Pct: 95, acpl: 2 };
+		const first = foldGame(stats, 1600, "finished-a");
+		const restored = JSON.parse(JSON.stringify(first)) as SessionStats;
+		expect(foldGame(restored, 1600, "finished-a")).toEqual(first);
+		expect(first.games).toBe(1);
+		expect(first.outOfBandStreak).toBe(1);
+		expect(foldGame(restored, 1600, "finished-b")).toMatchObject({
+			games: 2,
+			outOfBandStreak: 2,
+			finishedGameIds: ["finished-a", "finished-b"],
+		});
+		expect(stats.finishedGameIds).toBeUndefined();
+	});
+
+	it("retains a bounded recent identity history alongside legacy statistics", () => {
+		let stats: SessionStats = { ...EMPTY_STATS };
+		for (let i = 0; i < LIMITS.finishedGameHistorySize + 2; i++)
+			stats = foldGame(stats, 1600, `game-${i}`);
+		expect(stats.finishedGameIds).toHaveLength(LIMITS.finishedGameHistorySize);
+		expect(stats.finishedGameIds?.[0]).toBe("game-2");
+		expect(foldGame(stats, 1600, "game-2").games).toBe(stats.games);
+		// Unknown legacy ids cannot safely deduplicate separate games.
+		expect(foldGame(stats, 1600).games).toBe(stats.games + 1);
+		expect(foldGame(stats, 1600, null).games).toBe(stats.games + 1);
+		expect(foldGame(stats, 1600, "").games).toBe(stats.games + 1);
+		expect(
+			foldMove(stats, { thinkMs: 1, scored: false, top1: false, cpLoss: 0 }).finishedGameIds
+		).toEqual(stats.finishedGameIds);
 	});
 });

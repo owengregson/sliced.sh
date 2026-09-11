@@ -12,8 +12,10 @@
  * alarm for the whole worker, held while *any* tab is live.
  */
 
-import { onTabRemoved, onTabUpdated } from "@core/chrome/tabs";
+import { pageKindFromPath } from "@content/adapters/page-kind";
+import { onTabRemoved, onTabUpdated, tabsQuery } from "@core/chrome/tabs";
 import { KEEPALIVE_REASONS } from "@core/constants/alarms";
+import { URLS } from "@core/constants/urls";
 import { log } from "@core/logger";
 import type { TimeControlClass } from "@core/motor/types";
 import { createRng } from "@core/rng";
@@ -23,6 +25,7 @@ import type { DistributionHead } from "@core/timing/types";
 import { errorMessage } from "@core/util/errors";
 import { defaultNow, defaultScheduler, type Scheduler } from "@core/util/scheduler";
 import { AutoQueue } from "@service/auto-queue";
+import { createAutoQueuePersistence } from "@service/auto-queue-persistence";
 import type { BoardRectSource } from "@service/board-watch";
 import type { GameSessionHandle, GameSessionRegistry } from "@service/bootstrap";
 import type { ContentLink } from "@service/content-link";
@@ -111,21 +114,60 @@ export class SessionRegistry implements GameSessionRegistry, SnapshotSources {
 		this.autoQueue = new AutoQueue({
 			link: deps.link,
 			scheduler: this.scheduler,
+			now: this.now,
 			rng: createRng(`${deps.seed ?? "sl"}:auto-queue`),
+			persistence: createAutoQueuePersistence(),
+			canQueue: (tabId, gameId) => {
+				if (deps.settingsKnown?.() === false) return "hold";
+				const settings = deps.getSettings();
+				if (!settings.enabled || !settings.automation.autoQueue) return "cancel";
+				const session = this.sessions.get(tabId)?.session;
+				if (!session) return "hold";
+				const view = session.view();
+				if (view.gameId !== null && view.gameId !== gameId) return "cancel";
+				return view.state === "game-over" || view.state === "waiting-for-game" ? "allow" : "hold";
+			},
+			onChanged: () => {
+				this.reconcileKeepalive();
+				deps.notify();
+			},
 		});
+		void this.autoQueue.ready
+			.then(async () => {
+				const restoredTabs = this.autoQueue.tabIds();
+				if (restoredTabs.length === 0) return;
+				const openTabs = new Set((await tabsQuery({})).map((tab) => tab.id));
+				if (this.disposed) return;
+				for (const tabId of restoredTabs)
+					if (!openTabs.has(tabId) && !deps.link.isConnected(tabId)) this.autoQueue.cancel(tabId);
+			})
+			.catch((error: unknown) => log.warn("auto-queue: tab recovery check failed", error));
 		// A port that connected before this registry existed (an SW that built its stack in an
 		// unusual order) still gets a session.
 		for (const tabId of deps.link.tabs()) this.ensure(tabId);
 		this.offs.push(
 			deps.link.onConnect((tabId) => void this.ensure(tabId)),
-			deps.link.onDisconnect((tabId) => this.drop(tabId, "disconnected")),
+			deps.link.onDisconnect((tabId) => this.drop(tabId, "disconnected", true)),
 			onTabRemoved((tabId) => {
 				this.sessions.get(tabId)?.session.onTabEvent("tabRemoved");
 				this.drop(tabId, "tab removed");
+				this.autoQueue.cancel(tabId);
 			}),
 			onTabUpdated((tabId, changeInfo) => {
-				if (typeof changeInfo.url === "string")
-					this.sessions.get(tabId)?.session.onTabEvent("navigated");
+				if (typeof changeInfo.url !== "string") return;
+				let queuePage = false;
+				try {
+					const url = new URL(changeInfo.url);
+					const kind = pageKindFromPath(url.pathname);
+					queuePage =
+						url.origin === new URL(URLS.chesscom).origin &&
+						(kind === "live-game" || kind === "live-lobby" || kind === "vs-computer");
+				} catch {
+					/* An invalid destination cancels pending input. */
+				}
+				const preserve = queuePage && this.autoQueue.isPending(tabId);
+				this.sessions.get(tabId)?.session.onTabEvent("navigated", preserve);
+				if (!queuePage) this.autoQueue.cancel(tabId);
 			})
 		);
 	}
@@ -184,6 +226,7 @@ export class SessionRegistry implements GameSessionRegistry, SnapshotSources {
 	 */
 	settingsChanged(): void {
 		for (const entry of this.sessions.values()) entry.session.onSettingsChanged();
+		void this.autoQueue.wake();
 		// `EngineController` marks the diff pending from its *own* settings subscriber, so whether
 		// it has already run depends on registration order. Reading the flag one microtask later
 		// makes the reaction order-independent: every subscriber of this write has run by then,
@@ -246,6 +289,11 @@ export class SessionRegistry implements GameSessionRegistry, SnapshotSources {
 		return session;
 	}
 
+	/** Alarm callbacks are registered at service-worker startup, before this promise is awaited. */
+	wakeAutoQueue(): Promise<void> {
+		return this.autoQueue.wake();
+	}
+
 	private makeExecutor(
 		tabId: number,
 		config: { site: Site; persona: PersonaId; tcClass: TimeControlClass; gameSeed: string }
@@ -277,14 +325,14 @@ export class SessionRegistry implements GameSessionRegistry, SnapshotSources {
 		return executor;
 	}
 
-	private drop(tabId: number, reason: string): void {
+	private drop(tabId: number, reason: string, preserveAutoQueue = false): void {
 		const entry = this.sessions.get(tabId);
 		if (!entry) return;
 		this.sessions.delete(tabId);
 		entry.detachObserver?.();
 		for (const off of entry.offs.splice(0)) off();
-		entry.session.dispose();
-		this.autoQueue.cancel(tabId);
+		entry.session.dispose(preserveAutoQueue);
+		if (!preserveAutoQueue) this.autoQueue.cancel(tabId);
 		log.debug("session-registry: session closed", { tabId, reason });
 		this.reconcileKeepalive();
 		this.deps.notify();
@@ -292,7 +340,8 @@ export class SessionRegistry implements GameSessionRegistry, SnapshotSources {
 
 	/** `Keepalive.hold("game")` while any tab is live (§3.3 / Appendix B §4). */
 	private reconcileKeepalive(): void {
-		const live = [...this.sessions.values()].some((e) => e.session.isLive());
+		const live =
+			this.autoQueue.hasPending() || [...this.sessions.values()].some((e) => e.session.isLive());
 		if (live === this.holdingKeepalive) return;
 		this.holdingKeepalive = live;
 		const run = live

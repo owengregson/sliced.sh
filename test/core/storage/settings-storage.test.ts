@@ -32,6 +32,30 @@ describe("normalizeSettings", () => {
 		expect(normalizeSettings("nope")).toEqual(DEFAULT_SETTINGS);
 		expect(normalizeSettings([])).toEqual(DEFAULT_SETTINGS);
 	});
+	it("migrates old automation settings with random queue delay disabled", () => {
+		const s = normalizeSettings({ automation: { autoQueue: true, autoMove: true } });
+		expect(s.automation.autoQueue).toBe(true);
+		expect(s.automation.autoMove).toBe(true);
+		expect(s.automation.autoQueueDelayEnabled).toBe(false);
+		expect(s.automation.autoQueueDelayMaxMinutes).toBe(5);
+	});
+	it("normalizes queue delay to a finite integer maximum within its registered range", () => {
+		const max = (value: unknown): number =>
+			normalizeSettings({ automation: { autoQueueDelayMaxMinutes: value } }).automation
+				.autoQueueDelayMaxMinutes;
+		expect(max(-10)).toBe(LIMITS.autoQueueDelayMinutesMin);
+		expect(max(1000)).toBe(LIMITS.autoQueueDelayMinutesMax);
+		expect(max(5.7)).toBe(6);
+		expect(max(1)).toBe(1);
+		expect(max(60)).toBe(60);
+		for (const invalid of [Number.NaN, Number.POSITIVE_INFINITY, "10", null]) {
+			expect(max(invalid)).toBe(DEFAULT_SETTINGS.automation.autoQueueDelayMaxMinutes);
+		}
+		expect(
+			normalizeSettings({ automation: { autoQueueDelayEnabled: "true" } }).automation
+				.autoQueueDelayEnabled
+		).toBe(false);
+	});
 	it("drops unknown keys at every level", () => {
 		const s = normalizeSettings({
 			bogus: 1,
@@ -135,6 +159,17 @@ describe("normalizeSettings", () => {
 });
 
 describe("setSettings / onSettingsChanged", () => {
+	it("preserves queue delay preferences through partial writes and disabling auto-queue", async () => {
+		await setSettings({ automation: { autoQueue: true, autoQueueDelayEnabled: true } });
+		await setSettings({ automation: { autoQueueDelayMaxMinutes: 12 } });
+		await setSettings({ automation: { autoQueue: false } });
+		expect((await getSettings()).automation).toEqual({
+			...DEFAULT_SETTINGS.automation,
+			autoQueue: false,
+			autoQueueDelayEnabled: true,
+			autoQueueDelayMaxMinutes: 12,
+		});
+	});
 	it("read-merge-writes so unrelated sections survive", async () => {
 		await setSettings({ display: { theme: "light" } });
 		await setSettings({ engine: { multiPv: 2 } });

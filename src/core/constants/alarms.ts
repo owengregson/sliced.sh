@@ -6,6 +6,7 @@ export const ALARM_NAMES = {
 	licenseRevalidate: "sl-license",
 	keepalive: "sl-keepalive",
 	timingLogFlush: "sl-timing-flush",
+	autoQueue: "sl-auto-queue",
 } as const;
 export const ALARM_CADENCE_MINUTES = {
 	licenseRevalidate: 360,

@@ -141,6 +141,12 @@ export interface GameSessionView {
 	sideToMove: Color | null;
 	ply: number;
 	clocks: PositionSnapshot["clocks"] | null;
+	/** Pending automatic matchmaking. dueAt is the next attempt's epoch time. */
+	autoQueue?: {
+		dueAt: number;
+		attempts: number;
+		status: "waiting" | "retrying" | "searching";
+	};
 	/** Latest analysis for the current position, including opponent-turn pondering. Side-to-move POV. */
 	evaluation?: {
 		fen: string;
@@ -181,6 +187,8 @@ export interface SessionStats {
 	games: number;
 	moves: number;
 	avgThinkMs: number;
+	/** Bounded receipt history, saved atomically with the game totals for restart-safe deduplication. */
+	finishedGameIds?: string[];
 	/** Task 24 (§13.6 session strip): running top-1 agreement, 0–100 (absent until the first move). */
 	top1Pct?: number;
 	/** Running average centipawn loss (absent until the first move). */

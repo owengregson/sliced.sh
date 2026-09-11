@@ -71,6 +71,10 @@ export const COPY = {
 		engineLoading: "engine loading",
 		watching: "Connected",
 		reading: "Reading position…",
+		queueDelay: (remaining: string): string => `Next game in ${remaining}`,
+		queueStarting: "Starting next game…",
+		queueRetrying: "Retrying…",
+		queueSearching: "Matchmaking…",
 		autoplayTooltip: "Turns on when a game starts",
 		preArmed: "Armed for next game",
 		/** §4.4: the master switch is off, so there is nothing to arm (`COPY.move.disabled` names it). */
@@ -523,6 +527,14 @@ export const SETTINGS_COPY = {
 			label: "Auto-queue",
 			help: "Starts the next game when one ends.",
 		},
+		"automation.autoQueueDelayEnabled": {
+			label: "Random queue delay",
+			help: "Wait a random duration before starting the next automatic game.",
+		},
+		"automation.autoQueueDelayMaxMinutes": {
+			label: "Maximum queue delay",
+			help: `Uniform delay from ${LIMITS.autoQueueDelayMinutesMin} minute to this maximum.`,
+		},
 		"automation.highlightMoves": {
 			label: "Highlight moves",
 			help: "Marks the recommended move on the board.",
@@ -588,6 +600,7 @@ export const SETTINGS_COPY = {
 		percent: (fraction: number): string => `${Math.round(fraction * 100)}%`,
 		offset: (n: number): string => (n > 0 ? `+${n}` : String(n)),
 		mb: (n: number): string => `${n} MB`,
+		minutes: (n: number): string => `${n} min`,
 		threadsAuto: "Auto",
 		variance: { low: "Low", medium: "Medium", high: "High" },
 		motor: { slow: "Slow", natural: "Natural", fast: "Fast" },

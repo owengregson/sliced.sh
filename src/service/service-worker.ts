@@ -68,6 +68,10 @@ lifecycle.setAlarmHandler(ALARM_NAMES.timingLogFlush, async () => {
 	await game.timingLog.flush();
 });
 
+lifecycle.setAlarmHandler(ALARM_NAMES.autoQueue, async () => {
+	await game.registry.wakeAutoQueue();
+});
+
 // Validation runs at SW startup (§3.6); the alarm handles the 6 h cadence after that.
 void systems.license
 	.ensure()

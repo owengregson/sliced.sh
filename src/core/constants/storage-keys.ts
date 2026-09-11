@@ -16,11 +16,12 @@ export const LOCAL_KEYS = {
 	motorProfile: "sl::motor-profile", // fitted MotorProfile (Task 19)
 } as const;
 
-/** Cleared on service-worker restart — only ephemeral coordination flags. */
+/** Survives worker restarts; cleared when the browser restarts or the extension reloads. */
 export const SESSION_KEYS = {
 	autoMoveArmed: "sl::auto-move-armed", // Record<tabId, boolean>
 	debuggerAttached: "sl::debugger-attached", // Record<tabId, boolean>
 	personaByGame: "sl::persona-by-game", // Record<gameId, PersonaLatents>
+	autoQueuePending: "sl::auto-queue-pending", // PendingAutoQueues
 } as const;
 
 export type LocalKey = (typeof LOCAL_KEYS)[keyof typeof LOCAL_KEYS];

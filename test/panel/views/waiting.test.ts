@@ -2,7 +2,7 @@
 // hold-to-arm control dispatching PANEL_SET_AUTO_MOVE at arm time with the infobar explanation,
 // the pre-armed lock, session strip, Settings link and the new-game link.
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { MSG, type PanelSnapshot, UI_TIMINGS } from "@core/constants";
+import { DEFAULT_SETTINGS, MSG, type PanelSnapshot, UI_TIMINGS } from "@core/constants";
 import { clearBanners, currentBannerKind, mountBannerSlot } from "@panel/components/banner";
 import { COPY } from "@panel/copy";
 import { resetWaitingSession, waitingView } from "@panel/views/waiting";
@@ -50,6 +50,84 @@ const toggle = (): HTMLButtonElement => {
 };
 
 describe("waitingView", () => {
+	it("counts down the absolute next-game deadline without restarting on snapshots", async () => {
+		const snapshot = makeSnapshot({
+			state: "game-over",
+			settings: { automation: { ...DEFAULT_SETTINGS.automation, autoQueue: true } },
+		});
+		snapshot.session.autoQueue = { dueAt: Date.now() + 65_000, attempts: 0, status: "waiting" };
+		await mountWaiting(snapshot);
+		const status = container.querySelector<HTMLElement>(".sl-waiting__status");
+		expect(text(".sl-waiting__status-text")).toBe("Next game in 1:05");
+		expect(status?.getAttribute("role")).toBe("timer");
+		expect(status?.getAttribute("aria-live")).toBe("off");
+		await dom.tick(5_000);
+		expect(text(".sl-waiting__status-text")).toBe("Next game in 1:00");
+		store.emit({ ...snapshot });
+		expect(text(".sl-waiting__status-text")).toBe("Next game in 1:00");
+		await dom.tick(59_000);
+		expect(text(".sl-waiting__status-text")).toBe("Next game in 0:01");
+		await dom.tick(1_000);
+		expect(text(".sl-waiting__status-text")).toBe(COPY.waiting.queueStarting);
+		expect(status?.getAttribute("role")).toBe("status");
+		expect(status?.getAttribute("aria-live")).toBe("polite");
+	});
+
+	it("shows matchmaking and retry phases, then removes the countdown when queueing is canceled", async () => {
+		const snapshot = makeSnapshot({
+			state: "game-over",
+			settings: { automation: { ...DEFAULT_SETTINGS.automation, autoQueue: true } },
+		});
+		const queue = { dueAt: Date.now() + 60_000, attempts: 1, status: "waiting" as const };
+		snapshot.session.autoQueue = queue;
+		await mountWaiting(snapshot);
+		expect(text(".sl-waiting__status-text")).toBe(COPY.waiting.queueStarting);
+		for (const [phase, expected] of [
+			["retrying", COPY.waiting.queueRetrying],
+			["searching", COPY.waiting.queueSearching],
+		] as const) {
+			store.emit({
+				...snapshot,
+				session: { ...snapshot.session, autoQueue: { ...queue, status: phase } },
+			});
+			expect(text(".sl-waiting__status-text")).toBe(expected);
+		}
+		store.emit({
+			...snapshot,
+			session: { ...snapshot.session, autoQueue: { ...queue, attempts: 0 } },
+		});
+		expect(text(".sl-waiting__status-text")).toBe("Next game in 1:00");
+		store.emit(makeSnapshot());
+		await dom.tick(5_000);
+		expect(text(".sl-waiting__status-text")).toBe(COPY.waiting.watching);
+	});
+
+	it("does not display an old pending queue when disabled and disposes its timer", async () => {
+		const snapshot = makeSnapshot({
+			settings: { automation: { ...DEFAULT_SETTINGS.automation, autoQueue: true } },
+		});
+		snapshot.session.autoQueue = { dueAt: Date.now() + 60_000, attempts: 0, status: "waiting" };
+		await mountWaiting(snapshot);
+		store.emit({ ...snapshot, settings: { ...snapshot.settings, enabled: false } });
+		await dom.tick(2_000);
+		expect(text(".sl-waiting__status-text")).toBe(COPY.move.disabled);
+		store.emit({
+			...snapshot,
+			settings: {
+				...snapshot.settings,
+				automation: { ...snapshot.settings.automation, autoQueue: false },
+			},
+		});
+		expect(text(".sl-waiting__status-text")).toBe(COPY.waiting.watching);
+		store.emit(snapshot);
+		const detachedStatus = container.querySelector<HTMLElement>(".sl-waiting__status-text");
+		const before = detachedStatus?.textContent;
+		cleanup?.();
+		cleanup = null;
+		await dom.tick(5_000);
+		expect(detachedStatus?.textContent).toBe(before);
+	});
+
 	it("shows the detected opponent and the derived target Elo", async () => {
 		await mountWaiting(
 			withOpponent(makeSnapshot(), {

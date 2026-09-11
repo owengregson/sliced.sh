@@ -293,6 +293,60 @@ describe("content entry — feed", () => {
 });
 
 describe("content entry — commands", () => {
+	it("releases stale pointer isolation only when a safe restart control is ready, then acknowledges its click", () => {
+		const { dom, feed, bridge } = boot("chesscom-gameover");
+		dom.layout("button", { x: 200, y: 200, width: 150, height: 40 });
+		const next = dom.query('[data-cy="game-over-modal-new-game-button"]');
+		let clicked = 0;
+		next.addEventListener("click", () => clicked++);
+		feed.command({ kind: "cursorTo", x: 100, y: 100, down: false });
+		feed.command({ kind: "startNewGame", id: "stale", gameId: "old-game" });
+		expect(clicked).toBe(0);
+		expect(bridge.notified.some((message) => message.kind === "cursorHide")).toBe(false);
+		expect(feed.of("startNewGameResult").at(-1)?.status).toBe("in-game");
+		feed.command({ kind: "startNewGame", id: "next", gameId: "173765478165" });
+		expect(clicked).toBe(1);
+		expect(bridge.notified.at(-1)?.kind).toBe("cursorHide");
+		expect(feed.of("startNewGameResult").at(-1)).toEqual({
+			kind: "startNewGameResult",
+			id: "next",
+			status: "started",
+		});
+	});
+
+	it("acknowledges a delayed New Game control and never falls back to Rematch or cancels a search", () => {
+		const { dom, feed } = boot("chesscom-gameover");
+		for (const button of dom.document.querySelectorAll("button")) {
+			if (!button.textContent?.includes("Rematch")) button.remove();
+		}
+		dom.layout("button", { x: 200, y: 200, width: 150, height: 40 });
+		let rematches = 0;
+		for (const button of dom.document.querySelectorAll("button"))
+			button.addEventListener("click", () => rematches++);
+		feed.command({ kind: "startNewGame", id: "waiting", gameId: null });
+		expect(feed.of("startNewGameResult").at(-1)?.status).toBe("not-ready");
+		expect(rematches).toBe(0);
+		dom
+			.query(".new-game-buttons-component")
+			.insertAdjacentHTML("beforeend", '<button aria-label="New Game">New Game</button>');
+		dom.layout('button[aria-label="New Game"]', { x: 200, y: 200, width: 150, height: 40 });
+		const next = dom.query('button[aria-label="New Game"]');
+		let started = 0;
+		next.addEventListener("click", () => {
+			started++;
+			next.textContent = "Cancel";
+		});
+		feed.command({ kind: "startNewGame", id: "ready", gameId: null });
+		feed.command({ kind: "startNewGame", id: "search", gameId: null });
+		expect(started).toBe(1);
+		expect(rematches).toBe(0);
+		expect(feed.of("startNewGameResult").map((message) => message.status)).toEqual([
+			"not-ready",
+			"started",
+			"searching",
+		]);
+	});
+
 	it("highlight/arrow are not drawn while highlightMoves is off; drawn after settings turns it on; observeMove leaves the mark alone", async () => {
 		const { feed, bridge, dom } = boot("chesscom-live");
 		await waitFor(() => bridge.callsOf("getState").length > 0);
@@ -527,7 +581,8 @@ describe("content entry — commands", () => {
 		expect(g?.promotion).toBeUndefined();
 	});
 	it("ignores speak (TTS lives in the SW), stores keybinds, and startNewGame clicks the site's button", () => {
-		const { feed } = boot("chesscom-gameover");
+		const { feed, dom } = boot("chesscom-gameover");
+		dom.layout("button", { x: 200, y: 200, width: 150, height: 40 });
 		const before = feed.posts.length;
 		feed.command({ kind: "speak", text: "knight f3" });
 		feed.command({
@@ -568,8 +623,11 @@ describe("content entry — commands", () => {
 				global: false,
 			},
 		});
-		feed.command({ kind: "startNewGame" });
-		expect(feed.posts.length).toBe(before);
+		feed.command({ kind: "startNewGame", id: "next", gameId: null });
+		expect(feed.posts.length).toBe(before + 1);
+		expect(feed.of("startNewGameResult")).toEqual([
+			{ kind: "startNewGameResult", id: "next", status: "started" },
+		]);
 	});
 	it("never touches page storage while booting and feeding", async () => {
 		const dom = loadFixture("chesscom-live");

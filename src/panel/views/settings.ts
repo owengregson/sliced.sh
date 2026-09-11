@@ -484,8 +484,12 @@ export function createSettingsView(overrides: Partial<SettingsViewDeps> = {}): V
 				voices: () => voiceOptions,
 			};
 
-			function disabledFor(_path: SettingsLeafPath): boolean {
+			function disabledFor(path: SettingsLeafPath): boolean {
 				if (locked) return true;
+				if (path === "automation.autoQueueDelayEnabled") return !settings.automation.autoQueue;
+				if (path === "automation.autoQueueDelayMaxMinutes") {
+					return !settings.automation.autoQueue || !settings.automation.autoQueueDelayEnabled;
+				}
 				return false;
 			}
 

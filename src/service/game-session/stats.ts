@@ -11,6 +11,7 @@
  * (`checkBand`), and the Live view warns after three.
  */
 
+import { LIMITS } from "@core/constants/limits";
 import { checkBand } from "@core/strength/bands";
 import type { SessionStats } from "@typedefs/game";
 
@@ -64,11 +65,22 @@ export function foldMove(stats: SessionStats, move: MoveOutcome): SessionStats {
  * resets, judged on the session's running pair against `targetElo`'s band. A
  * session with no moves yet counts as in band (`checkBand`'s rule).
  */
-export function foldGame(stats: SessionStats, targetElo: number): SessionStats {
+export function foldGame(
+	stats: SessionStats,
+	targetElo: number,
+	gameId?: string | null
+): SessionStats {
+	const knownGames = Array.isArray(stats.finishedGameIds)
+		? stats.finishedGameIds.filter((id) => typeof id === "string" && id.length > 0)
+		: [];
+	if (gameId && knownGames.includes(gameId)) return stats;
 	const verdict = checkBand(targetElo, stats);
 	return {
 		...stats,
 		games: stats.games + 1,
 		outOfBandStreak: verdict.inBand ? 0 : (stats.outOfBandStreak ?? 0) + 1,
+		...(gameId
+			? { finishedGameIds: [...knownGames, gameId].slice(-LIMITS.finishedGameHistorySize) }
+			: {}),
 	};
 }

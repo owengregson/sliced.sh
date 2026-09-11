@@ -219,7 +219,7 @@ export interface GameSessionDeps {
 	focus: Pick<FocusGate, "positionArrived" | "onEdge" | "snapshot">;
 	ownership: Pick<HandOwnership, "realPointerCount">;
 	timingLog: Pick<TimingLogWriter, "append" | "upsert" | "markActual" | "attachTelemetry">;
-	autoQueue: Pick<AutoQueue, "schedule" | "cancel">;
+	autoQueue: Pick<AutoQueue, "schedule" | "cancel" | "view" | "observedGame">;
 	createExecutor: ExecutorFactory;
 	/**
 	 * Overrides how the §3.2 pipeline is built for a game (default:
@@ -441,6 +441,7 @@ export class GameSession implements SessionSource {
 	private retryTimer: unknown = null;
 	private retryAttempts = 0;
 	private disposed = false;
+	private finishingGame: Promise<void> | null = null;
 	/** `mayAct()` as of the last settings write this session saw (§4.4 flip detection). */
 	private acting: boolean;
 
@@ -482,6 +483,8 @@ export class GameSession implements SessionSource {
 			clocks: s?.clocks ?? null,
 		};
 		const tc = s?.timeControl ?? this.game?.timeControl;
+		const queue = this.deps.autoQueue.view(this.deps.tabId);
+		if (queue) view.autoQueue = queue;
 		if (tc) view.timeControl = tc;
 		if (s) {
 			const liveLine = this.ponderer?.latestLines(s.fen)[0];
@@ -593,6 +596,8 @@ export class GameSession implements SessionSource {
 		// Fix D: the mirror is page DOM, so it goes the moment it is no longer allowed — which is
 		// either the switch or `display.virtualCursor`, and only the switch makes `flipped` true.
 		if (!this.virtualCursorAllowed()) this.hideVirtualCursor();
+		if (!on || !this.deps.getSettings().automation.autoQueue)
+			this.deps.autoQueue.cancel(this.deps.tabId);
 		if (!flipped) return;
 		if (on) void this.resumeEnabled();
 		else this.stopDisabled();
@@ -794,7 +799,7 @@ export class GameSession implements SessionSource {
 		return this.ponderer?.stop() ?? Promise.resolve();
 	}
 
-	dispose(): void {
+	dispose(preserveAutoQueue = false): void {
 		if (this.disposed) return;
 		this.disposed = true;
 		for (const off of this.offs.splice(0)) off();
@@ -809,7 +814,7 @@ export class GameSession implements SessionSource {
 		this.preAnalysis = null;
 		if (inFlight) void inFlight.stop();
 		this.ponderer?.dispose();
-		this.deps.autoQueue.cancel(this.deps.tabId);
+		if (!preserveAutoQueue) this.deps.autoQueue.cancel(this.deps.tabId);
 		this.hideVirtualCursor();
 		this.window.discard();
 		this.clearRetry();
@@ -831,7 +836,16 @@ export class GameSession implements SessionSource {
 				void this.onPosition(msg.snapshot);
 				return;
 			case "gameEnded":
-				this.onGameEnded(msg.result);
+				void (
+					msg.gameId && this.game && msg.gameId !== this.game.gameId
+						? Promise.resolve()
+						: this.onGameEnded(msg.result, msg.replayed === true)
+				)
+					.then(() => {
+						if (msg.eventId)
+							this.deps.link.post(this.deps.tabId, { kind: "gameEndReceived", eventId: msg.eventId });
+					})
+					.catch((error: unknown) => log.warn("game-session: game-end handling failed", error));
 				return;
 			case "opponent":
 				this.opponentInfo = {
@@ -881,9 +895,9 @@ export class GameSession implements SessionSource {
 	}
 
 	/** The tab navigated away from the game (`navigated`) or was closed (`tabRemoved`). */
-	onTabEvent(event: "navigated" | "tabRemoved"): void {
+	onTabEvent(event: "navigated" | "tabRemoved", preserveAutoQueue = false): void {
 		this.cancelInFlight();
-		this.deps.autoQueue.cancel(this.deps.tabId);
+		if (!preserveAutoQueue) this.deps.autoQueue.cancel(this.deps.tabId);
 		this.rec = null;
 		this.hideVirtualCursor();
 		this.forgetPremove(event === "navigated" ? "the tab navigated away" : "the tab was closed");
@@ -902,19 +916,21 @@ export class GameSession implements SessionSource {
 		this.deps.notify();
 	}
 
-	onGameEnded(result: GameResult): void {
+	onGameEnded(result: GameResult, replayed = false): Promise<void> {
 		// Fix D: above the guard on purpose. `gameEnded` is refused from `idle` only, which a
 		// reconnect cannot produce (`FeedPort` replays `hello` before the outbox, which moves the
 		// session to `waiting-for-game`) — but the arrow does not self-heal the way a board mark
 		// does, so it costs one line not to depend on that reasoning.
 		this.hideVirtualCursor();
-		if (!this.apply("gameEnded")) return;
+		if (this.state === "game-over") return this.finishingGame ?? Promise.resolve();
+		if (!this.apply("gameEnded")) return Promise.resolve();
 		this.cancelInFlight();
 		this.rec = null;
 		this.forgetPremove("the game ended");
 		this.clearBoardMarks();
-		void this.finishGame(result);
+		this.finishingGame = replayed ? Promise.resolve() : this.finishGame(result);
 		this.deps.notify();
+		return this.finishingGame;
 	}
 
 	// ── the per-position pipeline (§3.2) ───────────────────────────────────
@@ -2348,6 +2364,8 @@ export class GameSession implements SessionSource {
 	// ── game lifecycle ─────────────────────────────────────────────────────
 
 	private startGame(meta: GameMeta): void {
+		this.cancelQueueForNewGame(meta.gameId);
+		this.finishingGame = null;
 		this.game = meta;
 		this.site = meta.site;
 		this.snapshot = null;
@@ -2429,11 +2447,26 @@ export class GameSession implements SessionSource {
 	}
 
 	private async finishGame(result: GameResult): Promise<void> {
-		await this.updateStats((stats) => foldGame(stats, this.targetElo()));
 		const settings = this.deps.getSettings();
+		const targetElo = this.targetElo();
+		const finishedGameId = this.game?.gameId ?? null;
 		// §4.4: the auto-queue asks the *page* for a new game, so the switch gates it like the rest.
-		if (this.mayAct() && settings.automation.autoQueue) this.deps.autoQueue.schedule(this.deps.tabId);
+		if (this.mayAct() && settings.automation.autoQueue)
+			await this.deps.autoQueue.schedule(
+				this.deps.tabId,
+				this.game?.gameId ?? null,
+				settings.automation
+			);
+		// Statistics must not delay queuing or enqueue an obsolete game after a slow storage write.
+		await this.updateStats((stats) => foldGame(stats, targetElo, finishedGameId));
 		log.info("game-session: game over", { tabId: this.deps.tabId, result });
+	}
+
+	private cancelQueueForNewGame(gameId: string): void {
+		// A reconnect first replays the finished game's position; preserve its pending deadline.
+		if (this.game !== null && this.game.gameId !== gameId)
+			this.deps.autoQueue.cancel(this.deps.tabId);
+		void this.deps.autoQueue.observedGame(this.deps.tabId, gameId);
 	}
 
 	// ── executor plumbing ──────────────────────────────────────────────────

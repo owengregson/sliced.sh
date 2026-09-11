@@ -32,6 +32,14 @@ export interface PersonaLatents {
 /** `Record<tabId, boolean>` — chrome.storage keys are strings, so tab ids are stringified. */
 export type TabFlags = Record<string, boolean>;
 
+export interface PendingAutoQueue {
+	gameId: string | null;
+	/** Absolute wall-clock deadline, preserved across service-worker lifetimes. */
+	dueAt: number;
+}
+
+export type PendingAutoQueues = Record<string, PendingAutoQueue>;
+
 export interface LocalStorageSchema {
 	[LOCAL_KEYS.settings]: Settings;
 	[LOCAL_KEYS.licenseState]: LicenseState;
@@ -53,4 +61,5 @@ export interface SessionStorageSchema {
 	[SESSION_KEYS.autoMoveArmed]: TabFlags;
 	[SESSION_KEYS.debuggerAttached]: TabFlags;
 	[SESSION_KEYS.personaByGame]: Record<string, PersonaLatents>;
+	[SESSION_KEYS.autoQueuePending]: PendingAutoQueues;
 }

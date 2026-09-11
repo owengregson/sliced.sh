@@ -43,6 +43,8 @@ export const SECTIONS: readonly SectionSpec[] = [
 		"enabled",
 		"automation.autoMove",
 		"automation.autoQueue",
+		"automation.autoQueueDelayEnabled",
+		"automation.autoQueueDelayMaxMinutes",
 		"execution.motorSpeed",
 		"execution.calibrateFromMyMouse",
 		"execution.previewSelects",

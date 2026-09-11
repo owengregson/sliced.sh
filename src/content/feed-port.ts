@@ -28,6 +28,7 @@
 import type { GamePortCommand, GamePortMessage } from "@core/constants/messages";
 import { PORT_NAMES } from "@core/constants/ports";
 import { connectPort, type PortScheduler } from "@core/messaging/ports";
+import { newId } from "@core/util/ids";
 
 export interface FeedPort {
 	post(msg: GamePortMessage): void;
@@ -45,12 +46,20 @@ export interface FeedPortOptions {
 export function createFeedPort(options: FeedPortOptions): FeedPort {
 	let lastHello: GamePortMessage | null = null;
 	let lastPosition: GamePortMessage | null = null;
+	let lastStarted: Extract<GamePortMessage, { kind: "gameStarted" }> | null = null;
 	let lastFocus: GamePortMessage | null = null;
+	let lastEnded: Extract<GamePortMessage, { kind: "gameEnded" }> | null = null;
+	let lastEndedAcknowledged = false;
+	let currentGameId: string | null = null;
 	let down = false;
 	let outbox: GamePortMessage[] = [];
 
 	const port = connectPort<GamePortMessage, GamePortCommand>(PORT_NAMES.game, {
 		onMessage(cmd) {
+			if (cmd.kind === "gameEndReceived") {
+				if (lastEnded?.eventId === cmd.eventId) lastEndedAcknowledged = true;
+				return;
+			}
 			options.onCommand(cmd);
 		},
 		onDisconnect() {
@@ -71,7 +80,11 @@ export function createFeedPort(options: FeedPortOptions): FeedPort {
 			// owner action at all. Delivered before it, the edge finds no window and no snapshot, and
 			// the gate simply has its reading in time for the move the position schedules.
 			if (lastFocus && !pending.some((m) => m.kind === "focus")) port.post(lastFocus);
-			if (lastPosition) port.post(lastPosition);
+			if (lastPosition?.kind === "position" && lastPosition.snapshot.gameId === currentGameId)
+				port.post(lastPosition);
+			else if (lastStarted) port.post(lastStarted);
+			if (lastEnded && !pending.some((m) => m.kind === "gameEnded" || m.kind === "gameStarted"))
+				port.post({ ...lastEnded, replayed: lastEndedAcknowledged });
 			for (const msg of pending) port.post(msg);
 		},
 		...(options.scheduler ? { scheduler: options.scheduler } : {}),
@@ -80,11 +93,33 @@ export function createFeedPort(options: FeedPortOptions): FeedPort {
 	return {
 		ready: port.ready,
 		post(msg) {
+			// The latest position is replayed before the outage outbox, which may still contain an
+			// older game's result. Preserve both its game identity and its receipt identity.
+			const outgoing: GamePortMessage =
+				msg.kind === "gameEnded"
+					? {
+							...msg,
+							eventId: msg.eventId ?? newId(),
+							...(msg.gameId === undefined && currentGameId !== null ? { gameId: currentGameId } : {}),
+						}
+					: msg;
 			if (msg.kind === "hello") lastHello = msg;
-			else if (msg.kind === "position") lastPosition = msg;
-			else if (msg.kind === "focus") lastFocus = msg;
-			if (down) outbox.push(msg);
-			else port.post(msg);
+			else if (msg.kind === "position") {
+				if (lastPosition?.kind === "position" && lastPosition.snapshot.gameId !== msg.snapshot.gameId)
+					lastEnded = null;
+				lastPosition = msg;
+				currentGameId = msg.snapshot.gameId;
+			} else if (msg.kind === "focus") lastFocus = msg;
+			else if (outgoing.kind === "gameEnded") {
+				if (lastEnded?.eventId !== outgoing.eventId) lastEndedAcknowledged = false;
+				lastEnded = outgoing;
+			} else if (msg.kind === "gameStarted") {
+				lastEnded = null;
+				currentGameId = msg.game.gameId;
+				lastStarted = msg;
+			}
+			if (down) outbox.push(outgoing);
+			else port.post(outgoing);
 		},
 		dispose() {
 			outbox = [];

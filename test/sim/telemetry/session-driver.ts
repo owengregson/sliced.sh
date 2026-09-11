@@ -135,6 +135,7 @@ export function createSessionDriver(options: SessionDriverOptions = {}): Session
 			link: sw.link,
 			scheduler: defaultScheduler,
 			rng: createRng(`${gameId}:auto-queue`),
+			canQueue: () => "cancel",
 		});
 		// The driver hands the session its positions explicitly (ruling 6), so the session does not
 		// subscribe to the page's own feed — otherwise the harness's `page.arrive()` would race the

@@ -149,7 +149,12 @@ export type GamePortMessage =
 	| { kind: "hello"; site: Site; pageKind: PageKind; adapterVersion: string }
 	| { kind: "position"; snapshot: PositionSnapshot }
 	| { kind: "gameStarted"; game: GameMeta }
-	| { kind: "gameEnded"; result: GameResult }
+	| { kind: "gameEnded"; result: GameResult; gameId?: string; eventId?: string; replayed?: boolean }
+	| {
+			kind: "startNewGameResult";
+			id: string;
+			status: "started" | "searching" | "not-ready" | "in-game";
+	  }
 	| { kind: "cursor"; x: number; y: number; t: number; real: true }
 	| { kind: "selectorMiss"; selector: string }
 	/** V2 §13.4: every window focus/blur/visibilitychange edge */
@@ -202,7 +207,8 @@ export type GamePortCommand =
 	| { kind: "clearHighlight" }
 	| { kind: "arrow"; lines: Array<{ from: Square; to: Square; weight: number }> }
 	| { kind: "keybinds"; keybinds: Keybinds }
-	| { kind: "startNewGame" }
+	| { kind: "startNewGame"; id: string; gameId: string | null }
+	| { kind: "gameEndReceived"; eventId: string }
 	| { kind: "speak"; text: string }
 	/** Settings the content script acts on (`automation.highlightMoves`, §13.3 rule 4); default off until sent. */
 	| { kind: "settings"; highlightMoves: boolean }

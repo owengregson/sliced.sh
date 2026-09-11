@@ -37,6 +37,8 @@ describe("game session: game over and the auto-queue (Step 2d)", () => {
 		const at = h.sim.now();
 		expect(at - endedAt).toBeGreaterThanOrEqual(MIN_DELAY);
 		expect(at - endedAt).toBeLessThanOrEqual(MAX_DELAY + 100);
+		// A click is not confirmation: stop only after the site's next game arrives.
+		await h.drive(() => h.site.startGame({ gameId: "second-game" }));
 		await h.advance(MAX_DELAY * 2);
 		expect(newGameCommands()).toBe(1);
 	});
@@ -82,4 +84,123 @@ describe("game session: game over and the auto-queue (Step 2d)", () => {
 		expect(h.session().currentState()).toBe("live:opponent-turn");
 		expect(h.session().view().gameId).toBe("second-game");
 	});
+});
+
+it("retries an unanswered request until a new game arrives", async () => {
+	h = await createGameHarness({ settings: { automation: { autoQueue: true } } });
+	await h.arrive();
+	await h.drive(() => h.site.endGame("1-0"));
+	expect(await h.until(() => newGameCommands() >= 3, 20_000)).toBe(true);
+	expect(h.session().view().autoQueue?.status).toBe("retrying");
+	await h.drive(() => h.site.startGame({ gameId: "recovered" }));
+	const count = newGameCommands();
+	await h.advance(30_000);
+	expect(newGameCommands()).toBe(count);
+	expect(h.session().view().autoQueue).toBeUndefined();
+});
+
+it("waits one minute when the optional maximum is one, then starts", async () => {
+	h = await createGameHarness({
+		settings: {
+			automation: { autoQueue: true, autoQueueDelayEnabled: true, autoQueueDelayMaxMinutes: 1 },
+		},
+	});
+	await h.arrive();
+	const now = h.sim.now();
+	await h.drive(() => h.site.endGame("1-0"));
+	expect(h.session().view().autoQueue?.dueAt).toBe(now + 60_000);
+	await h.advance(59_999);
+	expect(newGameCommands()).toBe(0);
+	await h.advance(1);
+	expect(newGameCommands()).toBe(1);
+});
+
+it("turning auto queue off cancels an already scheduled wait", async () => {
+	h = await createGameHarness({
+		settings: {
+			automation: { autoQueue: true, autoQueueDelayEnabled: true, autoQueueDelayMaxMinutes: 1 },
+		},
+	});
+	await h.arrive();
+	await h.drive(() => h.site.endGame("1-0"));
+	await h.patch({ automation: { autoQueue: false } });
+	await h.advance(65_000);
+	expect(newGameCommands()).toBe(0);
+	expect(h.session().view().autoQueue).toBeUndefined();
+});
+
+it("a new game racing game-end persistence cancels the old request", async () => {
+	h = await createGameHarness({ settings: { automation: { autoQueue: true } } });
+	await h.arrive();
+	await h.drive(() => {
+		h.site.endGame("1-0");
+		h.site.startGame({ gameId: "immediate-next" });
+	});
+	await h.advance(10_000);
+	expect(newGameCommands()).toBe(0);
+	expect(h.session().view().autoQueue).toBeUndefined();
+});
+
+it("duplicate end events do not resample the wait or count a game twice", async () => {
+	h = await createGameHarness({ settings: { automation: { autoQueue: true } } });
+	await h.arrive();
+	await h.drive(() => h.site.endGame("1-0"));
+	const dueAt = h.session().view().autoQueue?.dueAt;
+	await h.advance(500);
+	await h.drive(() => h.site.endGame("1-0"));
+	expect(h.session().view().autoQueue?.dueAt).toBe(dueAt);
+	const stats = await h.sw.run(() => chromeLocalGet(LOCAL_KEYS.sessionStats));
+	expect(stats?.games).toBe(1);
+});
+
+it("a stale finished-game replay cannot end the next game", async () => {
+	h = await createGameHarness({ settings: { automation: { autoQueue: true } } });
+	await h.arrive();
+	await h.drive(() => h.site.startGame({ gameId: "new-game" }));
+	await h.drive(() => h.site.post({ kind: "gameEnded", gameId: "old-game", result: "1-0" }));
+	expect(h.session().currentState()).toBe("live:opponent-turn");
+	await h.advance(10_000);
+	expect(newGameCommands()).toBe(0);
+});
+
+it("a handled game-end replay restores state without reviving a cancelled queue", async () => {
+	h = await createGameHarness({ settings: { automation: { autoQueue: true } } });
+	await h.arrive();
+	await h.drive(() => h.site.post({ kind: "gameEnded", result: "1-0", replayed: true }));
+	expect(h.session().currentState()).toBe("game-over");
+	await h.advance(10_000);
+	expect(newGameCommands()).toBe(0);
+	expect((await h.sw.run(() => chromeLocalGet(LOCAL_KEYS.sessionStats)))?.games ?? 0).toBe(0);
+});
+
+it("a same-site matchmaking navigation preserves the scheduled deadline", async () => {
+	h = await createGameHarness({ settings: { automation: { autoQueue: true } } });
+	await h.arrive();
+	await h.drive(() => h.site.endGame("1-0"));
+	const dueAt = h.session().view().autoQueue?.dueAt;
+	await h.sw.run(() =>
+		h.sim.chrome.tabs.update(h.tabId, { url: "https://www.chess.com/play/online" })
+	);
+	expect(h.session().view().autoQueue?.dueAt).toBe(dueAt);
+	expect(await h.until(() => newGameCommands() > 0, MAX_DELAY + 100)).toBe(true);
+});
+
+it("navigation outside the site cancels the queued game", async () => {
+	h = await createGameHarness({ settings: { automation: { autoQueue: true } } });
+	await h.arrive();
+	await h.drive(() => h.site.endGame("1-0"));
+	await h.sw.run(() => h.sim.chrome.tabs.update(h.tabId, { url: "https://example.com/" }));
+	await h.advance(10_000);
+	expect(newGameCommands()).toBe(0);
+	expect(h.session().view().autoQueue).toBeUndefined();
+});
+
+it("leaving the game for same-site analysis cancels the queued game", async () => {
+	h = await createGameHarness({ settings: { automation: { autoQueue: true } } });
+	await h.arrive();
+	await h.drive(() => h.site.endGame("1-0"));
+	await h.sw.run(() => h.sim.chrome.tabs.update(h.tabId, { url: "https://www.chess.com/analysis" }));
+	await h.advance(10_000);
+	expect(newGameCommands()).toBe(0);
+	expect(h.session().view().autoQueue).toBeUndefined();
 });

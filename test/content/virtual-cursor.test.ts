@@ -83,7 +83,7 @@ describe("content virtual-cursor relay", () => {
 		expect(mirror.apply(to(1, 2))).toBe(true);
 		expect(mirror.apply(hide)).toBe(true);
 		expect(mirror.apply({ kind: "clearHighlight" })).toBe(false);
-		expect(mirror.apply({ kind: "startNewGame" })).toBe(false);
+		expect(mirror.apply({ kind: "startNewGame", id: "queue", gameId: null })).toBe(false);
 	});
 
 	it("forwards every position to the bridge, never through a round trip", () => {

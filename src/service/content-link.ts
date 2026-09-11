@@ -31,7 +31,9 @@ type ReplyKindOf<K extends RequestKind> = K extends "geometry"
 					? "cursorPrepared"
 					: K extends "cursorDelivery"
 						? "cursorDelivered"
-						: never;
+						: K extends "startNewGame"
+							? "startNewGameResult"
+							: never;
 export type ReplyFor<K extends RequestKind> = Extract<GamePortMessage, { kind: ReplyKindOf<K> }>;
 /** A request without its `id`; `timeoutMs` defaults to the request budget. */
 export type RequestInput<K extends RequestKind> = { kind: K } & Omit<
