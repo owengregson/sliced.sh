@@ -1,5 +1,6 @@
 // test/offscreen/nnue-store.test.ts
 import { describe, expect, it } from "bun:test";
+import { BUNDLED_NNUE } from "@core/constants/engine-files";
 import { LIMITS } from "@core/constants/limits";
 import type { EnginePortMessage, NnueChunk } from "@core/constants/messages";
 import { base64ToBytes, bytesToBase64 } from "@core/util/base64";
@@ -78,6 +79,7 @@ interface Harness {
 
 function setup(options: {
 	bundled?: Record<string, Uint8Array>;
+	useDefaultBundled?: boolean;
 	opfs?: FakeOpfs | null;
 	indexedDb?: IDBFactory | null;
 }): Harness {
@@ -103,7 +105,7 @@ function setup(options: {
 		opfs: opfs ? async () => opfs.dir : null,
 		indexedDb: options.indexedDb ?? null,
 		onProgress: (name, p) => progress.push([name, p]),
-		bundled: Object.keys(bundled),
+		...(options.useDefaultBundled ? {} : { bundled: Object.keys(bundled) }),
 	});
 	return { store, requests, progress, fetched, opfs: opfs ?? fakeOpfs() };
 }
@@ -132,6 +134,30 @@ describe("base64 helpers", () => {
 });
 
 describe("NnueStore.get", () => {
+	it("loads every variant locally by default across repeated strength switches", async () => {
+		const bundled = Object.fromEntries(BUNDLED_NNUE.map((name, i) => [name, bytes(i)]));
+		const h = setup({ bundled, useDefaultBundled: true });
+		for (let switchIndex = 0; switchIndex < 3; switchIndex++) {
+			for (const [i, name] of BUNDLED_NNUE.entries())
+				expect(await h.store.get(name)).toEqual(bytes(i));
+		}
+		expect(h.fetched).toHaveLength(BUNDLED_NNUE.length * 3);
+		expect(h.fetched.every((url) => url.startsWith(`${ROOT}assets/engine/`))).toBe(true);
+		expect(h.requests).toEqual([]);
+		expect(h.opfs.reads).toEqual([]);
+		expect(h.progress).toEqual([]);
+	});
+
+	it("retains a verified full-network cache fallback if an older installation lacks the asset", async () => {
+		const name = LIMITS.nnueBigNames[1];
+		const data = new Uint8Array(await Bun.file(`assets/engine/${name}`).arrayBuffer());
+		const h = setup({ useDefaultBundled: true, opfs: fakeOpfs({ [name]: data }) });
+		expect(await h.store.get(name)).toEqual(data);
+		expect(h.fetched).toEqual([`${ROOT}assets/engine/${name}`]);
+		expect(h.opfs.reads).toEqual([name]);
+		expect(h.requests).toEqual([]);
+	});
+
 	it("returns the bundled net via fetch(getURL(assets/engine/<name>)) without touching OPFS", async () => {
 		const data = bytes(1);
 		const h = setup({ bundled: { [LIMITS.nnueSmallName]: data } });

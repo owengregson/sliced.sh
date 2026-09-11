@@ -26,7 +26,7 @@ describe("effectiveElo", () => {
 		expect(effectiveElo(1500, 1)).toBe(1650);
 		expect(effectiveElo(1500, -0.5)).toBe(1425);
 		expect(effectiveElo(3200, 1)).toBe(3350);
-		expect(effectiveElo(3650, 1)).toBe(LIMITS.eloMax);
+		expect(effectiveElo(3800, 1)).toBe(LIMITS.eloMax);
 		expect(effectiveElo(400, -1)).toBe(LIMITS.eloMin);
 	});
 });
@@ -41,7 +41,7 @@ describe("E-band helpers (§7.2 / Appendix E §1.5)", () => {
 		expect(tauFor(900)).toBeCloseTo(0.271, 2);
 		expect(tauFor(400)).toBe(0.3);
 		expect(tauFor(3200)).toBe(tauFor(2500));
-		expect(tauFor(3650)).toBe(tauFor(2500));
+		expect(tauFor(3800)).toBe(tauFor(2500));
 	});
 	it("σ(E) is 50 below 800, 8 at ≥ 2400", () => {
 		expect(sigmaFor(800)).toBe(50);

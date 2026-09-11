@@ -254,8 +254,8 @@ Open the offscreen document's console (`chrome://extensions` → Inspect views: 
 | D4 | Force the fallback (open several heavy tabs first, or run on a low-RAM machine) | A failed 2560-page allocation degrades to 1536 then 1024 and the engine still boots, rather than throwing | |
 | D5 | Confirm the extension-URL `import()` of the Emscripten factory works under the extension CSP | Engine reaches `uciok`; no CSP violation in the offscreen console | |
 | D6 | Confirm pthreads actually spawn (`mainScriptUrlOrBlob`) | Worker threads appear; `Threads` option takes effect (nps rises with more threads in the Engine view) | |
-| D7 | Trigger a full-build NNUE download (Settings › Engine › Network = `big`, **see Known gaps L2 — this control is currently inert, so drive it from the SW console instead**) | The SW fetches, the offscreen store receives ~4 MiB base64 chunks; record the wall-clock latency per chunk and total. `nnue-progress` drives the panel's progress bar | |
-| D8 | With OPFS unavailable (or quota exhausted) | The IndexedDB fallback (`NNUE_DB`) is used; the engine still boots | |
+| D7 | Select Network = `big`, or set target Elo above 3200; repeat after returning to Small | The full engine loads both installed raw networks, reaches ready, and searches without remote NNUE requests or a download-progress bar | |
+| D8 | Disable cache storage and network access, then select the full engine | Packaged networks still load. On an older installation missing those assets, separately verify the OPFS/IndexedDB and checksum-verified relay fallback | |
 | D9 | Open two windows on supported sites | Exactly **one** offscreen document exists (`chrome.runtime.getContexts`), shared by both | |
 | D10 | Engine view → Restart | Engine restarts, reaches `ready`, and analysis resumes without a reload | |
 
@@ -503,10 +503,11 @@ card. Nothing in `src/service/**` reads it, so with the toggle **off** the exten
 analyses, still recommends, still highlights and — if armed — still plays. Being fixed
 separately; the gate belongs in the SW session (`src/service/game-session/**`).
 
-**L2 — the Network control is inert.** `Settings.engine.nnue` (`small` | `big` | `auto`, default
-`auto`) is read only by the Settings view to render its control. `EngineController` never passes
-it on, so the running variant is always the bundled smallnet and the full build's on-demand nets
-are never requested. The wiring belongs in `src/service/engine-controller.ts`'s configure path.
+**L2 — resolved: Network selection and full networks.** `EngineController` switches variants
+before searching: Big requests full at any Elo; Auto or Small upgrades above the product's
+3200 cutoff. Both variants now use packaged networks. Missing assets on older installations
+retain the verified cache/download fallback. See D7–D8 and
+[`bundled-nnue-2026-09-11.md`](qa/bundled-nnue-2026-09-11.md).
 
 **L3 — `bun run dev` does not watch.** `--watch` is parsed but there is no watch loop; it is one
 build. Re-run `bun run build --dev` and reload the extension.

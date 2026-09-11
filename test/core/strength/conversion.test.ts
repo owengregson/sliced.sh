@@ -35,7 +35,7 @@ describe("winning-position conversion", () => {
 		expect(loadPosition(applyMoves(QUEEN, ["f7e6"]) ?? "")?.isStalemate()).toBe(true);
 		const chosen = selectMove(
 			lines,
-			ctx({ fen: QUEEN, phase: "endgame", targetElo: 3650, engineBestmove: "f7e6" })
+			ctx({ fen: QUEEN, phase: "endgame", targetElo: 3800, engineBestmove: "f7e6" })
 		);
 		expect(chosen.uci).toBe("g6g5");
 		expect(chosen.rationale.join(" ")).toContain("avoiding a searched stalemate");
@@ -102,14 +102,14 @@ describe("clock-race strength", () => {
 		for (let seed = 0; seed < 100; seed++) {
 			const chosen = selectMove(
 				lines,
-				ctx({ ...race, targetElo: 3650, rng: createRng(seed), blunderScale: 100 })
+				ctx({ ...race, targetElo: 3800, rng: createRng(seed), blunderScale: 100 })
 			);
 			picks.add(chosen.uci);
 			expect(chosen.cpLoss).toBeLessThanOrEqual(60);
 			expect(chosen.source).not.toBe("blunder");
 		}
 		expect([...picks].sort()).toEqual(["d2d4", "e2e4"]);
-		expect(selectMove(lines, ctx({ ...race, oppClockMs: 10000, targetElo: 3650 })).uci).toBe("e2e4");
+		expect(selectMove(lines, ctx({ ...race, oppClockMs: 10000, targetElo: 3800 })).uci).toBe("e2e4");
 	});
 
 	it("recognises a lone king only for the side with no other pieces", () => {

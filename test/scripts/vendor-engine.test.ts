@@ -4,7 +4,8 @@
 import { describe, expect, it } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { BOOKS, ENGINE_DIR, ENGINE_FILES, LIMITS } from "@core/constants";
+import { BOOKS, ENGINE_DIR, ENGINE_FILES, ENGINE_NNUE_SOURCES, LIMITS } from "@core/constants";
+import { readNnueSource } from "../../scripts/nnue-assets";
 import {
 	nnueHashPrefix,
 	packageFiles,
@@ -47,14 +48,19 @@ describe("verifyNnueHash", () => {
 });
 
 describe("ENGINE_FILES registry", () => {
-	it("every smallnet and full-build file (except the on-demand nets) exists on disk", () => {
-		for (const name of [...packageFiles(ENGINE_FILES), netName])
+	it("every engine program and registered network source exists on disk", () => {
+		for (const name of [...packageFiles(ENGINE_FILES), ...ENGINE_NNUE_SOURCES.map((s) => s.source)])
 			expect(existsSync(path.join(engineDir, name))).toBe(true);
 	});
 
-	it("does not bundle the full-strength nets (they are downloaded on demand)", () => {
-		for (const name of ENGINE_FILES.full.nnue)
-			expect(existsSync(path.join(engineDir, name))).toBe(false);
+	it("ships the verified full pair with only the oversized source compressed", async () => {
+		for (const spec of ENGINE_NNUE_SOURCES) {
+			const data = await readNnueSource(engineDir, spec);
+			expect(verifyNnueHash(data, spec.name)).toBe(true);
+		}
+		expect(existsSync(path.join(engineDir, ENGINE_FILES.full.nnue[0]))).toBe(false);
+		expect(existsSync(path.join(engineDir, `${ENGINE_FILES.full.nnue[0]}.gz`))).toBe(true);
+		expect(existsSync(path.join(engineDir, ENGINE_FILES.full.nnue[1]))).toBe(true);
 	});
 
 	it("net names carry their hash prefix and are only defined in LIMITS", () => {

@@ -1,7 +1,7 @@
 export const LIMITS = {
 	eloMin: 400,
 	/** Product strength scale; the top endpoint requests maximum available engine strength. */
-	eloMax: 3650,
+	eloMax: 3800,
 	/** Product policy boundary, not a calibrated capability limit of the small engine. */
 	nnueSmallEloMax: 3200,
 	engineEloMin: 1320,
@@ -38,7 +38,7 @@ export const LIMITS = {
 	featureDepth: 10,
 	/** Smallnet weights bundled in `assets/engine/` (§6.1); `nn-<sha256[0:12]>.nnue`. */
 	nnueSmallName: "nn-4ca89e4b3abf.nnue",
-	/** Full-strength `sf_18` dual nets `[big, small]`, fetched on demand into OPFS (Task 12). */
+	/** Full-strength `sf_18` dual nets `[big, small]`, bundled as raw installed assets. */
 	nnueBigNames: ["nn-c288c895ea92.nnue", "nn-37f18f62d772.nnue"],
 	/** Raw bytes per `nnue-chunk` / `model-chunk` relayed SW → offscreen (before base64) (Task 12/34). */
 	nnueChunkBytes: 4_194_304,

@@ -14,16 +14,21 @@ code is not derived from Stockfish and talks to it only through the package's pu
 | `@lichess-org/stockfish-web` (build scripts, patches, Emscripten glue) | 0.4.4 | AGPL-3.0-or-later | https://github.com/lichess-org/stockfish-web |
 | Stockfish | 18 (tag `sf_18`, base `cb3d4ee9`) | GPL-3.0-or-later | https://github.com/official-stockfish/Stockfish |
 | NNUE network `nn-4ca89e4b3abf.nnue` (smallnet weights) | — | distributed by the Stockfish project | https://tests.stockfishchess.org/api/nn/nn-4ca89e4b3abf.nnue |
+| NNUE network `nn-c288c895ea92.nnue` (full-build big weights) | — | distributed by the Stockfish project | https://tests.stockfishchess.org/api/nn/nn-c288c895ea92.nnue |
+| NNUE network `nn-37f18f62d772.nnue` (full-build small weights) | — | distributed by the Stockfish project | https://tests.stockfishchess.org/api/nn/nn-37f18f62d772.nnue |
 
 Targets vendored: `sf_18_smallnet` (Stockfish 18 with the sscg13/threat-small patch, plus the
 `_relaxed-simd` variant) and `sf_18` (the dual-net full build). The full build's networks
-`nn-c288c895ea92.nnue` (big) and `nn-37f18f62d772.nnue` (small) are **not** bundled; they are downloaded on demand from
-`https://tests.stockfishchess.org/api/nn/` and verified before use.
+`nn-c288c895ea92.nnue` (big) and `nn-37f18f62d772.nnue` (small) are bundled alongside the smallnet. Switching to full
+strength loads installed extension bytes without downloading networks. The repository stores
+the big net as `nn-c288c895ea92.nnue.gz` using deterministic gzip (level 9, no timestamp or filename) to stay
+below the Git host's per-file limit. Build verifies and expands it to `nn-c288c895ea92.nnue` and excludes the
+compressed source from the extension; runtime does not decompress it.
 
 ### Source offer
 
-The files in `assets/engine/` are unmodified copies of the npm package's published files. The
-complete corresponding source is:
+Engine programs in `assets/engine/` are unmodified copies of the npm package's published files;
+network bytes come from the Stockfish project's mirror above. The complete corresponding source is:
 
 - the build scripts, patches and glue at https://github.com/lichess-org/stockfish-web (npm version 0.4.4);
 - the Stockfish sources at https://github.com/official-stockfish/Stockfish/commit/cb3d4ee9b47d0c5aae855b12379378ea1439675c (tag `sf_18`).
@@ -34,9 +39,18 @@ GPL-3.0 §6 / AGPL-3.0 §6; contact details are at https://sliced.sh.
 
 ### Network integrity
 
-A Stockfish net is named `nn-<first 12 hex digits of its SHA-256>.nnue`. The bundled net was
-verified against its name when vendored, and the on-demand nets are verified the same way after
-download.
+A Stockfish net is named `nn-<first 12 hex digits of its SHA-256>.nnue`. All decoded network bytes
+are verified against their names both when vendored and when built. Cached or downloaded fallback
+copies for older installations are verified before use. Build never needs a network connection
+when the checked-in sources are present.
+
+### Networks shipped in the extension (raw bytes)
+
+| File | Bytes | SHA-256 |
+|---|---|---|
+| `nn-4ca89e4b3abf.nnue` | 15,054,352 | `4ca89e4b3abfbe9df13e4f3db2acb64dc6ddc7a9becb2ac1cf388f4d66b3bd94` |
+| `nn-c288c895ea92.nnue` | 108,919,594 | `c288c895ea924429ea9092e3f36b2b3c1f00f2a3a4c759ff7e57e79e3b43e4a7` |
+| `nn-37f18f62d772.nnue` | 3,519,630 | `37f18f62d772f3107e1d6aaca3898c130c3c86f2ab63e6555fbbca20635a899d` |
 
 ### Vendored files (`assets/engine/`)
 
@@ -50,6 +64,8 @@ download.
 | `sf_18.wasm` | 601,688 | `bce890e12af049c1a4e80d13b7742ccd281d907b4c78f48a997f715d2de3d22b` |
 | `LICENSE` | 35,149 | `3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986` |
 | `nn-4ca89e4b3abf.nnue` | 15,054,352 | `4ca89e4b3abfbe9df13e4f3db2acb64dc6ddc7a9becb2ac1cf388f4d66b3bd94` |
+| `nn-c288c895ea92.nnue.gz` | 72,754,416 | `e21863de1e721111d2a9548d9bea7d80537ac541963f5036e27fe64b429ce48e` |
+| `nn-37f18f62d772.nnue` | 3,519,630 | `37f18f62d772f3107e1d6aaca3898c130c3c86f2ab63e6555fbbca20635a899d` |
 
 Types only (not shipped): `src/types/stockfish-web.d.ts` copied from the package's
 `stockfishWeb.d.ts` (593 bytes, SHA-256 `d15386028e38d90114fb5240fabfe12b9aafd8e8f09c09e26bbe10a30af2197d`).

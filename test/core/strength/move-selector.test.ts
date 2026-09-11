@@ -108,11 +108,11 @@ describe("selectMove — base policy (a)", () => {
 });
 
 describe("selectMove — selection modes", () => {
-	it("3650 selects the strongest searched continuation even with a weaker engine-elo suggestion", () => {
+	it("3800 selects the strongest searched continuation even with a weaker engine-elo suggestion", () => {
 		for (const selectionMode of ["engine-elo", "hybrid", "persona-sampling"] as const) {
 			const chosen = selectMove(
 				TWO,
-				ctx({ targetElo: 3650, form: -1, selectionMode, engineBestmove: "d2d4", blunderScale: 2 })
+				ctx({ targetElo: 3800, form: -1, selectionMode, engineBestmove: "d2d4", blunderScale: 2 })
 			);
 			expect(chosen.uci).toBe("e2e4");
 			expect(chosen.rationale.join(" ")).toContain("maximum strength");
@@ -252,7 +252,7 @@ describe("selectMove — never-play filters (b)(c)", () => {
 	it("preserves searched mates at low Elo and in the engine-elo path, including longer mates", () => {
 		const MATE = [line(START, "d2d4", { mate: 8 }, 1), line(START, "e2e4", { cp: 700 }, 2)];
 		for (const selectionMode of ["persona-sampling", "engine-elo", "hybrid"] as const) {
-			for (const targetElo of [800, 1500, 3650]) {
+			for (const targetElo of [800, 1500, 3800]) {
 				const m = selectMove(
 					MATE,
 					ctx({ targetElo, selectionMode, engineBestmove: "e2e4", blunderScale: 100 }),

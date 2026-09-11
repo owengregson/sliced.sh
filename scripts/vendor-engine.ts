@@ -1,12 +1,11 @@
 // scripts/vendor-engine.ts — vendor Stockfish 18 (`@lichess-org/stockfish-web`) and the
-// smallnet NNUE into `assets/engine/` (Task 10, §6.1–6.2).
+// all NNUE variants into `assets/engine/` (Task 10, §6.1–6.2).
 //
 // 1. Copies the files named by `ENGINE_FILES` (+ the AGPL `LICENSE`) from the installed npm
 //    package into `assets/engine/`, and `stockfishWeb.d.ts` into `src/types/stockfish-web.d.ts`.
-// 2. Downloads `LIMITS.nnueSmallName` from `URLS.nnueMirror` unless a verified copy already
-//    exists. A net's file name is the first 12 hex digits of its SHA-256, which is checked
-//    before the file is written (`verifyNnueHash`). The `full` nets are on-demand (Task 12)
-//    and are deliberately not downloaded.
+// 2. Downloads registered nets from `URLS.nnueMirror` unless verified sources already exist.
+//    A net's file name is its SHA-256 prefix, checked before writing. The large net is stored
+//    as deterministic gzip to fit the Git host's file limit; build emits verified raw bytes.
 // 3. Writes `docs/third-party.md`: versions, the source offer and the SHA-256 of every file —
 //    including the opening books in `assets/books/` (Task 15; built by
 //    `scripts/build-club-book.py`, described here, never downloaded).
@@ -20,10 +19,18 @@
 //
 // Run: `bun run vendor:engine` (re-runnable; idempotent when nothing changed).
 
-import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import {
+	encodeNnueSource,
+	type NnueSource,
+	readNnueSource,
+	sha256Hex,
+	verifyNnueHash,
+} from "./nnue-assets";
+
+export { nnueHashPrefix, sha256Hex, verifyNnueHash } from "./nnue-assets";
 
 export const ROOT = path.resolve(import.meta.dir, "..");
 
@@ -40,23 +47,7 @@ const TYPES_FILE = "stockfishWeb.d.ts";
 const TYPES_DEST = path.join(ROOT, "src", "types", "stockfish-web.d.ts");
 const DOCS_DEST = path.join(ROOT, "docs", "third-party.md");
 
-const NNUE_NAME_RE = /^nn-([0-9a-f]{12})\.nnue$/;
 const HASH_PREFIX_LEN = 12;
-
-export function sha256Hex(data: Uint8Array): string {
-	return createHash("sha256").update(data).digest("hex");
-}
-
-/** The 12-hex-digit SHA-256 prefix encoded in a Stockfish net name, if well-formed. */
-export function nnueHashPrefix(name: string): string | undefined {
-	return NNUE_NAME_RE.exec(name)?.[1];
-}
-
-/** True when `data` is the net `name` claims to be (`sha256(data)[0:12] === <hash in name>`). */
-export function verifyNnueHash(data: Uint8Array, name: string): boolean {
-	const expected = nnueHashPrefix(name);
-	return expected !== undefined && sha256Hex(data).slice(0, HASH_PREFIX_LEN) === expected;
-}
 
 interface BookRegistry {
 	dir: string;
@@ -99,6 +90,7 @@ interface ModelsRegistry {
 interface EngineRegistry extends ModelsRegistry {
 	BOOKS: BookRegistry;
 	ENGINE_DIR: string;
+	ENGINE_NNUE_SOURCES: readonly NnueSource[];
 	ENGINE_FILES: {
 		smallnet: { js: string; wasm: string; relaxedJs: string; relaxedWasm: string; nnue: string };
 		full: { js: string; wasm: string; nnue: readonly [string, string] };
@@ -129,16 +121,18 @@ async function loadRegistry(): Promise<EngineRegistry> {
 	const g = globalThis as Record<string, unknown>;
 	g.__SL_LICENSE_ENFORCE__ ??= false;
 	g.__SL_LICENSE_URL__ ??= "";
-	const [{ ENGINE_DIR, ENGINE_FILES }, { URLS }, { BOOKS }, models] = await Promise.all([
-		import("../src/core/constants/engine-files"),
-		import("../src/core/constants/urls"),
-		import("../src/core/constants/books"),
-		import("../src/core/constants/models"),
-	]);
+	const [{ ENGINE_DIR, ENGINE_FILES, ENGINE_NNUE_SOURCES }, { URLS }, { BOOKS }, models] =
+		await Promise.all([
+			import("../src/core/constants/engine-files"),
+			import("../src/core/constants/urls"),
+			import("../src/core/constants/books"),
+			import("../src/core/constants/models"),
+		]);
 	return {
 		BOOKS,
 		ENGINE_DIR,
 		ENGINE_FILES,
+		ENGINE_NNUE_SOURCES,
 		nnueMirror: URLS.nnueMirror,
 		website: URLS.website,
 		MODELS_DIR: models.MODELS_DIR,
@@ -173,12 +167,17 @@ async function copyPackageFiles(names: string[], destDir: string): Promise<void>
 	await copyFile(path.join(PACKAGE_DIR, TYPES_FILE), TYPES_DEST);
 }
 
-async function hasVerifiedNet(file: string, name: string): Promise<boolean> {
-	if (!existsSync(file)) return false;
-	return verifyNnueHash(new Uint8Array(await readFile(file)), name);
+async function hasVerifiedNet(dir: string, spec: NnueSource): Promise<boolean> {
+	try {
+		await readNnueSource(dir, spec);
+		return true;
+	} catch {
+		return false;
+	}
 }
 
-async function downloadNet(mirror: string, name: string, dest: string): Promise<void> {
+async function downloadNet(mirror: string, spec: NnueSource, destDir: string): Promise<void> {
+	const { name, source } = spec;
 	const url = mirror + name;
 	console.log(`downloading ${url}`);
 	const res = await fetch(url);
@@ -186,7 +185,7 @@ async function downloadNet(mirror: string, name: string, dest: string): Promise<
 	const data = new Uint8Array(await res.arrayBuffer());
 	if (!verifyNnueHash(data, name))
 		throw new Error(`${name}: sha256 ${sha256Hex(data).slice(0, HASH_PREFIX_LEN)} != name`);
-	await writeFile(dest, data);
+	await writeFile(path.join(destDir, source), await encodeNnueSource(data, spec));
 }
 
 interface VendoredFile {
@@ -235,6 +234,8 @@ export interface ThirdPartyNotice {
 	version: string;
 	registry: EngineRegistry;
 	engineFiles: VendoredFile[];
+	/** Decoded networks shipped by build, including any compressed repository source. */
+	networks: VendoredFile[];
 	typesFile: VendoredFile;
 	/** The Polyglot books in `BOOKS.dir` (Task 15), each with its build manifest. */
 	books: Array<{ file: VendoredFile; manifest: BookManifest }>;
@@ -345,16 +346,21 @@ code is not derived from Stockfish and talks to it only through the package's pu
 | \`${PACKAGE_NAME}\` (build scripts, patches, Emscripten glue) | ${n.version} | AGPL-3.0-or-later | ${PACKAGE_REPO} |
 | Stockfish | 18 (tag \`${STOCKFISH_TAG}\`, base \`${STOCKFISH_BASE_COMMIT.slice(0, 8)}\`) | GPL-3.0-or-later | ${STOCKFISH_REPO} |
 | NNUE network \`${ENGINE_FILES.smallnet.nnue}\` (smallnet weights) | — | distributed by the Stockfish project | ${nnueMirror}${ENGINE_FILES.smallnet.nnue} |
+| NNUE network \`${big}\` (full-build big weights) | — | distributed by the Stockfish project | ${nnueMirror}${big} |
+| NNUE network \`${small}\` (full-build small weights) | — | distributed by the Stockfish project | ${nnueMirror}${small} |
 
 Targets vendored: \`sf_18_smallnet\` (Stockfish 18 with the sscg13/threat-small patch, plus the
 \`_relaxed-simd\` variant) and \`sf_18\` (the dual-net full build). The full build's networks
-\`${big}\` (big) and \`${small}\` (small) are **not** bundled; they are downloaded on demand from
-\`${nnueMirror}\` and verified before use.
+\`${big}\` (big) and \`${small}\` (small) are bundled alongside the smallnet. Switching to full
+strength loads installed extension bytes without downloading networks. The repository stores
+the big net as \`${big}.gz\` using deterministic gzip (level 9, no timestamp or filename) to stay
+below the Git host's per-file limit. Build verifies and expands it to \`${big}\` and excludes the
+compressed source from the extension; runtime does not decompress it.
 
 ### Source offer
 
-The files in \`${ENGINE_DIR}\` are unmodified copies of the npm package's published files. The
-complete corresponding source is:
+Engine programs in \`${ENGINE_DIR}\` are unmodified copies of the npm package's published files;
+network bytes come from the Stockfish project's mirror above. The complete corresponding source is:
 
 - the build scripts, patches and glue at ${PACKAGE_REPO} (npm version ${n.version});
 - the Stockfish sources at ${STOCKFISH_REPO}/commit/${STOCKFISH_BASE_COMMIT} (tag \`${STOCKFISH_TAG}\`).
@@ -365,9 +371,16 @@ GPL-3.0 §6 / AGPL-3.0 §6; contact details are at ${website}.
 
 ### Network integrity
 
-A Stockfish net is named \`nn-<first 12 hex digits of its SHA-256>.nnue\`. The bundled net was
-verified against its name when vendored, and the on-demand nets are verified the same way after
-download.
+A Stockfish net is named \`nn-<first 12 hex digits of its SHA-256>.nnue\`. All decoded network bytes
+are verified against their names both when vendored and when built. Cached or downloaded fallback
+copies for older installations are verified before use. Build never needs a network connection
+when the checked-in sources are present.
+
+### Networks shipped in the extension (raw bytes)
+
+| File | Bytes | SHA-256 |
+|---|---|---|
+${n.networks.map(row).join("\n")}
 
 ### Vendored files (\`${ENGINE_DIR}\`)
 
@@ -660,7 +673,7 @@ pyftsubset <family>-var.ttf --unicodes="${FONT_UNICODES}" \\
 
 export async function vendorEngine(): Promise<void> {
 	const registry = await loadRegistry();
-	const { ENGINE_DIR, ENGINE_FILES, nnueMirror } = registry;
+	const { ENGINE_DIR, ENGINE_FILES, ENGINE_NNUE_SOURCES, nnueMirror } = registry;
 	const destDir = path.join(ROOT, ENGINE_DIR);
 	await mkdir(destDir, { recursive: true });
 
@@ -669,12 +682,17 @@ export async function vendorEngine(): Promise<void> {
 	await copyPackageFiles(copied, destDir);
 	console.log(`copied ${copied.length} files from ${PACKAGE_NAME}@${version} to ${ENGINE_DIR}`);
 
-	const net = ENGINE_FILES.smallnet.nnue;
-	const netFile = path.join(destDir, net);
-	if (await hasVerifiedNet(netFile, net)) console.log(`${net}: present and verified`);
-	else await downloadNet(nnueMirror, net, netFile);
-
-	const engineFiles = await describe(destDir, [...copied, net]);
+	const networks: VendoredFile[] = [];
+	for (const spec of ENGINE_NNUE_SOURCES) {
+		if (await hasVerifiedNet(destDir, spec)) console.log(`${spec.source}: present and verified`);
+		else await downloadNet(nnueMirror, spec, destDir);
+		const data = await readNnueSource(destDir, spec);
+		networks.push({ name: spec.name, bytes: data.length, sha256: sha256Hex(data) });
+	}
+	const engineFiles = await describe(destDir, [
+		...copied,
+		...ENGINE_NNUE_SOURCES.map((spec) => spec.source),
+	]);
 	const [typesFile] = await describe(path.dirname(TYPES_DEST), [path.basename(TYPES_DEST)]);
 	if (!typesFile) throw new Error("types file missing after copy");
 	const { BOOKS } = registry;
@@ -684,7 +702,17 @@ export async function vendorEngine(): Promise<void> {
 	const models = await describeModels(registry);
 	await writeFile(
 		DOCS_DEST,
-		renderThirdParty({ version, registry, engineFiles, typesFile, books, fonts, models, onnxruntime })
+		renderThirdParty({
+			version,
+			registry,
+			engineFiles,
+			networks,
+			typesFile,
+			books,
+			fonts,
+			models,
+			onnxruntime,
+		})
 	);
 	console.log(`wrote ${path.relative(ROOT, DOCS_DEST)}`);
 }

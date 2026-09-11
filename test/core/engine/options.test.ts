@@ -22,11 +22,11 @@ describe("optionsForSettings", () => {
 	it("automatically upgrades above the product cutoff, including an old Small preference", () => {
 		expect(variantForSettings(settings({ nnue: "auto" }, LIMITS.nnueSmallEloMax))).toBe("smallnet");
 		expect(variantForSettings(settings({ nnue: "auto" }, LIMITS.nnueSmallEloMax + 1))).toBe("full");
-		expect(variantForSettings(settings({ nnue: "small" }, 3650))).toBe("full");
+		expect(variantForSettings(settings({ nnue: "small" }, 3800))).toBe("full");
 		expect(variantForSettings(settings({ nnue: "big" }, 1500))).toBe("full");
 	});
-	it("3650 requests unlimited strength without sending an unsupported native UCI_Elo", () => {
-		const options = optionsForSettings(settings({}, 3650), { hardwareConcurrency: 8, sab: true });
+	it("3800 requests unlimited strength without sending an unsupported native UCI_Elo", () => {
+		const options = optionsForSettings(settings({}, 3800), { hardwareConcurrency: 8, sab: true });
 		expect(options.UCI_LimitStrength).toBe(false);
 		expect(options.UCI_Elo).toBe(3190);
 		expect(

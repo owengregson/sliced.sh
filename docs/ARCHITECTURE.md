@@ -113,8 +113,11 @@ scanned for product words at build time; and there is no eval-shaped string anyw
 Stockfish 18 from `@lichess-org/stockfish-web`, vendored into `assets/engine/` and run in the
 offscreen document because a service worker has neither `Worker` nor DOM. The document is
 cross-origin isolated (COOP/COEP manifest keys) so pthreads and `SharedArrayBuffer` work; the
-consequence is that it cannot fetch cross-origin assets itself, so the SW fetches the big NNUE
-nets and ChessMimic bands and streams them back over the `sl-engine` port as base64 chunks.
+consequence is that it cannot fetch cross-origin assets itself. All three Stockfish NNUE nets
+ship in the extension and load from extension URLs. The large net is checked in as deterministic
+gzip to fit the Git host's file limit; the build verifies its decoded SHA-256 prefix, emits the
+raw `.nnue`, and excludes the compressed source. The SW relay remains a verified cache/download
+fallback for older installations and supplies missing ChessMimic bands over `sl-engine` chunks.
 `src/core/engine/uci-client.ts` is a transport-agnostic UCI framework: request/response mailbox,
 `info` coalescing, snapshot building, restart with backoff.
 
@@ -211,10 +214,10 @@ polls `URLS.websiteManifest` on the licence alarm and raises `LOCAL_KEYS.updateA
 
 The master toggle gap below is recorded here (and in `docs/qa-checklist.md`) so QA can track it.
 NNUE selection is now wired: `EngineController` selects the full engine above the product's
-3200 small-network cutoff, downloads both verified full-build nets through the service-worker
-relay, and holds searches until the new engine has replayed its options. Explicit Big selects
+3200 small-network cutoff, loads both packaged full-build nets locally, and holds searches until
+the new engine has replayed its options. Explicit Big selects
 the full engine at any target. At or below the cutoff, Auto and Small use the bundled smallnet.
-The 3650 endpoint selects maximum available search strength; it is not a calibrated human rating.
+The 3800 endpoint selects maximum available search strength; it is not a calibrated human rating.
 
 | Setting | What actually happens | Where the wiring belongs |
 |---|---|---|

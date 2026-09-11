@@ -64,7 +64,8 @@ export const steps: Step[] = [
 	{
 		name: "copy",
 		run: async () => {
-			for (const d of ["assets", "css", "pages"])
+			await (await import("./nnue-assets.ts")).copyBundledAssets(ROOT, DIST);
+			for (const d of ["css", "pages"])
 				await cp(path.join(ROOT, d), path.join(DIST, d), { recursive: true });
 		},
 	},

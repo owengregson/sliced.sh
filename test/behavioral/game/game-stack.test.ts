@@ -209,14 +209,14 @@ describe("createGameStack: the real service-worker stack", () => {
 	it("a high target selects the full host and applies unlimited strength before its next search", async () => {
 		const built = stack as GameStack;
 		await (sw as SwContext).run(async () => {
-			await setSettings({ strength: { targetElo: 3650 } });
+			await setSettings({ strength: { targetElo: 3800 } });
 			await settle();
 		});
 		expect(built.transport.status().variant).toBe("full");
 		expect(built.engine.state()).toBe("idle");
 		const sf = hostedEngines.at(-1) as FakeStockfishWeb;
 		expect(sf.commands).toContain("setoption name UCI_LimitStrength value false");
-		expect(sf.commands).not.toContain("setoption name UCI_Elo value 3650");
+		expect(sf.commands).not.toContain("setoption name UCI_Elo value 3800");
 		await (sw as SwContext).run(async () => {
 			(site as SimulatedSite).hello();
 			(site as SimulatedSite).startGame();

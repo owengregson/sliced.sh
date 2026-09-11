@@ -113,7 +113,7 @@ describe("EngineController options", () => {
 		});
 		const variants: string[] = [];
 		const { ctrl, t, eng } = await setup({
-			settings: settings({ targetElo: 3650 }),
+			settings: settings({ targetElo: 3800 }),
 			deps: {
 				configureVariant: async (variant) => {
 					variants.push(variant);
@@ -128,7 +128,7 @@ describe("EngineController options", () => {
 		release();
 		await flush();
 		expect(t.sent).toContain("setoption name UCI_LimitStrength value false");
-		expect(t.sent).not.toContain("setoption name UCI_Elo value 3650");
+		expect(t.sent).not.toContain("setoption name UCI_Elo value 3800");
 		expect(ctrl.engineElo()).toBeUndefined();
 		expect(t.sent.indexOf("isready")).toBeLessThan(t.sent.indexOf("go infinite"));
 		finish(t, 2, 12);
@@ -139,7 +139,7 @@ describe("EngineController options", () => {
 	it("cancels a queued move immediately while the network is downloading", async () => {
 		let release = (): void => {};
 		const { ctrl, t } = await setup({
-			settings: settings({ targetElo: 3650 }),
+			settings: settings({ targetElo: 3800 }),
 			deps: {
 				configureVariant: () =>
 					new Promise<void>((resolve) => {
@@ -160,7 +160,7 @@ describe("EngineController options", () => {
 		let release = (): void => {};
 		const { ctrl, t } = await setup({
 			init: false,
-			settings: settings({ targetElo: 3650 }),
+			settings: settings({ targetElo: 3800 }),
 			deps: {
 				configureVariant: () =>
 					new Promise<void>((resolve) => {
@@ -196,7 +196,7 @@ describe("EngineController options", () => {
 		await cached.result;
 		expect(cache.size).toBe(1);
 		const active = ctrl.analyse(req({ id: "active", fen: AFTER_E4 }));
-		src.emit(settings({ targetElo: 3650 }));
+		src.emit(settings({ targetElo: 3800 }));
 		expect(t.sent).toContain("stop");
 		t.feed("bestmove e7e5");
 		await active.result;
@@ -224,7 +224,7 @@ describe("EngineController options", () => {
 
 	it("a failed full-network load fails the waiting move rather than using the small cache", async () => {
 		const { ctrl, t } = await setup({
-			settings: settings({ targetElo: 3650 }),
+			settings: settings({ targetElo: 3800 }),
 			deps: {
 				configureVariant: async () => {
 					throw new Error("checksum mismatch");
@@ -241,7 +241,7 @@ describe("EngineController options", () => {
 	it("a lower target cancels an in-flight upgrade and restores the requested small configuration", async () => {
 		const variants: string[] = [];
 		const { ctrl, src } = await setup({
-			settings: settings({ targetElo: 3650 }),
+			settings: settings({ targetElo: 3800 }),
 			deps: {
 				configureVariant: (variant, _threads, signal) => {
 					variants.push(variant);

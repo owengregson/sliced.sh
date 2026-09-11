@@ -1,13 +1,12 @@
 /**
  * NNUE network store for the offscreen document (§6.3, Appendix A §5): the `AssetStore`
  * specialised for Stockfish nets. A net is `nn-<sha256[0:12]>.nnue`: the 12 hex digits in the
- * name are the hash prefix a cached or downloaded copy must match; the smallnet is bundled under
- * `ENGINE_DIR`; anything else is requested from the service worker with `nnue-request` and
- * arrives as `nnue-chunk`s.
+ * name are the hash prefix a cached or downloaded copy must match. All registered networks are
+ * bundled under `ENGINE_DIR`. Missing assets can fall back to verified storage or the service
+ * worker's `nnue-request` / `nnue-chunk` relay for older or incomplete installations.
  */
 
-import { ENGINE_DIR } from "@core/constants/engine-files";
-import { LIMITS } from "@core/constants/limits";
+import { BUNDLED_NNUE, ENGINE_DIR } from "@core/constants/engine-files";
 import type { NnueChunk } from "@core/constants/messages";
 import { NNUE_DB } from "@core/constants/storage-keys";
 import { type AssetSpec, AssetStore, type AssetStoreDeps } from "./asset-store";
@@ -34,7 +33,7 @@ export function nnueHashPrefix(name: string): string {
 }
 
 export interface NnueStoreDeps extends AssetStoreDeps {
-	/** Net names shipped in the package. Default: `[LIMITS.nnueSmallName]`. */
+	/** Net names shipped in the package. Defaults to all registered engine networks. */
 	bundled?: readonly string[];
 }
 
@@ -53,7 +52,7 @@ function nnueSpec(bundled: ReadonlySet<string>): AssetSpec {
 
 export class NnueStore extends AssetStore {
 	constructor(deps: NnueStoreDeps) {
-		super(nnueSpec(new Set(deps.bundled ?? [LIMITS.nnueSmallName])), deps);
+		super(nnueSpec(new Set(deps.bundled ?? BUNDLED_NNUE)), deps);
 	}
 
 	/** Route every `nnue-chunk` port message here. */
