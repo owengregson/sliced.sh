@@ -68,6 +68,8 @@ export interface GameHarnessOptions {
 	 * here replaces the seeded `{ enabled: true }` wholesale (`settings` below merges instead).
 	 */
 	storage?: Record<string, unknown>;
+	/** Observe every game-port command as it reaches the page (`SimulatedSiteOptions.onCommand`). */
+	onCommand?: (cmd: GamePortCommand) => void;
 }
 
 export interface GameHarness {
@@ -252,6 +254,7 @@ export async function createGameHarness(options: GameHarnessOptions = {}): Promi
 		...(options.fen ? { fen: options.fen } : {}),
 		...(options.sendKeybinds ? { sendKeybinds: true } : {}),
 		...(options.premoves ? { premoves: true } : {}),
+		...(options.onCommand ? { onCommand: options.onCommand } : {}),
 	});
 	await sim.time.runMicrotasks();
 

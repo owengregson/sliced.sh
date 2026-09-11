@@ -37,6 +37,14 @@ export const BRIDGE_WIRE = {
 	square: "q",
 	color: "c",
 	keys: "y",
+	/**
+	 * `draw` only: draw through the bridge's own SVG overlay even when the board exposes
+	 * `game.markings`. The mark for a move the hand is about to play must outlive the whole
+	 * action, and a native marking is the site's object — chess.com clears its user markings on a
+	 * left press on the board, so every press of the hand's action (the preview touches included)
+	 * took our mark with it (the owner's live report, 2026-09-10). An overlay mark is ours alone.
+	 */
+	forceOverlay: "v",
 	// pointer (`cursor` reply)
 	x: "x",
 	y: "y",

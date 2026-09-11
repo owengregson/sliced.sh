@@ -97,6 +97,40 @@ describe("game session: the time control arrives after the game started (§4.3)"
 		expect(h.session().recommendation()?.plan.features.eps).toBeDefined();
 	}, 120_000);
 
+	it("re-profiles from a reading the own-hand guard drops, so the clock is not deferred a ply", async () => {
+		// §4.3's republish is a **one-shot**: `AdapterBase.apply` records `lastTimeControl` before it
+		// decides to publish, the adapter has no position poll, and `scheduleTimeControlProbe` stops
+		// once a time control has been seen — so a reading that is dropped is never re-offered. The
+		// re-ask runs on a 1 s timer and the hand's action takes seconds, so the republish lands
+		// squarely inside the window `GameSession.ownHandsDoing` drops readings in. It is therefore
+		// `salvageFromOwnHand` that has to take the clock out of the reading before the rest of it
+		// goes; without that the whole of the next move is still planned untimed.
+		h = await createGameHarness({
+			timeControl: null,
+			gameId: "late-tc-mid-move",
+			settings: { automation: { autoMove: true, highlightMoves: true } },
+		});
+		expect(await h.until(() => h.executor()?.isArmed() === true, 2_000)).toBe(true);
+		await h.arrive(null, { w: BULLET.baseMs, b: BULLET.baseMs });
+		expect(await recommended(h)).toBe(true);
+		expect(h.executor()?.timeControlClass()).toBe("classical");
+		expect(await h.until(() => h.executor()?.runningMove() !== null, 20_000)).toBe(true);
+		const running = h.session().recommendation();
+		const marksBefore = h.commands().filter((c) => c.kind === "clearHighlight").length;
+
+		// The site answers its clock while the hand is mid-move, and the adapter republishes the
+		// position that has not moved to deliver it: same ply, same side to move.
+		h.site.setTimeControl(BULLET);
+		await h.arrive(null, { w: BULLET.baseMs, b: BULLET.baseMs });
+
+		// The reading itself was dropped — the recommendation and the board are untouched …
+		expect(h.session().recommendation()).toBe(running);
+		expect(h.commands().filter((c) => c.kind === "clearHighlight").length).toBe(marksBefore);
+		// … and the clock it carried was taken out of it first.
+		expect(h.executor()?.timeControlClass()).toBe("bullet");
+		expect((await h.snapshot()).session.timeControl).toEqual(BULLET);
+	}, 60_000);
+
 	it("the engine's own `go` line carries the class budget the clock selects", async () => {
 		// §6.4 / §7.5 end to end through the real `EngineController` + `UciEngine`: the search the
 		// engine is actually asked for follows the time control, not the planned wait. Before this

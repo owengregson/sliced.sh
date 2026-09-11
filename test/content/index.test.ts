@@ -293,7 +293,7 @@ describe("content entry — feed", () => {
 });
 
 describe("content entry — commands", () => {
-	it("highlight/arrow are not drawn while highlightMoves is off; drawn after settings turns it on; cleared before observeMove", async () => {
+	it("highlight/arrow are not drawn while highlightMoves is off; drawn after settings turns it on; observeMove leaves the mark alone", async () => {
 		const { feed, bridge, dom } = boot("chesscom-live");
 		await waitFor(() => bridge.callsOf("getState").length > 0);
 		feed.command({ kind: "highlight", from: "d2", to: "d4", style: "both" });
@@ -310,6 +310,9 @@ describe("content entry — commands", () => {
 				{ square: "d4", color: expect.any(String) },
 			],
 			arrows: [{ from: "d2", to: "d4", color: expect.any(String) }],
+			// The overlay branch draws from screen coordinates, so every draw carries the
+			// orientation; nothing sent it before and an overlay mark was mirrored for black.
+			orientation: "white",
 		});
 		// a second mark replaces the first rather than stacking on it: native `game.markings` only
 		// ever *adds*, so a redraw without this clear left the old squares on the board for good
@@ -318,15 +321,23 @@ describe("content entry — commands", () => {
 		expect(bridge.callsOf("clear")).toHaveLength(1);
 		expect(bridge.calls.at(-2)?.kind).toBe("clear");
 
+		// §13.3 rule 4 used to make this a clear ("no mark at move-submission time") and the two
+		// assertions below were its inverse. The owner has overruled the rule for the mark of the
+		// move being submitted (2026-09-10): `observeMove` is the *verifier*, `runWithRetry` issues
+		// one after every attempt and before every retry, so a clear here left tier 2 — a whole
+		// second visible action — running with nothing on the board. Completion is the only clear
+		// now, and it comes from the service worker.
+		const bridgeCallsBefore = bridge.calls.length;
 		feed.command({
 			kind: "observeMove",
 			id: "m1",
 			expected: { from: "d2", to: "d4" },
 			timeoutMs: 300,
 		});
-		expect(bridge.calls.at(-1)?.kind).toBe("clear"); // cleared before the hand moves
-		expect(bridge.callsOf("clear")).toHaveLength(2);
-		await sleep(10); // the clear is acknowledged, the watch is armed
+		expect(bridge.calls.length).toBe(bridgeCallsBefore); // the verifier touches nothing
+		expect(bridge.callsOf("clear")).toHaveLength(1);
+		await sleep(10);
+		expect(bridge.callsOf("clear")).toHaveLength(1); // …and nothing clears later either
 		playD4(dom);
 		await waitFor(() => feed.of("observeMoveResult").length === 1, 2_000);
 		expect(feed.of("observeMoveResult")[0]).toEqual({
@@ -335,37 +346,109 @@ describe("content entry — commands", () => {
 			ok: true,
 		});
 
+		// `highlightMoves` going off still clears — that is a different thing from the verifier.
 		feed.command({ kind: "settings", highlightMoves: false });
 		feed.command({ kind: "highlight", from: "e2", to: "e4", style: "squares" });
 		expect(bridge.callsOf("draw")).toHaveLength(2);
+		expect(bridge.callsOf("clear")).toHaveLength(2);
 		feed.command({ kind: "clearHighlight" }); // nothing drawn: no extra bridge call
 		expect(bridge.callsOf("clear")).toHaveLength(2);
 	});
-	it("observeMove waits for the page side to acknowledge the clear before watching the board", async () => {
-		const { feed, bridge, dom } = boot("chesscom-live");
+	// Fix A (the owner's live report, 2026-09-10): the mark of the move the hand is playing must be
+	// ours, not one of the site's markings, so it survives the presses the action is made of.
+	it("a highlight command carrying `overlay` asks the bridge for a forced-overlay draw", async () => {
+		const { feed, bridge } = boot("chesscom-live");
 		await waitFor(() => bridge.callsOf("getState").length > 0);
-		let ackClear: () => void = () => {};
-		bridge.responses.set(
-			"clear",
-			() =>
-				new Promise<void>((r) => {
-					ackClear = r;
-				})
-		);
 		feed.command({ kind: "settings", highlightMoves: true });
 		feed.command({ kind: "highlight", from: "d2", to: "d4", style: "both" });
 		await sleep(10);
+		// The ordinary recommendation mark is unchanged: native markings, no flag on the wire.
+		expect(bridge.callsOf("draw")).toHaveLength(1);
+		expect(bridge.callsOf("draw")[0]?.payload).not.toHaveProperty("forceOverlay");
+
+		feed.command({ kind: "highlight", from: "d2", to: "d4", style: "both", overlay: true });
+		await sleep(10);
+		expect(bridge.callsOf("draw")).toHaveLength(2);
+		expect(bridge.callsOf("draw")[1]?.payload).toMatchObject({
+			forceOverlay: true,
+			orientation: "white",
+			highlights: [
+				{ square: "d2", color: expect.any(String) },
+				{ square: "d4", color: expect.any(String) },
+			],
+		});
+		// One bridge call, not two: the page program removes our native markings inside the same
+		// `draw`, so the board is never unmarked for a frame — the hand is already acting by then.
+		expect(bridge.calls.at(-1)?.kind).toBe("draw");
+		expect(bridge.callsOf("clear")).toHaveLength(0);
+	});
+	// The page dropped its own record of the native keys inside that `draw` (it answers `{keys: []}`),
+	// so this side has to drop it too. Otherwise the next `clear` names keys the page no longer
+	// holds, and a keyless clear — which means "everything of ours" and is what actually heals a
+	// draw that never arrived — never gets sent.
+	it("a forced-overlay draw makes this side forget the native keys it replaced", async () => {
+		const { feed, bridge } = boot("chesscom-live");
+		// What the real page answers (`boot` installs a flat `{keys:["k1"]}`, so this replaces it):
+		// keys for a native draw, none for a forced-overlay one — the page has just dropped them.
+		bridge.responses.set("draw", (payload) =>
+			(payload as { forceOverlay?: boolean })?.forceOverlay === true
+				? { keys: [] }
+				: { keys: ["highlight|d2", "highlight|d4"] }
+		);
+		await waitFor(() => bridge.callsOf("getState").length > 0);
+		feed.command({ kind: "settings", highlightMoves: true });
+
+		// A native draw: the page reports its keys and this side records them, so a clear names them.
+		feed.command({ kind: "highlight", from: "d2", to: "d4", style: "squares" });
+		await sleep(10);
+		feed.command({ kind: "clearHighlight" });
+		await sleep(10);
+		expect(bridge.callsOf("clear").at(-1)?.payload).toEqual({
+			keys: ["highlight|d2", "highlight|d4"],
+		});
+
+		// Draw natively again, then replace it with a forced-overlay draw: the keys are gone from
+		// the page, so the next clear must be the keyless "everything of ours" form.
+		feed.command({ kind: "highlight", from: "d2", to: "d4", style: "squares" });
+		await sleep(10);
+		feed.command({ kind: "highlight", from: "d2", to: "d4", style: "squares", overlay: true });
+		await sleep(10);
+		feed.command({ kind: "clearHighlight" });
+		await sleep(10);
+		expect(bridge.callsOf("clear").at(-1)?.payload).toEqual({});
+	});
+	it("the forced-overlay draw reports the orientation the board is actually in", async () => {
+		const bridge = new FakeBridge();
+		bridge.responses.set("getState", () => ({ flipped: true, playingAs: "b", turn: "w" }));
+		const { feed } = boot("chesscom-live", { bridge });
+		await waitFor(() => bridge.callsOf("getState").length > 0);
+		feed.command({ kind: "settings", highlightMoves: true });
+		feed.command({ kind: "highlight", from: "d2", to: "d4", style: "both", overlay: true });
+		await sleep(10);
+		expect(bridge.callsOf("draw").at(-1)?.payload).toMatchObject({
+			forceOverlay: true,
+			orientation: "black",
+		});
+	});
+	// This test used to assert the opposite: `observeMove` cleared the mark first and did not start
+	// watching until the page had acknowledged the clear. That contract is overruled (2026-09-10)
+	// and its replacement is the stronger one — the verifier starts watching at once and never
+	// touches the mark, so a page side that never answers a `clear` cannot hold the verifier up.
+	it("observeMove starts watching at once, clears nothing, and is not held up by an unanswered clear", async () => {
+		const { feed, bridge } = boot("chesscom-live");
+		await waitFor(() => bridge.callsOf("getState").length > 0);
+		// A `clear` that never resolves: nothing in the verifier path may await it.
+		bridge.responses.set("clear", () => new Promise<void>(() => {}));
+		feed.command({ kind: "settings", highlightMoves: true });
+		feed.command({ kind: "highlight", from: "d2", to: "d4", style: "both" });
+		await sleep(10);
+		const drawn = bridge.calls.length;
 		feed.command({
 			kind: "observeMove",
 			id: "m3",
 			expected: { from: "d5", to: "d6" }, // empty origin: the adapter answers at once IF watching
 			timeoutMs: 400,
 		});
-		await sleep(10);
-		expect(bridge.calls.at(-1)?.kind).toBe("clear");
-		await sleep(100);
-		expect(feed.of("observeMoveResult")).toHaveLength(0); // still waiting for the clear ack
-		ackClear();
 		await waitFor(() => feed.of("observeMoveResult").length === 1, 2_000);
 		expect(feed.of("observeMoveResult")[0]).toEqual({
 			kind: "observeMoveResult",
@@ -373,6 +456,8 @@ describe("content entry — commands", () => {
 			ok: false,
 			reason: "not-landed",
 		});
+		expect(bridge.calls.length).toBe(drawn);
+		expect(bridge.callsOf("clear")).toHaveLength(0);
 	});
 	it("cursorProbe answers from the bridge closure, else from the ISOLATED tracker, else null", async () => {
 		const { feed, bridge, dom } = boot("chesscom-live");

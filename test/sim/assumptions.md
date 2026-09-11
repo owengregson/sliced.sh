@@ -176,6 +176,42 @@ quirk here and fix the simulator — never bend the test to the simulator.
   `[{ frameId: 0, documentId: "sim-doc", result: undefined }]` unless
   `sim.scripting.respond` scripts it; nothing is injected.
 
+## The simulated chess site (`test/sim/telemetry/sim-site.ts`)
+
+- **A left press on the board clears the site's own user markings.** Modelled
+  by `boardMarks()` in `test/behavioral/game/mark-survives-the-hand.test.ts`,
+  the only place that assumes it: a `mousedown` removes a *native* mark and
+  leaves an overlay mark alone. chess.com is the only authority on whether it
+  is true — `docs/qa-checklist.md` B0.8–B0.9 answers it.
+
+  Two separate things rest on this, and only one of them is safe:
+
+  - The **production fix** does not rest on it. The mark of a move the hand is
+    playing is drawn through the bridge's own `<svg>` either way, and if the
+    site turns out never to clear anything the overlay mark simply sits there
+    as the native one would have.
+  - One **test** does rest on it entirely: the last case in that file ("with a
+    site that wipes its own markings on a press, …"). Its `atPress` /
+    `duringDrag` / `atRelease` assertions are satisfied by the pre-fix code the
+    moment the assumption is switched off, so read that case as a statement of
+    the owner's symptom, not as proof the symptom is gone. The assumption-free
+    proofs are the other cases in that file (the ordering of the board commands
+    against the hand's real CDP press stream, the clear on a failed attempt,
+    and the lifted-piece republish) together with
+    `test/content/mark-to-page.test.ts`, which runs the real content script and
+    the **emitted** bridge program against a real DOM and asserts what the page
+    actually holds.
+- **The simulated site has no `.piece` elements**, so it cannot produce the
+  DOM renderer's mid-drag reading at all. The test that covers it posts the
+  reading the real adapter was measured to publish (same game, same ply, an
+  approximate FEN with the mover missing) straight down the game port.
+- **The simulated site does not run `src/content/index.ts`.** It reimplements
+  the responders the executor needs (`geometry`, `boardCheck`, `observeMove`)
+  and knows nothing about `createHighlights`, so no behavioural test in
+  `test/behavioral/` can observe what the content script does with a mark.
+  That is why the verifier's "removes nothing" contract is pinned in
+  `test/content/mark-to-page.test.ts` instead.
+
 ## DOM (happy-dom)
 
 - happy-dom skips capture-phase listeners when an event is dispatched on the

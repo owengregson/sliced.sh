@@ -24,6 +24,7 @@ import {
 	type AdapterReading,
 	bridgeColor,
 	type ClockReading,
+	type DrawOptions,
 	type MoveWatch,
 	type NewGameMode,
 	type Opponent,
@@ -486,11 +487,25 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 		return fen === null ? null : placementOf(fen);
 	}
 
+	/**
+	 * The overlay branch of the bridge draws from screen coordinates, so it needs the board's
+	 * orientation; native markings name squares and do not. Nothing sent it before, so an overlay
+	 * mark was mirrored for the whole of every game played as black — harmless while the overlay
+	 * was only the no-`game.markings` fallback, not harmless now that `forceOverlay` routes the
+	 * mark of the move being played through it. `isFlipped()` already means "black at the bottom",
+	 * which is what the overlay means by `black`.
+	 */
 	protected drawPayload(
 		highlights: Array<{ square: Square; color: string }>,
-		arrows: Array<{ from: Square; to: Square; color: string }>
+		arrows: Array<{ from: Square; to: Square; color: string }>,
+		options: DrawOptions
 	): unknown {
-		return { arrows, highlights };
+		return {
+			arrows,
+			highlights,
+			orientation: this.isFlipped() ? "black" : "white",
+			...(options.forceOverlay === true ? { forceOverlay: true } : {}),
+		};
 	}
 
 	/**

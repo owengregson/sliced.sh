@@ -90,6 +90,23 @@ describe("PageBridgeClient — wire", () => {
 		expect(rec.posts[1]?.data.p).toEqual({ y: ["a", "b"] });
 		client.call(BRIDGE_KINDS.getState).catch(() => {});
 		expect("p" in (rec.posts[2]?.data ?? {})).toBe(false);
+		// `forceOverlay` is the one hop all of Fix A's Step 2 rests on: the page reads
+		// `!q[forceOverlay]`, so the letter is omitted for an ordinary draw (asserted above) and
+		// present for the mark of a move the hand is acting on.
+		client
+			.call(BRIDGE_KINDS.draw, {
+				orientation: "white",
+				highlights: [{ square: "e2", color: "c1" }],
+				arrows: [],
+				forceOverlay: true,
+			})
+			.catch(() => {});
+		expect(rec.posts.at(-1)?.data.p).toEqual({
+			r: "w",
+			h: [{ q: "e2", c: "c1" }],
+			a: [],
+			v: true,
+		});
 		for (const p of rec.posts) {
 			expect(JSON.stringify(p.data)).not.toMatch(/sliced|engine|bestmove|fen|analysis/);
 		}

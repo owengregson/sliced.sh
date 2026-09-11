@@ -187,6 +187,51 @@ describe("chesscom-bridge — behaviour", () => {
 		sendToPage(win, command("clear", "4"));
 		expect(game.markings.removed).toHaveLength(3);
 	});
+	// Fix A (the owner's live report, 2026-09-10): the mark of the move the hand is playing must
+	// outlive the whole action, so it may not be one of the site's own markings — chess.com clears
+	// those on a left press on the board, and the action is made of presses. `BRIDGE_WIRE.forceOverlay`
+	// takes the overlay branch even where `game.markings` exists.
+	it("forceOverlay draws the bridge's own svg even though game.markings exists, and addOne is never called", async () => {
+		const { win, posts, game } = await boot();
+		sendToPage(
+			win,
+			command("draw", "ov1", {
+				r: "w",
+				v: true,
+				h: [
+					{ q: "e2", c: "rgb(1 2 3 / 0.3)" },
+					{ q: "e4", c: "rgb(1 2 3 / 0.5)" },
+				],
+				a: [{ f: "e2", t: "e4", c: "rgb(1 2 3 / 0.6)" }],
+			})
+		);
+		expect(game.markings.added).toEqual([]);
+		const svg = win.document.querySelector("wc-chess-board > svg");
+		expect(svg).not.toBeNull();
+		expect(svg?.getAttribute("class")).toBe(TOKENS_FOR_SEED.overlayClass);
+		expect(svg?.getAttribute("style")).toContain("pointer-events:none");
+		expect(svg?.querySelectorAll("rect").length).toBe(2);
+		expect(svg?.querySelectorAll("polygon").length).toBe(1);
+		// No native key to report, so nothing of ours is registered for `clear` to remove by key.
+		expect(reply(posts, "ov1")?.p).toEqual({ y: [] });
+
+		// A clear removes it, and the next ordinary draw is native again (the default is unchanged).
+		sendToPage(win, command("clear", "ov2"));
+		expect(win.document.querySelector("wc-chess-board > svg")).toBeNull();
+		sendToPage(win, command("draw", "ov3", { r: "w", h: [{ q: "a1", c: "red" }], a: [] }));
+		expect(game.markings.added).toEqual([
+			{ type: "highlight", data: { square: "a1", color: "red" } },
+		]);
+		expect(win.document.querySelector("wc-chess-board > svg")).toBeNull();
+	});
+	it("forceOverlay mirrors the board when the payload says black is at the bottom", async () => {
+		const { win } = await boot();
+		sendToPage(win, command("draw", "ov4", { r: "b", v: true, h: [{ q: "a1", c: "red" }], a: [] }));
+		const rect = win.document.querySelector("wc-chess-board > svg > rect");
+		// a1 for black at the bottom is the top-right cell: col 7, row 0
+		expect(rect?.getAttribute("x")).toBe("7");
+		expect(rect?.getAttribute("y")).toBe("0");
+	});
 	it("falls back to the overlay svg (pointer-events none, spoofed class) when markings are unavailable", async () => {
 		const { win, posts, game } = await boot();
 		(game as unknown as { markings: unknown }).markings = undefined;
