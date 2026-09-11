@@ -60,10 +60,9 @@ async function playOneMove(): Promise<void> {
 
 describe("game session: the pointer mirror follows what the hand dispatched", () => {
 	it("posts exactly the dispatched sequence and parks on the last point", async () => {
-		// `style: "drag"` is pinned so the press/release pair below is the drag's, not click-click's.
-		h = await createGameHarness({
-			settings: { automation: { autoMove: true }, execution: { style: "drag" } },
-		});
+		// Every committed move is a drag (click-to-move was removed), so the press/release
+		// pair below is the drag's and needs no setting to pin it.
+		h = await createGameHarness({ settings: { automation: { autoMove: true } } });
 		await playOneMove();
 
 		const sent = positions();
