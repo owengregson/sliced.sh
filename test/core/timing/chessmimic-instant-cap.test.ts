@@ -27,10 +27,12 @@
 //   * it is measured at the **plan**, so `sampleGuarded`'s CV-guard redraws — which gave every
 //     rejected draw another chance at `instant` and leaked up to +10 pp past the round-3 head-level
 //     cap — are inside the controlled loop rather than outside it;
-//   * the **first move of a game is always allowed**, with no exemption written anywhere: an empty
-//     `plannedMs` is a realised share of 0, which is under every cap. That replaces round 3's blanket
-//     §7.4-eligibility exemption, which covered plies 0–15 whenever we played the top move and left
-//     the 10+0 opening uncapped for the first eight of our moves;
+//   * the **first move of a game is allowed by the two terms together**, not by an exemption. The
+//     feedback term cannot bind at ply 0 (an empty `plannedMs` is a realised share of 0, under every
+//     cap), and the feed-forward term's own book conditional is what carries an opening move — so a
+//     first move that is *in book*, which in practice every first move is, stays fast. An off-book
+//     first plan is NOT exempt: measured, it is thinned to ≈20.7 %. The cases below assert the
+//     in-book property, and assert `in_book === 1` so they cannot be mistaken for the general claim;
 //   * a game is never pushed **below** the budget, so the owner's "the bot never comes up with the
 //     move instantly" stays fixed wherever the game has room.
 import { describe, expect, it } from "bun:test";
@@ -186,10 +188,13 @@ describe("fastShareCap", () => {
 });
 
 describe("fastAddedShare: the budget is this game's own realised rate for the added channel", () => {
-	it("is 0 on an empty history — which is why the first move of a game is always allowed", () => {
+	it("is 0 on an empty history, so the feedback term cannot bind at ply 0", () => {
 		// Round 3 needed an explicit §7.4-eligibility exemption to keep 1.e4 instant, and that exemption
-		// covered plies 0-15 whenever we played the top move. This replaces it with nothing at all: a
-		// game with no plans yet has a realised rate of 0, which is under every budget.
+		// covered plies 0-15 whenever we played the top move. The feedback term needs no exemption: a
+		// game with no plans yet has a realised rate of 0, which is under every budget. Note the scope —
+		// this is the FEEDBACK term alone. The feed-forward term does thin a single position, so an
+		// off-book first plan is not exempt (≈20.7 % fast, measured); what keeps a real first move fast
+		// is that it is in book. See the in-book case at the foot of this file.
 		expect(fastAddedShare(freshState("g"))).toBe(0);
 	});
 
@@ -348,10 +353,13 @@ describe("ChessMimicHead: the realised page-level fast share respects the budget
 		expect((await planShares(c, 2000, "trouble")).underFast).toBeGreaterThan(0.5);
 	});
 
-	it("the first move of the game is fast at every speed, with no exemption in the code", async () => {
-		// "realistically we should make first move really quickly" — and the property is now structural:
-		// the budget is a function of this game's own history, and at ply 0 there is none. Measured as
-		// the *first* plan of a fresh game, which is the only move the owner's report is about.
+	it("an in-book first move is fast at every speed", async () => {
+		// "realistically we should make first move really quickly" — measured as the *first* plan of a
+		// fresh game, which is the only move the owner's report is about. Two things carry it: the
+		// feedback term has no history to budget against at ply 0, and the feed-forward term's book
+		// conditional covers an opening move. The `in_book` assertion below is part of the property,
+		// not fixture convenience: an OFF-book first plan is thinned to ≈20.7 %, so this case must not
+		// be read as "the first move is exempt".
 		const rows: string[] = [];
 		for (const [speed, baseSec] of [
 			["bullet", 60],

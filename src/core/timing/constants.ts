@@ -330,11 +330,19 @@ export const TIMING_CONSTANTS = {
 		 *
 		 * The anchor is the share of **real** human moves that arrive inside this bound
 		 * (`buckets.json`, 1 000 000 blitz moves a band): 17.8 % at 1200–1300, 21.3 % at 1500–1600,
-		 * 24.7 % at 1800–1900. Note carefully what that number is and is not — it is a **marginal over
-		 * positions**, so it is used as a budget on a *game's* realised rate and never as a ceiling on
-		 * any single position's conditional. A marginal does not license a per-position ceiling of the
-		 * same value: a calibrated model is supposed to answer "this position is obvious" sometimes.
-		 * Buckets are selected by upper edge against this value, never by index.
+		 * 24.7 % at 1800–1900. Note carefully what that number is: a **marginal over positions**.
+		 *
+		 * It is read two ways, and the second is a compromise rather than a clean inference. The
+		 * feedback term budgets a *game's realised rate* against it, which is what a marginal
+		 * licenses. The feed-forward term thins a single position's bucket-0 conditional towards it,
+		 * which a marginal does **not** license — a calibrated model is supposed to answer "this
+		 * position is obvious" sometimes, and at such a position the true conditional is far above
+		 * the marginal. Feed-forward exists anyway because a rate over the game is asymptotic
+		 * (realised/budget ≈ ×4 at one move, ×1.06 at forty), so feedback alone cannot bind in the
+		 * opening — which is exactly where the owner saw 50–85 % instant moves in a 10+0. The cost
+		 * is measured and disclosed: the off-book sub-2 s share at the page runs ≈11 pp above the
+		 * pre-lane build, and the lane's review carries it as an accepted trade rather than a closed
+		 * finding. Buckets are selected by upper edge against this value, never by index.
 		 */
 		fastMoveMaxS: 2,
 		/** The top 4 buckets (≥ 26 s, §3b.1) or `t > longMedianMultiple·median` label the sample `long`. */
