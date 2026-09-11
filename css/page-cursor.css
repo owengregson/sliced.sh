@@ -1,0 +1,7 @@
+/* The native pointer is hidden for the lifetime of the virtual pointer element. */
+html,
+html *,
+html *::before,
+html *::after {
+	cursor: none !important;
+}

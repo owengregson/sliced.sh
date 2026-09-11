@@ -38,6 +38,7 @@ export interface FeedPort {
 
 export interface FeedPortOptions {
 	onCommand: (cmd: GamePortCommand) => void;
+	onDisconnect?: () => void;
 	scheduler?: PortScheduler;
 }
 
@@ -54,6 +55,7 @@ export function createFeedPort(options: FeedPortOptions): FeedPort {
 		},
 		onDisconnect() {
 			down = true;
+			options.onDisconnect?.();
 		},
 		onConnect() {
 			if (!down) return; // first connection: nothing to replay

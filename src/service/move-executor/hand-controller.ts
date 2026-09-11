@@ -545,7 +545,7 @@ export class HandController {
 			// Outside the try: nothing is held yet, so a reflow caught here needs no escape.
 			await this.travel(pv.approach, guard);
 			await this.pause(pv.prePressMs, guard);
-			await this.press(pv.press);
+			await this.press(pv.press, false, guard);
 			// §13.2 counts *pieces* the page saw selected, so the record is written once the press is
 			// out — not before, where an aborted approach would claim a selection that never happened.
 			this.previewed.push(pv.piece);
@@ -570,7 +570,7 @@ export class HandController {
 			if (d) {
 				await this.travel(d.path, guard);
 				await this.pause(d.prePressMs, guard);
-				await this.press(d.press);
+				await this.press(d.press, false, guard);
 				// The resolving click counts as a selection only in the `switch-to-idle` form, where
 				// the square it clicks is an own piece (an empty / enemy square only clears one).
 				if (d.occupancy === "own") this.previewed.push(d.square);
@@ -713,7 +713,7 @@ export class HandController {
 		// Still outside the `try`: nothing is committed until the press, so a reflow caught here needs
 		// no escape release — it ends the execution with `pressed: false`.
 		await this.pause(t.preGrabMs, guard);
-		await this.press(t.pressAt, true);
+		await this.press(t.pressAt, true, guard);
 		try {
 			await this.pause(t.grabDelayMs, guard);
 			await this.travel(t.wobble, guard);
@@ -948,10 +948,13 @@ export class HandController {
 		this.ownership.setPosition(this.tabId, this.backend.position());
 	}
 
-	private async press(p: Pt, committed = false): Promise<void> {
+	private async press(p: Pt, committed = false, guard?: () => void): Promise<void> {
 		throwIfAborted(this.signal ?? undefined);
 		this.gate();
-		await this.backend.press(p, this.now(), this.signal ?? undefined);
+		await this.backend.press(p, this.now(), this.signal ?? undefined, () => {
+			this.gate();
+			guard?.();
+		});
 		this.pressedAny = true;
 		if (committed) this.pressedCommitted = true;
 		this.ownership.setPosition(this.tabId, this.backend.position());

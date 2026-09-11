@@ -2,8 +2,9 @@
  * `CdpMouse` (Appendix G §7.4): `Input.dispatchMouseEvent` with the verified
  * parameter shapes — `mousePressed{button:left,buttons:1,clickCount:1}`,
  * `mouseMoved{button:left,buttons:1}` while held, `mouseReleased{button:left,
- * buttons:0,clickCount:1}`, free moves `button:none,buttons:0`, never a
- * `timestamp` (the default wall-clock stamp is the only consistent one) —
+ * buttons:0,clickCount:1}`, free moves `button:none,buttons:0`. The browser stamps
+ * ordinary events; owned-page input uses the current wall-clock stamp that was
+ * admitted by the content capture filter before dispatch —
  * on an absolute-time schedule: each point is due at the previous due time
  * plus its `dtMs`, a late ack skips the sleep instead of accumulating drift,
  * and a stall longer than `CDP.stallResyncMs` re-anchors the schedule. Every
@@ -17,7 +18,7 @@
  * never told to anyone.
  */
 
-import { CDP } from "@core/constants/cdp";
+import { CDP, POINTER_CONTROL, type PreparedPointer } from "@core/constants/cdp";
 import type { PathPoint, Pt } from "@core/motor/types";
 import {
 	defaultNow,
@@ -30,6 +31,9 @@ import {
 export type Cdp = (method: string, params?: Record<string, unknown>) => Promise<unknown>;
 
 export interface CdpMouseOptions {
+	/** Resolves after the page admits this event; returns its epoch-ms stamp when controlled. */
+	beforeDispatch?: (pointer: PreparedPointer, signal?: AbortSignal) => Promise<number | undefined>;
+	afterDispatch?: (pointer: PreparedPointer) => Promise<boolean>;
 	now?: () => number;
 	scheduler?: Scheduler;
 	/** Every acknowledged point (viewport CSS px, rounded) and whether the left button was down. */
@@ -43,6 +47,8 @@ export class CdpMouse {
 	private buttons: number = CDP.mouse.noButtons;
 	/** §13.2 `PointerOffset`: summed straight-line distance between dispatched points. */
 	private travelled = 0;
+	private readonly beforeDispatch: CdpMouseOptions["beforeDispatch"];
+	private readonly afterDispatch: CdpMouseOptions["afterDispatch"];
 	private readonly now: () => number;
 	private readonly scheduler: Scheduler;
 	private readonly onDispatch: ((p: { x: number; y: number; pressed: boolean }) => void) | null;
@@ -53,6 +59,8 @@ export class CdpMouse {
 		options: CdpMouseOptions = {}
 	) {
 		this.pos = { x: Math.round(start.x), y: Math.round(start.y) };
+		this.beforeDispatch = options.beforeDispatch;
+		this.afterDispatch = options.afterDispatch;
 		this.now = options.now ?? defaultNow;
 		this.scheduler = options.scheduler ?? defaultScheduler;
 		this.onDispatch = options.onDispatch ?? null;
@@ -81,16 +89,22 @@ export class CdpMouse {
 	async moveAt(p: Pt, atMs: number, signal?: AbortSignal): Promise<void> {
 		await this.waitUntil(atMs, signal);
 		throwIfAborted(signal);
-		await this.dispatch("mouseMoved", p, this.buttons);
+		await this.dispatch("mouseMoved", p, this.buttons, {}, signal);
 	}
 
 	/** The button state only changes once the renderer acknowledged the press. */
-	async pressAt(p: Pt, atMs: number, signal?: AbortSignal): Promise<void> {
+	async pressAt(p: Pt, atMs: number, signal?: AbortSignal, beforePress?: () => void): Promise<void> {
 		await this.waitUntil(atMs, signal);
 		throwIfAborted(signal);
-		await this.dispatch("mousePressed", p, this.buttons | CDP.mouse.leftButtons, {
-			clickCount: CDP.mouse.clickCount,
-		});
+		await this.dispatch(
+			"mousePressed",
+			p,
+			this.buttons | CDP.mouse.leftButtons,
+			{ clickCount: CDP.mouse.clickCount },
+			signal,
+			beforePress
+		);
+
 		this.buttons |= CDP.mouse.leftButtons;
 	}
 
@@ -122,7 +136,7 @@ export class CdpMouse {
 			await this.waitUntil(due, signal);
 			throwIfAborted(signal);
 			beforePoint?.();
-			await this.dispatch("mouseMoved", pt, this.buttons);
+			await this.dispatch("mouseMoved", pt, this.buttons, {}, signal, beforePoint);
 			if (this.now() - due > CDP.stallResyncMs) due = this.now();
 		}
 	}
@@ -131,11 +145,20 @@ export class CdpMouse {
 		type: MouseEventType,
 		p: Pt,
 		buttons: number,
-		extra: Record<string, unknown> = {}
+		extra: Record<string, unknown> = {},
+		signal?: AbortSignal,
+		beforeInput?: () => void
 	): Promise<void> {
 		const x = Math.round(p.x);
 		const y = Math.round(p.y);
+		const timestampMs = await this.beforeDispatch?.(
+			{ type, x, y, buttons, timestampMs: this.now() },
+			signal
+		);
+		throwIfAborted(signal);
+		beforeInput?.();
 		await this.cdp(CDP.inputDispatchMouseEvent, {
+			...(timestampMs === undefined ? {} : { timestamp: timestampMs / POINTER_CONTROL.msPerSecond }),
 			type,
 			x,
 			y,
@@ -144,8 +167,15 @@ export class CdpMouse {
 			modifiers: CDP.mouse.modifiers,
 			...extra,
 		});
+		// Preserve actual browser button state even if the page rejected the event:
+		// recovery still owes a release after a dispatched press.
+		this.buttons = buttons;
 		this.travelled += Math.hypot(x - this.pos.x, y - this.pos.y);
 		this.pos = { x, y };
 		this.onDispatch?.({ x, y, pressed: (buttons & CDP.mouse.leftButtons) !== 0 });
+		if (timestampMs !== undefined && type !== "mouseMoved" && this.afterDispatch) {
+			const delivered = await this.afterDispatch({ type, x, y, buttons, timestampMs });
+			if (!delivered) throw new Error(POINTER_CONTROL.notDelivered);
+		}
 	}
 }

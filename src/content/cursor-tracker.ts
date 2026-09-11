@@ -1,19 +1,11 @@
 /**
- * `CursorTracker` (Task 21, §13.5): passive capture-phase `pointermove` /
- * `pointerdown` / `pointerup` listeners on `window` that record only
- * *trusted* pointer events (the real mouse). It reports the last sample as
- * `{ x, y, t, real: true }` on request (`report()`, used by the
- * `cursorProbe` responder) and posts samples on the game port (`cursor`
- * messages carrying `t`): while the hand is idle, `pointermove` is throttled
- * to one sample per `TIMINGS.cursorReportIntervalMs` (presses and releases
- * always); while the virtual hand is active (`beginHand()` … `endHand()`)
- * every trusted event is posted unthrottled, so the service worker derives
- * `realPointerEventsDuringHand` exactly by counting the `cursor` messages
- * timestamped inside the hand window. `endHand()` returns the same count.
- *
- * Nothing here dispatches events or reads page storage.
+ * Early capture-phase pointer tracking. Idle trusted samples anchor the next hand;
+ * while the virtual pointer is visible, unmatched mouse input is stopped and counted.
+ * Prepared browser events bypass that counter and never overwrite the real start point.
  */
 
+import { createPointerControl, POINTER_EVENT_TYPES } from "@content/pointer-control";
+import type { PreparedPointer } from "@core/constants/cdp";
 import { TIMINGS } from "@core/constants/timings";
 
 export interface CursorSample {
@@ -31,6 +23,9 @@ export interface CursorTracker {
 	/** Stop counting; returns how many real pointer events arrived meanwhile. */
 	endHand(): number;
 	handActive(): boolean;
+	setVirtualActive(active: boolean): void;
+	prepareVirtualPointer(pointer: PreparedPointer): void;
+	virtualPointerDelivered(pointer: PreparedPointer): boolean;
 	dispose(): void;
 }
 
@@ -42,7 +37,7 @@ export interface CursorTrackerOptions {
 	now?: () => number;
 }
 
-const TYPES = ["pointermove", "pointerdown", "pointerup"] as const;
+const SAMPLE_TYPES = new Set(["pointermove", "pointerdown", "pointerup"]);
 
 export function createCursorTracker(options: CursorTrackerOptions = {}): CursorTracker {
 	const win = options.window ?? window;
@@ -52,21 +47,25 @@ export function createCursorTracker(options: CursorTrackerOptions = {}): CursorT
 	let lastPosted = Number.NEGATIVE_INFINITY;
 	let hand = false;
 	let realDuringHand = 0;
+	let virtualActive = false;
+	const control = createPointerControl(win, now);
 
 	const onPointer = (ev: Event): void => {
-		if (!ev.isTrusted) return;
+		if (control.filter(ev)) return;
+		if (!ev.isTrusted || !SAMPLE_TYPES.has(ev.type)) return;
 		const pe = ev as PointerEvent;
 		if (typeof pe.clientX !== "number" || typeof pe.clientY !== "number") return;
 		const t = now();
-		last = { x: pe.clientX, y: pe.clientY, t, real: true };
-		if (hand) realDuringHand += 1;
+		const sample: CursorSample = { x: pe.clientX, y: pe.clientY, t, real: true };
+		if (!virtualActive) last = sample;
+		if (hand || virtualActive) realDuringHand += 1;
 		if (!options.onSample) return;
-		if (!hand && ev.type === "pointermove" && t - lastPosted < minInterval) return;
+		if (!hand && !virtualActive && ev.type === "pointermove" && t - lastPosted < minInterval) return;
 		lastPosted = t;
-		options.onSample(last);
+		options.onSample(sample);
 	};
-	const opts: AddEventListenerOptions = { capture: true, passive: true };
-	for (const type of TYPES) win.addEventListener(type, onPointer, opts);
+	const opts: AddEventListenerOptions = { capture: true, passive: false };
+	for (const type of POINTER_EVENT_TYPES) win.addEventListener(type, onPointer, opts);
 
 	return {
 		report: () => (last ? { ...last } : null),
@@ -81,8 +80,15 @@ export function createCursorTracker(options: CursorTrackerOptions = {}): CursorT
 			return n;
 		},
 		handActive: () => hand,
+		setVirtualActive(active) {
+			virtualActive = active;
+			control.setActive(active);
+		},
+		prepareVirtualPointer: (pointer) => control.prepare(pointer),
+		virtualPointerDelivered: (pointer) => control.delivered(pointer),
 		dispose() {
-			for (const type of TYPES) win.removeEventListener(type, onPointer, opts);
+			control.setActive(false);
+			for (const type of POINTER_EVENT_TYPES) win.removeEventListener(type, onPointer, opts);
 		},
 	};
 }

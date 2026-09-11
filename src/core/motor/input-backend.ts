@@ -15,7 +15,7 @@ export interface InputBackend {
 	 * An abort during the wait throws `AbortedError` without dispatching.
 	 */
 	move(p: Pt, atMs: number, signal?: AbortSignal): Promise<void>;
-	press(p: Pt, atMs: number, signal?: AbortSignal): Promise<void>;
+	press(p: Pt, atMs: number, signal?: AbortSignal, beforePress?: () => void): Promise<void>;
 	/** Never aborted: the abort path itself releases at the current point. */
 	release(p: Pt, atMs: number): Promise<void>;
 	/**

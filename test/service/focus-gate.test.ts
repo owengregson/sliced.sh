@@ -30,6 +30,23 @@ afterEach(async () => {
 });
 
 describe("FocusGate.canExecute", () => {
+	it("uses acknowledged page focus during tab/window changes and restores physical gating on release", () => {
+		gate.dispose();
+		let maintained = true;
+		gate = new FocusGate(link, { isFocusMaintained: (id) => id === tabId && maintained });
+		const edges: boolean[] = [];
+		gate.onEdge((_id, focused) => edges.push(focused));
+		focus(tabId, false, "hidden");
+		sim.tabs.activate(other);
+		sim.windows.setFocus(sim.chrome.windows.WINDOW_ID_NONE);
+		expect(gate.canExecute(tabId)).toEqual({ ok: true });
+		expect(gate.snapshot(tabId)).toEqual({ pageHasFocus: true, blurSeenThisMove: false });
+		expect(edges).toEqual([]);
+		expect(gate.canExecute(other).ok).toBe(false);
+		maintained = false;
+		expect(gate.canExecute(tabId).ok).toBe(false);
+	});
+
 	it("requires a focus report: unknown tabs and unfocused pages are 'unfocused'", () => {
 		expect(gate.canExecute(tabId)).toEqual({ ok: false, reason: "unfocused" });
 		focus(tabId, false);

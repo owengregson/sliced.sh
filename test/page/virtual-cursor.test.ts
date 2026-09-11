@@ -146,6 +146,18 @@ describe("virtual-cursor (the page-realm pointer mirror)", () => {
 		expect(win.document.querySelectorAll(`.${cursorClass}`)).toHaveLength(1);
 	});
 
+	it("hides the native cursor only while the mirror exists and removes the override on hide", () => {
+		const { win } = boot();
+		expect(win.document.querySelector("style")).toBeNull();
+		sendToPage(win, to(10, 10));
+		const sheet = el(win)?.querySelector("style");
+		expect(sheet?.textContent).toContain("cursor: none !important");
+		const hide = command("cursorHide", "0");
+		delete hide.i;
+		sendToPage(win, hide);
+		expect(win.document.querySelector("style")).toBeNull();
+	});
+
 	it("ignores a hide that arrives before anything was drawn", () => {
 		const { win } = boot();
 		const hide = command("cursorHide", "0");

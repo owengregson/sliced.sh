@@ -776,3 +776,50 @@ describe("content entry — the pointer mirror (Fix D)", () => {
 		expect(bridge.notified.at(-1)).toEqual({ kind: "cursorHide", payload: undefined });
 	});
 });
+
+it("installs pointer capture before the deferred board boot and restores input on dispose", async () => {
+	const dom = createTabDom("https://www.chess.com/game/live/173765478164");
+	cleanups.push(installWindowGlobals(dom.window));
+	dom.document.documentElement.innerHTML = "<head></head>";
+	dom.document.body?.remove();
+	const { feed, factory } = fakeFeed();
+	const bridge = new FakeBridge();
+	bridge.responses.set("getState", () => ({}));
+	const handle = startContent({
+		window: pageWindow(dom),
+		document: pageDocument(dom),
+		bridge,
+		port: factory,
+	});
+	cleanups.push(() => handle?.dispose());
+	let reachedPage = 0;
+	dom.window.addEventListener(
+		"pointerdown",
+		() => {
+			reachedPage += 1;
+		},
+		true
+	);
+	const body = dom.document.createElement("body");
+	dom.document.documentElement.appendChild(body);
+	dom.document.dispatchEvent(new dom.window.Event("DOMContentLoaded"));
+	await waitFor(() => feed.of("hello").length === 1, 1000);
+	feed.command({ kind: "cursorTo", x: 50, y: 60, down: false });
+	const move = () => {
+		const event = new dom.window.PointerEvent("pointerdown", {
+			clientX: 200,
+			clientY: 300,
+			buttons: 1,
+			bubbles: true,
+			cancelable: true,
+		});
+		Object.defineProperty(event, "isTrusted", { value: true });
+		body.dispatchEvent(event);
+		return event;
+	};
+	expect(move().defaultPrevented).toBe(true);
+	expect(reachedPage).toBe(0);
+	handle?.dispose();
+	expect(move().defaultPrevented).toBe(false);
+	expect(reachedPage).toBe(1);
+});

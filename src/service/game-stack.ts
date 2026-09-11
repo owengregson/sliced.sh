@@ -109,7 +109,9 @@ export function createGameStack(options: GameStackOptions): GameStack {
 
 	const link = new ContentLink();
 	const debuggerManager = new DebuggerManager({ keepalive: systems.keepalive });
-	const focus = new FocusGate(link);
+	const focus = new FocusGate(link, {
+		isFocusMaintained: (tabId) => debuggerManager.isFocusMaintained(tabId),
+	});
 	const ownership = new HandOwnership(link);
 	// §9.5: the board's viewport rect per tab, as the content script reports it.
 	const board = new BoardWatch(link);

@@ -3,6 +3,7 @@
 // tier": `runWithRetry` dispatches `EXECUTOR.maxAttempts` drags and nothing else.
 import { describe, expect, it } from "bun:test";
 import { EXECUTOR, TIMINGS } from "@core/constants";
+import { POINTER_CONTROL } from "@core/constants/cdp";
 import type { ExecutionResult } from "@core/motor/types";
 import { retryDelayMs, runWithRetry } from "@service/move-executor/retry-policy";
 import type { VerifyResult } from "@service/move-executor/verifier";
@@ -95,6 +96,74 @@ describe("retry policy tables", () => {
 });
 
 describe("runWithRetry", () => {
+	it("checks the final rejected delivery and recognizes a move that landed without a third attempt", async () => {
+		const h = harness([], [{ outcome: "rejected" }, { outcome: "ok" }], () => ({
+			...dispatched(),
+			ok: false,
+			outcome: "failed",
+			pressed: true,
+			reason: EXECUTOR.reasons.dispatchFailed,
+			error: POINTER_CONTROL.notDelivered,
+		}));
+		const result = await h.run();
+		expect(result).toMatchObject({ ok: true, outcome: "executed", attempts: 2 });
+		expect(result.error).toBeUndefined();
+		expect(result.reason).toBeUndefined();
+		expect(h.attempts).toEqual([0, 1]);
+		expect(h.rechecks).toBe(2);
+		expect(h.delays).toHaveLength(1);
+	});
+
+	it("ends an uncheckable final delivery as unavailable rather than guessing a third gesture", async () => {
+		const h = harness(
+			[],
+			[{ outcome: "rejected" }, { outcome: "unavailable", reason: "page closed" }],
+			() => ({
+				...dispatched(),
+				ok: false,
+				outcome: "failed",
+				pressed: true,
+				reason: EXECUTOR.reasons.dispatchFailed,
+				error: POINTER_CONTROL.notDelivered,
+			})
+		);
+		expect(await h.run()).toMatchObject({
+			ok: false,
+			reason: EXECUTOR.reasons.verificationUnavailable,
+			attempts: 2,
+		});
+		expect(h.attempts).toEqual([0, 1]);
+		expect(h.rechecks).toBe(2);
+	});
+
+	it("recovers one rejected press with a new admission after checking the board", async () => {
+		const rejected = () => ({
+			...dispatched(),
+			ok: false,
+			outcome: "failed" as const,
+			pressed: false,
+			reason: EXECUTOR.reasons.dispatchFailed,
+			error: POINTER_CONTROL.notDelivered,
+		});
+		const h = harness([{ outcome: "ok" }], [{ outcome: "rejected" }], (i) =>
+			i === 0 ? rejected() : dispatched()
+		);
+		expect(await h.run()).toMatchObject({ ok: true, attempts: 2 });
+		expect(h.rechecks).toBe(1);
+		const alreadyLanded = harness([], [{ outcome: "ok" }], rejected);
+		const landed = await alreadyLanded.run();
+		expect(landed).toMatchObject({ ok: true, attempts: 1 });
+		expect(landed.error).toBeUndefined();
+		expect(landed.reason).toBeUndefined();
+		expect(alreadyLanded.attempts).toEqual([0]);
+		const persistent = harness([], [{ outcome: "rejected" }], rejected);
+		expect(await persistent.run()).toMatchObject({
+			ok: false,
+			attempts: 2,
+			error: POINTER_CONTROL.notDelivered,
+		});
+	});
+
 	it("a verified first attempt is executed with attempts = 1 and no retry", async () => {
 		const h = harness([{ outcome: "ok" }]);
 		const r = await h.run();

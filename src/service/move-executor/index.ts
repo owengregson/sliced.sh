@@ -1,3 +1,4 @@
+import type { PreparedPointer } from "@core/constants/cdp";
 /**
  * `MoveExecutor` (§9.3, Appendix G §7.5): the per-tab façade the `GameSession`
  * (Task 30) drives. `arm()` attaches the debugger (arm time, waiting view —
@@ -59,6 +60,12 @@ import { checkSquares, type VerifyResult, verifyMove } from "./verifier";
 
 /** The slice of `ContentLink` the executor needs (geometry + verification requests). */
 export interface ExecutorLink {
+	confirmPointer?(tabId: number, pointer: PreparedPointer): Promise<boolean>;
+	preparePointer?(
+		tabId: number,
+		pointer: PreparedPointer,
+		signal?: AbortSignal
+	): Promise<number | undefined>;
 	request<K extends RequestKind>(
 		tabId: number,
 		cmd: RequestInput<K>,
@@ -272,6 +279,8 @@ export class MoveExecutor {
 	 */
 	private attachedAt: number | null = null;
 	private disposed = false;
+	private armVersion = 0;
+	private focusReservation: number | null = null;
 
 	constructor(deps: MoveExecutorDeps) {
 		this.tabId = deps.tabId;
@@ -326,8 +335,34 @@ export class MoveExecutor {
 	 * hand from the last real position / previous rest point.
 	 */
 	async arm(startPoint?: Pt): Promise<void> {
+		if (this.disposed) return;
+		const version = ++this.armVersion;
+		const reservation = this.debugger.reserveFocus(this.tabId);
+		this.focusReservation = reservation;
 		const wasAttached = this.debugger.isAttached(this.tabId);
-		await this.debugger.ensureAttached(this.tabId);
+		try {
+			await this.debugger.ensureAttached(this.tabId);
+			if (this.disposed || version !== this.armVersion) return;
+			await this.debugger.setFocusMaintained(this.tabId, true, reservation);
+		} catch (error) {
+			if (version === this.armVersion && this.debugger.hasFocusReservation(this.tabId, reservation)) {
+				this.cancel();
+				this.ownership.released(this.tabId);
+				await this.whenIdle();
+			}
+			await this.debugger
+				.setFocusMaintained(this.tabId, false, reservation)
+				.catch((restoreError: unknown) =>
+					log.warn("executor: focus restoration after failed arm failed", restoreError)
+				);
+			throw error;
+		}
+		if (
+			this.disposed ||
+			version !== this.armVersion ||
+			!this.debugger.hasFocusReservation(this.tabId, reservation)
+		)
+			return;
 		// A *fresh* attach is the one that brings the infobar; re-arming an attached tab shifts nothing.
 		if (!wasAttached) this.attachedAt = this.now();
 		this.ownership.armed(
@@ -339,8 +374,16 @@ export class MoveExecutor {
 
 	/** The user stopped the hand: cancel anything pending and give the pointer back. */
 	disarm(): void {
+		this.armVersion += 1;
+		const reservation = this.focusReservation;
 		this.cancel();
 		this.ownership.released(this.tabId);
+		void this.whenIdle()
+			.then(async () => {
+				if (reservation !== null && !this.ownership.isArmed(this.tabId))
+					await this.debugger.setFocusMaintained(this.tabId, false, reservation);
+			})
+			.catch((error: unknown) => log.warn("executor: focus restoration failed", error));
 	}
 
 	/**
@@ -703,11 +746,7 @@ export class MoveExecutor {
 		const start =
 			this.ownership.position(this.tabId) ?? plausibleStart(geo.boardRect, moveRng, fromRect);
 		this.ownership.setPosition(this.tabId, start);
-		const backend = CdpInputBackend.forTab(this.debugger, this.tabId, start, {
-			now: this.now,
-			scheduler: this.scheduler,
-			onDispatch: (p) => this.emit("pointer", p),
-		});
+		const backend = this.createBackend(start);
 		const controller = new HandController({
 			backend,
 			focus: this.focus,
@@ -910,6 +949,26 @@ export class MoveExecutor {
 		if (rec.chosen.promotion) return "promotion";
 		if (rec.chosen.source === "premove") return "premove";
 		return "normal";
+	}
+
+	private createBackend(start: Pt): CdpInputBackend {
+		return CdpInputBackend.forTab(this.debugger, this.tabId, start, {
+			now: this.now,
+			scheduler: this.scheduler,
+			...(this.link.preparePointer
+				? {
+						beforeDispatch: (p: PreparedPointer, signal?: AbortSignal) =>
+							this.link.preparePointer?.(this.tabId, p, signal) ?? Promise.resolve(undefined),
+					}
+				: {}),
+			...(this.link.confirmPointer
+				? {
+						afterDispatch: (p: PreparedPointer) =>
+							this.link.confirmPointer?.(this.tabId, p) ?? Promise.resolve(true),
+					}
+				: {}),
+			onDispatch: (p) => this.emit("pointer", p),
+		});
 	}
 
 	private async readGeometry(

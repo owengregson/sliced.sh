@@ -21,7 +21,7 @@
  * short budget instead of the full one and never retried.
  */
 
-import { EXECUTOR } from "@core/constants/cdp";
+import { EXECUTOR, POINTER_CONTROL } from "@core/constants/cdp";
 import { TIMINGS } from "@core/constants/timings";
 import { log } from "@core/logger";
 import type { ExecutionResult } from "@core/motor/types";
@@ -78,13 +78,34 @@ export async function runWithRetry(o: RetryRunnerOptions): Promise<ExecutionResu
 			const pre = await o.recheck(o.checkSignal());
 			if (pre.outcome === "ok") {
 				log.info("executor: move landed before the retry; not re-dispatching", { attempt: i });
-				return { ...last, ok: true, outcome: "executed", attempts };
+				const upgraded = { ...last, ok: true, outcome: "executed" as const, attempts };
+				delete upgraded.reason;
+				delete upgraded.error;
+				return upgraded;
 			}
 			if (pre.outcome === "unavailable") return unavailable(last, attempts, pre);
 		}
 		const result = await o.attempt(i);
 		if (result.outcome !== "skipped" || result.pressed) attempts += 1;
 		if (!result.ok) {
+			if (result.error === POINTER_CONTROL.notDelivered && !o.signal?.aborted) {
+				// Cleanup released the browser button. The next attempt rechecks the board
+				// before a fresh admission/press. The final attempt still needs its bounded
+				// check: a rejected release acknowledgment may follow a move that landed.
+				if (i + 1 === EXECUTOR.maxAttempts) {
+					const late = await o.recheck(o.checkSignal());
+					if (late.outcome === "ok") {
+						const upgraded = { ...result, ok: true, outcome: "executed" as const, attempts };
+						delete upgraded.reason;
+						delete upgraded.error;
+						return upgraded;
+					}
+					if (late.outcome === "unavailable") return unavailable(result, attempts, late);
+					return { ...result, attempts };
+				}
+				last = result;
+				continue;
+			}
 			// `pressedAny`, not `pressed`: a §9.3a **preview** press is a real `mousedown` on a real
 			// square and never sets the committed flag, so a window that ended between it and its
 			// release (a reflow caught mid-preview, a focus skip inside a preview drag) could have
@@ -122,5 +143,6 @@ export async function runWithRetry(o: RetryRunnerOptions): Promise<ExecutionResu
 		last = result;
 	}
 	const base = last as ExecutionResult;
+	if (base.error === POINTER_CONTROL.notDelivered) return { ...base, attempts };
 	return { ...base, ok: false, outcome: "failed", reason: EXECUTOR.reasons.unverified, attempts };
 }

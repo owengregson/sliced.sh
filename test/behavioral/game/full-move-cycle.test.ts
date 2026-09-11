@@ -133,9 +133,9 @@ describe("game session: the full move cycle (Step 2a)", () => {
 		expect(tabsCreate).toBe(0);
 		expect(windowsUpdate).toBe(0);
 		expect(h.sim.debugger.commandsFor("Page.bringToFront")).toHaveLength(0);
-		// every dispatched input was CDP mouse input, nothing else
+		// Native focus emulation keeps the page visible without activating any tab/window.
 		const methods = new Set(h.sim.debugger.commands.map((c) => c.method));
-		expect([...methods]).toEqual([CDP.inputDispatchMouseEvent]);
+		expect([...methods].sort()).toEqual([CDP.focusEmulation, CDP.inputDispatchMouseEvent].sort());
 	});
 
 	it("a blur during my-turn:recommended cancels the scheduled execution and the snapshot shows it", async () => {

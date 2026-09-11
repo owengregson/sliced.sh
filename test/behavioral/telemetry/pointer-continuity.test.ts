@@ -9,7 +9,7 @@ import { SIM_TELEMETRY } from "@test/sim/telemetry/constants";
 import { runSimulatedGame, type SimulatedGame } from "@test/sim/telemetry/harness";
 import { assertHumanShapedAc, moveMetaOf } from "../../../tools/telemetry-conformance/ac-model";
 
-const FORBIDDEN_METHODS = ["Page.bringToFront", "Emulation.setFocusEmulationEnabled"];
+const FORBIDDEN_METHODS = ["Page.bringToFront"];
 const MS_PER_S = 1000;
 
 let game: SimulatedGame | null = null;
@@ -28,7 +28,11 @@ describe("telemetry: pointer continuity (Step 2e)", () => {
 		assertHumanShapedAc(game.acs, { moves: game.moves.map(moveMetaOf) });
 
 		// every command the whole game issued, in order; the periods of the blobs partition them
-		const all = game.sim.debugger.commands;
+		for (const c of game.sim.debugger.commands) {
+			expect([CDP.inputDispatchMouseEvent, CDP.focusEmulation] as string[]).toContain(c.method);
+			expect(FORBIDDEN_METHODS).not.toContain(c.method);
+		}
+		const all = game.sim.debugger.commandsFor(CDP.inputDispatchMouseEvent);
 		for (const c of all) {
 			expect(c.method).toBe(CDP.inputDispatchMouseEvent);
 			expect(FORBIDDEN_METHODS).not.toContain(c.method);

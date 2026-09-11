@@ -790,6 +790,7 @@ export class GameSession implements SessionSource {
 		for (const off of this.offs.splice(0)) off();
 		// The executor goes first: `dispose()` → `cancel()` is what actually stops a premove that
 		// has not been sent, and `forgetPremove` only gives up the arm and says so.
+		this.executorHandle?.disarm();
 		this.detachExecutor();
 		this.forgetPremove("the session was disposed");
 		this.pipelineAc?.abort();

@@ -40,7 +40,8 @@ import { BOARD, inside, squareRect } from "../../core/motor/fixtures";
 
 const START = 1_000_000;
 const START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-const FORBIDDEN_METHODS = ["Page.bringToFront", "Emulation.setFocusEmulationEnabled"];
+// Page focus is maintained natively at arm time; never activate the user's actual tab.
+const FORBIDDEN_METHODS = ["Page.bringToFront"];
 
 let sim: Simulator;
 let sw: SwContext;
@@ -50,6 +51,7 @@ let keepalive: Keepalive;
 let dbg: DebuggerManager;
 let link: ContentLink;
 let focus: FocusGate;
+let nativeFocus = false;
 let ownership: HandOwnership;
 let boardWatch: BoardWatch;
 let executor: MoveExecutor;
@@ -176,6 +178,7 @@ function bootFakeAdapter(): void {
 }
 
 beforeEach(async () => {
+	nativeFocus = false;
 	sim = createSimulator({ startAt: START });
 	sim.time.install();
 	tabId = sim.openTab("https://www.chess.com/game/174252022572").tabId;
@@ -228,7 +231,10 @@ beforeEach(async () => {
 			dbg = new DebuggerManager({ keepalive, scheduler: defaultScheduler, now: sim.now });
 			await dbg.ready;
 			link = new ContentLink({ scheduler: defaultScheduler, now: sim.now });
-			focus = new FocusGate(link, { now: sim.now });
+			focus = new FocusGate(link, {
+				now: sim.now,
+				isFocusMaintained: (id) => nativeFocus && dbg.isFocusMaintained(id),
+			});
 			ownership = new HandOwnership(link, { now: sim.now });
 			boardWatch = new BoardWatch(link, { now: sim.now });
 			executor = new MoveExecutor({
@@ -342,7 +348,7 @@ interface Cmd {
 	at: number;
 }
 const commands = (): Cmd[] =>
-	sim.debugger.commands.map((c) => {
+	sim.debugger.commandsFor(CDP.inputDispatchMouseEvent).map((c) => {
 		const p = (c.params ?? {}) as Record<string, unknown>;
 		return {
 			method: c.method,
@@ -355,6 +361,139 @@ const commands = (): Cmd[] =>
 	});
 
 describe("executor: a scheduled drag move end to end", () => {
+	it.each([false, true])(
+		"keeps the newer delayed arm's focus hold when old cleanup finishes (replacement=%s)",
+		async (replacement) => {
+			await sw.run(() => executor.arm());
+			let finishCleanup = () => {};
+			const cleanup = new Promise<void>((resolve) => {
+				finishCleanup = resolve;
+			});
+			const originalWhenIdle = executor.whenIdle.bind(executor);
+			executor.whenIdle = () => cleanup;
+			const next = replacement
+				? new MoveExecutor({
+						tabId,
+						site: "chesscom",
+						debugger: dbg,
+						link,
+						focus,
+						ownership,
+						now: sim.now,
+						scheduler: defaultScheduler,
+						persona: "balanced",
+						tcClass: "blitz",
+						previewScale: 0,
+						gameSeed: "replacement",
+					})
+				: executor;
+			let acknowledge = () => {};
+			const off = sim.debugger.respond(CDP.focusEmulation, (params) =>
+				params?.enabled
+					? new Promise<void>((resolve) => {
+							acknowledge = resolve;
+						})
+					: undefined
+			);
+			let armed: Promise<void> = Promise.resolve();
+			await sw.run(async () => {
+				executor.disarm();
+				if (replacement) executor.dispose();
+				armed = next.arm();
+				await sim.time.runMicrotasks();
+				finishCleanup();
+				await sim.time.runMicrotasks();
+				expect(ownership.isArmed(tabId)).toBe(false);
+				acknowledge();
+				await armed;
+				await sim.time.runMicrotasks();
+			});
+			expect(next.isArmed()).toBe(true);
+			expect(dbg.isFocusMaintained(tabId)).toBe(true);
+			expect(
+				sim.debugger.commandsFor(CDP.focusEmulation).map((command) => command.params?.enabled)
+			).toEqual([true, true]);
+			off();
+			executor.whenIdle = originalWhenIdle;
+			if (replacement) {
+				await sw.run(async () => {
+					next.disarm();
+					await sim.time.runMicrotasks();
+					next.dispose();
+				});
+			}
+		}
+	);
+
+	it("restores the native hold when the superseding arm fails while old cleanup is pending", async () => {
+		await sw.run(() => executor.arm());
+		let finishCleanup = () => {};
+		const cleanup = new Promise<void>((resolve) => {
+			finishCleanup = resolve;
+		});
+		const originalWhenIdle = executor.whenIdle.bind(executor);
+		executor.whenIdle = () => cleanup;
+		let rejectArm: (error: Error) => void = () => {};
+		const off = sim.debugger.respond(CDP.focusEmulation, (params) =>
+			params?.enabled
+				? new Promise<void>((_resolve, reject) => {
+						rejectArm = reject;
+					})
+				: undefined
+		);
+		let armed: Promise<unknown> = Promise.resolve();
+		await sw.run(async () => {
+			executor.disarm();
+			armed = executor.arm().catch((error: unknown) => error);
+			await sim.time.runMicrotasks();
+			rejectArm(new Error("focus command failed"));
+			await sim.time.runMicrotasks();
+			expect(
+				sim.debugger.commandsFor(CDP.focusEmulation).map((command) => command.params?.enabled)
+			).toEqual([true, true]);
+			finishCleanup();
+			expect(await armed).toBeInstanceOf(Error);
+			await sim.time.runMicrotasks();
+		});
+		expect(executor.isArmed()).toBe(false);
+		expect(dbg.isFocusMaintained(tabId)).toBe(false);
+		expect(
+			sim.debugger.commandsFor(CDP.focusEmulation).map((command) => command.params?.enabled)
+		).toEqual([true, true, false]);
+		off();
+		executor.whenIdle = originalWhenIdle;
+	});
+
+	it("continues an armed move across browser/tab changes with maintained page focus, then releases the hold on stop", async () => {
+		nativeFocus = true;
+		const reports: ExecutionReport[] = [];
+		await sw.run(async () => {
+			executor.on("executed", (report) => reports.push(report));
+			await executor.arm();
+			focus.positionArrived(tabId, sim.now());
+			const plan = plan1200();
+			executor.schedule(recommendation(plan), plan);
+			await sim.time.advance(300);
+			sim.openTab("https://example.org/", { active: true });
+			sim.windows.setFocus(sim.chrome.windows.WINDOW_ID_NONE);
+		});
+		await content.run(() =>
+			port.post({ kind: "focus", hasFocus: false, visibility: "hidden", at: sim.now() })
+		);
+		await sw.run(() => sim.time.advanceUntilIdle({ maxAdvanceMs: 30000 }));
+		expect(reports).toHaveLength(1);
+		expect(reports[0]?.result.ok).toBe(true);
+		expect(submitted).toEqual([["e2", "e4"]]);
+		expect(tabsUpdateCalls).toBe(0);
+		expect(windowsUpdateCalls).toBe(0);
+		await sw.run(async () => {
+			executor.disarm();
+			await sim.time.runMicrotasks();
+		});
+		expect(dbg.isFocusMaintained(tabId)).toBe(false);
+		expect(focus.canExecute(tabId).ok).toBe(false);
+	});
+
 	it("attaches at arm time, plays the move on the deadline with a realistic CDP sequence, verifies it and reports `executed`", async () => {
 		const reports: ExecutionReport[] = [];
 		const hands: string[] = [];
@@ -382,6 +521,13 @@ describe("executor: a scheduled drag move end to end", () => {
 
 		const cmds = commands();
 		expect(cmds.length).toBeGreaterThan(8);
+		expect(sim.debugger.commandsFor(CDP.focusEmulation).map((c) => c.params)).toEqual([
+			{ enabled: true },
+		]);
+		for (const c of sim.debugger.commands) {
+			expect([CDP.inputDispatchMouseEvent, CDP.focusEmulation] as string[]).toContain(c.method);
+			expect(FORBIDDEN_METHODS).not.toContain(c.method);
+		}
 		for (const c of cmds) {
 			expect(c.method).toBe(CDP.inputDispatchMouseEvent);
 			expect(FORBIDDEN_METHODS).not.toContain(c.method);
@@ -888,7 +1034,7 @@ describe("executor: a scheduled drag move end to end", () => {
 			reason: EXECUTOR.reasons.aborted,
 			attempts: 0,
 		});
-		expect(sim.debugger.commands).toHaveLength(0);
+		expect(commands()).toHaveLength(0);
 		expect(adapter.observeRequests).toEqual([]);
 		expect(executor.isRunning()).toBe(false);
 		expect(executor.handView()).toBe("resting");

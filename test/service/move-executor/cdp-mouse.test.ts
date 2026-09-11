@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { debuggerAttach, debuggerSend } from "@core/chrome/debugger";
 import { CDP } from "@core/constants";
+import { POINTER_CONTROL } from "@core/constants/cdp";
 import type { PathPoint } from "@core/motor/types";
 import { defaultScheduler } from "@core/util/scheduler";
 import { CdpMouse } from "@service/move-executor/cdp-mouse";
@@ -41,6 +42,25 @@ const mouseCommands = (): Array<Record<string, unknown> & { at: number }> =>
 		.map((c) => ({ ...(c.params as Record<string, unknown>), at: c.at }));
 
 describe("CdpMouse", () => {
+	it("retains the dispatched button state for cleanup when the page rejects a press", async () => {
+		const mouse = new CdpMouse(
+			(method, params) => debuggerSend(tabId, method, params),
+			{ x: 10, y: 10 },
+			{
+				now: sim.now,
+				beforeDispatch: async (pointer) => pointer.timestampMs,
+				afterDispatch: async (pointer) => pointer.type !== "mousePressed",
+			}
+		);
+		await expect(mouse.pressAt({ x: 60, y: 70 }, sim.now())).rejects.toThrow(
+			POINTER_CONTROL.notDelivered
+		);
+		expect(mouse.pressed).toBe(true);
+		await mouse.releaseAt(mouse.position, sim.now());
+		expect(mouse.pressed).toBe(false);
+		expect(mouseCommands().map((c) => c.type)).toEqual(["mousePressed", "mouseReleased"]);
+	});
+
 	it("dispatches the verified press / drag-move / release parameter shapes and never a timestamp", async () => {
 		const mouse = makeMouse();
 		await mouse.moveAt({ x: 450, y: 650 }, sim.now());
@@ -204,4 +224,103 @@ describe("CdpMouse", () => {
 		expect(await outcome).toBe("aborted");
 		expect(mouseCommands()).toHaveLength(1);
 	});
+});
+
+it("waits for pointer admission before dispatch and uses its current wall-clock stamp", async () => {
+	let admit: (() => void) | undefined;
+	const calls: unknown[] = [];
+	const mouse = new CdpMouse(
+		(method, params) => debuggerSend(tabId, method, params),
+		{ x: 10, y: 10 },
+		{
+			now: sim.now,
+			beforeDispatch: async (pointer) => {
+				calls.push(pointer);
+				await new Promise<void>((resolve) => {
+					admit = resolve;
+				});
+				return pointer.timestampMs;
+			},
+		}
+	);
+	const running = mouse.moveAt({ x: 25.4, y: 35.7 }, sim.now());
+	await Promise.resolve();
+	await Promise.resolve();
+	expect(mouseCommands()).toEqual([]);
+	expect(calls).toEqual([{ type: "mouseMoved", x: 25, y: 36, buttons: 0, timestampMs: START }]);
+	admit?.();
+	await running;
+	expect(mouseCommands()).toHaveLength(1);
+	expect(mouseCommands()[0]?.timestamp).toBe(START / 1000);
+});
+
+it("does not press when pointer admission fails", async () => {
+	const mouse = new CdpMouse(
+		(method, params) => debuggerSend(tabId, method, params),
+		{ x: 10, y: 10 },
+		{
+			now: sim.now,
+			beforeDispatch: async () => {
+				throw new Error("content disconnected");
+			},
+		}
+	);
+	await expect(mouse.pressAt({ x: 20, y: 30 }, sim.now())).rejects.toThrow("content disconnected");
+	expect(mouseCommands()).toEqual([]);
+	expect(mouse.pressed).toBe(false);
+});
+
+it("rechecks cancellation after admission so cancelling an awaited press cannot submit input", async () => {
+	let admit: (() => void) | undefined;
+	const ac = new AbortController();
+	const mouse = new CdpMouse(
+		(method, params) => debuggerSend(tabId, method, params),
+		{ x: 10, y: 10 },
+		{
+			now: sim.now,
+			beforeDispatch: async (pointer) => {
+				await new Promise<void>((resolve) => {
+					admit = resolve;
+				});
+				return pointer.timestampMs;
+			},
+		}
+	);
+	const running = mouse.pressAt({ x: 20, y: 30 }, sim.now(), ac.signal);
+	const result = running.catch((error: Error) => error.message);
+	await Promise.resolve();
+	await Promise.resolve();
+	ac.abort();
+	admit?.();
+	expect(await result).toBe("aborted");
+	expect(mouseCommands()).toEqual([]);
+	expect(mouse.pressed).toBe(false);
+});
+
+it("rechecks the press guard after admission, before the physical press", async () => {
+	let admit: (() => void) | undefined;
+	let focused = true;
+	const mouse = new CdpMouse(
+		(method, params) => debuggerSend(tabId, method, params),
+		{ x: 10, y: 10 },
+		{
+			now: sim.now,
+			beforeDispatch: async (pointer) => {
+				await new Promise<void>((resolve) => {
+					admit = resolve;
+				});
+				return pointer.timestampMs;
+			},
+		}
+	);
+	const running = mouse.pressAt({ x: 20, y: 30 }, sim.now(), undefined, () => {
+		if (!focused) throw new Error("unfocused");
+	});
+	const result = running.catch((error: Error) => error.message);
+	await Promise.resolve();
+	await Promise.resolve();
+	focused = false;
+	admit?.();
+	expect(await result).toBe("unfocused");
+	expect(mouseCommands()).toEqual([]);
 });

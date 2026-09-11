@@ -9,7 +9,7 @@
  * on the same object, so nothing here is executor-specific.
  */
 
-import { CONTENT_LINK_ERRORS } from "@core/constants/cdp";
+import { CONTENT_LINK_ERRORS, POINTER_CONTROL, type PreparedPointer } from "@core/constants/cdp";
 import type { GamePortCommand, GamePortMessage } from "@core/constants/messages";
 import { PORT_NAMES } from "@core/constants/ports";
 import { log } from "@core/logger";
@@ -27,7 +27,11 @@ type ReplyKindOf<K extends RequestKind> = K extends "geometry"
 			? "boardCheckResult"
 			: K extends "cursorProbe"
 				? "cursorProbeResult"
-				: never;
+				: K extends "cursorPrepare"
+					? "cursorPrepared"
+					: K extends "cursorDelivery"
+						? "cursorDelivered"
+						: never;
 export type ReplyFor<K extends RequestKind> = Extract<GamePortMessage, { kind: ReplyKindOf<K> }>;
 /** A request without its `id`; `timeoutMs` defaults to the request budget. */
 export type RequestInput<K extends RequestKind> = { kind: K } & Omit<
@@ -65,6 +69,7 @@ interface Pending {
 }
 
 export class ContentLink implements ContentLinkEvents {
+	private readonly controlledPointers = new Set<number>();
 	private readonly ports = new Map<number, Entry>();
 	private readonly pending = new Map<string, Pending>();
 	private readonly listeners = new Set<AnyMessageListener>();
@@ -100,8 +105,38 @@ export class ContentLink implements ContentLinkEvents {
 	post(tabId: number, cmd: GamePortCommand): boolean {
 		const entry = this.ports.get(tabId);
 		if (!entry) return false;
+		if (cmd.kind === "cursorTo") this.controlledPointers.add(tabId);
+		else if (cmd.kind === "cursorHide") this.controlledPointers.delete(tabId);
 		entry.port.post(cmd);
 		return true;
+	}
+
+	/** Install the page's single-use admission before sending the matching browser event. */
+	async preparePointer(
+		tabId: number,
+		pointer: PreparedPointer,
+		signal?: AbortSignal
+	): Promise<number | undefined> {
+		if (!this.controlledPointers.has(tabId)) return undefined;
+		const reply = await this.request(
+			tabId,
+			{ kind: "cursorPrepare", pointer },
+			POINTER_CONTROL.prepareTimeoutMs,
+			signal
+		);
+		if (reply.kind !== "cursorPrepared") throw new Error(CONTENT_LINK_ERRORS.disconnected);
+		return pointer.timestampMs;
+	}
+
+	/** A renderer acknowledgment alone cannot prove that the page input filter accepted the press. */
+	async confirmPointer(tabId: number, pointer: PreparedPointer): Promise<boolean> {
+		if (!this.controlledPointers.has(tabId)) return true;
+		const reply = await this.request(
+			tabId,
+			{ kind: "cursorDelivery", pointer },
+			POINTER_CONTROL.prepareTimeoutMs
+		);
+		return reply.kind === "cursorDelivered" && reply.delivered;
 	}
 
 	/**
@@ -188,6 +223,7 @@ export class ContentLink implements ContentLinkEvents {
 		this.stop = () => {};
 		for (const entry of this.ports.values()) for (const off of entry.offs) off();
 		this.ports.clear();
+		this.controlledPointers.clear();
 		this.failPending(null, CONTENT_LINK_ERRORS.disposed);
 		this.listeners.clear();
 		this.connectListeners.clear();
@@ -227,6 +263,7 @@ export class ContentLink implements ContentLinkEvents {
 		if (this.ports.get(tabId) !== entry) return;
 		for (const off of entry.offs) off();
 		this.ports.delete(tabId);
+		this.controlledPointers.delete(tabId);
 		this.failPending(tabId, CONTENT_LINK_ERRORS.disconnected);
 		log.debug("content-link: port disconnected", { tabId, reason: reason ?? null });
 		for (const cb of [...this.disconnectListeners]) cb(tabId, reason);

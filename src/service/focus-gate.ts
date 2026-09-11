@@ -6,7 +6,9 @@
  * `visibilitychange`), `chrome.windows.onFocusChanged` (browser lost focus)
  * and `chrome.tabs.onActivated`. A blur edge inside the move window marks the
  * move `blur-in-window` until the next `positionArrived`; the extension never
- * changes focus itself — it waits, and the panel shows why.
+ * activates a tab or window. An armed hand can instead maintain native page
+ * focus/visibility through Chrome emulation. Only an acknowledged hold overrides
+ * the physical tab/window checks; unmaintained pages retain the strict gate.
  */
 
 import { onTabActivated, onTabRemoved } from "@core/chrome/tabs";
@@ -57,7 +59,10 @@ export class FocusGate {
 
 	constructor(
 		private readonly link: ContentLinkEvents,
-		options: { now?: () => number } = {}
+		private readonly options: {
+			now?: () => number;
+			isFocusMaintained?: (tabId: number) => boolean;
+		} = {}
 	) {
 		this.now = options.now ?? defaultNow;
 		this.offs = [
@@ -77,6 +82,7 @@ export class FocusGate {
 	}
 
 	canExecute(tabId: number): FocusVerdict {
+		if (this.options.isFocusMaintained?.(tabId)) return { ok: true };
 		const s = this.states.get(tabId);
 		if (s?.hasFocus !== true || !s.browserFocused)
 			return { ok: false, reason: EXECUTOR.reasons.unfocused };
@@ -86,6 +92,8 @@ export class FocusGate {
 	}
 
 	snapshot(tabId: number): FocusSnapshot {
+		if (this.options.isFocusMaintained?.(tabId))
+			return { pageHasFocus: true, blurSeenThisMove: false };
 		const s = this.states.get(tabId);
 		return { pageHasFocus: s?.hasFocus === true, blurSeenThisMove: s?.blurSeen ?? false };
 	}
@@ -117,6 +125,12 @@ export class FocusGate {
 		const was = s.hasFocus;
 		s.hasFocus = msg.hasFocus;
 		s.visible = msg.visibility === "visible";
+		// Native focus emulation keeps the page active across browser/tab changes.
+		// Retain physical state for restoration, but it is not a page-visible blur.
+		if (this.options.isFocusMaintained?.(tabId)) {
+			s.blurSeen = false;
+			return;
+		}
 		if (!msg.hasFocus) s.blurSeen = true;
 		if (was !== msg.hasFocus) {
 			for (const l of [...this.edgeListeners]) l(tabId, msg.hasFocus, msg.at ?? this.now());
@@ -128,12 +142,12 @@ export class FocusGate {
 		for (const [tabId, s] of this.states) {
 			if (windowId === none) {
 				s.browserFocused = false;
-				s.blurSeen = true;
+				if (!this.options.isFocusMaintained?.(tabId)) s.blurSeen = true;
 				continue;
 			}
 			const own = this.link.windowIdOf(tabId);
 			s.browserFocused = own === null || own === windowId;
-			if (!s.browserFocused) s.blurSeen = true;
+			if (!s.browserFocused && !this.options.isFocusMaintained?.(tabId)) s.blurSeen = true;
 		}
 	}
 

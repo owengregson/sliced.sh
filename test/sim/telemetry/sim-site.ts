@@ -178,7 +178,11 @@ export async function createSimulatedSite(
 		received.push(cmd);
 		options.onCommand?.(cmd);
 		if (!port) return;
-		if (cmd.kind === "geometry") {
+		if (cmd.kind === "cursorPrepare") {
+			port.post({ kind: "cursorPrepared", id: cmd.id });
+		} else if (cmd.kind === "cursorDelivery") {
+			port.post({ kind: "cursorDelivered", id: cmd.id, delivered: true });
+		} else if (cmd.kind === "geometry") {
 			if (cmd.promotion !== undefined) {
 				port.post({
 					kind: "geometryResult",

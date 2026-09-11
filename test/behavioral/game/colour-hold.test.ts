@@ -9,6 +9,7 @@
 // then resumed from the moment a later reading supplies the colour.
 import { afterEach, describe, expect, it } from "bun:test";
 import { legalMoves } from "@core/chess/san";
+import { CDP } from "@core/constants/cdp";
 import type { GamePortCommand } from "@core/constants/messages";
 import type { Color, PositionSnapshot } from "@typedefs/game";
 import { createGameHarness, type GameHarness } from "./harness";
@@ -71,7 +72,8 @@ describe("game session: an unknown colour holds (it is never guessed)", () => {
 		expect(boardCommands().filter((c) => c.kind === "highlight")).toEqual([]);
 		expect(h.executor()?.pendingMove()).toBeNull();
 		expect(h.executor()?.isRunning()).toBe(false);
-		expect(h.sim.debugger.commands).toEqual([]);
+		// Arming maintains page focus, but an unknown colour must never produce pointer input.
+		expect(h.sim.debugger.commands.filter((c) => c.method !== CDP.focusEmulation)).toEqual([]);
 		expect(h.site.board.lastMove()).toBeNull();
 
 		// The bridge answers: the owner is black. The position has not moved, so this is the same

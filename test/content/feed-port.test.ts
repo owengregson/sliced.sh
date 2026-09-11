@@ -224,3 +224,20 @@ describe("FeedPort", () => {
 		feed.dispose();
 	});
 });
+
+it("notifies pointer cleanup immediately when the game connection disconnects", async () => {
+	const rt = installFakeRuntime();
+	const scheduler = makeScheduler();
+	let disconnected = 0;
+	const feed = createFeedPort({
+		onCommand: () => {},
+		onDisconnect: () => {
+			disconnected += 1;
+		},
+		scheduler,
+	});
+	await feed.ready;
+	rt.ports[0]?.emitDisconnect();
+	expect(disconnected).toBe(1);
+	feed.dispose();
+});

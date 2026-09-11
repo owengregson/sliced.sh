@@ -35,8 +35,8 @@ export class CdpInputBackend implements InputBackend {
 		return this.mouse.moveAt(p, atMs, signal);
 	}
 
-	press(p: Pt, atMs: number, signal?: AbortSignal): Promise<void> {
-		return this.mouse.pressAt(p, atMs, signal);
+	press(p: Pt, atMs: number, signal?: AbortSignal, beforePress?: () => void): Promise<void> {
+		return this.mouse.pressAt(p, atMs, signal, beforePress);
 	}
 
 	release(p: Pt, atMs: number): Promise<void> {

@@ -50,7 +50,11 @@ import {
 import { createChesscomAdapter } from "@content/adapters/chesscom";
 import { pageKindFromPath } from "@content/adapters/page-kind";
 import { occupancyOf, waitForPromotionRect } from "@content/board-state";
-import { createCursorTracker } from "@content/cursor-tracker";
+import {
+	type CursorSample,
+	type CursorTracker,
+	createCursorTracker,
+} from "@content/cursor-tracker";
 import { createFeedPort, type FeedPort } from "@content/feed-port";
 import { createHighlights } from "@content/highlights";
 import { installKeybinds } from "@content/keybinds";
@@ -92,6 +96,11 @@ type BoardCheckCommand = Extract<GamePortCommand, { kind: "boardCheck" }>;
 
 const LIVE_KINDS: ReadonlySet<PageKind> = new Set(["live-game", "vs-computer"]);
 
+interface CursorBinding {
+	tracker: CursorTracker;
+	onSample?: (sample: CursorSample) => void;
+}
+
 const EMPTY_RECT: Rect = toRect({ x: 0, y: 0, width: 0, height: 0 });
 
 /** Boot the content script for the current page; `null` when the host is not a supported site. */
@@ -100,8 +109,12 @@ export function startContent(options: ContentOptions = {}): ContentHandle | null
 	const doc = options.document ?? document;
 	const site = detectSite(win.location.hostname);
 	if (!site) return null;
-	if (doc.body) return bootContent(site, win, doc, options);
-	return deferUntilBody(site, win, doc, options);
+	// Install capture at document_start, before page listeners; the board may be parsed much later.
+	const cursor: CursorBinding = {
+		tracker: createCursorTracker({ window: win, onSample: (sample) => cursor.onSample?.(sample) }),
+	};
+	if (doc.body) return bootContent(site, win, doc, options, cursor);
+	return deferUntilBody(site, win, doc, options, cursor);
 }
 
 /** `document_start` path: wait for `<body>` before touching the adapter. */
@@ -109,7 +122,8 @@ function deferUntilBody(
 	site: Site,
 	win: Window,
 	doc: Document,
-	options: ContentOptions
+	options: ContentOptions,
+	cursorBinding: CursorBinding
 ): ContentHandle {
 	let inner: ContentHandle | null = null;
 	let done = false;
@@ -123,7 +137,7 @@ function deferUntilBody(
 	const tryBoot = (): void => {
 		if (done || !doc.body) return;
 		stop();
-		inner = bootContent(site, win, doc, options);
+		inner = bootContent(site, win, doc, options, cursorBinding);
 	};
 	doc.addEventListener("DOMContentLoaded", tryBoot, true);
 	doc.addEventListener("readystatechange", tryBoot, true);
@@ -134,7 +148,8 @@ function deferUntilBody(
 		adapter: () => inner?.adapter() ?? null,
 		dispose() {
 			stop();
-			inner?.dispose();
+			if (inner) inner.dispose();
+			else cursorBinding.tracker.dispose();
 		},
 	};
 }
@@ -143,7 +158,8 @@ function bootContent(
 	site: Site,
 	win: Window,
 	doc: Document,
-	options: ContentOptions
+	options: ContentOptions,
+	cursorBinding: CursorBinding
 ): ContentHandle {
 	const adapterVersion = options.adapterVersion ?? __SL_VERSION__;
 	const ownBridge = options.bridge === undefined;
@@ -152,7 +168,7 @@ function bootContent(
 	const highlights = createHighlights(adapter, false);
 	// Fix D: the mirror of the hand's own pointer. Drawn by the MAIN-world bridge (§13.3), driven
 	// only by what the service worker dispatched — never by a pointer event read here.
-	const virtualCursor = createVirtualCursor(bridge);
+	const virtualCursor = createVirtualCursor(bridge, (shown) => cursor.setVirtualActive(shown));
 	let keybinds: Keybinds = { ...DEFAULT_KEYBINDS, global: false };
 	let pageKind = adapter.detectPageKind();
 	let sessionGameId: string | null = null;
@@ -170,10 +186,8 @@ function bootContent(
 		const op = adapter.getOpponent();
 		if (op) post({ kind: "opponent", ...op });
 	};
-	const cursor = createCursorTracker({
-		window: win,
-		onSample: (s) => post({ kind: "cursor", ...s }),
-	});
+	const cursor = cursorBinding.tracker;
+	cursorBinding.onSample = (s) => post({ kind: "cursor", ...s });
 
 	/** `gameStarted` (once per game id) then `position`. */
 	const publish = (s: AdapterPositionSnapshot): void => {
@@ -356,6 +370,13 @@ function bootContent(
 		if (highlights.apply(cmd)) return;
 		if (virtualCursor.apply(cmd)) return;
 		switch (cmd.kind) {
+			case "cursorDelivery":
+				post({
+					kind: "cursorDelivered",
+					id: cmd.id,
+					delivered: cursor.virtualPointerDelivered(cmd.pointer),
+				});
+				return;
 			case "keybinds":
 				keybinds = cmd.keybinds;
 				return;
@@ -378,6 +399,10 @@ function bootContent(
 			case "boardCheck":
 				boardCheck(cmd);
 				return;
+			case "cursorPrepare":
+				cursor.prepareVirtualPointer(cmd.pointer);
+				post({ kind: "cursorPrepared", id: cmd.id });
+				return;
 			case "cursorProbe":
 				cursorProbe(cmd.id);
 				return;
@@ -388,7 +413,15 @@ function bootContent(
 
 	// ---- wiring -------------------------------------------------------------------
 	const ownPort = options.port === undefined;
-	port = options.port ? options.port(handleCommand) : createFeedPort({ onCommand: handleCommand });
+	port = options.port
+		? options.port(handleCommand)
+		: createFeedPort({
+				onCommand: handleCommand,
+				onDisconnect: () => {
+					virtualCursor.apply({ kind: "cursorHide" });
+					cursor.setVirtualActive(false);
+				},
+			});
 	hello();
 	opponent();
 	startSessionIfLive();

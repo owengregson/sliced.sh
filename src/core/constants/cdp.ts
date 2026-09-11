@@ -12,6 +12,7 @@ export const CDP = {
 	/** `chrome.debugger.attach` protocol version (major must match, minor ≥). */
 	protocolVersion: "1.3",
 	inputDispatchMouseEvent: "Input.dispatchMouseEvent",
+	focusEmulation: "Emulation.setFocusEmulationEnabled",
 	/** A dispatch that lands later than this past its due time resyncs the schedule (GC, throttling). */
 	stallResyncMs: 40,
 	/** Waits shorter than this are not worth a timer: dispatch immediately. */
@@ -163,3 +164,24 @@ export const EXECUTOR = {
 		boardMoved: "board-moved",
 	},
 } as const;
+
+/** Bounded admission for one browser-dispatched mouse action while the page pointer is owned. */
+export const POINTER_CONTROL = {
+	prepareTimeoutMs: 250,
+	expiresMs: 250,
+	/** Allow browser timer quantization and viewport/device-pixel rounding. */
+	timestampToleranceMs: 8,
+	coordinateTolerancePx: 1,
+	notDelivered: "pointer-input-not-delivered",
+	boundaryEventsPerType: 32,
+	msPerSecond: 1000,
+} as const;
+
+export interface PreparedPointer {
+	type: "mouseMoved" | "mousePressed" | "mouseReleased";
+	x: number;
+	y: number;
+	buttons: number;
+	/** Current epoch milliseconds, also supplied as the browser event's timestamp. */
+	timestampMs: number;
+}

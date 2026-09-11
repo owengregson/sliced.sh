@@ -40,6 +40,7 @@
 
 import { BRIDGE_WIRE as W } from "@core/constants/bridge";
 import { defineProgram, type Expression, js, type Statement } from "@pagescript";
+import cursorCss from "../../css/page-cursor.css?raw";
 import { defineHandle, KINDS, listen } from "./bridge-common";
 import markup from "./templates/virtual-cursor.html?raw";
 
@@ -131,6 +132,9 @@ export function cursorStatements(p: CursorParams): Statement[] {
 				js.expr(js.call(js.member(el, "setAttribute"), js.str("class"), p.cls)),
 				js.expr(js.call(js.member(el, "setAttribute"), js.str("style"), js.id("curBase"))),
 				js.assign(js.member(el, "innerHTML"), js.str(markup.trim())),
+				js.const_("sheet", js.call(js.member(doc, "createElement"), js.str("style"))),
+				js.assign(js.member(js.id("sheet"), "textContent"), js.str(cursorCss.trim())),
+				js.expr(js.call(js.member(el, "appendChild"), js.id("sheet"))),
 				js.expr(js.call(js.member(host, "appendChild"), el)),
 				// DO NOT REMOVE. The element is inserted at `opacity:0` and `curTo` raises it to 1 in
 				// the same task, so without a forced style flush between the two the computed value

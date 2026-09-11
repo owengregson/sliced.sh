@@ -1,3 +1,4 @@
+import type { PreparedPointer } from "./cdp";
 /**
  * Message-type registry and port contracts (§4.3). This is the only place
  * message `type` strings exist; handlers register by constant. The
@@ -167,6 +168,8 @@ export type GamePortMessage =
 	 * clock is not comparable with it, and an unread field that looks comparable is a trap.
 	 */
 	| { kind: "boardRect"; rect: Rect }
+	| { kind: "cursorPrepared"; id: string }
+	| { kind: "cursorDelivered"; id: string; delivered: boolean }
 	| { kind: "moveObserved"; san: string; ply: number; byMe: boolean; atMs: number }
 	/** Task 18: reply to `observeMove` — `ok` once the board/move list shows the move. */
 	| { kind: "observeMoveResult"; id: string; ok: boolean; reason?: string }
@@ -228,7 +231,9 @@ export type GamePortCommand =
 	 * the element (§13.3). `cursorHide` removes it.
 	 */
 	| { kind: "cursorTo"; x: number; y: number; down: boolean }
-	| { kind: "cursorHide" };
+	| { kind: "cursorHide" }
+	| { kind: "cursorPrepare"; id: string; pointer: PreparedPointer }
+	| { kind: "cursorDelivery"; id: string; pointer: PreparedPointer };
 
 /**
  * A slice of a net relayed by the SW (`handlers/engine/nnue-download.ts`).

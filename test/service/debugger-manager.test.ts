@@ -34,6 +34,33 @@ async function makeManager(): Promise<DebuggerManager> {
 }
 
 describe("DebuggerManager", () => {
+	it("enables acknowledged native focus emulation and restores it without activating a tab", async () => {
+		const m = await makeManager();
+		await m.ensureAttached(tabId);
+		expect(m.isFocusMaintained(tabId)).toBe(false);
+		await m.setFocusMaintained(tabId, true);
+		expect(m.isFocusMaintained(tabId)).toBe(true);
+		await m.setFocusMaintained(tabId, false);
+		expect(m.isFocusMaintained(tabId)).toBe(false);
+		expect(sim.debugger.commandsFor(CDP.focusEmulation).map((c) => c.params)).toEqual([
+			{ enabled: true },
+			{ enabled: false },
+		]);
+		await m.setFocusMaintained(tabId, true);
+		sim.debugger.detachByUser(tabId);
+		expect(m.isFocusMaintained(tabId)).toBe(false);
+	});
+
+	it("never treats a rejected focus command as an active focus hold", async () => {
+		const m = await makeManager();
+		await m.ensureAttached(tabId);
+		sim.debugger.respond(CDP.focusEmulation, () => {
+			throw new Error("unavailable");
+		});
+		await expect(m.setFocusMaintained(tabId, true)).rejects.toThrow("unavailable");
+		expect(m.isFocusMaintained(tabId)).toBe(false);
+	});
+
 	it("attaches once per tab with protocol 1.3, dedupes concurrent calls, and holds the keepalive", async () => {
 		const versions: string[] = [];
 		const realAttach = sim.chrome.debugger.attach.bind(sim.chrome.debugger);

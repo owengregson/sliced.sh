@@ -12,8 +12,9 @@
  *
  * Each position is one fire-and-forget `notify`, not a `call`: the hand
  * dispatches a point every few milliseconds (~45/s measured over a move), and a
- * reply per point would double the traffic and allocate a pending entry and a
- * timer for an answer nobody reads.
+ * mirror reply would allocate a pending entry and timer for an answer nobody
+ * reads. Separately, controlled mouse input has a pre-dispatch admission request;
+ * that acknowledgment is required before the browser receives the event.
  *
  * This is also the only place the mirror is deduplicated, and the only place it
  * *can* be: `drawn` and the element share a lifetime — both live in the tab —
@@ -34,7 +35,10 @@ export interface VirtualCursor {
 	dispose(): void;
 }
 
-export function createVirtualCursor(bridge: PageBridge): VirtualCursor {
+export function createVirtualCursor(
+	bridge: PageBridge,
+	onVisibilityChange?: (shown: boolean) => void
+): VirtualCursor {
 	let drawn = false;
 	let disposed = false;
 
@@ -48,7 +52,10 @@ export function createVirtualCursor(bridge: PageBridge): VirtualCursor {
 		if (!drawn) return;
 		// Cleared only on a send that actually left: a hide we could not deliver must not be
 		// forgotten, or the element stays on the page with nothing left to erase it.
-		if (send(BRIDGE_KINDS.cursorHide)) drawn = false;
+		if (send(BRIDGE_KINDS.cursorHide)) {
+			drawn = false;
+			onVisibilityChange?.(false);
+		}
 	};
 
 	const api: VirtualCursor = {
@@ -56,7 +63,10 @@ export function createVirtualCursor(bridge: PageBridge): VirtualCursor {
 		apply(cmd) {
 			switch (cmd.kind) {
 				case "cursorTo":
-					if (send(BRIDGE_KINDS.cursorTo, { x: cmd.x, y: cmd.y, down: cmd.down })) drawn = true;
+					if (send(BRIDGE_KINDS.cursorTo, { x: cmd.x, y: cmd.y, down: cmd.down }) && !drawn) {
+						drawn = true;
+						onVisibilityChange?.(true);
+					}
 					return true;
 				case "cursorHide":
 					hide();
@@ -69,6 +79,7 @@ export function createVirtualCursor(bridge: PageBridge): VirtualCursor {
 			if (disposed) return;
 			hide();
 			disposed = true;
+			onVisibilityChange?.(false);
 		},
 	};
 	return api;
