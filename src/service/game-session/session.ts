@@ -38,6 +38,7 @@
  * attached while the switch is off buys nothing and only leaves the infobar).
  */
 
+import { parseFen, plyOf } from "@core/chess/fen";
 import { applyMoves, legalMoves, uciToSan } from "@core/chess/san";
 import { sanToSpeech } from "@core/chess/san-speech";
 import { isSquare } from "@core/chess/squares";
@@ -137,6 +138,16 @@ function isScoredMove(chosen: ChosenMove): boolean {
  * The game's first move: ply 0 playing white, ply 1 playing black. The scope of the owner's
  * 2026-09-10 §13.4 ruling (`docs/qa/focus-discipline.md` §4) and the only move where no later
  * position can arrive to carry a second chance — as white the board cannot change until we play.
+ *
+ * Counted from the **FEN's own move counters** (`plyOf`), never from `PositionSnapshot.ply`. That
+ * field is `plyOf(readMoveList(document))`, a read of chess.com's move-list DOM, and it is **0**
+ * whenever the list element cannot be found — which on `/play/online` (no URL game id) also bumps
+ * the adapter's game serial, so the session starts a "new game" holding a *mid-game* position that
+ * claims `ply: 0`. Scoping the ruling on that would hand every remaining move of such a game the
+ * first-move relaxation the owner explicitly declined. The FEN comes from the MAIN-world bridge and
+ * cannot claim fullmove 1 on a mid-game board; the adapter guards the FEN against exactly this
+ * confusion (`chesscom.ts`, "an empty list must not 'prove' the start position") and `ply` never got
+ * the same cross-check.
  */
 const FIRST_MOVE_LAST_PLY = 1;
 
@@ -272,6 +283,22 @@ export class GameSession implements SessionSource {
 
 	/** Feed dedupe (Task 21 replays `lastPosition` and the outbox on reconnect). */
 	private lastPositionKey: string | null = null;
+	/**
+	 * `gameId|ply` of the position a blur landed on while the session was holding it (§13.4). The
+	 * companion guard to `isGameFirstMove`, and **not** `FocusGate`'s own `blurSeenThisMove`: that
+	 * flag is per move *window*, and `positionArrived` reopens the window on every accepted position
+	 * — including the republish of an unmoved ply-0 position that carries the colour or the time
+	 * control, which `onPosition` documents as the normal case at move one. A §13.4 permission must
+	 * not be cleared by the thing that always happens, so the blur is remembered against the ply.
+	 *
+	 * What it records is every *transition* to unfocused that happens while this position is the one
+	 * the session holds — which is the only kind of blur a human, or chess.com's own per-move window,
+	 * would count against the move. It deliberately does not record a repeated "still not focused"
+	 * report (a `visibilitychange` while already blurred sets `FocusGate.blurSeen` but fires no edge):
+	 * that is the same blur, and if it predates the position then the owner was already in the side
+	 * panel when the move came up, which is exactly the case the ruling releases.
+	 */
+	private blurredPositionKey: string | null = null;
 	/** The position before the current one — what the §7.4 premove policy replays our move from. */
 	private priorFen: string | null = null;
 	/** The timing profile in force this game (§4.6); `null` until a game starts. */
@@ -1076,8 +1103,15 @@ export class GameSession implements SessionSource {
 	 *     published the next position yet); running the pipeline on that would recommend, and an
 	 *     armed hand would play, a move for the **opponent**.
 	 *
-	 * Nothing is replanned: `rec.plan` is handed over as it stands, and how late a re-delivered
-	 * plan should be paced is the timing model's question, not this one's.
+	 * A re-delivered plan is **re-planned** before it is handed over. Its `deadlineMs` is by
+	 * definition in the past — that is what "withheld" means — and `MoveExecutor.schedule` would
+	 * collapse such a plan to `EXECUTOR.minExecutionMs`, so the first move of every game would land a
+	 * constant quarter-second after whatever released it. A move that always happens but always
+	 * happens in exactly 250 ms is not a fix, it is a sharper machine signature than the one §13.2
+	 * spends all its effort removing. `TimingModel.replan(…, "engine-not-ready")` is the existing
+	 * reason for "the move could not be made when it was due": it folds the elapsed wait into the
+	 * think, so the realised hold covers the whole time since the position arrived and the part after
+	 * the release is the plan's own `approachMs` — drawn per move by the motor, not a floor.
 	 */
 	private async reconsider(reason: string): Promise<void> {
 		if (this.disposed) return;
@@ -1089,13 +1123,16 @@ export class GameSession implements SessionSource {
 		if (this.state !== "live:my-turn:analysing" && this.state !== "live:my-turn:recommended") return;
 		const rec = this.rec;
 		if (rec) {
+			const paced = this.repaced(rec);
 			log.info("game-session: acting on the recommendation that was held back", {
 				tabId: this.deps.tabId,
 				ply: snapshot.ply,
-				uci: rec.chosen.uci,
+				uci: paced.chosen.uci,
+				thinkMs: Math.round(paced.plan.thinkMs),
 				reason,
 			});
-			await this.actOnRecommendation(rec, this.deps.getSettings());
+			this.rec = paced;
+			await this.actOnRecommendation(paced, this.deps.getSettings());
 			return;
 		}
 		// A search already running for this position is itself the second chance.
@@ -1106,6 +1143,19 @@ export class GameSession implements SessionSource {
 			reason,
 		});
 		await this.runPipeline(snapshot);
+	}
+
+	/**
+	 * The withheld recommendation with its plan re-planned for the wait (see `reconsider`). The
+	 * recommendation itself is unchanged — the move the panel is showing is the move that gets played
+	 * — and the session adopts the result so the panel's plan line and §8.6's row agree with what the
+	 * hand was actually given. Unchanged when there is no timing model or no usable context.
+	 */
+	private repaced(rec: Recommendation): Recommendation {
+		const timing = this.timing;
+		const ctx = timing ? this.timingContextFor(rec) : null;
+		if (!timing || !ctx) return rec;
+		return { ...rec, plan: timing.replan(rec.plan, ctx, "engine-not-ready") };
 	}
 
 	/**
@@ -1135,10 +1185,16 @@ export class GameSession implements SessionSource {
 		return this.reconsiderGuarded("the hand was armed");
 	}
 
-	/** Is there a move to play right now — the scheduled one, or the standing recommendation? */
+	/**
+	 * Will `playNow()` reach the hand if called right now? Every condition `playNow` itself checks —
+	 * §4.4's switch, §13.4's armed hand, and something to play — because `playNowRequested` answers
+	 * the panel `true` on the strength of this and nothing may fall between the two: they run in one
+	 * synchronous step, and `playNow` is synchronous up to its own `await`.
+	 */
 	private hasPlayableMove(): boolean {
 		const executor = this.executorHandle;
-		return executor !== null && (executor.pendingMove() !== null || this.rec !== null);
+		if (!executor || !this.mayAct() || !executor.isArmed()) return false;
+		return executor.pendingMove() !== null || this.rec !== null;
 	}
 
 	/**
@@ -1448,6 +1504,7 @@ export class GameSession implements SessionSource {
 		this.lastOppMoveAt = null;
 		this.lastMyMoveAt = null;
 		this.lastPositionKey = null;
+		this.blurredPositionKey = null;
 		this.priorFen = null;
 		this.selection = createSelectionState();
 		const gameSeed = `${this.seed}:${meta.gameId}`;
@@ -1658,6 +1715,11 @@ export class GameSession implements SessionSource {
 			this.onFocusRegained();
 			return;
 		}
+		// Remember which position the blur landed on, before anything else: §13.4's permission to
+		// play the first move after a refocus hangs off this, and it has to outlive a republish of
+		// the same ply (see `blurredPositionKey`).
+		const blurred = this.snapshot;
+		if (blurred) this.blurredPositionKey = this.positionIdentity(blurred);
 		const executor = this.executorHandle;
 		const pending = executor?.pendingMove() ?? null;
 		if (!executor || (!pending && !executor.isRunning())) {
@@ -1682,7 +1744,9 @@ export class GameSession implements SessionSource {
 	 * every move — which is the version the owner explicitly did not choose.
 	 */
 	private isGameFirstMove(snapshot: PositionSnapshot): boolean {
-		return snapshot.ply <= FIRST_MOVE_LAST_PLY;
+		const parts = parseFen(snapshot.fen);
+		// A FEN we cannot parse is not evidence of anything: refuse rather than widen.
+		return parts !== null && plyOf(parts) <= FIRST_MOVE_LAST_PLY;
 	}
 
 	/**
@@ -1715,8 +1779,13 @@ export class GameSession implements SessionSource {
 	private onFocusRegained(): void {
 		const snapshot = this.snapshot;
 		if (!snapshot || !this.isGameFirstMove(snapshot)) return;
-		if (this.deps.focus.snapshot(this.deps.tabId).blurSeenThisMove) return;
+		if (this.blurredPositionKey === this.positionIdentity(snapshot)) return;
 		void this.reconsiderGuarded("the page regained focus on the game's first move");
+	}
+
+	/** The position a blur or a permission is remembered against: the game and the ply, nothing else. */
+	private positionIdentity(snapshot: PositionSnapshot): string {
+		return `${snapshot.gameId}|${snapshot.ply}`;
 	}
 
 	// ── helpers ────────────────────────────────────────────────────────────

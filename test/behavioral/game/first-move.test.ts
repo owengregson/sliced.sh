@@ -26,7 +26,8 @@
 // auto-move toggle and the panel's play-now — is covered here, because the gate having three
 // hand-written copies is what made the bug class possible in the first place.
 import { afterEach, describe, expect, it } from "bun:test";
-import { CDP, PANEL_COMMAND_ERRORS } from "@core/constants/cdp";
+import { sideToMove } from "@core/chess/fen";
+import { CDP, EXECUTOR, PANEL_COMMAND_ERRORS } from "@core/constants/cdp";
 import { MSG } from "@core/constants/messages";
 import { TIMINGS } from "@core/constants/timings";
 import {
@@ -96,6 +97,30 @@ function gaveUp(warnings: readonly LogEntry[]): boolean {
 /** `PANEL_SET_AUTO_MOVE` as the side panel sends it, through the installed router. */
 function setAutoMove(armed: boolean): Promise<unknown> | undefined {
 	return h.router._dispatch({ type: MSG.PANEL_SET_AUTO_MOVE, tabId: h.tabId, armed }, {});
+}
+
+/**
+ * A raw `position` of the shape the adapter really can publish: the page's own FEN with whatever
+ * `ply` and `gameId` the test wants. `ply` is `plyOf(readMoveList(document))` in production and is
+ * **0** whenever the move-list element cannot be found — which on `/play/online` also bumps the
+ * adapter's game serial, so a mid-game board can publish `ply: 0` under a fresh `gameId`.
+ */
+function postPosition(over: { gameId?: string; ply?: number }): void {
+	const board = h.site.board;
+	const fen = board.fen();
+	h.site.post({
+		kind: "position",
+		snapshot: {
+			site: "chesscom",
+			gameId: over.gameId ?? h.site.gameId,
+			fen,
+			ply: over.ply ?? board.ply(),
+			sideToMove: sideToMove(fen) ?? "w",
+			myColor: board.myColor,
+			clocks: { w: { ms: 300_000, running: true }, b: { ms: 300_000, running: true } },
+			capturedAt: h.sim.now(),
+		},
+	});
 }
 
 /** `PANEL_PLAY_NOW` as the side panel sends it, through the installed router. */
@@ -534,6 +559,262 @@ describe("game session: the first move as white (Fix G)", () => {
 		expect(reply.error).toContain(PANEL_COMMAND_ERRORS.noRecommendation);
 		await h.advance(5_000);
 		expect(presses()).toHaveLength(0);
+	});
+
+	it("a mid-game FEN published with ply 0 is not move one", async () => {
+		// The scope of the ruling must come from the bridge FEN, not from the adapter's move-list ply.
+		// `readMoveList` answers `{ sans: [] }` when the list element is missing, `plyOf` then says 0,
+		// and on `/play/online` (no URL game id) that also bumps the game serial — so a mid-game board
+		// publishes `ply: 0` under a fresh `gameId` and the session starts a "new game". Scoping on
+		// `snapshot.ply` would hand every remaining move of that game the first-move relaxation the
+		// owner declined.
+		h = await createGameHarness({
+			manualStart: true,
+			settings: { automation: { autoMove: true } },
+		});
+		await h.drive(() => {
+			h.site.hello();
+			h.site.startGame();
+		});
+		const session = h.session();
+		expect(await h.until(() => h.executor()?.isArmed() === true, 5_000)).toBe(true);
+
+		// Play two real moves, so the board is genuinely mid-game.
+		await h.arrive();
+		expect(await h.until(() => h.site.board.chess.history().length === 1, 60_000)).toBe(true);
+		await h.arrive("e7e5");
+		expect(await h.until(() => h.site.board.chess.history().length === 3, 60_000)).toBe(true);
+		// One more opponent move straight onto the board, so the spurious position below is *our* turn
+		// on a genuinely mid-game board.
+		await h.drive(() => {
+			const reply = h.site.board.legalMoves()[0];
+			if (reply === undefined) throw new Error("first-move: no legal opponent move");
+			h.site.board.applyOpponent(reply);
+		});
+		const midGame = [...h.site.board.chess.history()];
+		expect(midGame).toHaveLength(4);
+		expect(h.site.board.ply()).toBeGreaterThan(1);
+
+		// The owner switches the right-hand panel to Chat and the move list goes away: the adapter
+		// publishes the real mid-game FEN with a false ply, under a bumped serial. And he is in the
+		// side panel while it happens, so the new "first" window opens unfocused with no blur in it.
+		await h.drive(() => h.site.panelClick());
+		await h.drive(() => postPosition({ gameId: `${h.site.gameId}#2`, ply: 0 }));
+		expect(await h.until(() => session.recommendation() !== null, 5_000)).toBe(true);
+		expect(session.view().ply).toBe(0); // the session really believes the false ply
+		expect(await h.until(() => h.executor()?.pendingMove() === null, 60_000)).toBe(true);
+
+		// Clicking back in must not release it: the FEN says fullmove 3, whatever the ply says.
+		await h.drive(() => h.site.clickIntoBoard());
+		await h.advance(60_000);
+		expect(h.site.board.chess.history()).toEqual(midGame);
+	});
+
+	it("a republish of the same ply-0 position does not clear the blur hold", async () => {
+		// The companion guard has to outlive the thing that always happens at move one: the colour and
+		// the time control arrive on a *republish of the unmoved ply-0 position*, and `positionArrived`
+		// reopens `FocusGate`'s window on every accepted position. A §13.4 permission cannot hang off a
+		// flag that the normal case clears.
+		h = await createGameHarness({
+			manualStart: true,
+			timeControl: null, // the site has not answered `timeControl.get()` yet (§4.3)
+			settings: { automation: { autoMove: true } },
+		});
+		await h.drive(() => {
+			h.site.hello();
+			h.site.startGame();
+		});
+		const session = h.session();
+		expect(await h.until(() => h.executor()?.isArmed() === true, 5_000)).toBe(true);
+
+		await h.arrive();
+		expect(await h.until(() => session.recommendation() !== null, 5_000)).toBe(true);
+		// A blur *inside* the first move's window: this move is spent (§13.2).
+		await h.drive(() => h.site.panelClick());
+		expect(h.executor()?.pendingMove()).toBeNull();
+
+		// Now the game "starts" on the site and the clock arrives — the same ply 0, republished.
+		await h.drive(() => h.site.setTimeControl({ baseMs: 300_000, incMs: 2_000 }));
+		await h.arrive();
+		expect(session.view().ply).toBe(0);
+		expect(await h.until(() => h.executor()?.pendingMove() === null, 60_000)).toBe(true);
+
+		await h.drive(() => h.site.clickIntoBoard());
+		await h.advance(60_000);
+		expect(h.site.board.lastMove()).toBeNull();
+	});
+
+	it("the assistant turned off between the hold and the release: nothing is searched or played", async () => {
+		// §4.4 inside `reconsider`. `stopDisabled` disarms the hand and drops the recommendation but
+		// leaves the state at `recommended`, so without the switch check the release would re-run the
+		// pipeline — an engine search, on the page, with the assistant off.
+		h = await createGameHarness({
+			manualStart: true,
+			settings: { automation: { autoMove: true } },
+		});
+		const release = holdAttach(h);
+		await openGameWithTheArmInFlight();
+		const session = h.session();
+		await h.arrive();
+		expect(await h.until(() => session.recommendation() !== null, 5_000)).toBe(true);
+
+		await h.patch({ enabled: false });
+		expect(session.recommendation()).toBeNull();
+		const searches = ownMoveSearches();
+
+		// The arm lands after the switch went off.
+		await h.drive(() => release());
+		await h.advance(10_000);
+		expect(ownMoveSearches()).toBe(searches);
+		expect(h.executor()?.pendingMove()).toBeNull();
+		expect(presses()).toHaveLength(0);
+		expect(h.site.board.lastMove()).toBeNull();
+	});
+
+	it("the released first move is re-planned for the wait, not collapsed to the floor", async () => {
+		// `rec.plan.deadlineMs` is in the past by definition once a move has been withheld, and
+		// `MoveExecutor.schedule` collapses such a plan to `EXECUTOR.minExecutionMs`. A first move that
+		// always lands a constant quarter-second after the click is a sharper machine signature than
+		// the ones §13.2 spends its effort removing, so the re-delivery re-plans.
+		h = await createGameHarness({
+			manualStart: true,
+			settings: { automation: { autoMove: true } },
+		});
+		await h.drive(() => {
+			h.site.hello();
+			h.site.startGame();
+		});
+		const session = h.session();
+		expect(await h.until(() => h.executor()?.isArmed() === true, 5_000)).toBe(true);
+
+		await h.drive(() => h.site.panelClick());
+		await h.arrive();
+		expect(await h.until(() => session.recommendation() !== null, 5_000)).toBe(true);
+		const planned = session.recommendation()?.plan.thinkMs ?? 0;
+		const arrivedAt = h.sim.now();
+		expect(await h.until(() => h.executor()?.pendingMove() === null, 60_000)).toBe(true);
+
+		// The owner is away far longer than the move was planned to take.
+		const AWAY_MS = 20_000;
+		await h.advance(AWAY_MS);
+		expect(AWAY_MS).toBeGreaterThan(planned);
+		const away = h.sim.now() - arrivedAt;
+		await h.drive(() => h.site.clickIntoBoard());
+
+		const plan = session.recommendation()?.plan;
+		expect(plan?.thinkMs ?? 0).toBeGreaterThanOrEqual(away);
+		expect(plan?.thinkMs ?? 0).toBeGreaterThan(EXECUTOR.minExecutionMs);
+		expect(await h.until(() => h.site.board.lastMove() !== null, 60_000)).toBe(true);
+	});
+
+	it("a re-delivery that throws is logged, not left as an unhandled rejection", async () => {
+		h = await createGameHarness({
+			manualStart: true,
+			settings: { automation: { autoMove: true } },
+		});
+		const release = holdAttach(h);
+		await openGameWithTheArmInFlight();
+		const session = h.session();
+		const executor = h.executor();
+		if (!executor) throw new Error("first-move: the session has no executor");
+		await h.arrive();
+		expect(await h.until(() => session.recommendation() !== null, 5_000)).toBe(true);
+
+		// The re-delivery is reached from an arm's `.then` and from `onCommand` / `onKeybind`, where a
+		// rejection would be unhandled; two of its triggers replaced synchronous code.
+		executor.schedule = (): void => {
+			throw new Error("schedule exploded");
+		};
+		const warnings: LogEntry[] = [];
+		const sink = (entry: LogEntry): void => {
+			if (entry.level === "warn") warnings.push(entry);
+		};
+		__setLogSinkOutsideServiceWorker(true);
+		setLogSink(sink);
+		try {
+			await h.drive(() => release());
+			await h.advance(1_000);
+			expect(
+				warnings.some(
+					(e) =>
+						typeof e.args[0] === "string" && e.args[0].includes("acting on the held position failed")
+				)
+			).toBe(true);
+		} finally {
+			clearLogSink(sink);
+			__setLogSinkOutsideServiceWorker(false);
+		}
+		// And the session is still usable: its state machine did not move to anything terminal.
+		expect(session.currentState()).toBe("live:my-turn:recommended");
+	});
+
+	it("the panel's play-now answers before the hand has finished", async () => {
+		// The reply must not be held for the length of a move: the outcome reaches the panel through
+		// the broadcaster (`lastExecution` + toast), not through this reply.
+		h = await createGameHarness({
+			manualStart: true,
+			settings: { automation: { autoMove: true } },
+		});
+		await h.drive(() => {
+			h.site.hello();
+			h.site.startGame();
+		});
+		const session = h.session();
+		expect(await h.until(() => h.executor()?.isArmed() === true, 5_000)).toBe(true);
+		await h.arrive();
+		expect(await h.until(() => session.recommendation() !== null, 5_000)).toBe(true);
+
+		const reply = (await h.drive(() => playNow())) as { success: boolean };
+		expect(reply.success).toBe(true);
+		// The hand has the move and is working on it; the board has not changed yet.
+		expect(h.site.board.lastMove()).toBeNull();
+		expect(await h.until(() => h.site.board.lastMove() !== null, 60_000)).toBe(true);
+	});
+
+	it("the page's focus state is known before any focus edge", async () => {
+		// `FocusGate.canExecute` answers `unfocused` while it has no reading at all, and the reading
+		// only ever came from the content script's `focus` message — which `installFocusEdges` used to
+		// send only on an actual edge. A tab that was already focused when the content script loaded,
+		// armed with the `Shift+A` shortcut (no focus edge, by design), therefore had every move
+		// skipped with nothing to release it.
+		h = await createGameHarness({ manualStart: true });
+		await h.drive(() => {
+			h.site.hello();
+			h.site.startGame();
+		});
+		// Nothing has blurred or focused the page: this is the install report alone.
+		expect((await h.snapshot()).focus.pageHasFocus).toBe(true);
+
+		const session = h.session();
+		await h.drive(() => void session.command("armAutoMove"));
+		expect(h.executor()?.isArmed()).toBe(true);
+		await h.arrive();
+		expect(await h.until(() => h.site.board.lastMove() !== null, 60_000)).toBe(true);
+		expect(h.site.board.lastMove()?.byMe).toBe(true);
+	});
+
+	it("disposing the session drops its pending re-delivery (C6)", async () => {
+		// A timer must not outlive the module that armed it. `reconsider` returns early on `disposed`
+		// so a leaked retry is invisible behaviourally — the timer itself is the assertion.
+		h = await createGameHarness({
+			manualStart: true,
+			settings: { automation: { autoMove: true } },
+		});
+		blankSearches(h, Number.POSITIVE_INFINITY);
+		await h.drive(() => {
+			h.site.hello();
+			h.site.startGame();
+		});
+		expect(await h.until(() => h.executor()?.isArmed() === true, 5_000)).toBe(true);
+
+		const before = h.sim.time.pendingTimers();
+		await h.arrive(); // the search answers nothing, so one re-delivery is armed
+		await h.advance(0);
+		const armed = h.sim.time.pendingTimers();
+		expect(armed).toBe(before + 1);
+
+		await h.drive(() => h.session().dispose());
+		expect(h.sim.time.pendingTimers()).toBe(before);
 	});
 
 	it("the owner played the first move by hand while the arm was in flight: nothing is dispatched", async () => {

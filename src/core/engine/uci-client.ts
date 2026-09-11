@@ -527,6 +527,12 @@ export class UciEngine {
 			// queue itself; a synchronous `transport.send` throw — the `void` sync API the client
 			// already defends against — does not, and neither does a throw from the option replay or
 			// `ucinewgame` below it. One settle here covers every way the handshake can end badly.
+			//
+			// As of 2026-09-10 the throwing leg is **unreachable through the shipped transport**: the
+			// only production `UciEngine` is built over `RemoteEngine` (`game-stack.ts`), whose `post`
+			// catches and logs rather than throwing. So this line keeps a contract rather than fixing a
+			// live hang — and it is the line that has to be here if `RemoteEngine.post` ever rethrows,
+			// or a second transport appears, because the hang it prevents is silent and permanent.
 			this.failQueued();
 			throw err;
 		} finally {

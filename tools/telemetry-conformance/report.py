@@ -377,6 +377,22 @@ def render(summary: dict[str, Any], paths: list[str]) -> tuple[str, bool]:
                 f"  [INFO] telemetry on {summary['telemetryRows']} of {summary['moves']} rows —"
                 f" a partially migrated export; everything below describes that subset only"
             )
+        # `focusFieldsSet == 0` stays a hard requirement, and on a game that exercised the owner's
+        # 2026-09-10 §13.4 ruling it WILL FAIL. That is expected, not a regression, and the band is
+        # deliberately left strict so nobody has to remember it.
+        #
+        # The ruling (docs/qa/focus-discipline.md §4) lets the *first* move of a game be played after
+        # the owner's own refocus, because at move one no later position can arrive to carry a second
+        # chance. `GameSession.onFocusEdge` records the edge in the move window before releasing, so
+        # that one move closes a window containing a focus edge: `DidFocusOnOwnTurn` is set and
+        # `LastFocusToMoveTime` is non-null, which is exactly what `focusFieldsSet` counts.
+        #
+        # Do not relax this to make the expected case pass. A carve-out here would also hide the
+        # unexpected cases — a focus field on move two, or on every move, which is the every-move
+        # relaxation the owner declined and Critical 1 of the Fix G review showed can happen by
+        # accident. The reading to apply instead: one failing game whose only focus field is on move
+        # one is the ruling working; anything else is a bug. `LastFocusToMoveTime` on that move is the
+        # number worth looking at — a constant floor there would be a machine signature.
         blur_ok = ac["blur"] <= BANDS["blurCountMax"] and ac["toggles"] == 0 and ac["focusFieldsSet"] == 0
         lines.append(
             f"  [{verdict(blur_ok)}] blur {ac['blur']} (max {BANDS['blurCountMax']}) · toggles {ac['toggles']}"

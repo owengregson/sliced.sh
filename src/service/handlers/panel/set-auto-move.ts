@@ -34,6 +34,13 @@ export function registerSetAutoMoveHandler(
 			// because only the session can build one — an `executor.schedule` with no `MoveContext` at
 			// all: no candidates, no legal destinations and no clock, so the §13.2 exploration had
 			// nothing to plan from.
+			//
+			// One deliberate widening comes with that. The old code only ever scheduled a *standing*
+			// recommendation (`state === "live:my-turn:recommended"`); `reconsider` also accepts
+			// `live:my-turn:analysing`, so arming from the panel while the last search produced nothing
+			// now starts a fresh one on our own clock. That is the point of having one mechanism — the
+			// arm is a hold being released, whichever hold it was — but it is a behaviour change on
+			// this path and not a refactor.
 			await deps.sources.session(msg.tabId)?.handArmed();
 		} finally {
 			deps.broadcaster.notify();

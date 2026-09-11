@@ -271,10 +271,13 @@ describe("content entry — feed", () => {
 	});
 	it("forwards every focus / blur / visibilitychange edge as { kind: 'focus' } (§13.4)", () => {
 		const { feed, dom } = boot("chesscom-live");
+		// One edge is already there: `installFocusEdges` reports the state at install, so the service
+		// worker knows whether the page has focus without waiting for the first edge (§13.4).
+		expect(feed.of("focus")).toHaveLength(1);
 		fire(dom, "window", "blur");
 		fire(dom, "window", "focus");
 		fire(dom, "document", "visibilitychange");
-		const edges = feed.of("focus");
+		const edges = feed.of("focus").slice(1);
 		expect(edges).toHaveLength(3);
 		for (const e of edges) {
 			expect(typeof e.hasFocus).toBe("boolean");

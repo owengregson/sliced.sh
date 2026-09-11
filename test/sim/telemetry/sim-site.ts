@@ -220,7 +220,11 @@ export async function createSimulatedSite(
 				},
 				{ window: win, now: sim.now }
 			);
-			port.post({ kind: "focus", hasFocus: true, visibility: "visible", at: sim.now() });
+			// No fabricated initial `focus` post here: the real `installFocusEdges` above reports the
+			// current state once at install, exactly as the content script does. Inventing the message
+			// in this fake made every simulated game start with focus *known*, which hid a production
+			// hold — `FocusGate.hasFocus` staying `null` for a tab that was focused the whole time —
+			// for as long as the fabrication existed.
 			const rest = SIM_TELEMETRY.restPoint;
 			port.post({ kind: "cursor", x: rest.x, y: rest.y, t: sim.now(), real: true });
 		},

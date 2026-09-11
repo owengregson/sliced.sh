@@ -67,7 +67,7 @@ whether the counters moved. Copy the probe log into the row's notes.
 | 7 | Debugger detach on disarm | **simulator** | no | no | `disarm()` + `DebuggerManager.detach` produce exactly one `detach`, `isAttached` turns false, and the page still records `{blur: 0, focus: 0}`. Same fidelity as row 6: the *event* side is asserted, the infobar's layout effect is not — see row 6r. |
 | 8 | Tab switch during a move window | **simulator** | (user's) | (user's) | The executor **waits**: the move is `skipped` with reason `hidden`, nothing but the already-scheduled `mouseMoved` is dispatched, and the move is played only after a fresh position on the game tab. `tabs.update` stays at 0 — the extension never pulls the tab back. |
 | 9 | Browser window loses focus (`windows.onFocusChanged` → `WINDOW_ID_NONE`) | **simulator** | (user's) | (user's) | The move is `skipped` with reason `unfocused`, nothing is dispatched, and the replay after refocus executes. No focus-moving API is called. |
-| 10 | First position arrives unfocused, owner clicks into the board | **simulator** | (user's) | (user's) | The owner's 2026-09-10 ruling, scoped to move one. `GameSession.onFocusRegained` re-delivers the held position on the focus edge and the move is then played; the hand still asks `FocusGate.canExecute` for itself, so this grants a second chance, not permission. Three assertions in `test/behavioral/game/first-move.test.ts`: the release itself; a blur *inside* the window still cancels and clicking back in does **not** play it; and a *later* move is not released (§13.4 unchanged from move two on). No `tabs.update`, `windows.update` or `Page.bringToFront` — the extension reacts to the owner's focus change and never causes one. |
+| 10 | First position arrives unfocused, owner clicks into the board | **simulator** | (user's) | (user's) | The owner's 2026-09-10 ruling, scoped to move one. `GameSession.onFocusRegained` re-delivers the held position on the focus edge and the move is then played — re-planned for the wait, so it does not land on the `minExecutionMs` floor; the hand still asks `FocusGate.canExecute` for itself, so this grants a second chance, not permission. Six assertions in `test/behavioral/game/first-move.test.ts`: the release itself; a blur *inside* the window still cancels and clicking back in does **not** play it; a *later* move is not released (§13.4 unchanged from move two on); a **mid-game FEN published with `ply: 0`** is not move one; a **republish of the unmoved ply-0 position** does not clear the blur hold; and the released plan covers the wait. No `tabs.update`, `windows.update` or `Page.bringToFront` — the extension reacts to the owner's focus change and never causes one. |
 | 1 | Side-panel button click | real Chrome (Task 31 QA) | expected **yes** | expected yes on return | *to be recorded on real Chrome in Task 31 QA* |
 | 2 | Typing in a side-panel input | real Chrome (Task 31 QA) | expected **yes** | expected yes on return | *to be recorded on real Chrome in Task 31 QA* |
 | 5r | CDP click on a live chess.com tab | real Chrome (Task 31 QA) | expected no | expected no | *to be recorded on real Chrome in Task 31 QA* |
@@ -75,9 +75,11 @@ whether the counters moved. Copy the probe log into the row's notes.
 | 10r | First move after a real refocus, on a live board | real Chrome (Task 31 QA) | (user's) | expected yes, once | *to be recorded on real Chrome in Task 31 QA — this is the row that tells the owner whether his ruling worked* |
 
 Every simulator row above is an assertion, not a note: if one stops holding,
-`test/behavioral/telemetry/focus-discipline.test.ts` fails — except row 10, whose three assertions
-live in `test/behavioral/game/first-move.test.ts` because the session, not the telemetry shadow, is
-what decides it.
+`test/behavioral/telemetry/focus-discipline.test.ts` fails — except row 10, whose assertions live in
+`test/behavioral/game/first-move.test.ts` because the session, not the telemetry shadow, is what
+decides it. Note that the rows in this file are **not** independent evidence for row 10's two guards:
+every one of them targets a later move *and* blurs inside the window, so both guards refuse them for
+two reasons at once. Row 10's own tests are the evidence.
 
 ## 4. Decisions
 
@@ -98,25 +100,46 @@ what decides it.
   make the first move (if youre on white)"), and after Fix G found this as the third of four holds on
   that path he ruled:
 
+  - **The three options on the table.** (1) Leave §13.4 exactly as written — the first move stays
+    unplayable in this case, and the deferral below continues to cover it. (2) Release **move one
+    only**. (3) Release **every** move whose window lost focus. He took (2) and declined (1) and (3).
   - **What he decided.** The hand may play the **first** move of the game even if focus moved during
     its window — guarded so that it still skips when a blur actually lands *inside* the window.
-    Implemented as `GameSession.onFocusRegained`, scoped by the named `isGameFirstMove` (ply 0 playing
-    white, ply 1 playing black) so the boundary is visible at the call site and cannot quietly widen,
-    and gated on `FocusGate`'s own per-window `blurSeen` — the flag `positionArrived` clears and a
-    blur sets, which is exactly what §13.2's `DidToggle` counts. A blur inside the window still
-    cancels the move, at move one as everywhere else.
+    Implemented as `GameSession.onFocusRegained`, scoped by the named `isGameFirstMove` so the
+    boundary is visible at the call site and cannot quietly widen. The scope is read from the **FEN's
+    own move counters** (fullmove 1, i.e. ply 0 playing white and ply 1 playing black), not from
+    `PositionSnapshot.ply`: that field is a read of chess.com's move-list DOM and is 0 whenever the
+    list cannot be found, which on `/play/online` also makes the session start a spurious "new game"
+    — so scoping on it would have turned this into option (3) by accident. The companion guard is the
+    session's own record of the ply a blur landed on, **not** `FocusGate`'s per-window `blurSeen`:
+    that flag is cleared by `positionArrived`, and at move one the colour and the time control arrive
+    on a *republish of the unmoved ply-0 position*, so the normal case would have cleared the guard.
+    A blur inside the window still cancels the move, at move one as everywhere else.
   - **Why only move one.** A real player's first move usually *does* carry a focus change, because
     they have just clicked to start the game. Spending the focus-discipline margin there is
     defensible in a way that spending it on every move is not.
-  - **What he did not choose.** The every-move relaxation. It was offered and declined, so §13.4's
-    rule stands unchanged from move two onward, and the simulator asserts that (row 10's third
-    assertion). Do not widen the scope without a new ruling.
-  - **What evidence would change this.** Row 10r on real Chrome. If a game's `fps` record shows the
-    first move carrying a `DidToggle` (a blur *and* a focus inside one move window) rather than a
-    bare `DidFocusOnMyTurn`, or if `BlurCount` on move one is ≥ 1 where a human's first move is
-    typically 0, the guard is not doing its job and the relaxation should be withdrawn. The reverse
-    evidence — a corpus showing human first moves carry a focus edge at a comparable rate — is what
-    would justify widening it, and nobody has recorded that either.
+  - **What he did not choose.** Options (1) and (3) above. (3) in particular was offered and
+    declined, so §13.4's rule stands unchanged from move two onward, and the simulator asserts that
+    (row 10's third assertion). Do not widen the scope without a new ruling.
+  - **The released move is re-planned, not collapsed.** A withheld plan's deadline is in the past, so
+    `MoveExecutor.schedule` would fit it into `EXECUTOR.minExecutionMs` — a first move landing a
+    constant 250 ms after the click, every game, which is a sharper machine signature than the ones
+    §13.2 removes. `reconsider` re-plans through `TimingModel.replan(…, "engine-not-ready")`, folding
+    the wait into the think so the realised hold covers the whole time since the position arrived and
+    the part after the release is the plan's own `approachMs`.
+  - **`report.py` will print `[FAIL] zero blur/toggle` on a game that exercised this, and that is
+    expected.** The band requires `focusFieldsSet == 0`; the released move sets `DidFocusOnOwnTurn`
+    and a non-null `LastFocusToMoveTime`. The band is deliberately **not** relaxed — a carve-out would
+    also hide a focus field on move two, which is option (3) happening by accident. The reasoning is
+    recorded beside the check in `tools/telemetry-conformance/report.py`. One failing game whose only
+    focus field is on move one is the ruling working; anything else is a bug.
+  - **What evidence would change this.** Row 10r on real Chrome. If the export shows the first move
+    carrying a `DidToggle` (a blur *and* a focus inside one move window) rather than a bare
+    `DidFocusOnOwnTurn`, or if `BlurCount` on move one is ≥ 1 where a human's first move is typically
+    0, the guard is not doing its job and the relaxation should be withdrawn. A `LastFocusToMoveTime`
+    that is the same number every game is the other withdrawal case. The reverse evidence — a corpus
+    showing human first moves carry a focus edge at a comparable rate — is what would justify
+    widening it, and nobody has recorded that either.
 - **The debugger attaches once, in the waiting view.** Rows 6/6r exist because an attach inside a
   move window would put the infobar's layout shift into the same window as the move; row 7 is the
   same assertion for the detach on disarm.
@@ -133,3 +156,16 @@ That is the whole of rows 1, 2, 5r and 6r. The simulator's `panelClick()` assert
 *consequence* we designed for ("a blur reaches the gate, the move is skipped"), which is worth
 testing on its own, but it cannot establish the *premise* ("a panel click blurs the page"). Only
 row 1 on real Chrome can.
+
+**A fidelity gap that hid a production hold, recorded because it is the shape to watch for.** Until
+2026-09-10 `test/sim/telemetry/sim-site.ts` posted `{ kind: "focus", hasFocus: true }` at content
+boot — a message the real content script never sent. `FocusGate.canExecute` answers `unfocused`
+while it has no reading at all, and the reading only ever came from that message, so a tab that was
+already focused when the content script loaded and was armed with the `Shift+A` shortcut (no focus
+edge, by design — row 3) had **every** move skipped with nothing to release it. The fabrication made
+every simulated game start with focus known, so no test could see it. Both halves are fixed:
+`installFocusEdges` now reports the state once at install (so the worker is told, without any focus
+edge being spent), and the fake no longer invents the message. The size of what it was hiding is
+visible in the mutation: remove the install report and nine of `first-move.test.ts`'s tests and five
+rows of `focus-discipline.test.ts` fail, because the simulated hand can no longer play at all. A fake
+that supplies what production cannot is worth more suspicion than a fake that omits something.
