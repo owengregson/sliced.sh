@@ -1,6 +1,7 @@
 // test/behavioral/panel/harness.ts — fakes for the panel ↔ SW behavioural tests (Task 28).
 // `GameSessionRegistry` does not exist yet (Task 30); these drive the broadcaster's
 // `SnapshotSources` read interfaces by hand.
+import type { MoveExecutor } from "@service/move-executor";
 import type {
 	ExecutorHandle,
 	HandSources,
@@ -21,6 +22,12 @@ export class FakeSession implements SessionSource {
 	game: SessionGameView;
 	rec: Recommendation | null = null;
 	opp: OpponentView | null = null;
+	/**
+	 * The hand this stand-in schedules on. `handArmed()` is the session's half of
+	 * `PANEL_SET_AUTO_MOVE` (the handler stopped doing it itself so that the gate and the
+	 * `MoveContext` live in one place), so a fake session has to play that part too.
+	 */
+	hand: Pick<MoveExecutor, "schedule" | "pendingMove" | "isRunning"> | null = null;
 
 	constructor(site: Site) {
 		this.game = {
@@ -58,6 +65,20 @@ export class FakeSession implements SessionSource {
 	}
 	opponent(): OpponentView | null {
 		return this.opp;
+	}
+	/** What the real `GameSession.handArmed()` does, with this fake's own state. */
+	handArmed(): Promise<void> {
+		const rec = this.rec;
+		const hand = this.hand;
+		if (
+			rec &&
+			hand &&
+			this.game.state === "live:my-turn:recommended" &&
+			hand.pendingMove() === null &&
+			!hand.isRunning()
+		)
+			hand.schedule(rec, rec.plan);
+		return Promise.resolve();
 	}
 }
 

@@ -73,6 +73,18 @@ export interface SessionSource {
 	recommendation(): Recommendation | null;
 	/** V2 §13.6 opponent identity with the derived target, once the adapter reported it. */
 	opponent(): OpponentView | null;
+	/**
+	 * The hand was armed from outside the session (`PANEL_SET_AUTO_MOVE`): act on whatever the
+	 * unarmed hand made the session withhold (§3.2 step 5).
+	 *
+	 * The session owns this, not the caller. Only it can answer whether a move is still owed for the
+	 * position it is holding (the §3.3 state, not the snapshot) and only it can build the
+	 * `MoveContext` the §13.2 exploration plans from — and a caller that scheduled for itself would
+	 * be a second hand-written copy of the "is a move already pending" gate, which is how a double
+	 * move gets shipped. Never rejects: the arm it follows has already succeeded, so a failure here
+	 * must not tell the panel the arm failed.
+	 */
+	handArmed(): Promise<void>;
 }
 
 /** The per-tab executor surface the panel handlers and the broadcaster use. */

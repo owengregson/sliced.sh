@@ -1102,6 +1102,33 @@ export class GameSession implements SessionSource {
 	}
 
 	/**
+	 * `reconsider`, guaranteed not to reject. Every trigger is either a fire-and-forget callback (an
+	 * arm's `.then`, the retry timer) or a command whose own result must not become an error because
+	 * the follow-up failed — and the two that replaced synchronous code (`arm`'s tail, `handArmed`)
+	 * would otherwise have turned a rejection into an unhandled one.
+	 */
+	private async reconsiderGuarded(reason: string): Promise<void> {
+		try {
+			await this.reconsider(reason);
+		} catch (error) {
+			log.warn("game-session: acting on the held position failed", {
+				tabId: this.deps.tabId,
+				reason,
+				error: errorMessage(error),
+			});
+		}
+	}
+
+	/**
+	 * `SessionSource`: the hand was armed from outside the session — the panel's auto-move toggle
+	 * (`PANEL_SET_AUTO_MOVE`). One gate, one `MoveContext`, one definition: the handler must not
+	 * schedule for itself.
+	 */
+	handArmed(): Promise<void> {
+		return this.reconsiderGuarded("the hand was armed");
+	}
+
+	/**
 	 * Arm the one re-delivery above, `TIMINGS.sessionRetryMs` from now. The budget
 	 * (`TIMINGS.sessionRetryMax`) is per position — `cancelInFlight` resets it — and when it is
 	 * spent the session says so at `warn` rather than sitting silently: the service worker's own
@@ -1122,7 +1149,7 @@ export class GameSession implements SessionSource {
 		this.retryAttempts += 1;
 		this.retryTimer = this.scheduler.setTimeout(() => {
 			this.retryTimer = null;
-			void this.reconsider(reason);
+			void this.reconsiderGuarded(reason);
 		}, TIMINGS.sessionRetryMs);
 	}
 
@@ -1299,9 +1326,10 @@ export class GameSession implements SessionSource {
 			this.deps.notify();
 			return;
 		}
-		const rec = this.rec;
-		if (rec && this.state === "live:my-turn:recommended" && !executor.pendingMove())
-			executor.schedule(rec, rec.plan, this.moveContext(rec));
+		// The recommendation this arm may have raced is acted on through the one re-delivery path, not
+		// a copy of it here: the gate, the `MoveContext` and the §3.3 answer all live in one place,
+		// so the manual arm, the automatic arm and the panel's toggle cannot drift apart.
+		await this.reconsiderGuarded("the hand was armed");
 		this.deps.notify();
 	}
 
@@ -1487,17 +1515,10 @@ export class GameSession implements SessionSource {
 		// manual arm (Shift+A) has always re-checked the recommendation it may have raced, while
 		// this path did not. At ply 0 as white that re-check is the only one there will ever be.
 		if (this.mayAct() && (wasArmed || this.deps.getSettings().automation.autoMove))
-			void executor
-				.arm()
-				.then(
-					() => this.reconsider("the hand finished arming"),
-					(error: unknown) => log.warn("game-session: re-arm failed", error)
-				)
-				.catch((error: unknown) =>
-					log.debug("game-session: the re-check after arming failed", {
-						error: errorMessage(error),
-					})
-				);
+			void executor.arm().then(
+				() => this.reconsiderGuarded("the hand finished arming"),
+				(error: unknown) => log.warn("game-session: re-arm failed", error)
+			);
 	}
 
 	private detachExecutor(): void {

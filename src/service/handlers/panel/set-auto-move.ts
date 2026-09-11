@@ -2,9 +2,10 @@
  * `PANEL_SET_AUTO_MOVE { tabId, armed }` → arm (attach the debugger now — waiting view, never
  * mid-game, §13.4 — and hand the pointer to the virtual hand) or disarm the tab's executor.
  * Arming while the session already holds a recommendation for my turn schedules it for
- * `plan.deadlineMs` (§3.2 step 5); later recommendations are the session's to schedule. An
- * attach failure — or `Settings.enabled` being off (§4.4) — rejects with the user-facing reason
- * (the panel reverts its toggle).
+ * `plan.deadlineMs` (§3.2 step 5) — through `SessionSource.handArmed()`, so the decision and the
+ * `MoveContext` stay in the one place that owns them; later recommendations are the session's too.
+ * An attach failure — or `Settings.enabled` being off (§4.4) — rejects with the user-facing reason
+ * (the panel reverts its toggle); `handArmed()` never rejects, because by then the arm has worked.
  */
 
 import { PANEL_COMMAND_ERRORS } from "@core/constants/cdp";
@@ -28,10 +29,12 @@ export function registerSetAutoMoveHandler(
 			// the stored settings are still unknown).
 			if (!mayAct(deps)) throw new Error(PANEL_COMMAND_ERRORS.assistantOff);
 			await executor.arm();
-			const session = deps.sources.session(msg.tabId);
-			const rec = session?.recommendation() ?? null;
-			if (rec && session?.view().state === "live:my-turn:recommended" && !executor.pendingMove())
-				executor.schedule(rec, rec.plan);
+			// The *session* acts on a recommendation this arm unblocked (§3.2 step 5). This handler used
+			// to do it itself, which meant a third hand-written copy of the double-move gate and —
+			// because only the session can build one — an `executor.schedule` with no `MoveContext` at
+			// all: no candidates, no legal destinations and no clock, so the §13.2 exploration had
+			// nothing to plan from.
+			await deps.sources.session(msg.tabId)?.handArmed();
 		} finally {
 			deps.broadcaster.notify();
 		}

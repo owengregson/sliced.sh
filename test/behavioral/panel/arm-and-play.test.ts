@@ -175,6 +175,9 @@ beforeEach(async () => {
 				previewScale: 0,
 				gameSeed: "game-1",
 			});
+			// `PANEL_SET_AUTO_MOVE` asks the *session* to act on a recommendation the arm unblocked
+			// (one gate, one `MoveContext`), so the stand-in session needs the hand it schedules on.
+			session.hand = executor;
 			router = installMessageRouter();
 			sources = fakeSources({
 				sessions: new Map([[tabId, session]]),
