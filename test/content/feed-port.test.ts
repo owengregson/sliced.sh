@@ -158,23 +158,33 @@ describe("FeedPort", () => {
 			{ kind: "focus", hasFocus: true, visibility: "visible", at: 9 },
 		]);
 		// the new port dies at once (SW still gone): Chrome loses what was flushed into it, so the
-		// next reconnect gets hello + last position again — and the last focus reading with them.
+		// next reconnect gets hello and the last position again — with the last focus reading between
+		// them.
 		//
-		// That last entry is a deliberate change (2026-09-10). This assertion used to read
+		// That middle entry is a deliberate change (2026-09-10). This assertion used to read
 		// `[hello, newer]`, i.e. it asserted that a focus reading was *not* replayed. It has to be:
 		// `FocusGate` holds the page's focus state in the service worker's memory, nothing can ask the
 		// page for it, and `canExecute` answers `unfocused` while it holds none — so a restarted worker
 		// on a tab the owner has not blurred since load would skip every move with nothing to release
-		// it. Everything the old assertion checked is still checked: `hello` and the last position
-		// still go first, and a reading queued during the outage still wins over the remembered one
-		// (the test below).
+		// it. Everything the old assertion checked is still checked: `hello` still goes first, the last
+		// position still precedes the outage queue, and a reading queued during the outage still wins
+		// over the remembered one (the test below).
 		rt.ports[1]?.emitDisconnect();
 		scheduler.fire();
 		expect(rt.ports[2]?.posted).toEqual([
 			hello,
-			newer,
 			{ kind: "focus", hasFocus: true, visibility: "visible", at: 9 },
+			newer,
 		]);
+		// …and the focus reading goes *before* the position, which is not cosmetic: a first reading
+		// fires a focus edge in the reconnected worker, and after the position that edge would land in
+		// the move window the position opened — stamping the §13.2 focus fields on that move, and at
+		// ply 0 satisfying the §13.4 first-move release with no owner action at all.
+		const replayed = (rt.ports[2]?.posted ?? []) as GamePortMessage[];
+		const focusAt = replayed.findIndex((m) => m.kind === "focus");
+		const positionAt = replayed.findIndex((m) => m.kind === "position");
+		expect(focusAt).toBeGreaterThanOrEqual(0);
+		expect(focusAt).toBeLessThan(positionAt);
 		feed.post({ kind: "focus", hasFocus: false, visibility: "hidden", at: 3 });
 		expect(rt.ports[2]?.posted).toHaveLength(4);
 		feed.dispose();

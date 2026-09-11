@@ -16,6 +16,13 @@
  * since then, a torn-down worker would come back knowing nothing and never be told: every move
  * skipped, nothing to release it. Replaying the last reading closes that, and it is narrow — a newer
  * reading queued during the outage wins.
+ *
+ * It is replayed **before** the position, not after. A first reading fires a focus edge in the
+ * reconnected worker, and an edge that arrives after the position lands inside the move window the
+ * position opened: it stamps the §13.2 focus fields on that move, and at ply 0 it satisfies the
+ * §13.4 first-move release with no owner action at all. Sent first, the edge finds no window and no
+ * position, and all it does is what it is for — give `FocusGate.canExecute` its reading before the
+ * move is scheduled.
  */
 
 import type { GamePortCommand, GamePortMessage } from "@core/constants/messages";
@@ -54,8 +61,15 @@ export function createFeedPort(options: FeedPortOptions): FeedPort {
 			const pending = outbox;
 			outbox = [];
 			if (lastHello) port.post(lastHello);
-			if (lastPosition) port.post(lastPosition);
+			// Before the position, and that order is load-bearing (see the header). The reconnected
+			// worker's `FocusGate` has no reading, so this message is a *first* reading and fires a
+			// focus edge. Delivered after the position it would land inside the move window the
+			// position just opened — stamping `DidFocusOnOwnTurn` and `LastFocusToMoveTime` on that
+			// move — and at ply 0 it would release the owner's first-move relaxation (§13.4) with no
+			// owner action at all. Delivered before it, the edge finds no window and no snapshot, and
+			// the gate simply has its reading in time for the move the position schedules.
 			if (lastFocus && !pending.some((m) => m.kind === "focus")) port.post(lastFocus);
+			if (lastPosition) port.post(lastPosition);
 			for (const msg of pending) port.post(msg);
 		},
 		...(options.scheduler ? { scheduler: options.scheduler } : {}),

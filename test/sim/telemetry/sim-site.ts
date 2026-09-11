@@ -241,6 +241,10 @@ export async function createSimulatedSite(
 			ply: board.ply(),
 			sideToMove: board.chess.turn() as Color,
 			myColor,
+			// Stated, like the real adapter states it: this FEN is the board's own, so it is exact. The
+			// service worker treats an *unstated* provenance as untrusted (§13.4), and a fake that left
+			// it out would be exercising a path production never takes.
+			approximate: false,
 			clocks: { w: { ms: clocks.w, running: true }, b: { ms: clocks.b, running: true } },
 			capturedAt: sim.now(),
 		};

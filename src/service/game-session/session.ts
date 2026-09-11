@@ -38,11 +38,12 @@
  * attached while the switch is off buys nothing and only leaves the infobar).
  */
 
-import { parseFen, plyOf } from "@core/chess/fen";
+import { type FenParts, parseFen, plyOf } from "@core/chess/fen";
 import { applyMoves, legalMoves, uciToSan } from "@core/chess/san";
 import { sanToSpeech } from "@core/chess/san-speech";
 import { isSquare } from "@core/chess/squares";
 import { chromeLocalGet, chromeLocalSet } from "@core/chrome/storage";
+import { CHESS_START_FEN } from "@core/constants/chess";
 import { LIMITS } from "@core/constants/limits";
 import type { GamePortCommand, GamePortMessage } from "@core/constants/messages";
 import { LOCAL_KEYS } from "@core/constants/storage-keys";
@@ -150,6 +151,30 @@ function isScoredMove(chosen: ChosenMove): boolean {
  * the same cross-check.
  */
 const FIRST_MOVE_LAST_PLY = 1;
+
+/** Placement field of the start position — the only one a fullmove-1 white-to-move FEN can carry. */
+const START_PLACEMENT = CHESS_START_FEN.split(" ")[0];
+
+/**
+ * Does this FEN's **placement** agree with its claim to be the game's first move? The counters say
+ * fullmove 1; the pieces have to say so too.
+ *
+ * This is deliberately independent of where the FEN came from. `PositionSnapshot.approximate` is a
+ * *provenance* claim — "the page gave us this" — and the predicate's safety would otherwise be the
+ * conjunction of three adapter code paths staying honest, one of which is already weaker than it
+ * reads: the SAN-replay source is uncorroborated on a canvas board (its only test there is
+ * `ply > 0`), so one parseable move-list node on a mid-game board can publish fullmove 1 with
+ * `approximate: false`. A placement check cannot be fooled by any of that: at fullmove 1 the board is
+ * either untouched (white to move) or one legal white move from untouched (black to move).
+ */
+function isFirstMovePlacement(parts: FenParts): boolean {
+	if (parts.turn === "w") return parts.placement === START_PLACEMENT;
+	for (const uci of legalMoves(CHESS_START_FEN)) {
+		const after = applyMoves(CHESS_START_FEN, [uci]);
+		if (after !== null && after.split(" ")[0] === parts.placement) return true;
+	}
+	return false;
+}
 
 /** `t_premove ~ U(0, maxS)` — §7.4 / Appendix D §3a.5 (120 ms). */
 const PREMOVE_WINDOW_MS = TIMING_CONSTANTS.premove.maxS * MS_PER_S;
@@ -695,9 +720,14 @@ export class GameSession implements SessionSource {
 		// the reconnect replay, is dropped here, and the whole first move is planned `untimed` —
 		// classical motor, no premoves, a 7.5 s think in a 1+0 game.
 		const tc = snapshot.timeControl;
+		// `approximate` belongs in the key for the same reason the colour and the time control do: it is
+		// information about the position that can arrive *after* the first reading of it (the bridge
+		// answers and the adapter republishes an exact FEN for the same ply), and it now gates a §13.4
+		// permission. Without it the republish is indistinguishable from the reconnect replay, is
+		// dropped here, and the first reading's provenance sticks for the whole position.
 		const key = `${snapshot.gameId}|${snapshot.ply}|${snapshot.fen}|${snapshot.myColor ?? "?"}|${
 			tc ? `${tc.baseMs}+${tc.incMs}` : "?"
-		}`;
+		}|${snapshot.approximate === true ? "~" : "="}`;
 		if (key === this.lastPositionKey) return; // the reconnect replay (Task 21)
 		if (
 			this.game?.gameId === snapshot.gameId &&
@@ -1167,8 +1197,17 @@ export class GameSession implements SessionSource {
 		// `report.py`'s think-time bands read. The clock in the snapshot is frozen at the moment the
 		// position was read, so it *is* the bound; clamp the elapsed time the model is told about
 		// rather than the plan it returns, and every window the plan carries stays consistent.
+		//
+		// `affordable` is deliberately not floored at 0. A clock shorter than the approach makes it
+		// negative, which tells the model the move started *after* now — and that cannot change the
+		// answer, because `engine-not-ready` returns `max(plan.thinkMs, spent + approach)` and
+		// `approachMs <= thinkMs` by construction, so the `plan.thinkMs` term wins for any negative
+		// `spent`. Measured identical (think and window sum, to the millisecond) with and without a
+		// floor at clocks of 200 ms and 50 ms against a 20 s wait. A floor here would be a line no
+		// mutation could kill.
+		// An untimed game has no clock to exceed, so nothing is clamped and the whole wait folds in.
 		const startedAt = rec.plan.deadlineMs - rec.plan.thinkMs;
-		const affordable = Math.max(0, ctx.myClockMs - rec.plan.window.approachMs);
+		const affordable = ctx.myClockMs - rec.plan.window.approachMs;
 		const nowMs = ctx.myClockMs > 0 ? Math.min(ctx.nowMs, startedAt + affordable) : ctx.nowMs;
 		return { ...rec, plan: timing.replan(rec.plan, { ...ctx, nowMs }, "engine-not-ready") };
 	}
@@ -1758,14 +1797,19 @@ export class GameSession implements SessionSource {
 	 * every move — which is the version the owner explicitly did not choose.
 	 */
 	private isGameFirstMove(snapshot: PositionSnapshot): boolean {
-		// An approximate FEN is the adapter's own reconstruction from the DOM placement, and its
-		// fullmove counter is `Math.floor(ply / 2) + 1` — the very field this predicate stopped
-		// trusting. A mid-game placement with an unreadable move list therefore *can* be published as
-		// fullmove 1, so reading the counter is only safe when the page itself supplied it.
-		if (snapshot.approximate === true) return false;
+		// Provenance, and it fails **closed**: only an explicit `false` counts. An approximate FEN is
+		// the adapter's own reconstruction from the DOM placement, and its fullmove counter is
+		// `Math.floor(ply / 2) + 1` — the very field this predicate stopped trusting — so a mid-game
+		// placement with an unreadable move list can be published as fullmove 1. A snapshot that does
+		// not state its provenance at all is not evidence either: absent must not mean trusted on a
+		// §13.4 permission, or a future producer inherits the relaxation by omission.
+		if (snapshot.approximate !== false) return false;
 		const parts = parseFen(snapshot.fen);
 		// A FEN we cannot parse is not evidence of anything: refuse rather than widen.
-		return parts !== null && plyOf(parts) <= FIRST_MOVE_LAST_PLY;
+		if (parts === null || plyOf(parts) > FIRST_MOVE_LAST_PLY) return false;
+		// And the counters have to be corroborated by the pieces (`isFirstMovePlacement`): provenance
+		// is a claim about the source, not a consistency check on the position.
+		return isFirstMovePlacement(parts);
 	}
 
 	/**

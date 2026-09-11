@@ -110,6 +110,8 @@ function postPosition(over: {
 	ply?: number;
 	fen?: string;
 	approximate?: boolean;
+	/** Omit the provenance field entirely, as a producer that never states it would. */
+	statelessProvenance?: boolean;
 	clockMs?: number;
 }): void {
 	const board = h.site.board;
@@ -124,7 +126,7 @@ function postPosition(over: {
 			ply: over.ply ?? board.ply(),
 			sideToMove: sideToMove(fen) ?? board.myColor,
 			myColor: board.myColor,
-			...(over.approximate === undefined ? {} : { approximate: over.approximate }),
+			...(over.statelessProvenance === true ? {} : { approximate: over.approximate ?? false }),
 			clocks: { w: { ms: clockMs, running: true }, b: { ms: clockMs, running: true } },
 			capturedAt: h.sim.now(),
 		},
@@ -710,11 +712,13 @@ describe("game session: the first move as white (Fix G)", () => {
 		expect(h.site.board.lastMove()).toBeNull();
 	});
 
-	it("the released first move is re-planned for the wait, not collapsed to the floor", async () => {
-		// `rec.plan.deadlineMs` is in the past by definition once a move has been withheld, and
-		// `MoveExecutor.schedule` collapses such a plan to `EXECUTOR.minExecutionMs`. A first move that
-		// always lands a constant quarter-second after the click is a sharper machine signature than
-		// the ones §13.2 spends its effort removing, so the re-delivery re-plans.
+	it("the released first move's recorded think covers the wait, not the floor", async () => {
+		// `rec.plan.deadlineMs` is in the past by definition once a move has been withheld, so
+		// `MoveExecutor.schedule` fits the plan's `thinkMs` down to `EXECUTOR.minExecutionMs` and the
+		// §8.6 row would report a move that waited twenty seconds as a 250 ms think. The re-plan makes
+		// that record truthful. It does **not** change the interval the page observes after the release
+		// — that is the hand's motor path, measured at 590–1010 ms with the re-plan and without it — so
+		// this test asserts the record and nothing else.
 		h = await createGameHarness({
 			manualStart: true,
 			settings: { automation: { autoMove: true } },
@@ -1004,6 +1008,176 @@ describe("game session: the first move as white (Fix G)", () => {
 		expect(await h.drive(() => session.playNowRequested())).toBe(false);
 		await h.advance(10_000);
 		expect(h.site.board.chess.history()).toEqual(played);
+	});
+
+	it("an untimed game folds the whole wait into the record: there is no clock to exceed", async () => {
+		// The clock cap's other half. With no clock the bound does not apply, and clamping anyway would
+		// record the original plan — 104 ms — for a move that waited twenty-five seconds.
+		h = await createGameHarness({
+			manualStart: true,
+			timeControl: null,
+			settings: { automation: { autoMove: true } },
+		});
+		await h.drive(() => {
+			h.site.hello();
+			h.site.startGame();
+		});
+		const session = h.session();
+		expect(await h.until(() => h.executor()?.isArmed() === true, 5_000)).toBe(true);
+
+		await h.drive(() => h.site.panelClick());
+		await h.arrive(null, { w: 0, b: 0 }); // an untimed game reports no clock at all
+		expect(await h.until(() => session.recommendation() !== null, 5_000)).toBe(true);
+		const planned = session.recommendation()?.plan.thinkMs ?? 0;
+		expect(await h.until(() => h.executor()?.pendingMove() === null, 60_000)).toBe(true);
+
+		const AWAY_MS = 25_000;
+		await h.advance(AWAY_MS);
+		expect(AWAY_MS).toBeGreaterThan(planned);
+		await h.drive(() => h.site.clickIntoBoard());
+		expect(session.recommendation()?.plan.thinkMs ?? 0).toBeGreaterThanOrEqual(AWAY_MS);
+	});
+
+	it("a mid-game placement carrying first-move counters is not move one", async () => {
+		// The placement cross-check, independent of provenance. `approximate: false` is a claim about
+		// where the FEN came from, and one of the adapter's sources is uncorroborated on a canvas board
+		// (its only test there is `ply > 0`), so a mid-game board can publish fullmove 1 with the flag
+		// clear. The pieces cannot lie about it: at fullmove 1 the board is untouched, or one legal
+		// white move from untouched.
+		h = await createGameHarness({
+			manualStart: true,
+			settings: { automation: { autoMove: true } },
+		});
+		await h.drive(() => {
+			h.site.hello();
+			h.site.startGame();
+		});
+		const session = h.session();
+		const executor = h.executor();
+		if (!executor) throw new Error("first-move: the session has no executor");
+		expect(await h.until(() => executor.isArmed(), 5_000)).toBe(true);
+		// The posted FEN is not the board's, so a dispatched move would be refused by the hand's own
+		// occupancy check and never reach the page: the schedule is the observable, not the press.
+		let schedules = 0;
+		const realSchedule = executor.schedule.bind(executor);
+		executor.schedule = (rec, plan, ctx): void => {
+			schedules += 1;
+			realSchedule(rec, plan, ctx);
+		};
+
+		await h.drive(() => h.site.panelClick());
+		// A real mid-game placement with `fullmove 1` and `approximate: false` — exactly what the
+		// uncorroborated replay source can emit.
+		const midGame = "rnbqkbnr/pp3ppp/2p5/3pp3/4P3/3P1N2/PPP2PPP/RNBQKB1R w KQkq - 0 1";
+		await h.drive(() => postPosition({ fen: midGame, ply: 0, approximate: false }));
+		expect(await h.until(() => session.recommendation() !== null, 5_000)).toBe(true);
+		expect(await h.until(() => executor.pendingMove() === null, 60_000)).toBe(true);
+		const before = schedules;
+		expect(before).toBeGreaterThan(0); // the position itself was acted on
+
+		await h.drive(() => h.site.clickIntoBoard());
+		await h.advance(60_000);
+		expect(schedules).toBe(before); // …and the click released nothing
+	});
+
+	it("black's own first move is move one", async () => {
+		// The other side of the cross-check, and the side nothing asserted before: playing black, our
+		// first move is ply 1 / fullmove 1 with black to move, and its placement is one legal white move
+		// from the start. The ruling covers it.
+		h = await createGameHarness({
+			manualStart: true,
+			myColor: "b",
+			settings: { automation: { autoMove: true } },
+		});
+		await h.drive(() => {
+			h.site.hello();
+			h.site.startGame();
+		});
+		const session = h.session();
+		expect(await h.until(() => h.executor()?.isArmed() === true, 5_000)).toBe(true);
+
+		await h.drive(() => h.site.panelClick());
+		await h.arrive("e2e4"); // white opens; our first move is now due
+		expect(await h.until(() => session.recommendation() !== null, 5_000)).toBe(true);
+		expect(await h.until(() => h.executor()?.pendingMove() === null, 60_000)).toBe(true);
+		expect(h.site.board.chess.history()).toEqual(["e4"]);
+
+		await h.drive(() => h.site.clickIntoBoard());
+		expect(await h.until(() => h.site.board.chess.history().length === 2, 60_000)).toBe(true);
+		expect(h.site.board.lastMove()?.byMe).toBe(true);
+
+		// And the negative the black branch exists for — the half the reviewer's contrived path actually
+		// reaches (no bridge, one parseable move-list node, playing black): fullmove 1 with black to move
+		// on a *mid-game* placement, which is not one legal white move from the start.
+		const executor = h.executor();
+		if (!executor) throw new Error("first-move: the session has no executor");
+		let schedules = 0;
+		const realSchedule = executor.schedule.bind(executor);
+		executor.schedule = (rec, plan, ctx): void => {
+			schedules += 1;
+			realSchedule(rec, plan, ctx);
+		};
+		const midGameBlack = "rnbqkbnr/pp3ppp/2p5/3pp3/4P3/3P1N2/PPP2PPP/RNBQKB1R b KQkq - 0 1";
+		await h.drive(() => h.site.panelClick());
+		await h.drive(() => postPosition({ fen: midGameBlack, ply: 1, approximate: false }));
+		await h.advance(5_000);
+		const before = schedules;
+		await h.drive(() => h.site.clickIntoBoard());
+		await h.advance(60_000);
+		expect(schedules).toBe(before);
+	});
+
+	it("a snapshot that does not state its provenance is not move one", async () => {
+		// Fail closed: absent is not the same as exact. A producer that never states where its FEN came
+		// from must inherit the safe answer, not the permission.
+		h = await createGameHarness({
+			manualStart: true,
+			settings: { automation: { autoMove: true } },
+		});
+		await h.drive(() => {
+			h.site.hello();
+			h.site.startGame();
+		});
+		const session = h.session();
+		expect(await h.until(() => h.executor()?.isArmed() === true, 5_000)).toBe(true);
+
+		await h.drive(() => h.site.panelClick());
+		await h.drive(() => postPosition({ statelessProvenance: true }));
+		expect(await h.until(() => session.recommendation() !== null, 5_000)).toBe(true);
+		expect(await h.until(() => h.executor()?.pendingMove() === null, 60_000)).toBe(true);
+
+		await h.drive(() => h.site.clickIntoBoard());
+		await h.advance(60_000);
+		expect(h.site.board.lastMove()).toBeNull();
+	});
+
+	it("a republish that differs only in provenance is not deduped away", async () => {
+		// `approximate` is in the feed's dedupe key for the same reason the colour and the clock are: the
+		// bridge can answer *after* the first reading of a position and the adapter republishes the same
+		// ply with an exact FEN. Dropped as a replay, the first reading's provenance would stick — and it
+		// now gates a §13.4 permission.
+		h = await createGameHarness({
+			manualStart: true,
+			settings: { automation: { autoMove: true } },
+		});
+		await h.drive(() => {
+			h.site.hello();
+			h.site.startGame();
+		});
+		const session = h.session();
+		expect(await h.until(() => h.executor()?.isArmed() === true, 5_000)).toBe(true);
+
+		await h.drive(() => h.site.panelClick());
+		// The DOM reading first — a reconstruction, so no release…
+		await h.drive(() => postPosition({ approximate: true }));
+		expect(await h.until(() => session.recommendation() !== null, 5_000)).toBe(true);
+		expect(await h.until(() => h.executor()?.pendingMove() === null, 60_000)).toBe(true);
+		// …then the bridge answers and the same ply is republished as exact.
+		await h.drive(() => postPosition({ approximate: false }));
+		expect(await h.until(() => h.executor()?.pendingMove() === null, 60_000)).toBe(true);
+
+		await h.drive(() => h.site.clickIntoBoard());
+		expect(await h.until(() => h.site.board.lastMove() !== null, 60_000)).toBe(true);
 	});
 
 	it("the owner played the first move by hand while the arm was in flight: nothing is dispatched", async () => {
