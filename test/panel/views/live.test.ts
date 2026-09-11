@@ -269,6 +269,18 @@ describe("move card states (§5.6)", () => {
 		expect(card.dataset.state).toBe("thinking");
 		expect(card.querySelector(".sl-move__header")?.textContent).toBe(COPY.move.thinking);
 
+		// The colour's third value: the page has not said which side we are, or the adapter withdrew the
+		// answer it gave after the site contradicted it. The card must not name a side — `headerYours`
+		// would read a null colour as white — and must not pretend a move is coming, because with no
+		// colour the session plans nothing at all (review R2-1).
+		h.store.emit(liveSnapshot({ myColor: null, recommendation: null }));
+		expect(card.dataset.state).toBe("colour-unknown");
+		expect(card.querySelector(".sl-move__header")?.textContent).toBe(COPY.waiting.reading);
+		expect(card.querySelector(".sl-move__san")?.textContent).toBe("");
+		// no inert control offered either: the play button stays disabled, as it is for every state
+		// that is not our move
+		expect(playButton().getAttribute("aria-disabled")).toBe("true");
+
 		h.store.emit(
 			liveSnapshot({
 				autoMove: { armed: true, scheduledAt: Date.now() + THINK_MS, plan: makeRecommendation().plan },

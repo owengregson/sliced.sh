@@ -714,12 +714,18 @@ export class GameSession implements SessionSource {
 		this.site = snapshot.site;
 		// The colour can arrive after `gameStarted` did (the bridge answers `getPlayingAs()` a moment
 		// after the board appears), and the panel reads the game's copy when the snapshot has none.
-		// …and it can arrive *wrong* and be corrected later (`AdapterBase.apply` republishes an
-		// authoritative correction on an unmoved position), so this tracks the snapshot rather than
-		// filling a blank once: a `"w" → "b"` correction that left `GameMeta.myColor` at `"w"` would
-		// leave the panel's fallback, the game-over attribution and anything else that reads the
-		// game's copy stating the colour the owner is not playing.
-		if (this.game && snapshot.myColor !== null && this.game.myColor !== snapshot.myColor)
+		// …and it can arrive *wrong* and be corrected later, or be **withdrawn** (`AdapterBase.apply`
+		// republishes an authoritative correction on an unmoved position, and withholds the colour
+		// altogether once a game has spent its corrections), so this tracks the snapshot exactly rather
+		// than filling a blank once.
+		//
+		// Withdrawal included, which is the whole point of having no `!== null` test here: `view()`
+		// falls back to this copy, so keeping the old colour through a withdrawal left the panel
+		// telling the owner "Your move · white" — the very colour the site had just contradicted —
+		// beside an assistant that had gone silent. A confident wrong statement next to an unexplained
+		// silence is the worst of the two, and the refusal only being in the log is no answer: the log
+		// is not what the owner reads (review R2-1).
+		if (this.game && this.game.myColor !== snapshot.myColor)
 			this.game = { ...this.game, myColor: snapshot.myColor };
 		this.cancelInFlight();
 		const previous = this.snapshot;

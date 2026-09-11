@@ -242,3 +242,28 @@ describe("game session: the contradiction is read from the FEN's turn field, not
 		expect(highlights()).toEqual([]);
 	});
 });
+
+describe("game session: a withdrawn colour is withdrawn from the panel too", () => {
+	it("reports no colour after a withdrawal, instead of the one the site contradicted", async () => {
+		// The adapter withholds the colour once a game has spent its corrections and the site
+		// contradicts it again (`LIMITS.colourCorrectionsPerGame`): the snapshot then carries
+		// `myColor: null` and `mayActOn` holds on it, so the assistant does nothing. What the *panel*
+		// says has to follow, and `view()` falls back to the session's per-game copy — so a copy that
+		// kept the old value left the owner reading "Your move · white", the colour the site had just
+		// contradicted, beside an assistant that had gone quiet (review R2-1).
+		await boot("b");
+		await h.drive(() => h.site.post({ kind: "position", snapshot: position({ myColor: "w" }) }));
+		expect(await h.until(() => h.session().recommendation() !== null, 10_000)).toBe(true);
+		expect(h.session().view().myColor).toBe("w");
+		expect(gameMetaColor()).toBe("w");
+
+		// the withheld reading: same game, same ply, same FEN, no colour
+		await h.drive(() => h.site.post({ kind: "position", snapshot: position({ myColor: null }) }));
+		await h.advance(5_000);
+		expect(h.session().view().myColor).toBeNull();
+		expect(gameMetaColor()).toBeNull();
+		// …and it really is a hold, not a colour swap
+		expect(h.session().recommendation()).toBeNull();
+		expect((await h.snapshot()).session.myColor).toBeNull();
+	});
+});

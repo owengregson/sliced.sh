@@ -30,6 +30,8 @@ const START = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 const WEBGL_FEN = "rnbqkbnr/pp2pppp/2p5/8/4p3/3P1P2/PPP3PP/RNBQKBNR w KQkq - 0 4";
 /** The capture's own position, after white's 4.dxe4 — a move landing on the mid-game fixture. */
 const AFTER_DXE4 = "rnbqkbnr/pp2pppp/2p5/8/4P3/5P2/PPP3PP/RNBQKBNR b KQkq - 0 4";
+/** …and after 4…Nf6 — a second move, so a second key change. */
+const AFTER_NF6 = "rnbqkb1r/pp2pppp/2p2n2/8/4P3/5P2/PPP3PP/RNBQKBNR w KQkq - 1 5";
 const WEBGL_RECT: LayoutRect = { x: 120, y: 80, width: 704, height: 704 };
 const LOBBY_URL = "https://www.chess.com/play/online";
 const SETTLE = 160;
@@ -407,5 +409,39 @@ describe("ChessComAdapter — reconciling as it reads keeps the dedupe key stabl
 		expect(adapter.readSnapshot()?.fen).toBe(fen);
 		expect(adapter.readSnapshot()?.sideToMove).toBe("w");
 		expect(seen).toEqual([]);
+	});
+});
+
+describe("ChessComAdapter — losing sight of the colour is not evidence that it changed", () => {
+	it("a momentary null does not clear the known colour, so a later flip is refused not learned", async () => {
+		// `statedColour`'s last line — "including `null`: losing sight of the clocks for a frame is not
+		// evidence that the colour changed" — is load-bearing, and deleting it reopens R-2 in two steps.
+		// If a withdrawn `null` were published, `lastColor` would clear, and the flipped board would then
+		// be *learned* rather than refused: a black colour stated for a game played as white.
+		//
+		// Canvas board, bridge answering a FEN but no `mode`, so the render ladder answers. Owner white.
+		let fen = WEBGL_FEN;
+		const { dom, adapter, bridge } = boot(() => ({ fen }), { bottom: "w", active: "w" });
+		await waitFor(() => adapter.readSnapshot()?.myColor === "w");
+		const seen: AdapterPositionSnapshot[] = [];
+		adapter.onPositionChange((s) => seen.push(s));
+
+		// Step 1: the clocks lose their colour classes in the same beat as a real move, so the only
+		// colour evidence on the page is gone and the position has changed.
+		dom.query(".clock-bottom").setAttribute("class", "clock-component clock-bottom");
+		dom.query(".clock-top").setAttribute("class", "clock-component clock-top");
+		fen = AFTER_DXE4;
+		bridge.emit("move", { fen });
+		await waitFor(() => seen.length > 0, 2_000);
+		expect(adapter.getMyColor()).toBeNull(); // the page really says nothing
+		expect(seen.at(-1)?.myColor).toBe("w"); // and the session keeps what it was told
+
+		// Step 2: the clocks come back — with the board turned round — and another move lands.
+		setClocks(dom, "b", "w");
+		fen = AFTER_NF6;
+		bridge.emit("move", { fen });
+		await waitFor(() => seen.length > 1, 2_000);
+		expect(adapter.getMyColor()).toBe("b"); // the render now reads black…
+		expect(seen.map((s) => s.myColor)).toEqual(["w", "w"]); // …and was never stated
 	});
 });
