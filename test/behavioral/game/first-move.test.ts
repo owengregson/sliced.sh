@@ -644,6 +644,37 @@ describe("game session: the first move as white (Fix G)", () => {
 		expect(h.site.board.lastMove()).toBeNull();
 	});
 
+	it("a republished ply does not release the blur hold either", async () => {
+		// The blur is remembered against the FEN, not the ply, for the same reason the scope is: the
+		// adapter's ply can come back wrong on a position that has not moved, and a lying ply would
+		// make the remembered blur stop matching and release a move that must stay held.
+		h = await createGameHarness({
+			manualStart: true,
+			settings: { automation: { autoMove: true } },
+		});
+		await h.drive(() => {
+			h.site.hello();
+			h.site.startGame();
+		});
+		const session = h.session();
+		expect(await h.until(() => h.executor()?.isArmed() === true, 5_000)).toBe(true);
+
+		await h.arrive();
+		expect(await h.until(() => session.recommendation() !== null, 5_000)).toBe(true);
+		await h.drive(() => h.site.panelClick()); // a blur inside the first move's window
+		expect(h.executor()?.pendingMove()).toBeNull();
+
+		// The same start position, republished with a different ply — still fullmove 1, so still
+		// move one as far as the ruling's scope is concerned.
+		await h.drive(() => postPosition({ ply: 1 }));
+		expect(session.view().ply).toBe(1);
+		expect(await h.until(() => h.executor()?.pendingMove() === null, 60_000)).toBe(true);
+
+		await h.drive(() => h.site.clickIntoBoard());
+		await h.advance(60_000);
+		expect(h.site.board.lastMove()).toBeNull();
+	});
+
 	it("the assistant turned off between the hold and the release: nothing is searched or played", async () => {
 		// §4.4 inside `reconsider`. `stopDisabled` disarms the hand and drops the recommendation but
 		// leaves the state at `recommended`, so without the switch check the release would re-run the

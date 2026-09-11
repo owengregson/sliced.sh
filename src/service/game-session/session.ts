@@ -284,7 +284,7 @@ export class GameSession implements SessionSource {
 	/** Feed dedupe (Task 21 replays `lastPosition` and the outbox on reconnect). */
 	private lastPositionKey: string | null = null;
 	/**
-	 * `gameId|ply` of the position a blur landed on while the session was holding it (§13.4). The
+	 * The position a blur landed on while the session was holding it (§13.4). The
 	 * companion guard to `isGameFirstMove`, and **not** `FocusGate`'s own `blurSeenThisMove`: that
 	 * flag is per move *window*, and `positionArrived` reopens the window on every accepted position
 	 * — including the republish of an unmoved ply-0 position that carries the colour or the time
@@ -1783,9 +1783,17 @@ export class GameSession implements SessionSource {
 		void this.reconsiderGuarded("the page regained focus on the game's first move");
 	}
 
-	/** The position a blur or a permission is remembered against: the game and the ply, nothing else. */
+	/**
+	 * The identity a blur is remembered against: the game and the **FEN**, never `snapshot.ply`. The
+	 * ply is the adapter's move-list read and can be 0 — or simply wrong — on a board that has moved
+	 * (the same reason `isGameFirstMove` reads the FEN), and a lying ply on a republished position
+	 * would make the remembered blur stop matching and release a move it should hold. The FEN comes
+	 * from the bridge and is identical across the republish that carries the colour or the clock.
+	 * A repeated position later in the game cannot collide with this: the only release this gates is
+	 * the game's first move, whose FEN cannot recur.
+	 */
 	private positionIdentity(snapshot: PositionSnapshot): string {
-		return `${snapshot.gameId}|${snapshot.ply}`;
+		return `${snapshot.gameId}|${snapshot.fen}`;
 	}
 
 	// ── helpers ────────────────────────────────────────────────────────────
