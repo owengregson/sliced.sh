@@ -17,6 +17,16 @@ function deepFreeze<T>(value: T): T {
 }
 
 export const SELECTION_CONSTANTS = deepFreeze({
+	/** Avoid a repeat only when a searched alternative preserves an advantage. */
+	repetition: { aheadCp: 150, keepAdvantageCp: 80, maxLossCp: 150 },
+	/** Post-selection clock strategy never gives up more than this searched advantage. */
+	opponentPressure: {
+		min: 0.35,
+		maxLossCp: 35,
+		checkWeight: 3,
+		recaptureWeight: 2,
+		captureWeight: 1,
+	},
 	/** §7.2 inputs: `form_t = ar·form_{t−1} + N(0, noiseSigma)`, clamped ±clampAbs; `E = target + eloPerUnit·form`. */
 	form: { ar: 0.85, noiseSigma: 0.25, clampAbs: 1, eloPerUnit: 150 },
 	/** §7.2 steps 2 and 4: mate → ±(mateCpBase + (mateHorizon − |mate|)); `win(cp) = 1/(1 + e^(−winProbK·cp))`. */

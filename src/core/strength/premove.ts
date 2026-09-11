@@ -1,14 +1,17 @@
 /**
  * Premove candidates (Task 15, §7.4, Appendix E §3.1). After our move `m`,
  * predict the opponent's reply `r` (the engine's `ponder` or a short MultiPV-3
- * search), require `p(r) ≥ 0.6` under softmax(τ = 0.06) over the opponent's
- * lines, then analyse `m r` and premove our reply `q` only when it is
+ * search), normally require `p(r) ≥ 0.6` under softmax(τ = 0.06), then analyse
+ * `m r` and premove our reply `q` only when it is
  * forced-looking: a recapture on the just-captured square, the only legal move
  * or a clear-only move (`loss_2nd ≥ 0.25`) — never a king move. The engine
- * searches are injected (`analyseAfter`); the timing model's π_p arrives as
- * the optional `piP` multiplier.
+ * searches are injected (`analyseAfter`). Safe queued trades have a separate, higher attempt
+ * propensity and may accept a lower prediction confidence after validating every legal reply.
  */
 
+import { loadPosition } from "@core/chess/fen";
+import type { PositionHistory } from "@core/chess/history";
+import { PIECE_VALUES } from "@core/chess/material";
 import { classifyMove } from "@core/chess/move-classify";
 import { applyMoves, legalMoves, parseUci } from "@core/chess/san";
 import { PREMOVE } from "@core/constants/books";
@@ -19,6 +22,7 @@ import { clamp } from "@core/util/clamp";
 import type { EvalLine } from "@typedefs/engine";
 import type { Square, TimeControl } from "@typedefs/game";
 import { cpEffective, winProb } from "./elo-map";
+import { avoidRepetition } from "./repetition";
 
 export interface PremoveContext {
 	/** Position before our move. */
@@ -33,6 +37,8 @@ export interface PremoveContext {
 	rng: Rng;
 	/** Timing-model premove propensity π_p in [0, 1] (default 1). */
 	piP?: number | undefined;
+	/** Validated game history through our move, for the projected reply search. */
+	historyAfterMove?: PositionHistory;
 }
 
 export interface AnalyseOptions {
@@ -67,6 +73,50 @@ export function premoveProbability(E: number, piP = 1): number {
 	return clamp(base * clamp(piP, 0, 1), 0, 1);
 }
 
+export function tradePremoveProbability(E: number, piP = 1): number {
+	if (E < PREMOVE.minElo || piP <= 0) return 0;
+	const base =
+		PREMOVE.tradeProbBase +
+		PREMOVE.tradeProbRange * clamp((E - PREMOVE.minElo) / PREMOVE.probSpan, 0, 1);
+	return base * (PREMOVE.tradePersonaFloor + (1 - PREMOVE.tradePersonaFloor) * clamp(piP, 0, 1));
+}
+
+/**
+ * A reason alone is not proof that a queued move is safe. Require a recapture onto our own
+ * occupied square; every other reply that leaves it legal must also be a safe exchange there.
+ */
+export function isQueueableCandidate(
+	afterMove: string,
+	candidate: Pick<PremoveCandidate, "reply" | "premove" | "reason">
+): boolean {
+	if (!isQueueableReason(candidate.reason)) return false;
+	const board = loadPosition(afterMove);
+	const parts = parseUci(candidate.premove);
+	if (!board || !parts) return false;
+	const target = board.get(parts.to);
+	const ours = board.get(parts.from);
+	if (!target || !ours || target.color !== ours.color || target.color === board.turn()) return false;
+	const predicted = applyMoves(afterMove, [candidate.reply]);
+	if (
+		!predicted ||
+		!classifyMove(afterMove, candidate.reply)?.isCapture ||
+		!classifyMove(predicted, candidate.premove, candidate.reply)?.isRecapture
+	)
+		return false;
+	for (const reply of legalMoves(afterMove)) {
+		if (reply === candidate.reply) continue;
+		const next = applyMoves(afterMove, [reply]);
+		if (!next) continue;
+		const recapture = classifyMove(next, candidate.premove, reply);
+		if (!recapture) continue; // The site drops an illegal premove.
+		const capture = classifyMove(afterMove, reply);
+		if (!capture?.isCapture || !recapture.isRecapture) return false;
+		if (recapture.capturedType && PIECE_VALUES[recapture.capturedType] < PIECE_VALUES[ours.type])
+			return false;
+	}
+	return true;
+}
+
 /** Softmax(τ = 0.06) over the opponent lines' win fractions; 0 when `reply` is not among them. */
 export function replyProbability(reply: string, lines: readonly EvalLine[]): number {
 	if (lines.length === 0) return 0;
@@ -83,10 +133,8 @@ export function replyProbability(reply: string, lines: readonly EvalLine[]): num
 }
 
 /**
- * Fix F: may this premove be *entered on the site* during the opponent's turn, rather than only
- * played fast once the predicted reply has landed? Only the self-invalidating reasons
- * (`PREMOVE.queueReasons`): a queued move fires whether or not the prediction held, so the gate
- * has to be "an unexpected reply makes this illegal", which `loss2nd` is not.
+ * Category eligibility for a site queue. isQueueableCandidate provides the actual board proof;
+ * a reason cannot establish that an unexpected reply makes a move illegal.
  */
 export function isQueueableReason(reason: PremoveReason): boolean {
 	return (PREMOVE.queueReasons as readonly PremoveReason[]).includes(reason);
@@ -108,7 +156,8 @@ export async function premoveCandidate(
 	deps: PremoveDeps
 ): Promise<PremoveCandidate | null> {
 	if (!isPremoveSpeed(ctx.timeControl) || ctx.targetElo < PREMOVE.minElo) return null;
-	const p = premoveProbability(ctx.targetElo, ctx.piP);
+	const ordinaryP = premoveProbability(ctx.targetElo, ctx.piP);
+	const p = Math.max(ordinaryP, tradePremoveProbability(ctx.targetElo, ctx.piP));
 	if (p <= 0 || !ctx.rng.chance(p)) return null;
 
 	const afterMove = applyMoves(ctx.fen, [ctx.move]);
@@ -124,14 +173,25 @@ export async function premoveCandidate(
 	const reply = ctx.ponder ?? opponentLines[0]?.pvUci[0];
 	if (reply === undefined || !legalReplies.includes(reply)) return null;
 	const pReply = replyProbability(reply, opponentLines);
-	if (pReply < PREMOVE.replyMinProb) return null;
+	const predictedCapture = classifyMove(afterMove, reply)?.isCapture ?? false;
+	if (pReply < (predictedCapture ? PREMOVE.tradeReplyMinProb : PREMOVE.replyMinProb)) return null;
 
 	const afterReply = applyMoves(afterMove, [reply]);
 	if (afterReply === null) return null;
-	const lines = await deps.analyseAfter(ctx.fen, [ctx.move, reply], {
+	if (
+		pReply < PREMOVE.replyMinProb &&
+		!legalMoves(afterReply).some((q) => classifyMove(afterReply, q, reply)?.isRecapture)
+	)
+		return null;
+	const analysed = await deps.analyseAfter(ctx.fen, [ctx.move, reply], {
 		movetimeMs: PREMOVE.replyMovetimeMs,
 		multiPv: PREMOVE.replyMultiPv,
 	});
+	const projectedHistory = ctx.historyAfterMove && {
+		fen: ctx.historyAfterMove.fen,
+		moves: [...ctx.historyAfterMove.moves, reply],
+	};
+	const lines = avoidRepetition(analysed, afterReply, projectedHistory).lines;
 	const best = lines[0];
 	const q = best?.pvUci[0];
 	if (best === undefined || q === undefined) return null;
@@ -151,6 +211,8 @@ export async function premoveCandidate(
 		}
 	}
 	if (reason === null) return null;
+	if (reason !== "recapture" && (pReply < PREMOVE.replyMinProb || !ctx.rng.chance(ordinaryP / p)))
+		return null;
 
 	const parts = parseUci(q);
 	if (!parts) return null;
@@ -163,5 +225,6 @@ export async function premoveCandidate(
 		replyProbability: pReply,
 	};
 	if (parts.promotion !== undefined) candidate.promotion = parts.promotion;
+	if (pReply < PREMOVE.replyMinProb && !isQueueableCandidate(afterMove, candidate)) return null;
 	return candidate;
 }

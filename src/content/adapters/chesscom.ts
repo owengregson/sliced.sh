@@ -445,6 +445,7 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 			sideToMove,
 			myColor: this.getMyColor(),
 			...(lastMove ? { lastMove } : {}),
+			...(replay ? { moveHistory: list.sans.slice(0, ply) } : {}),
 			clocks: { w: this.clockState("w"), b: this.clockState("b") },
 			// §4.3: the site's own `{baseTime, increment}`, once it answers — `null` until the game
 			// actually starts, which is why `AdapterBase.apply` republishes an unmoved position when

@@ -3,6 +3,7 @@ import { describe, expect, it } from "bun:test";
 import { PREMOVE } from "@core/constants/books";
 import { createRng, type Rng } from "@core/rng";
 import {
+	isQueueableCandidate,
 	isQueueableReason,
 	type PremoveContext,
 	type PremoveDeps,
@@ -10,6 +11,7 @@ import {
 	premoveCandidate,
 	premoveProbability,
 	replyProbability,
+	tradePremoveProbability,
 } from "@core/strength/premove";
 import type { EvalLine } from "@typedefs/engine";
 
@@ -57,6 +59,12 @@ function ctx(overrides: Partial<PremoveContext> = {}): PremoveContext {
 }
 
 describe("premoveProbability", () => {
+	it("recognised trades are attempted often without squaring the persona's generic premove rate", () => {
+		expect(tradePremoveProbability(1800, 0.1)).toBeGreaterThan(0.6);
+		expect(tradePremoveProbability(2400, 0.5)).toBeGreaterThan(0.8);
+		expect(tradePremoveProbability(1100)).toBe(0);
+		expect(tradePremoveProbability(2000, 0)).toBe(0);
+	});
 	it("is 0.35 + 0.5·clamp((E − 1200)/1200, 0, 1), times the optional π_p", () => {
 		expect(premoveProbability(1200)).toBeCloseTo(0.35);
 		expect(premoveProbability(1800)).toBeCloseTo(0.6);
@@ -196,6 +204,25 @@ describe("premoveCandidate", () => {
 });
 
 describe("isQueueableReason (Fix F)", () => {
+	it("does not mistake an only-move rook block for a self-invalidating premove", () => {
+		expect(
+			isQueueableCandidate("r6k/8/8/8/8/2R5/6PP/7K b - - 1 1", {
+				reply: "a8a1",
+				premove: "c3c1",
+				reason: "only-move",
+			})
+		).toBe(false);
+	});
+
+	it("queues a pawn recapture that stays a safe trade after either of two capturers", () => {
+		expect(
+			isQueueableCandidate("4k3/8/8/8/1b2n3/2N5/1P6/5K2 b - - 1 1", {
+				reply: "b4c3",
+				premove: "b2c3",
+				reason: "recapture",
+			})
+		).toBe(true);
+	});
 	// The central safety decision of the queued-premove path: only a reason an unexpected reply
 	// makes *illegal* may be entered on the site before that reply is known.
 	it("queues a recapture — the opponent not capturing there leaves our own piece on the square", () => {

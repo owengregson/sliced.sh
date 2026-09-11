@@ -28,6 +28,7 @@
  * tail (premove / instant) could not be produced at all.
  */
 
+import { matchingHistory, type PositionHistory } from "@core/chess/history";
 import { phase as phaseOf } from "@core/chess/phase";
 import { legalMoves } from "@core/chess/san";
 import { SEARCH_BUDGET } from "@core/constants/search";
@@ -38,6 +39,7 @@ import type { BookContext, BookPolicy } from "@core/strength/book/book-policy";
 import { isTrap, lineFacts } from "@core/strength/book/book-policy";
 import { effectiveElo } from "@core/strength/elo-map";
 import { selectMove } from "@core/strength/move-selector";
+import { avoidRepetition, repetitionRisk } from "@core/strength/repetition";
 import type { SelectionContext, SelectionState } from "@core/strength/types";
 import { budgetController, scheduleAlloc } from "@core/timing/budget";
 import { TIMING_CONSTANTS } from "@core/timing/constants";
@@ -211,6 +213,8 @@ export interface RecommendationInput {
 	tau: number;
 	/** UCI moves played this game (oldest first). */
 	moves: string[];
+	/** Starting FEN and validated move history for repetition-aware searches. */
+	history?: PositionHistory;
 	expectedOppReply: string | null;
 	oppThinkMsHistory: number[];
 	myThinkMsHistory: number[];
@@ -259,11 +263,13 @@ export class RecommendationPipeline {
 	private readonly engine: PipelineEngine;
 	private readonly timing: TimingModel;
 	private readonly book: BookPolicy | null;
+	private readonly now: () => number;
 
 	constructor(deps: RecommendationPipelineDeps) {
 		this.engine = deps.engine;
 		this.timing = deps.timing;
 		this.book = deps.book;
+		this.now = deps.now ?? Date.now;
 	}
 
 	/**
@@ -291,7 +297,7 @@ export class RecommendationPipeline {
 
 		// §7.3 item 3 + §3.2 step 1: the book and the engine run at the same time.
 		const bookPending = this.bookMove(input);
-		const analysis = await this.analyse(snapshot, budget, input.signal);
+		const analysis = await this.analyse(snapshot, budget, input.signal, input.history);
 		if (input.signal?.aborted) return null;
 		const book = await bookPending;
 
@@ -368,31 +374,33 @@ export class RecommendationPipeline {
 	}
 
 	/**
-	 * §7.5 quality guard: one retry with `+300 ms` when the first result came back
-	 * shallower than `retryDepth`. A search the caller aborted resolves `null`.
+	 * §7.5 quality guard: a shallow early result may retry within the original wall-clock budget.
+	 * A search that exhausted the budget never starts a second full search.
 	 */
 	private async analyse(
 		snapshot: PositionSnapshot,
 		budget: SearchBudget,
-		signal: AbortSignal | undefined
+		signal: AbortSignal | undefined,
+		history?: PositionHistory
 	): Promise<AnalysisResult | null> {
-		const first = await this.runSearch(snapshot, budget, signal);
+		const started = this.now();
+		const first = await this.runSearch(snapshot, budget, signal, history);
 		if (!first || signal?.aborted) return first;
 		if (first.final.depth >= SEARCH_BUDGET.retryDepth) return first;
+		const remaining = budget.movetimeMs - Math.max(this.now() - started, first.final.timeMs);
+		if (remaining < SEARCH_BUDGET.minMovetimeMs) return first;
 		log.debug("recommendation: shallow search, retrying once", {
 			depth: first.final.depth,
-			extraMs: SEARCH_BUDGET.retryExtraMs,
+			remainingMs: remaining,
 		});
 		const retry = await this.runSearch(
 			snapshot,
 			{
 				...budget,
-				movetimeMs: Math.min(
-					SEARCH_BUDGET.maxMovetimeMs,
-					budget.movetimeMs + SEARCH_BUDGET.retryExtraMs
-				),
+				movetimeMs: remaining,
 			},
-			signal
+			signal,
+			history
 		);
 		return retry && retry.final.depth > first.final.depth ? retry : first;
 	}
@@ -400,11 +408,14 @@ export class RecommendationPipeline {
 	private async runSearch(
 		snapshot: PositionSnapshot,
 		budget: SearchBudget,
-		signal: AbortSignal | undefined
+		signal: AbortSignal | undefined,
+		history?: PositionHistory
 	): Promise<AnalysisResult | null> {
+		const validHistory = matchingHistory(history, snapshot.fen);
 		const req: AnalysisRequest = {
 			id: newId(),
-			fen: snapshot.fen,
+			fen: validHistory?.fen ?? snapshot.fen,
+			...(validHistory?.moves.length ? { moves: validHistory.moves } : {}),
 			multiPv: budget.multiPv,
 			limit: { movetimeMs: Math.round(budget.movetimeMs), depth: budget.depthCap },
 			priority: "move",
@@ -438,11 +449,31 @@ export class RecommendationPipeline {
 	private choose(
 		input: RecommendationInput,
 		lines: EvalLine[],
-		book: ChosenMove | null,
+		bookMove: ChosenMove | null,
 		analysis: AnalysisResult | null,
 		shallow: boolean
 	): ChosenMove | null {
 		const E = effectiveElo(input.targetElo, input.form);
+		let book = bookMove;
+		// Include an unsearched book candidate in the draw check. Its optimistic score is only
+		// for this veto; an actual alternative must still come from a legal evaluated engine line.
+		const guardLines =
+			book && !lines.some((line) => line.pvUci[0] === book?.uci)
+				? [
+						...lines,
+						{
+							multipv: 0,
+							depth: 0,
+							score: lines[0]?.score ?? { cp: 0 },
+							pvUci: [book.uci],
+							pvSan: [book.san],
+						},
+					]
+				: lines;
+		const guarded =
+			book || shallow ? avoidRepetition(guardLines, input.snapshot.fen, input.history) : null;
+		if (book && guarded?.avoided && input.history && repetitionRisk(input.history, book.uci) > 0)
+			book = null;
 		if (book) {
 			const facts = lineFacts(book.uci, lines);
 			if (!isTrap(E, facts)) return book;
@@ -451,7 +482,8 @@ export class RecommendationPipeline {
 				loss: facts.lossLowerBound,
 			});
 		}
-		const pool = shallow ? lines.slice(0, SEARCH_BUDGET.shallowLines) : lines;
+		// A viable escape found at rank three or later must survive the shallow-device truncation.
+		const pool = shallow && !guarded?.avoided ? lines.slice(0, SEARCH_BUDGET.shallowLines) : lines;
 		if (pool.length === 0) return book;
 		// `run()` has already refused a position whose colour is unknown; reading it again here keeps
 		// that the only place the question is answered, rather than defaulting to white's clock.
@@ -459,6 +491,7 @@ export class RecommendationPipeline {
 		if (myColor === null) return book;
 		const ctx: SelectionContext = {
 			fen: input.snapshot.fen,
+			...(input.history ? { history: input.history } : {}),
 			targetElo: input.targetElo,
 			form: input.form,
 			ply: input.snapshot.ply,
@@ -475,6 +508,7 @@ export class RecommendationPipeline {
 		// treats as "unknown" and falls back to the absolute ramp for.
 		const baseMs = input.snapshot.timeControl?.baseMs ?? 0;
 		if (baseMs > 0) ctx.baseMs = baseMs;
+		ctx.incrementMs = input.snapshot.timeControl?.incMs ?? 0;
 		const last = input.moves[input.moves.length - 1];
 		if (last !== undefined) ctx.lastMove = last;
 		const bestmove = analysis?.bestmove;

@@ -17,7 +17,6 @@
 import type { TimingInferenceInputs } from "@core/constants/messages";
 import type { ChessMimicBand } from "@core/constants/models";
 import type { Rng } from "@core/rng";
-import { clamp } from "@core/util/clamp";
 import {
 	bucketMask,
 	CHESSMIMIC_BUCKETS,
@@ -385,6 +384,9 @@ export class ChessMimicHead implements DistributionHead {
 
 	private instantSec(band: ChessMimicBand, rng: Rng): number {
 		const I = TIMING_CONSTANTS.instant;
-		return clamp(sampleWithinBucket(band, 0, rng), I.minS, I.minS + I.rangeS);
+		const sample = sampleWithinBucket(band, 0, rng);
+		// Bucket zero spans a whole second; clamping it collapsed most reactions onto
+		// exactly 250 ms. Preserve in-range samples and redraw overflow within the band.
+		return sample >= I.minS && sample <= I.minS + I.rangeS ? sample : I.minS + rng.next() * I.rangeS;
 	}
 }

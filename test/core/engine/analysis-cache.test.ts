@@ -1,5 +1,6 @@
 // test/core/engine/analysis-cache.test.ts
 import { describe, expect, it } from "bun:test";
+import { historyKey } from "@core/chess/history";
 import { LIMITS } from "@core/constants/limits";
 import { TIMINGS } from "@core/constants/timings";
 import {
@@ -101,8 +102,10 @@ describe("keys", () => {
 		expect(limitKey({})).toBe(limitKey({ movetimeMs: TIMINGS.analysisDefaultMovetimeMs }));
 	});
 	it("cacheKey is fen|multiPv|elo|limit with `full` for full strength", () => {
-		expect(cacheKey(START_LATER, 4, 1500, { movetimeMs: 800 })).toBe(`${fenKey(START)}|4|1500|t800`);
-		expect(cacheKey(START, 4, undefined, { infinite: true })).toBe(`${fenKey(START)}|4|full|inf`);
+		expect(cacheKey(START_LATER, 4, 1500, { movetimeMs: 800 })).toBe(
+			`${historyKey(START_LATER)}|4|1500|t800`
+		);
+		expect(cacheKey(START, 4, undefined, { infinite: true })).toBe(`${historyKey(START)}|4|full|inf`);
 	});
 });
 
@@ -112,7 +115,8 @@ describe("AnalysisCache", () => {
 		const r = result(START, 14, { elo: 1500 });
 		c.set(r);
 		expect(c.get(START, 4, 12, 1500)).toBe(r);
-		expect(c.get(START_LATER, 4, 14, 1500)).toBe(r);
+		expect(c.get(START_LATER, 4, 14, 1500)).toBeUndefined();
+		expect(c.get(START.replace("0 1", "0 12"), 4, 14, 1500)).toBe(r);
 		expect(c.get(START, 4, 15, 1500)).toBeUndefined();
 		expect(c.get(START, 4, 12)).toBeUndefined();
 		expect(c.get(START, 4, 12, 1400)).toBeUndefined();
@@ -156,7 +160,7 @@ describe("AnalysisCache", () => {
 	it("replaces an entry with the same key", () => {
 		const c = new AnalysisCache();
 		c.set(result(START, 10, { id: "a" }));
-		c.set(result(START_LATER, 12, { id: "b" }));
+		c.set(result(START.replace("0 1", "0 12"), 12, { id: "b" }));
 		expect(c.size).toBe(1);
 		expect(c.get(START, 4, 1)?.id).toBe("b");
 	});

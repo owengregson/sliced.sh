@@ -2,6 +2,7 @@
 import { describe, expect, it } from "bun:test";
 import { DEFAULT_SETTINGS } from "@core/constants/defaults";
 import { createRng } from "@core/rng";
+import { TIMING_CONSTANTS } from "@core/timing/constants";
 import { computeFeatures } from "@core/timing/features";
 import { windowTotalMs } from "@core/timing/move-window";
 import { freshState, isBotPace, needsResample, TimingModel } from "@core/timing/timing-model";
@@ -109,15 +110,15 @@ describe("TimingModel.planMove", () => {
 		expect(entries[0]?.persona).toBe("balanced");
 		expect(entries[0]?.gameId).toBe("game-A");
 	});
-	it("speedScale multiplies the sampled think time", () => {
+	it("speedScale multiplies the sampled think time when no clock cap binds", () => {
 		const a = model({ speedScale: 1 }, 7);
 		const b = model({ speedScale: 2 }, 7);
 		a.m.startGame(meta);
 		b.m.startGame(meta);
 		let compared = 0;
 		for (let i = 0; i < 50; i++) {
-			const pa = a.m.planMove(ctx({ myClockMs: 170_000, oppClockMs: 170_000 }));
-			const pb = b.m.planMove(ctx({ myClockMs: 170_000, oppClockMs: 170_000 }));
+			const pa = a.m.planMove(ctx({ baseSec: 0, incSec: 0, myClockMs: 0, oppClockMs: 0 }));
+			const pb = b.m.planMove(ctx({ baseSec: 0, incSec: 0, myClockMs: 0, oppClockMs: 0 }));
 			if (pa.mode === "normal" && pb.mode === "normal" && pa.thinkMs > 2000) {
 				expect(pb.thinkMs).toBeCloseTo(2 * pa.thinkMs, 3);
 				compared++;
@@ -254,7 +255,9 @@ describe("TimingModel.planMove", () => {
 		expect(q50).toBeGreaterThan(2);
 		expect(q50).toBeLessThan(4);
 		const tail = ts.filter((t) => t > 15).length / ts.length;
-		expect(tail).toBeGreaterThan(0.01);
+		// The clock budget now caps this position below 15 s, including long-tail draws.
+		expect(tail).toBe(0);
+		expect(sorted.at(-1) ?? 0).toBeLessThanOrEqual(120 * TIMING_CONSTANTS.budget.windowClockFraction);
 		expect(tail).toBeLessThan(0.06);
 		expect(instant / ts.length).toBeGreaterThan(0.05);
 		expect(instant / ts.length).toBeLessThan(0.2);
@@ -268,7 +271,7 @@ describe("TimingModel.planMove", () => {
 			expect(best / ts.length).toBeLessThan(0.1);
 		}
 	});
-	it("premove on chess.com carries the site's fixed 0.1 s", () => {
+	it("a predicted fast reply includes the site's penalty and a varied physical gesture", () => {
 		const { m } = model({ premoveTendency: 1 });
 		m.startGame({ ...meta, site: "chesscom" });
 		const c = ctx({
@@ -282,17 +285,20 @@ describe("TimingModel.planMove", () => {
 			lines: [line(1, -10, "d8d5"), line(2, -60, "g8f6")],
 		});
 		let seen = 0;
+		const fastTimes = new Set<number>();
 		for (let i = 0; i < 100; i++) {
 			const p = m.planMove(c);
 			if (p.mode === "premove") {
 				seen++;
+				fastTimes.add(Math.round(p.thinkMs));
 				expect(p.thinkMs).toBeGreaterThanOrEqual(100);
-				expect(p.thinkMs).toBeLessThanOrEqual(220);
+				expect(p.thinkMs).toBeLessThan(2000);
 				expect(p.preMoveHoverMs).toBe(0);
 				expect(p.window.approachMs).toBe(p.thinkMs);
 			}
 		}
 		expect(seen).toBeGreaterThan(50);
+		expect(fastTimes.size).toBeGreaterThan(seen / 2);
 	});
 	it("bot-pace floor: the mirror term keeps the median ≥ 0.6× the model median, without a mass point", () => {
 		expect(isBotPace([400, 450, 420, 380])).toBe(true);
@@ -341,7 +347,10 @@ describe("TimingModel.planMove", () => {
 		expect(r.q(0.5) / 1000).toBeGreaterThan(2);
 		expect(r.q(0.5) / 1000).toBeLessThan(4);
 		const tail = r.sorted.filter((t) => t > 15_000).length / r.sorted.length;
-		expect(tail).toBeGreaterThan(0.01);
+		expect(tail).toBe(0);
+		expect(r.sorted.at(-1) ?? 0).toBeLessThanOrEqual(
+			120_000 * TIMING_CONSTANTS.budget.windowClockFraction
+		);
 		expect(tail).toBeLessThanOrEqual(0.07);
 		const instant = (r.modes.instant ?? 0) / r.sorted.length;
 		expect(instant).toBeGreaterThan(0.05);

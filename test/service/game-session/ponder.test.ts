@@ -93,6 +93,18 @@ describe("PonderController", () => {
 		expect(p.isRunning()).toBe(true);
 		p.dispose();
 	});
+	it("looks up the expected reply under the reached position, normalising the bridge's en-passant spelling", async () => {
+		const engine = fakeEngine(() => "e7e5");
+		const { scheduler } = fakeScheduler();
+		const p = new PonderController({ engine, scheduler });
+		await p.start("opponent", FEN, ["e2e4"]);
+		await p.stop();
+		expect(p.expectedReply("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1")).toBe(
+			"e7e5"
+		);
+		expect(p.expectedReply(FEN)).toBeNull();
+		p.dispose();
+	});
 
 	it("panel-only mode ponders our own position at panel priority (§7.5)", async () => {
 		const engine = fakeEngine(() => "d2d4");

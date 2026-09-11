@@ -42,6 +42,8 @@ export interface PositionSnapshot {
 	sideToMove: Color;
 	myColor: Color | null;
 	lastMove?: { from: Square; to: Square; san: string };
+	/** Complete SAN list through this position, validated by the session before use. */
+	moveHistory?: string[];
 	/**
 	 * The adapter reconstructed this FEN from the DOM rather than reading it from the page's own game
 	 * object (Appendix C §3's third source): the placement is real but the move counters, castling and

@@ -45,6 +45,7 @@
  */
 
 import { type FenParts, parseFen, plyOf, turnFieldOf } from "@core/chess/fen";
+import { historyFromSan, matchingHistory, type PositionHistory } from "@core/chess/history";
 import { applyMoves, legalMoves, uciToSan } from "@core/chess/san";
 import { sanToSpeech } from "@core/chess/san-speech";
 import { isSquare } from "@core/chess/squares";
@@ -65,7 +66,7 @@ import type { BookPolicy } from "@core/strength/book/book-policy";
 import { createSelectionState } from "@core/strength/move-selector";
 import { createFormLatent, type FormLatent } from "@core/strength/persona";
 import type { PremoveReason } from "@core/strength/premove";
-import { isPremoveSpeed, isQueueableReason, premoveCandidate } from "@core/strength/premove";
+import { isPremoveSpeed, isQueueableCandidate, premoveCandidate } from "@core/strength/premove";
 import type { SelectionState } from "@core/strength/types";
 import { TIMING_CONSTANTS } from "@core/timing/constants";
 import { tcClass } from "@core/timing/features";
@@ -402,6 +403,7 @@ export class GameSession implements SessionSource {
 	private profiledTimeControl: TimeControl | null = null;
 	private pipelineAc: AbortController | null = null;
 	private moves: string[] = [];
+	private positionHistory: PositionHistory | null = null;
 	private oppThinkMs: number[] = [];
 	private myThinkMs: number[] = [];
 	private lastOppMoveAt: number | null = null;
@@ -930,7 +932,17 @@ export class GameSession implements SessionSource {
 		const key = `${snapshot.gameId}|${snapshot.ply}|${snapshot.fen}|${snapshot.myColor ?? "?"}|${
 			tc ? `${tc.baseMs}+${tc.incMs}` : "?"
 		}|${snapshot.approximate === true ? "~" : "="}`;
-		if (key === this.lastPositionKey) return; // the reconnect replay (Task 21)
+		if (key === this.lastPositionKey) {
+			const current = this.snapshot;
+			if (current && snapshot.capturedAt > current.capturedAt) {
+				// Keep the same object so a clock tick cannot invalidate an in-flight search.
+				current.clocks = snapshot.clocks;
+				current.capturedAt = snapshot.capturedAt;
+				this.updateHistory(snapshot);
+				this.deps.notify();
+			}
+			return;
+		}
 		if (
 			this.game?.gameId === snapshot.gameId &&
 			this.snapshot !== null &&
@@ -1107,12 +1119,13 @@ export class GameSession implements SessionSource {
 	private async onOpponentTurn(snapshot: PositionSnapshot): Promise<void> {
 		const ponderer = this.ponderer;
 		if (!ponderer) return;
-		await ponderer.start("opponent", snapshot.fen);
+		const history = this.historyFor(snapshot.fen);
+		await ponderer.start("opponent", history.fen, history.moves);
 		// §4.4: starting the ponder is an await, so the switch can go off *inside* it — and
 		// `stopDisabled`'s own stop then ran before this search existed, which would leave a
 		// `go infinite` running with the assistant off. Stop what we just started, and search
 		// nothing more for this position.
-		if (!this.mayAct()) {
+		if (!this.mayAct() || this.snapshot !== snapshot) {
 			await ponderer.stop();
 			return;
 		}
@@ -1196,8 +1209,8 @@ export class GameSession implements SessionSource {
 		);
 		const request: AnalysisRequest = {
 			id: `${this.deps.tabId}-predicted-${this.now()}`,
-			fen: snapshot.fen,
-			moves: [reply],
+			fen: this.historyFor(snapshot.fen).fen,
+			moves: [...this.historyFor(snapshot.fen).moves, reply],
 			multiPv: budget.multiPv,
 			limit: { movetimeMs: Math.round(budget.movetimeMs), depth: budget.depthCap },
 			priority: "ponder",
@@ -1228,7 +1241,8 @@ export class GameSession implements SessionSource {
 	private async resumePonder(snapshot: PositionSnapshot, ponderer: PonderController): Promise<void> {
 		if (this.disposed || this.snapshot !== snapshot || !this.mayAct()) return;
 		if (ponderer.isRunning()) return;
-		await ponderer.start("opponent", snapshot.fen);
+		const history = this.historyFor(snapshot.fen);
+		await ponderer.start("opponent", history.fen, history.moves);
 	}
 
 	/**
@@ -1275,6 +1289,7 @@ export class GameSession implements SessionSource {
 				form: this.form.value,
 				tau: timing.persona.tau,
 				moves: this.moves,
+				history: this.historyFor(snapshot.fen),
 				expectedOppReply: expected,
 				oppThinkMsHistory: this.oppThinkMs,
 				myThinkMsHistory: this.myThinkMs,
@@ -1320,7 +1335,8 @@ export class GameSession implements SessionSource {
 		}
 		if (!executor?.isArmed() || !this.autoMoveAllowed(settings)) {
 			// Panel-only mode (§7.5): keep deepening the eval on our own position.
-			await this.ponderer?.start("panel", rec.fen);
+			const history = this.historyFor(rec.fen);
+			await this.ponderer?.start("panel", history.fen, history.moves);
 			// Mirror of the opponent-turn re-check above: `start` can await, so a flip-off landing
 			// inside it would have run `stopDisabled`'s stop before this search existed, leaving a
 			// `go infinite` running with the assistant off.
@@ -1468,7 +1484,10 @@ export class GameSession implements SessionSource {
 		// An untimed game has no clock to exceed, so nothing is clamped and the whole wait folds in.
 		const startedAt = rec.plan.deadlineMs - rec.plan.thinkMs;
 		const affordable = ctx.myClockMs - rec.plan.window.approachMs;
-		const nowMs = ctx.myClockMs > 0 ? Math.min(ctx.nowMs, startedAt + affordable) : ctx.nowMs;
+		// Epoch timestamps lose sub-millisecond precision; round the ceiling down so
+		// adding the sampled approach cannot put the result just above the clock.
+		const nowMs =
+			ctx.myClockMs > 0 ? Math.min(ctx.nowMs, Math.floor(startedAt + affordable)) : ctx.nowMs;
 		return { ...rec, plan: timing.replan(rec.plan, { ...ctx, nowMs }, "withheld-then-released") };
 	}
 
@@ -1507,7 +1526,8 @@ export class GameSession implements SessionSource {
 	 */
 	private hasPlayableMove(): boolean {
 		const executor = this.executorHandle;
-		if (!executor || !this.mayAct() || !executor.isArmed()) return false;
+		if (!executor || !this.mayAct() || !executor.isArmed() || !isMyTurnState(this.state))
+			return false;
 		return executor.pendingMove() !== null || this.rec !== null;
 	}
 
@@ -1585,6 +1605,7 @@ export class GameSession implements SessionSource {
 				{
 					fen: previous,
 					move: last,
+					historyAfterMove: this.historyFor(snapshot.fen),
 					targetElo: this.targetElo(),
 					timeControl: snapshot.timeControl,
 					ponder: this.ponderer?.expectedReply(snapshot.fen) ?? undefined,
@@ -1593,11 +1614,12 @@ export class GameSession implements SessionSource {
 					piP: 1 / (1 + Math.exp(-timing.persona.pi_p)),
 				},
 				{
-					analyseAfter: async (fen, moves, opts) => {
+					analyseAfter: async (_fen, moves, opts) => {
+						const root = this.historyFor(snapshot.fen);
 						const request: AnalysisRequest = {
 							id: `${this.deps.tabId}-premove-${this.now()}`,
-							fen,
-							moves: [...moves],
+							fen: root.fen,
+							moves: [...root.moves, ...moves.slice(1)],
 							multiPv: opts.multiPv,
 							limit: { movetimeMs: opts.movetimeMs },
 							priority: "ponder",
@@ -1751,7 +1773,15 @@ export class GameSession implements SessionSource {
 		const executor = this.executorHandle;
 		if (!armed || !executor || this.disposed) return;
 		if (this.premoveEntry !== null) return;
-		if (this.premoveQueueing === false || !isQueueableReason(armed.reason)) return;
+		if (
+			this.premoveQueueing === false ||
+			!isQueueableCandidate(snapshot.fen, {
+				reply: armed.reply,
+				premove: armed.chosen.uci,
+				reason: armed.reason,
+			})
+		)
+			return;
 		if (!this.mayAct() || !executor.isArmed()) return;
 		if (!this.autoMoveAllowed(this.deps.getSettings())) return;
 		const myColor = snapshot.myColor;
@@ -2040,6 +2070,7 @@ export class GameSession implements SessionSource {
 	private notePremovePlies(entry: PremoveEntry, reply: string, snapshot: PositionSnapshot): void {
 		if (this.moves[this.moves.length - 1] !== reply) this.moves.push(reply);
 		if (this.moves[this.moves.length - 1] !== entry.chosen.uci) this.moves.push(entry.chosen.uci);
+		this.updateHistory(snapshot, [reply, entry.chosen.uci]);
 		const afterReply = applyMoves(entry.fromFen, [reply]);
 		if (afterReply !== null) this.priorFen = afterReply;
 		const at = snapshot.capturedAt;
@@ -2185,6 +2216,7 @@ export class GameSession implements SessionSource {
 	private async playNow(): Promise<void> {
 		const executor = this.executorHandle;
 		if (!executor) return;
+		if (!isMyTurnState(this.state)) return;
 		if (!this.mayAct()) {
 			log.info("game-session: playNow refused — the assistant is off", { tabId: this.deps.tabId });
 			return;
@@ -2251,6 +2283,7 @@ export class GameSession implements SessionSource {
 		// `premoveQueueing` is *not* reset here: it is a fact about the page, not about the game.
 		this.droppedPremoveFrom = null;
 		this.moves = [];
+		this.positionHistory = null;
 		this.oppThinkMs = [];
 		this.myThinkMs = [];
 		this.lastOppMoveAt = null;
@@ -2798,12 +2831,35 @@ export class GameSession implements SessionSource {
 		this.deps.link.post(this.deps.tabId, { kind: "cursorHide" });
 	}
 
+	private historyFor(fen: string): PositionHistory {
+		return matchingHistory(this.positionHistory, fen) ?? { fen, moves: [] };
+	}
+
+	private updateHistory(snapshot: PositionSnapshot, newMoves: string[] = []): void {
+		const restored = snapshot.moveHistory ? historyFromSan(snapshot.moveHistory, snapshot.fen) : null;
+		if (restored) {
+			this.positionHistory = restored;
+			this.moves = [...restored.moves];
+			return;
+		}
+		if (matchingHistory(this.positionHistory, snapshot.fen)) return;
+		const current = this.positionHistory;
+		const advanced =
+			current &&
+			matchingHistory({ fen: current.fen, moves: [...current.moves, ...newMoves] }, snapshot.fen);
+		this.positionHistory = advanced ?? { fen: snapshot.fen, moves: [] };
+	}
+
 	/** Record the move that produced `snapshot` and the pace it was played at. */
 	private trackMove(previous: PositionSnapshot | null, snapshot: PositionSnapshot): void {
 		const last = snapshot.lastMove;
-		if (!last || !previous) return;
+		if (!last || !previous) {
+			this.updateHistory(snapshot);
+			return;
+		}
 		const uci = this.uciOf(previous.fen, last.from, last.to);
 		if (uci !== null && this.moves[this.moves.length - 1] !== uci) this.moves.push(uci);
+		this.updateHistory(snapshot, uci === null ? [] : [uci]);
 		const at = snapshot.capturedAt;
 		const byMe = snapshot.myColor !== null && snapshot.sideToMove !== snapshot.myColor;
 		if (byMe) this.lastMyMoveAt = at;

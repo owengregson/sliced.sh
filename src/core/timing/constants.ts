@@ -75,9 +75,22 @@ export const TIMING_CONSTANTS = {
 		reserveMaxS: 20,
 		allocMinS: 0.15,
 		allocIncWeight: 0.9,
+		/** Outer move-window limits apply to every head, including heads that ignore alloc. */
+		normalWindowAllocations: 4,
+		longWindowAllocations: 6,
+		windowClockFraction: 0.12,
 		overspendFactor: 0.35,
 		overspendPlyHorizon: 60,
 		aheadOfScheduleExp: 0.1,
+	},
+	/** Post-model opponent-clock policy. Missing/untimed clocks leave both policies neutral. */
+	opponentPressure: {
+		thresholdBaseFraction: 0.12,
+		thresholdMinMs: 8_000,
+		thresholdMaxMs: 30_000,
+		incrementHorizon: 3,
+		ownClockRatioMin: 0.35,
+		maxThinkReduction: 0.45,
 	},
 	/** Appendix D §3a.3 body coefficients (log scale). */
 	beta: {

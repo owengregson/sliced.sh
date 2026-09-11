@@ -199,6 +199,23 @@ describe("EngineController options", () => {
 });
 
 describe("EngineController analyse / cache", () => {
+	it("a repetition-aware search cannot reuse a FEN-only result with the same board and clock", async () => {
+		const { t, ctrl } = await setup();
+		const fen = START.replace("0 1", "4 3");
+		const fresh = ctrl.analyse(req({ id: "fresh", fen, limit: { movetimeMs: 500 } }));
+		finish(t, 2, FEATURE_DEPTH + 2);
+		await fresh.result;
+		t.sent.length = 0;
+		const moves = ["g1f3", "g8f6", "f3g1", "f6g8"];
+		const repeat = ctrl.analyse(req({ id: "repeat", fen: START, moves, limit: { movetimeMs: 500 } }));
+		expect(t.sent).toContain(`position fen ${START} moves ${moves.join(" ")}`);
+		finish(t, 2, FEATURE_DEPTH + 2);
+		await repeat.result;
+		t.sent.length = 0;
+		await ctrl.analyse(req({ id: "same-repeat", fen: START, moves, limit: { movetimeMs: 500 } }))
+			.result;
+		expect(t.sent).toEqual([]);
+	});
 	it("serves a repeat request from the cache without touching the engine", async () => {
 		const { t, ctrl, cache } = await setup();
 		const first = ctrl.analyse(req({ id: "a", fen: START, limit: { movetimeMs: 500 } }));

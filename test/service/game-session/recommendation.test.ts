@@ -1,6 +1,7 @@
 // test/service/game-session/recommendation.test.ts — Task 30 Step 3: the §3.2 pipeline
 // (book → analyse → select → plan) and the §7.5 search-budget policy.
 import { describe, expect, it } from "bun:test";
+import { applyMoves } from "@core/chess/san";
 import { DEFAULT_SETTINGS } from "@core/constants/defaults";
 import { SEARCH_BUDGET } from "@core/constants/search";
 import type { AnalysisHandle, AnalysisRequest, AnalysisResult } from "@core/engine/types";
@@ -246,6 +247,51 @@ describe("§6.4 / §7.5 search budget", () => {
 });
 
 describe("recommendation pipeline (§3.2)", () => {
+	it("vetoes an unsearched book repetition when an evaluated continuation preserves the win", async () => {
+		const history = {
+			fen: "6k1/8/8/8/8/8/PPPP4/6K1 b - - 0 1",
+			moves: ["g8h8", "g1h1", "h8g8", "h1g1", "g8h8", "g1h1", "h8g8"],
+		};
+		const fen = applyMoves(history.fen, history.moves)!;
+		const book: ChosenMove = {
+			uci: "h1g1",
+			san: "Kg1",
+			from: "h1",
+			to: "g1",
+			source: "book",
+			rankInLines: 0,
+			cpLoss: 0,
+			rationale: [],
+		};
+		const engine = fakeEngine((req) => analysisOf(req, ["a2a3", "a2a4"], 14, [775, 750]));
+		const pipeline = new RecommendationPipeline({
+			engine,
+			timing: model(),
+			book: { bookMove: async () => book, dispose: () => {} },
+		});
+		const out = await pipeline.run(
+			input({ snapshot: snapshot({ fen, ply: 7 }), moves: history.moves, history })
+		);
+		expect(out?.rec.chosen.uci).not.toBe("h1g1");
+		expect(out?.rec.chosen.source).not.toBe("book");
+	});
+	it("passes validated game history to the engine and rejects a stale same-board replay", async () => {
+		const moves = ["g1f3", "g8f6", "f3g1", "f6g8"];
+		const fen = applyMoves(START, moves)!;
+		const engine = fakeEngine((req) => analysisOf(req, ["e2e4", "d2d4"], 14));
+		const pipeline = new RecommendationPipeline({ engine, timing: model(), book: null });
+		await pipeline.run(
+			input({ snapshot: snapshot({ fen, ply: 4 }), moves, history: { fen: START, moves } })
+		);
+		expect(engine.requests[0]?.fen).toBe(START);
+		expect(engine.requests[0]?.moves).toEqual(moves);
+		const twice = applyMoves(START, [...moves, ...moves])!;
+		await pipeline.run(
+			input({ snapshot: snapshot({ fen: twice, ply: 8 }), moves, history: { fen: START, moves } })
+		);
+		expect(engine.requests[1]?.fen).toBe(twice);
+		expect(engine.requests[1]?.moves).toBeUndefined();
+	});
 	it("composes book → analyse → select → plan and returns a full Recommendation", async () => {
 		const engine = fakeEngine((req) => analysisOf(req, ["e2e4", "d2d4", "g1f3", "c2c4"], 14));
 		const pipeline = new RecommendationPipeline({ engine, timing: model(), book: null });
@@ -311,7 +357,7 @@ describe("recommendation pipeline (§3.2)", () => {
 		expect(out?.fromBook).toBe(true); // the book did answer; the choice was overridden
 	});
 
-	it("retries once with +300 ms when the first search is shallower than depth 8", async () => {
+	it("retries a shallow early result only within the original search budget", async () => {
 		let call = 0;
 		const engine = fakeEngine((req) => {
 			call += 1;
@@ -321,8 +367,34 @@ describe("recommendation pipeline (§3.2)", () => {
 		const out = await pipeline.run(input());
 		expect(engine.requests.length).toBe(2);
 		const first = engine.requests[0]?.limit.movetimeMs ?? 0;
-		expect(engine.requests[1]?.limit.movetimeMs).toBe(Math.round(first + SEARCH_BUDGET.retryExtraMs));
+		expect(engine.requests[1]?.limit.movetimeMs).toBe(Math.round(first - 100));
 		expect(out?.rec.depth).toBe(12);
+	});
+
+	it("never adds another full search when a shallow result exhausted the original budget", async () => {
+		let elapsed = 0;
+		const engine = fakeEngine((req) => {
+			elapsed += req.limit.movetimeMs ?? 0;
+			const result = analysisOf(req, ["e2e4", "d2d4"], 5);
+			result.final.timeMs = req.limit.movetimeMs ?? 0;
+			return result;
+		});
+		const pipeline = new RecommendationPipeline({
+			engine,
+			timing: model(),
+			book: null,
+			now: () => elapsed,
+		});
+		const out = await pipeline.run(
+			input({
+				snapshot: snapshot({
+					clocks: { w: { ms: 2000, running: true }, b: { ms: 30000, running: false } },
+				}),
+			})
+		);
+		expect(out).not.toBeNull();
+		expect(engine.requests).toHaveLength(1);
+		expect(elapsed).toBeLessThanOrEqual(200);
 	});
 
 	it("falls back to the top two lines with τ halved below depth 6", async () => {

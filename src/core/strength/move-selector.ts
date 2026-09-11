@@ -7,6 +7,7 @@
 import { classifyMove } from "@core/chess/move-classify";
 import type { Phase } from "@core/chess/phase";
 import { applyMoves, parseUci, uciToSan } from "@core/chess/san";
+import { opponentClockPressure } from "@core/timing/opponent-pressure";
 import { clamp } from "@core/util/clamp";
 import type { EvalLine } from "@typedefs/engine";
 import type { ChosenMove } from "@typedefs/game";
@@ -14,6 +15,7 @@ import { blunderTerms, drawTargetLoss, pickBlunder } from "./blunder-model";
 import { SELECTION_CONSTANTS as C } from "./constants";
 import { betaFor, cpEffective, effectiveElo, gapFor, sigmaFor, tauFor, winProb } from "./elo-map";
 import { heuristicPriorDetailed, type PriorTerm } from "./prior";
+import { avoidRepetition } from "./repetition";
 import type { SelectionContext, SelectionState } from "./types";
 
 export { cpEffective, winProb } from "./elo-map";
@@ -202,7 +204,8 @@ export function selectMove(
 	ctx: SelectionContext,
 	prior?: ReadonlyMap<string, number>
 ): ChosenMove {
-	const usable = lines.filter((l) => l.pvUci[0] !== undefined);
+	const repetition = avoidRepetition(lines, ctx.fen, ctx.history);
+	const usable = repetition.lines.filter((l) => l.pvUci[0] !== undefined);
 	if (usable.length === 0) throw new RangeError("selectMove: no lines with a move");
 	const { rng, state } = ctx;
 	const NP = C.neverPlay;
@@ -210,12 +213,16 @@ export function selectMove(
 	// Step 1: effective Elo.
 	const E = effectiveElo(ctx.targetElo, ctx.form);
 	const rationale: string[] = [`E=${fmt(E, 1)} (target ${ctx.targetElo}, form ${fmt(ctx.form)})`];
+	if (repetition.avoided) rationale.push("repetition: preserving the advantage with a new position");
 
 	// Rank by raw cpEff (1 = best); stable, so engine order breaks ties.
 	const ranked = usable
 		.map((line, i) => ({ line, i, cpRaw: cpEffective(line.score) }))
 		.sort((a, b) => b.cpRaw - a.cpRaw || a.i - b.i);
-	const topCpRaw = ranked[0]?.cpRaw ?? 0;
+	const originalRanks = lines
+		.filter((line) => line.pvUci[0] !== undefined)
+		.sort((a, b) => cpEffective(b.score) - cpEffective(a.score));
+	const topCpRaw = cpEffective(originalRanks[0]?.score ?? { cp: 0 });
 	const winTopRaw = winProb(topCpRaw);
 	const priors = resolvePriorsDetailed(usable, ctx, prior);
 
@@ -224,7 +231,7 @@ export function selectMove(
 		return {
 			line: r.line,
 			uci,
-			rank,
+			rank: originalRanks.indexOf(r.line) + 1 || rank,
 			cpRaw: r.cpRaw,
 			cpEff: r.cpRaw,
 			loss: 0,
@@ -234,6 +241,57 @@ export function selectMove(
 			mate: r.line.score.mate,
 		};
 	};
+	const pressure = opponentClockPressure({
+		ownClockMs: ctx.myClockMs,
+		opponentClockMs: ctx.oppClockMs,
+		baseMs: ctx.baseMs ?? 0,
+		incrementMs: ctx.incrementMs ?? 0,
+	});
+	const finishPick = (pick: Candidate, source: ChosenMove["source"]): ChosenMove => {
+		let chosen = pick;
+		if (pressure >= C.opponentPressure.min && !ranked.some((r) => (r.line.score.mate ?? 0) > 0)) {
+			const forcing = (uci: string): number => {
+				const facts = classifyMove(ctx.fen, uci, ctx.lastMove);
+				if (!facts) return 0;
+				return facts.isCheck
+					? C.opponentPressure.checkWeight
+					: facts.isRecapture
+						? C.opponentPressure.recaptureWeight
+						: facts.isCapture
+							? C.opponentPressure.captureWeight
+							: 0;
+			};
+			const safe = ranked
+				.map((r, i) => toCandidate(r, i + 1))
+				.filter(
+					(c) =>
+						c.mate === undefined &&
+						topCpRaw - c.cpRaw <= C.opponentPressure.maxLossCp &&
+						forcing(c.uci) > 0
+				)
+				.sort((a, b) => forcing(b.uci) - forcing(a.uci) || b.cpRaw - a.cpRaw);
+			const alternative = safe[0];
+			if (
+				alternative &&
+				alternative.uci !== pick.uci &&
+				(forcing(alternative.uci) > forcing(pick.uci) ||
+					topCpRaw - pick.cpRaw > C.opponentPressure.maxLossCp) &&
+				rng.chance(pressure)
+			) {
+				chosen = alternative;
+				rationale.push(
+					`opponent clock pressure: safe forcing move (${Math.round(pressure * 100)}%, ≤${C.opponentPressure.maxLossCp} cp loss)`
+				);
+			}
+		}
+		return finish(
+			chosen,
+			chosen !== pick && source === "blunder" ? "sampled" : source,
+			topCpRaw,
+			ctx,
+			rationale
+		);
+	};
 
 	// §7.1 `engine-elo`: play the engine's Elo-limited bestmove verbatim.
 	if (ctx.selectionMode === "engine-elo") {
@@ -241,7 +299,7 @@ export function selectMove(
 		const r = ranked[idx >= 0 ? idx : 0];
 		if (r === undefined) throw new RangeError("selectMove: no lines");
 		rationale.push(idx >= 0 ? "engine-elo: bestmove" : "engine-elo: bestmove absent, top line");
-		return finish(toCandidate(r, (idx >= 0 ? idx : 0) + 1), "engine-elo", topCpRaw, ctx, rationale);
+		return finishPick(toCandidate(r, (idx >= 0 ? idx : 0) + 1), "engine-elo");
 	}
 
 	const params = selectionParams(E, state, ctx.phase, ctx.tauScale ?? 1);
@@ -301,7 +359,7 @@ export function selectMove(
 			const pick = mates[0];
 			if (pick !== undefined) {
 				rationale.push(`mate: mate-in-${pick.mate} played (p=${fmt(p)})`);
-				return finish(pick, "mate", topCpRaw, ctx, rationale);
+				return finishPick(pick, "mate");
 			}
 		}
 		rationale.push(
@@ -315,7 +373,7 @@ export function selectMove(
 	const terms = blunderTerms(E, {
 		myClockMs: ctx.myClockMs,
 		cpStd,
-		blunderScale: ctx.blunderScale,
+		blunderScale: pressure >= C.opponentPressure.min ? 0 : ctx.blunderScale,
 		state,
 		...(ctx.baseMs === undefined ? {} : { baseMs: ctx.baseMs }),
 	});
@@ -328,7 +386,7 @@ export function selectMove(
 		const pick = pickBlunder(pool, target);
 		if (pick) {
 			rationale.push(`blunder: ${kind} target ${fmt(target)} → loss ${fmt(pick.loss)}`);
-			return finish(pick, "blunder", topCpRaw, ctx, rationale);
+			return finishPick(pick, "blunder");
 		}
 		rationale.push(`blunder: no candidate with loss ≥ ${C.blunder.minLoss}, base policy`);
 	}
@@ -350,5 +408,5 @@ export function selectMove(
 	rationale.push(
 		`sampled: ${pool.length}/${cands.length} in gap, loss ${fmt(pick.loss)}, prior ${fmt(pick.prior, 2)}`
 	);
-	return finish(pick, "sampled", topCpRaw, ctx, rationale);
+	return finishPick(pick, "sampled");
 }

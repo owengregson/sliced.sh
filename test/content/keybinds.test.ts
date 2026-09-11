@@ -126,4 +126,16 @@ describe("installKeybinds", () => {
 		press({ key: "X", code: "KeyX", shiftKey: true });
 		expect(actions).toEqual(["playMove"]);
 	});
+	it("keeps bare Space available with global shortcuts, consumes it, and leaves editing alone", () => {
+		const { win, actions, press } = setup({ global: true });
+		let pageHandled = 0;
+		win.document.addEventListener("keydown", () => pageHandled++);
+		expect(press({ key: " ", code: "Space" })).toBe(false);
+		expect(press({ key: " ", code: "Space" })).toBe(false);
+		expect(actions).toEqual(["playMove"]);
+		expect(pageHandled).toBe(0);
+		press({ key: " ", code: "Space" }, win.document.getElementById("in") as unknown as Target);
+		expect(actions).toEqual(["playMove"]);
+		expect(pageHandled).toBe(1);
+	});
 });

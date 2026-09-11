@@ -17,6 +17,7 @@ import { TIMING_CONSTANTS } from "./constants";
 import { uniform } from "./distributions";
 import { computeFeatures, featuresToRecord, isBotPace } from "./features";
 import { allocateWindow, type MotorTimes, motorModel } from "./move-window";
+import { opponentClockPressure } from "./opponent-pressure";
 import { sampleOrientationMs } from "./orientation";
 import { samplePersona } from "./persona-latents";
 import { boundByCap, hardCapSec, paceFactor } from "./pressure";
@@ -198,6 +199,21 @@ export class TimingModel {
 		return this.settings.respectBudget ? budgetController(f, this._persona) : scheduleAlloc(f);
 	}
 
+	private capFor(f: Features, mode: TimingMode): number {
+		const hard = hardCapSec(f);
+		if (f.tc === "untimed") return hard;
+		// Keep room for the rest of the game even if the distribution head ignores its
+		// allocation input. The absolute emergency caps remain authoritative.
+		const allocation = budgetController(f, this._persona);
+		const windows =
+			mode === "long" ? C.budget.longWindowAllocations : C.budget.normalWindowAllocations;
+		return Math.min(
+			hard,
+			Math.max(floorFor(mode), allocation * windows * Math.min(1, this.settings.speedScale)),
+			Math.max(C.caps.tinyCapS, f.clock_s * C.budget.windowClockFraction)
+		);
+	}
+
 	/** Head sample with the per-game CV guard (§8.4a). */
 	private sampleGuarded(f: Features, alloc: number): HeadSample {
 		const st = this._state;
@@ -252,7 +268,6 @@ export class TimingModel {
 		// ever planned slower than it is today and the last seconds stay exactly as §13.2 measures
 		// them.
 		const comp = paceFactor(f);
-		const capSec = hardCapSec(f);
 		tSec *= comp;
 		// `premove` mode skips `boundByCap` and the physical floor below, because the hand is supposed to
 		// be on the piece already: pre-positioned during the opponent's think, leaving only press and
@@ -275,7 +290,9 @@ export class TimingModel {
 		const noPreEntry = f.ponder_hit === 0;
 		if (mode === "premove" && (!f.premove_eligible || this.forbidPremove || noPreEntry)) {
 			mode = "instant";
-			tSec = Math.max(tSec, C.instant.minS + C.instant.rangeS);
+			// Reuse the head's continuous spike draw instead of replacing it with a
+			// constant or consuming an unrelated extra draw from the game's random stream.
+			tSec = C.instant.minS + C.instant.rangeS * clamp(tSec / (C.premove.maxS * comp), 0, 1);
 			why.push(
 				this.forbidPremove
 					? "no premove entered → instant"
@@ -293,6 +310,7 @@ export class TimingModel {
 		const orientationMs = mode === "premove" ? 0 : sampleOrientationMs(f, this.rng);
 		const physicalS = orientationMs / 1000 + motor.totalS;
 		const clockEmergency = f.tc !== "untimed" && ctx.myClockMs < C.replan.emergencyClockMs;
+		const capSec = this.capFor(f, mode);
 		let totalS: number;
 		let emergency = false;
 		// A premove plan still has to be physically deliverable. `ponder_hit` (above) says we predicted
@@ -304,8 +322,13 @@ export class TimingModel {
 		// (measured p50 154 ms), which is the same non-human signature the ponder-hit gate removed for
 		// the no-prediction case. `replan("opponent-moved")` computes the fire time itself and is
 		// unaffected.
-		if (mode === "premove") totalS = Math.max(tSec, PHYSICAL_FLOOR_S);
-		else {
+		if (mode === "premove") {
+			// A predicted reply still needs a physical gesture. A fixed floor erases every
+			// sampled fast reply into the same duration; use the sampled hand plus reaction.
+			const b = boundByCap(motor.totalS + tSec, capSec, PHYSICAL_FLOOR_S, clockEmergency, this.rng);
+			totalS = b.totalSec;
+			emergency = b.emergency;
+		} else {
 			// Instant: orientation + motor + the head's U(0.05, 0.25). Normal/long: Appendix D §5's
 			// `max(tSec, motor.total)` with the §8.4b item 2 orientation inside the window. A
 			// binding hard cap (§3a.3) wins over that physical floor, sampled in `cap · U(lo, 1)`
@@ -316,6 +339,20 @@ export class TimingModel {
 			totalS = b.totalSec;
 			emergency = b.emergency;
 			if (b.bound) why.push(`cap ${capSec.toFixed(2)} s binds (lo ${b.lo.toFixed(2)})`);
+		}
+		const opponentPressure = opponentClockPressure({
+			ownClockMs: ctx.myClockMs,
+			opponentClockMs: ctx.oppClockMs,
+			baseMs: ctx.baseSec * 1000,
+			incrementMs: ctx.incSec * 1000,
+		});
+		if (opponentPressure > 0 && mode !== "premove") {
+			const factor = 1 - C.opponentPressure.maxThinkReduction * opponentPressure;
+			const floor = emergency ? C.motor.minMotorMs / 1000 : Math.max(floorFor(mode), physicalS);
+			// Shorten only discretionary time. Keep the sampled gesture, and never extend
+			// an already capped move to satisfy a floor that no longer fits the clock.
+			totalS = Math.min(totalS, Math.max(floor, totalS * factor));
+			why.push(`opponent clock pressure: think ×${factor.toFixed(2)}`);
 		}
 		if (emergency) why.push("emergency regime: no floors, minimal motor");
 		const thinkMs = totalS * 1000;
@@ -331,6 +368,7 @@ export class TimingModel {
 			alloc,
 			comp,
 			capSec,
+			opponentPressure,
 			emergency: emergency ? 1 : 0,
 			eps: st.eps,
 			bodyMedianMs: median * 1000,
@@ -454,7 +492,7 @@ export class TimingModel {
 			}
 			case "clock-jump": {
 				const f = computeFeatures(ctx, this._state);
-				const capSec = hardCapSec(f);
+				const capSec = this.capFor(f, plan.mode);
 				if (plan.thinkMs / 1000 <= capSec)
 					return this.withElapsed(plan, ctx, plan.thinkMs, plan.window, "clock-jump: within caps");
 				const clockEmergency = f.tc !== "untimed" && ctx.myClockMs < C.replan.emergencyClockMs;

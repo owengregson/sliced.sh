@@ -7,7 +7,7 @@
  *
  * `Keybinds.global` scope is the service worker's `chrome.commands`
  * (manifest shortcuts); while it is on, this page-scoped listener stays
- * inert so a shortcut never fires twice.
+ * inert except for bare Space, which Chrome's global command API cannot bind.
  */
 
 import { TIMINGS } from "@core/constants/timings";
@@ -30,7 +30,7 @@ export interface KeybindOptions {
 
 const EDITABLE_TAGS = new Set(["INPUT", "TEXTAREA", "SELECT"]);
 
-export function isEditableTarget(target: EventTarget | null): boolean {
+export function isEditableTarget(target: EventTarget | null | undefined): boolean {
 	if (!target || typeof target !== "object") return false;
 	const el = target as Partial<HTMLElement> & { closest?: (s: string) => Element | null };
 	if (typeof el.tagName !== "string") return false;
@@ -65,17 +65,25 @@ export function installKeybinds(
 	const lastFired = new Map<KeybindAction, number>();
 
 	const onKeyDown = (ev: KeyboardEvent): void => {
-		if (ev.repeat) return;
 		const binds = getKeybinds();
-		if (binds.global) return;
-		if (isEditableTarget(ev.target)) return;
+		if (isEditableTarget(ev.target) || ev.composedPath().some(isEditableTarget)) return;
 		for (const action of KEYBIND_ACTIONS) {
 			if (!keybindMatches(ev, binds[action])) continue;
+			const pageSpace =
+				action === "playMove" &&
+				ev.code === "Space" &&
+				!ev.altKey &&
+				!ev.ctrlKey &&
+				!ev.metaKey &&
+				!ev.shiftKey;
+			if (binds.global && !pageSpace) continue;
+			ev.preventDefault();
+			ev.stopImmediatePropagation();
+			if (ev.repeat) return;
 			const t = now();
 			const last = lastFired.get(action);
 			if (last !== undefined && t - last < debounceMs) return;
 			lastFired.set(action, t);
-			ev.preventDefault();
 			onAction(action);
 			return;
 		}

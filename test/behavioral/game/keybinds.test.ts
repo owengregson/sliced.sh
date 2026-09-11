@@ -24,6 +24,27 @@ const presses = (): unknown[] =>
 	);
 
 describe("game session: in-page keybinds (Step 2e)", () => {
+	it("Space interrupts a long running think within one gesture and never submits twice", async () => {
+		h = await createGameHarness({
+			sendKeybinds: true,
+			settings: { automation: { autoMove: true }, keybinds: { global: true } },
+			head: {
+				id: "v1-parametric",
+				median: () => 12,
+				sample: () => ({ tSec: 12, mode: "normal", why: [] }),
+			},
+		});
+		await h.arrive();
+		expect(await h.until(() => h.executor()?.handState() === "orientation", 10_000)).toBe(true);
+		const at = h.sim.now();
+		expect((h.session().recommendation()?.plan.deadlineMs ?? 0) - at).toBeGreaterThan(5000);
+		await press(DEFAULT_KEYBINDS.playMove);
+		expect(await h.until(() => h.site.board.lastMove() !== null, 2000)).toBe(true);
+		expect(h.sim.now() - at).toBeLessThan(2000);
+		await press(DEFAULT_KEYBINDS.playMove);
+		await h.advance(15_000);
+		expect(presses()).toHaveLength(1);
+	});
 	it("playMove plays the current recommendation now", async () => {
 		h = await createGameHarness({
 			sendKeybinds: true,

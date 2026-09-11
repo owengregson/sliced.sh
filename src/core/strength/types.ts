@@ -3,6 +3,7 @@
  * `@typedefs/*` and are never redefined here.
  */
 
+import type { PositionHistory } from "@core/chess/history";
 import type { Phase } from "@core/chess/phase";
 import type { Rng } from "@core/rng";
 import type { Settings } from "@typedefs/settings";
@@ -22,6 +23,7 @@ export interface SelectionState {
 /** Inputs to `selectMove` (§7.2). `lines` are side-to-move POV. */
 export interface SelectionContext {
 	fen: string;
+	history?: PositionHistory;
 	targetElo: number;
 	/** Per-game AR(1) form latent in [−1, 1] (`persona.ts`). */
 	form: number;
@@ -35,6 +37,8 @@ export interface SelectionContext {
 	 * untimed game, or a control that has not arrived yet) the absolute ramp applies alone.
 	 */
 	baseMs?: number;
+	/** Increment mitigates the opponent's apparent time trouble. */
+	incrementMs?: number;
 	/** The opponent's last move (UCI); enables the recapture row. */
 	lastMove?: string;
 	selectionMode: SelectionMode;

@@ -44,6 +44,11 @@ export const PREMOVE = {
 	probBase: 0.35,
 	probRange: 0.5,
 	probSpan: 1200,
+	/** A recognised trade is a deliberate premove opportunity, independent of the generic reflex rate. */
+	tradeProbBase: 0.65,
+	tradeProbRange: 0.3,
+	tradePersonaFloor: 0.8,
+	tradeReplyMinProb: 0.35,
 	/** Opponent prediction when no `ponder` move is available: `go movetime 150` MultiPV 3. */
 	ponderMovetimeMs: 150,
 	ponderMultiPv: 3,
@@ -56,13 +61,10 @@ export const PREMOVE = {
 	/** Clear-only move: the second line loses at least this win-fraction. */
 	loss2ndMin: 0.25,
 	/**
-	 * Fix F: the reasons a premove may be **entered on the site** during the opponent's turn,
-	 * rather than only played fast once their reply has landed. Both are *self-invalidating*: a
-	 * recapture needs the opponent to have captured on the square (they did not ⇒ our own piece
-	 * still stands there ⇒ the site drops the premove), and the only legal move in the predicted
-	 * position is almost never legal in another one. `loss2nd` is the exception and is deliberately
-	 * absent: a clear-best quiet move stays legal after *any* reply, so queueing it would fire a
-	 * move chosen for a position that never happened.
+	 * Reasons eligible for a site queue. Eligibility alone is insufficient: isQueueableCandidate
+	 * validates the occupied destination and all other legal replies. An only-move block can
+	 * remain legal after a different reply, so it must not be assumed safe from its reason alone.
+	 * Clear-best quiet moves remain fast replies after the expected position actually arrives.
 	 */
 	queueReasons: ["recapture", "only-move"] as const,
 	/**

@@ -11,7 +11,6 @@
  * controller ruling: nothing here is instantiated yet.
  */
 
-import { applyMoves } from "@core/chess/san";
 import { SEARCH_BUDGET } from "@core/constants/search";
 import type { AnalysisCache } from "@core/engine/analysis-cache";
 import { type EngineOptions, type OptionsEnv, optionsForSettings } from "@core/engine/options";
@@ -261,11 +260,6 @@ export class EngineController {
 		});
 	}
 
-	/** Position a request analyses (`fen` after `moves`); `null` when a move is illegal. */
-	private static effectiveFen(req: AnalysisRequest): string | null {
-		return req.moves && req.moves.length > 0 ? applyMoves(req.fen, req.moves) : req.fen;
-	}
-
 	/**
 	 * Appendix E §4.5: "a hit with depth ≥ requested depthCap − 2 skips the search". The slack is
 	 * the point — an own-move request carries `depth: depthCap` as a *stop* condition on a
@@ -281,23 +275,12 @@ export class EngineController {
 	}
 
 	private lookup(req: AnalysisRequest): AnalysisResult | undefined {
-		if (!this.cache) return undefined;
-		const fen = EngineController.effectiveFen(req);
-		if (fen === null) return undefined;
-		return this.cache.get(fen, req.multiPv, this.minDepthFor(req), req.elo);
+		if (!this.cache || req.searchmoves?.length) return undefined;
+		return this.cache.get(req.fen, req.multiPv, this.minDepthFor(req), req.elo, req.moves);
 	}
 
-	/** Cache under the position reached (the cache keys on `request.fen` alone). */
+	/** Keep the search history: the same board can have a different repetition outcome. */
 	private store(result: AnalysisResult): void {
-		if (!this.cache) return;
-		const { request } = result;
-		if (!request.moves || request.moves.length === 0) {
-			this.cache.set(result);
-			return;
-		}
-		const fen = applyMoves(request.fen, request.moves);
-		if (fen === null) return;
-		const { moves: _moves, ...rest } = request;
-		this.cache.set({ ...result, request: { ...rest, fen } });
+		this.cache?.set(result);
 	}
 }

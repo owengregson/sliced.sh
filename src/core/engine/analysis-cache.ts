@@ -1,12 +1,11 @@
 /**
  * Own transposition cache over `LruCache` (§6.4 / Appendix E §7.1). Keyed by
- * `${fenKey}|${multiPv}|${elo}|${limitKey}`; the FEN key drops the
- * halfmove/fullmove fields (evaluations do not depend on them), the stored
- * result keeps the full request. Ponder results are inserted at full strength
- * so the opponent's expected reply is often a hit for the panel.
+ * position, reversible history, fifty-move clock, MultiPV, strength and limit.
+ * Fullmove numbers do not affect identity. Stored results retain the original
+ * request so a prior occurrence cannot masquerade as the current search.
  */
 
-import { loadPosition } from "@core/chess/fen";
+import { historyKey, positionKey } from "@core/chess/history";
 import { LIMITS } from "@core/constants/limits";
 import { TIMINGS } from "@core/constants/timings";
 import { LruCache } from "@core/util/lru";
@@ -32,8 +31,7 @@ import type { AnalysisLimit, AnalysisResult } from "./types";
  * own raw fields, as before.
  */
 export function fenKey(fen: string): string {
-	const canonical = loadPosition(fen)?.fen() ?? fen;
-	return canonical.trim().split(/\s+/).slice(0, 4).join(" ");
+	return positionKey(fen);
 }
 
 /**
@@ -54,9 +52,10 @@ export function cacheKey(
 	fen: string,
 	multiPv: number,
 	elo: number | undefined,
-	limit: AnalysisLimit
+	limit: AnalysisLimit,
+	moves: readonly string[] = []
 ): string {
-	return `${fenKey(fen)}|${multiPv}|${elo ?? "full"}|${limitKey(limit)}`;
+	return `${historyKey(fen, moves)}|${multiPv}|${elo ?? "full"}|${limitKey(limit)}`;
 }
 
 /**
@@ -73,7 +72,7 @@ export function isCacheable(result: AnalysisResult): boolean {
 
 export class AnalysisCache {
 	private readonly lru: LruCache<string, AnalysisResult>;
-	/** fenKey → cache keys stored under it; stale keys are pruned lazily. */
+	/** History-aware position key → cache keys; stale entries are pruned lazily. */
 	private readonly byFen = new Map<string, Set<string>>();
 
 	constructor(private readonly capacity: number = LIMITS.analysisCacheEntries) {
@@ -89,8 +88,15 @@ export class AnalysisCache {
 	 * more at the same strength (`elo` undefined = full strength) and
 	 * `final.depth >= minDepth`. A hit refreshes recency.
 	 */
-	get(fen: string, multiPv: number, minDepth: number, elo?: number): AnalysisResult | undefined {
-		const fk = fenKey(fen);
+	get(
+		fen: string,
+		multiPv: number,
+		minDepth: number,
+		elo?: number,
+		moves: readonly string[] = []
+	): AnalysisResult | undefined {
+		const fk = historyKey(fen, moves);
+		if (fk === null) return undefined;
 		const keys = this.byFen.get(fk);
 		if (!keys) return undefined;
 		let bestKey: string | undefined;
@@ -121,9 +127,12 @@ export class AnalysisCache {
 	/** Stores only cacheable results (see `isCacheable`). */
 	set(result: AnalysisResult): void {
 		if (!isCacheable(result)) return;
-		const { fen, multiPv, elo, limit } = result.request;
-		const fk = fenKey(fen);
-		const key = cacheKey(fen, multiPv, elo, limit);
+		const { fen, moves, multiPv, elo, limit, searchmoves } = result.request;
+		// A restricted search cannot answer an unrestricted request.
+		if (searchmoves?.length) return;
+		const fk = historyKey(fen, moves);
+		if (fk === null) return;
+		const key = cacheKey(fen, multiPv, elo, limit, moves);
 		this.lru.set(key, result);
 		let keys = this.byFen.get(fk);
 		if (!keys) {

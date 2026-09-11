@@ -184,10 +184,18 @@ function withPreTouch(plan: TimingPlan, preTouchMs: number): TimingPlan {
 
 /** An instant plan for `playNow` and retries: no exploration, touch only. */
 export function instantTiming(plan: TimingPlan): TimingPlan {
+	const thinkMs = Math.max(EXECUTOR.minExecutionMs, plan.window.approachMs);
 	return {
 		...withPreTouch(plan, 0),
 		mode: "instant",
-		thinkMs: EXECUTOR.minExecutionMs + plan.dragDurationMs,
+		thinkMs,
+		window: {
+			orientationMs: 0,
+			scanMs: 0,
+			previewMs: 0,
+			decisionMs: 0,
+			approachMs: thinkMs,
+		},
 	};
 }
 
@@ -197,10 +205,16 @@ export function instantTiming(plan: TimingPlan): TimingPlan {
  */
 export function fitTiming(plan: TimingPlan, availableMs: number): TimingPlan {
 	if (availableMs >= plan.thinkMs) return plan;
-	const touchBudget = EXECUTOR.defaultApproachMs + plan.dragDurationMs;
 	const thinkMs = Math.max(EXECUTOR.minExecutionMs, availableMs);
+	const touchBudget = Math.min(plan.window.approachMs, thinkMs);
 	const preTouch = Math.max(0, Math.min(preTouchMsOf(plan), thinkMs - touchBudget));
-	return { ...withPreTouch(plan, preTouch), thinkMs };
+	const fitted = withPreTouch(plan, preTouch);
+	return {
+		...fitted,
+		thinkMs,
+		dragDurationMs: Math.min(plan.dragDurationMs, touchBudget),
+		window: { ...fitted.window, approachMs: thinkMs - preTouch },
+	};
 }
 
 /** Exploration candidates from the MultiPV lines, weighted by rank when the session gives no probabilities. */
@@ -434,11 +448,22 @@ export class MoveExecutor {
 		ctx?: MoveContext
 	): Promise<ExecutionResult | null> {
 		const pending = this.pending;
+		const running = this.running;
 		this.clearPending();
-		const target = rec ?? pending?.rec;
-		const base = plan ?? pending?.timing;
+		const target = rec ?? pending?.rec ?? running?.rec;
+		const base = plan ?? pending?.timing ?? running?.timing;
 		if (!target || !base) return null;
-		return this.execute(target, instantTiming(base), ctx ?? pending?.ctx ?? {});
+		if (running && !running.ac.signal.aborted) {
+			// A scheduled run owns its entire thinking window. Interrupt its look/hover now,
+			// then use the existing verified replacement path. Once the committed approach
+			// starts, let it finish: another Space must never drop a held piece or double-move.
+			if (this.hand !== "rest" && this.hand !== "orientation" && this.hand !== "exploring")
+				return running.done;
+			running.ac.abort();
+		}
+		const instant = instantTiming(base);
+		instant.deadlineMs = this.now() + instant.thinkMs;
+		return this.execute(target, instant, ctx ?? pending?.ctx ?? {});
 	}
 
 	/**
@@ -730,10 +755,13 @@ export class MoveExecutor {
 				? verifyMove(this.link, this.tabId, expected, timeoutMs, checkSignal)
 				: Promise.resolve({ outcome: "ok" });
 		try {
-			if (queued) return await this.enterPremove(controller, plan, timing, signal);
+			// Setup and replacement verification consume the original move window too.
+			const readyTiming = fitTiming(timing, timing.deadlineMs - this.now());
+			if (this.running?.rec === rec) this.running.timing = readyTiming;
+			if (queued) return await this.enterPremove(controller, plan, readyTiming, signal);
 			return await runWithRetry({
 				attempt: (index) =>
-					controller.execute(plan, index === 0 ? timing : instantTiming(timing), signal),
+					controller.execute(plan, index === 0 ? readyTiming : instantTiming(readyTiming), signal),
 				verify: check,
 				recheck: (checkSignal) => check(EXECUTOR.recheckTimeoutMs, checkSignal),
 				checkSignal: () => this.freshCheckSignal(),

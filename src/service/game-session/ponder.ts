@@ -17,6 +17,8 @@
  * engine busy and the change would never apply).
  */
 
+import { loadPosition } from "@core/chess/fen";
+import { applyMoves } from "@core/chess/san";
 import { SEARCH_BUDGET } from "@core/constants/search";
 import { TIMINGS } from "@core/constants/timings";
 import type { AnalysisHandle, AnalysisRequest, AnalysisResult } from "@core/engine/types";
@@ -73,7 +75,11 @@ export class PonderController {
 
 	/** `lines[0].pvUci[0]` of the last ponder on `fen`, or `null`. */
 	expectedReply(fen?: string): string | null {
-		if (fen !== undefined && this.expectedFen !== fen) return null;
+		if (fen !== undefined && this.expectedFen !== fen) {
+			const expected = this.expectedFen ? loadPosition(this.expectedFen) : null;
+			const queried = loadPosition(fen);
+			if (!expected || !queried || expected.fen() !== queried.fen()) return null;
+		}
 		return this.expected;
 	}
 
@@ -96,8 +102,10 @@ export class PonderController {
 	 */
 	async start(kind: PonderKind, fen: string, moves: readonly string[] = []): Promise<void> {
 		if (this.disposed) return;
+		const reached = moves.length ? applyMoves(fen, moves) : fen;
+		if (reached === null) return;
 		const current = this.running;
-		if (current && current.kind === kind && current.fen === fen) return;
+		if (current && current.kind === kind && current.fen === reached) return;
 		await this.stop();
 		if (this.disposed) return;
 		const req: AnalysisRequest = {
@@ -122,12 +130,12 @@ export class PonderController {
 			void handle.stop();
 		}, this.maxMs);
 		const settled = handle.result.then(
-			(result) => this.settle(fen, result),
+			(result) => this.settle(reached, result),
 			(error: unknown) => {
 				log.debug("ponder: failed", { error: errorMessage(error) });
 			}
 		);
-		this.running = { kind, fen, handle, timer, settled };
+		this.running = { kind, fen: reached, handle, timer, settled };
 		log.debug("ponder: started", { kind, fen, at: this.now() });
 	}
 
