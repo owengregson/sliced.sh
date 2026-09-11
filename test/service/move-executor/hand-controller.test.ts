@@ -17,6 +17,7 @@ import { defaultScheduler } from "@core/util/scheduler";
 import type { BoardRectSource } from "@service/board-watch";
 import type { FocusVerdict } from "@service/focus-gate";
 import { HandOwnership } from "@service/hand-ownership";
+import { fitTiming } from "@service/move-executor";
 import { CdpInputBackend } from "@service/move-executor/cdp-input-backend";
 import {
 	type GeometryProvider,
@@ -287,7 +288,104 @@ describe("HandController urgent gestures", () => {
 	);
 });
 
+describe("HandController replies with transport latency", () => {
+	it.each([650, 3000])(
+		"honors a %i ms reply window through the real generated approach, press, drag and release",
+		async (thinkMs) => {
+			sim.debugger.respond(
+				CDP.inputDispatchMouseEvent,
+				() => new Promise((resolve) => setTimeout(() => resolve({}), 16))
+			);
+			// A short/available analysis still consumes real time before the hand gets its move.
+			await sim.time.advance(150);
+			const ctrl = makeController(9);
+			const plan = makePlan();
+			const timing = fitTiming(
+				makeTiming({
+					mode: thinkMs < 1000 ? "instant" : "normal",
+					thinkMs,
+					deadlineMs: START + thinkMs,
+					dragDurationMs: 180,
+					preMoveHoverMs: thinkMs - 450,
+					window: {
+						orientationMs: thinkMs - 450,
+						scanMs: 0,
+						previewMs: 0,
+						decisionMs: 0,
+						approachMs: 450,
+					},
+				}),
+				thinkMs - 150
+			);
+			const result = await run(ctrl, plan, timing);
+			const cmds = commands();
+			const pressIndex = cmds.findIndex((cmd) => cmd.type === "mousePressed");
+			const releaseIndex = cmds.findIndex((cmd) => cmd.type === "mouseReleased");
+			const release = cmds[releaseIndex]!;
+			const approach = cmds.slice(0, pressIndex).filter((cmd) => cmd.type === "mouseMoved");
+			const drag = cmds.slice(pressIndex + 1, releaseIndex).filter((cmd) => cmd.type === "mouseMoved");
+			expect(result.outcome).toBe("executed");
+			expect(approach.length).toBeGreaterThan(5);
+			expect(drag.length).toBeGreaterThan(5);
+			expect(approach.every((cmd) => cmd.buttons === 0)).toBe(true);
+			expect(drag.every((cmd) => cmd.buttons === 1)).toBe(true);
+			expect(cmds.filter((cmd) => cmd.type === "mousePressed")).toHaveLength(1);
+			expect(cmds.filter((cmd) => cmd.type === "mouseReleased")).toHaveLength(1);
+			expect(inside(cmds[pressIndex]!, plan.from.rect)).toBe(true);
+			expect(inside(release, plan.to.rect)).toBe(true);
+			expect(release.at).toBeGreaterThanOrEqual(thinkMs);
+			expect(release.at).toBeLessThan(thinkMs < 1000 ? 1000 : thinkMs + 200);
+		}
+	);
+});
+
 describe("HandController premove gestures", () => {
+	it("motor speed changes the next smooth gesture duration while retaining both button edges and path legs", async () => {
+		const elapsed: number[] = [];
+		for (const motorSpeed of [0.5, 1, 2]) {
+			ownership.armed(tabId, START_POINT);
+			const ctrl = makeController(9);
+			const start = sim.now() - START;
+			const commandStart = sim.debugger.commands.length;
+			const plan = makePlan({ motorSpeed, expected: { uci: "e2e4", premove: true } });
+			const timing = makeTiming({
+				thinkMs: 20,
+				dragDurationMs: 400,
+				preMoveHoverMs: 0,
+				mode: "premove",
+				window: { orientationMs: 0, scanMs: 0, previewMs: 0, decisionMs: 0, approachMs: 20 },
+			});
+			const result = await run(ctrl, plan, timing);
+			const cmds = commands().slice(commandStart);
+			const pressIndex = cmds.findIndex((c) => c.type === "mousePressed");
+			const releaseIndex = cmds.findIndex((c) => c.type === "mouseReleased");
+			const approach = cmds.slice(0, pressIndex).filter((c) => c.type === "mouseMoved");
+			const drag = cmds.slice(pressIndex + 1, releaseIndex).filter((c) => c.type === "mouseMoved");
+			expect(result.outcome).toBe("executed");
+			expect(approach.length).toBeGreaterThan(5);
+			expect(drag.length).toBeGreaterThan(5);
+			expect(approach.every((c) => c.buttons === 0)).toBe(true);
+			expect(drag.every((c) => c.buttons === 1)).toBe(true);
+			expect(inside(cmds[pressIndex]!, plan.from.rect)).toBe(true);
+			expect(inside(cmds[releaseIndex]!, plan.to.rect)).toBe(true);
+			expect(cmds.filter((c) => c.type === "mousePressed")).toHaveLength(1);
+			expect(cmds.filter((c) => c.type === "mouseReleased")).toHaveLength(1);
+			let previous = { ...START_POINT, at: start };
+			for (const cmd of cmds) {
+				const distance = Math.hypot(cmd.x - previous.x, cmd.y - previous.y);
+				expect(distance).toBeLessThanOrEqual(
+					(plan.motor.peakSpeedCapPxPerS * (cmd.at - previous.at)) / 1000 + 1
+				);
+				previous = cmd;
+			}
+			elapsed.push(cmds[releaseIndex]!.at - start);
+			// The captured input remains available for logs/retries and is never rescaled in place.
+			expect(plan.motor).toBe(MOTOR_DEFAULTS);
+			expect(timing.dragDurationMs).toBe(400);
+		}
+		expect(elapsed[1]!).toBeLessThan(elapsed[0]! * 0.85);
+		expect(elapsed[2]!).toBeLessThan(elapsed[1]! * 0.9);
+	});
 	it("uses a generated path to the promotion picker after a premove drag", async () => {
 		const ctrl = makeController(7);
 		promotionRect = { left: 400, top: 100, width: 80, height: 80 };

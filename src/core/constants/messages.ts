@@ -43,6 +43,7 @@ export const MSG = {
 	// panel → SW (request/response)
 	PANEL_GET_SNAPSHOT: "sl:panel:getSnapshot",
 	PANEL_PLAY_NOW: "sl:panel:playNow",
+	PANEL_KEYBIND: "sl:panel:keybind",
 	PANEL_SET_AUTO_MOVE: "sl:panel:setAutoMove",
 	PANEL_CANCEL_PENDING: "sl:panel:cancelPending",
 	PANEL_SET_ENABLED: "sl:panel:setEnabled",

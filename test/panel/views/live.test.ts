@@ -18,7 +18,6 @@ import { bootPanelDom, click, key, type PanelDom, pointer } from "../dom";
 import {
 	FEN_B,
 	fakeStore,
-	INTERACTIVE_SELECTOR,
 	idleSnapshot,
 	type LiveHarness,
 	liveSnapshot,
@@ -55,72 +54,37 @@ const pillText = (name: string): string =>
 	h?.q(`.sl-pill[data-pill="${name}"] .sl-pill__text`).textContent ?? "";
 const pillClass = (name: string): string => h?.q(`.sl-pill[data-pill="${name}"]`).className ?? "";
 
-describe("hands-off mode (§13.4 / §10.4)", () => {
-	it("locks every control, shows the Play keybind only, never takes focus", async () => {
-		h = await mountLive(dom.sim, liveSnapshot());
-		expect(h.root.dataset.view).toBe("live");
-		expect(h.root.classList.contains("sl-live--hands-off")).toBe(true);
-		const controls = h.qa(INTERACTIVE_SELECTOR);
-		expect(controls.length).toBeGreaterThan(5);
-		for (const el of controls) {
-			expect({ el: el.className, disabled: el.getAttribute("aria-disabled") }).toEqual({
-				el: el.className,
-				disabled: "true",
-			});
-			expect(el.getAttribute("tabindex")).toBe("-1");
-		}
-		// CSS: the view's own lock (the shell adds `.sl-hands-off` on top).
-		expect(LIVE_CSS).toMatch(/\.sl-live--hands-off[^{]*\{[^}]*pointer-events:\s*none/);
-		// The Play button is a keybind hint only.
-		const button = playButton();
-		expect(button.getAttribute("aria-disabled")).toBe("true");
-		expect(button.querySelector<HTMLElement>(".sl-button__kbd")?.hidden).toBe(false);
-		expect(button.querySelector(".sl-button__kbd")?.textContent).toBe(COPY.keybind.keys.space);
-		expect(h.q(".sl-move").classList.contains("sl-move--hands-off")).toBe(true);
-		expect(LIVE_CSS).toMatch(
-			/\.sl-move--hands-off[^{]*\.sl-button__label[^{]*\{[^}]*display:\s*inline/
-		);
-		expect(document.activeElement).toBe(document.body);
-		// Nothing dispatches from pointer or keyboard while hands-off.
-		const row = h.qa(".sl-pv")[1];
-		if (row) pointer(row, "pointerover");
-		if (row) click(row);
-		click(h.q(".sl-live__strength-open"));
+describe("live controls", () => {
+	it("keeps play, strength, and settings controls usable during a live game", async () => {
+		h = await mountLive(dom.sim, liveSnapshot({ autoMove: { armed: true } }));
+		expect(h.root.classList.contains("sl-live--hands-off")).toBe(false);
+		expect(playButton().getAttribute("aria-disabled")).not.toBe("true");
 		click(playButton());
-		key(document, "keydown", { key: "A", code: "KeyA", shiftKey: true });
-		key(document, "keydown", { key: " ", code: "Space" });
-		await dom.tick(UI_TIMINGS.preArmMs);
-		expect(h.store.calls).toEqual([]);
-		expect(document.querySelector(".sl-popover")).toBeNull();
-		expect(h.toasts()).toHaveLength(0);
-		expect(document.activeElement).toBe(document.body);
+		expect(h.store.calls.at(-1)).toEqual({ type: MSG.PANEL_PLAY_NOW, tabId: h.tabId });
+		click(h.q(".sl-live__strength-open"));
+		expect(document.querySelector('.sl-popover[data-state="open"]')).not.toBeNull();
+		const highlight = h.q('.sl-toggle[data-toggle="highlight"]');
+		expect(highlight.getAttribute("aria-disabled")).not.toBe("true");
+		click(highlight);
+		await dom.tick(0);
+		expect((await chromeLocalGet(LOCAL_KEYS.settings))?.automation.highlightMoves).toBe(false);
 	});
 
-	it("through the shell: banner with the three keybinds, view switch disabled, controls locked", async () => {
+	it("through the shell: retains shortcut hints and an enabled view switch", async () => {
 		dom.sim.openTab("https://www.chess.com/game/174252011111", { active: true });
 		const app = document.getElementById("app");
-		if (!app) throw new Error("no #app");
+		if (!app) throw new Error("no app");
 		const store = fakeStore(null);
 		shell = bootShell(app, { store, views: { live: liveView } });
 		store.emit(liveSnapshot());
 		await dom.tick(0);
 		expect(shell.router.current).toBe("live");
-		expect(shell.handsOff).toBe(true);
-		expect(app.classList.contains("sl-hands-off")).toBe(true);
-		expect(app.querySelector(".sl-segment")?.getAttribute("aria-disabled")).toBe("true");
-		expect(currentBannerKind()).toBe("hands-off");
-		const banner = app.querySelector(".sl-banner--hands-off")?.textContent?.trim() ?? "";
-		expect(banner).toBe(COPY.banner.handsOff);
-		const shortcuts = app.querySelector(".sl-shortcuts")?.textContent ?? "";
-		expect(shortcuts).toContain("Shift+A");
-		expect(shortcuts).toContain("Space");
-		expect(shortcuts).toContain("Shift+X");
-		expect(app.querySelectorAll(".sl-banner")).toHaveLength(1); // no second (detached) banner
-		const live = app.querySelector<HTMLElement>(".sl-live");
-		expect(live?.classList.contains("sl-live--hands-off")).toBe(true);
-		for (const el of live?.querySelectorAll(INTERACTIVE_SELECTOR) ?? [])
-			expect(el.getAttribute("aria-disabled")).toBe("true");
-		expect(document.activeElement).toBe(document.body);
+		expect(shell.handsOff).toBe(false);
+		expect(app.classList.contains("sl-hands-off")).toBe(false);
+		expect(app.querySelector(".sl-segment")?.getAttribute("aria-disabled")).not.toBe("true");
+		expect(app.querySelector(".sl-banner--hands-off")).toBeNull();
+		for (const shortcut of ["Shift+A", "Space", "Shift+X"])
+			expect(app.querySelector(".sl-shortcuts")?.textContent).toContain(shortcut);
 	});
 });
 
@@ -444,7 +408,7 @@ describe("move card states (§5.6)", () => {
 		expect(flashing()).toBe(true);
 	});
 
-	it("Esc cancels the countdown; the play keybind plays now; port toasts surface", async () => {
+	it("Esc cancels the countdown; the play button plays now; port toasts surface", async () => {
 		h = await mountLive(
 			dom.sim,
 			idleSnapshot({
@@ -458,7 +422,8 @@ describe("move card states (§5.6)", () => {
 		expect(h.toasts()[0]?.querySelector(".sl-toast__text")?.textContent).toBe(
 			COPY.toast.skipped("Nf3")
 		);
-		key(document, "keydown", { key: " ", code: "Space" });
+		h.store.emit(idleSnapshot({ autoMove: { armed: true } }));
+		click(playButton());
 		expect(h.store.calls.at(-1)).toEqual({ type: MSG.PANEL_PLAY_NOW, tabId: h.tabId });
 		// Port toasts name a `TOAST_KEYS` key; the copy (and the drag/click wording) is resolved here.
 		h.store.port({ kind: "toast", level: "warn", key: TOAST_KEYS.notVerified });
@@ -560,9 +525,9 @@ describe("lines (§5.7)", () => {
 });
 
 describe("strength card (§4.4 item 7, §5.12)", () => {
-	it("shows Elo · band · persona; the popover applies setSettings and says Applies from next move", async () => {
+	it("shows the active derived Elo while the popover edits the configured target", async () => {
 		h = await mountLive(dom.sim, idleSnapshot());
-		expect(h.q(".sl-live__strength-elo").textContent).toBe("1500");
+		expect(h.q(".sl-live__strength-elo").textContent).toBe("1893");
 		expect(h.q(".sl-live__strength-label").textContent).toBe(
 			`${COPY.strength.bands.expert} · ${COPY.personaName.balanced}`
 		);
@@ -594,13 +559,14 @@ describe("strength card (§4.4 item 7, §5.12)", () => {
 		// The card follows the snapshot, not the popover.
 		h.store.emit(
 			idleSnapshot({
+				opponent: { isBot: false, name: "Peer", ratingEstimate: 3300, derivedTargetElo: 3350 },
 				settings: {
 					...idleSnapshot().settings,
 					strength: { ...idleSnapshot().settings.strength, targetElo: 2650, persona: "blitz" },
 				},
 			})
 		);
-		expect(h.q(".sl-live__strength-elo").textContent).toBe("2650");
+		expect(h.q(".sl-live__strength-elo").textContent).toBe("3350");
 		expect(h.q(".sl-live__strength-label").textContent).toBe(
 			`${COPY.strength.bands.elite} · ${COPY.personaName.blitz}`
 		);
@@ -686,54 +652,6 @@ describe("toggles row (§6.1)", () => {
 		expect(toggle("highlight").getAttribute("aria-checked")).toBe("true");
 		expect(toggle("autoqueue").getAttribute("aria-checked")).toBe("false");
 	});
-
-	it("keybind pre-arm: toast with a 1 s cancel window; second press cancels; armed → instant disarm", async () => {
-		h = await mountLive(dom.sim, idleSnapshot());
-		key(document, "keydown", { key: "A", code: "KeyA", shiftKey: true });
-		const toast = h.toasts()[0];
-		expect(toast?.querySelector(".sl-toast__text")?.textContent).toBe(COPY.toast.preArm("Shift+A"));
-		expect(toast?.querySelector(".sl-toast__action .sl-button__label")?.textContent).toBe(
-			COPY_LIVE.cancel
-		);
-		const ring = toast?.querySelector(".sl-ring .sl-ring__progress");
-		expect(ring).not.toBeNull(); // §6.1 step 5: the toast carries a ring
-		expect(Number(ring?.getAttribute("stroke-dashoffset"))).toBeCloseTo(0, 6);
-		await dom.tick(UI_TIMINGS.preArmMs / 2);
-		expect(Number(ring?.getAttribute("stroke-dashoffset"))).toBeGreaterThan(0);
-		await dom.tick(UI_TIMINGS.preArmMs / 2 - 1);
-		expect(h.store.calls).toEqual([]);
-		await dom.tick(1);
-		expect(h.store.calls).toEqual([{ type: MSG.PANEL_SET_AUTO_MOVE, tabId: h.tabId, armed: true }]);
-		await dom.tick(0);
-		expect(h.toasts()).toHaveLength(0); // the pre-arm toast leaves when it fires
-
-		h.store.emit(idleSnapshot());
-		key(document, "keydown", { key: "A", code: "KeyA", shiftKey: true });
-		await dom.tick(500);
-		key(document, "keydown", { key: "A", code: "KeyA", shiftKey: true });
-		await dom.tick(UI_TIMINGS.preArmMs);
-		expect(h.store.calls).toHaveLength(1); // cancelled
-
-		h.store.emit(idleSnapshot());
-		key(document, "keydown", { key: "A", code: "KeyA", shiftKey: true });
-		const action = h.toasts()[0]?.querySelector<HTMLElement>(".sl-toast__action .sl-button");
-		if (action) click(action);
-		await dom.tick(UI_TIMINGS.preArmMs);
-		expect(h.store.calls).toHaveLength(1); // the toast action cancels too
-
-		h.store.emit(idleSnapshot({ autoMove: { armed: true } }));
-		key(document, "keydown", { key: "A", code: "KeyA", shiftKey: true });
-		expect(h.store.calls.at(-1)).toEqual({
-			type: MSG.PANEL_SET_AUTO_MOVE,
-			tabId: h.tabId,
-			armed: false,
-		});
-		// A bare "a" without Shift is not the keybind.
-		h.store.emit(idleSnapshot());
-		key(document, "keydown", { key: "a", code: "KeyA" });
-		await dom.tick(UI_TIMINGS.preArmMs);
-		expect(h.store.calls).toHaveLength(2);
-	});
 });
 
 describe("session strip and detached banner (§4.4 item 9, §13.6, §9.7)", () => {
@@ -756,7 +674,7 @@ describe("session strip and detached banner (§4.4 item 9, §13.6, §9.7)", () =
 		expect(h.q(".sl-live__stats").textContent).toBe(COPY_LIVE.sessionNoStats(6, "3.1"));
 	});
 
-	it("detached banner with Reattach and Dismiss, outside hands-off only", async () => {
+	it("detached banner with explicit Reattach and Dismiss during live play too", async () => {
 		h = await mountLive(
 			dom.sim,
 			idleSnapshot({ autoMove: { armed: true }, executor: { debuggerAttached: true } })
@@ -796,40 +714,25 @@ describe("session strip and detached banner (§4.4 item 9, §13.6, §9.7)", () =
 		expect(currentBannerKind()).toBeNull();
 		h.store.emit(idleSnapshot({ executor: { debuggerAttached: false }, hand: "detached" }));
 		expect(currentBannerKind()).toBeNull();
-		// A live game never shows it (hands-off).
+		// Live play exposes the same recovery controls.
 		h.store.emit(liveSnapshot({ executor: { debuggerAttached: true } }));
 		h.store.emit(liveSnapshot({ executor: { debuggerAttached: false }, hand: "detached" }));
-		expect(currentBannerKind()).toBeNull();
+		expect(currentBannerKind()).toBe("warn");
 	});
 });
 
-describe("hands-off exit", () => {
-	it("restores every control's previous aria-disabled / tabindex (mirrors the shell)", async () => {
-		// Armed throughout: the play button carries its own `aria-disabled` while the hand is
-		// unarmed (§13.4), which the hands-off restore must not be blamed for.
-		h = await mountLive(dom.sim, idleSnapshot({ autoMove: { armed: true } }));
-		const count = h.q(".sl-live__count");
-		count.setAttribute("tabindex", "0"); // a control that had its own tabindex
-		const row = h.qa(".sl-pv")[0];
-		expect(row?.hasAttribute("tabindex")).toBe(false);
-		h.store.emit(liveSnapshot({ autoMove: { armed: true } }));
-		expect(count.getAttribute("tabindex")).toBe("-1");
-		expect(count.getAttribute("aria-disabled")).toBe("true");
-		expect(h.qa(".sl-pv")[0]?.getAttribute("tabindex")).toBe("-1");
-		h.store.emit(idleSnapshot({ autoMove: { armed: true } }));
+it("preserves control focusability when a game starts and ends", async () => {
+	h = await mountLive(dom.sim, idleSnapshot({ autoMove: { armed: true } }));
+	const count = h.q(".sl-live__count");
+	count.setAttribute("tabindex", "0");
+	for (const snapshot of [
+		liveSnapshot({ autoMove: { armed: true } }),
+		idleSnapshot({ autoMove: { armed: true } }),
+	]) {
+		h.store.emit(snapshot);
 		expect(count.getAttribute("tabindex")).toBe("0");
-		expect(count.hasAttribute("aria-disabled")).toBe(false);
-		for (const el of h.qa(INTERACTIVE_SELECTOR)) {
-			expect({ el: el.className, tabindex: el.getAttribute("tabindex") }).not.toEqual({
-				el: el.className,
-				tabindex: "-1",
-			});
-			expect(el.getAttribute("aria-disabled")).toBeNull();
-		}
-		// The keyboard path is live again: Space plays.
-		key(document, "keydown", { key: " ", code: "Space" });
-		expect(h.store.calls.at(-1)).toEqual({ type: MSG.PANEL_PLAY_NOW, tabId: h.tabId });
-	});
+		expect(count.getAttribute("aria-disabled")).not.toBe("true");
+	}
 });
 
 describe("cleanup", () => {

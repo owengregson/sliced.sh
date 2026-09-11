@@ -26,14 +26,29 @@ export interface KeybindOptions {
 	window?: Window;
 	debounceMs?: number;
 	now?: () => number;
+	/** A sidebar key recorder owns keyboard input while it is capturing a new binding. */
+	enabled?: () => boolean;
 }
 
 const EDITABLE_TAGS = new Set(["INPUT", "TEXTAREA", "SELECT"]);
+const NON_TEXT_INPUTS = new Set([
+	"button",
+	"submit",
+	"reset",
+	"checkbox",
+	"radio",
+	"range",
+	"color",
+	"file",
+	"image",
+	"hidden",
+]);
 
 export function isEditableTarget(target: EventTarget | null | undefined): boolean {
 	if (!target || typeof target !== "object") return false;
-	const el = target as Partial<HTMLElement> & { closest?: (s: string) => Element | null };
+	const el = target as Partial<HTMLInputElement> & { closest?: (s: string) => Element | null };
 	if (typeof el.tagName !== "string") return false;
+	if (el.tagName === "INPUT" && NON_TEXT_INPUTS.has(el.type ?? "text")) return false;
 	if (EDITABLE_TAGS.has(el.tagName)) return true;
 	if (el.isContentEditable === true) return true;
 	const editable = typeof el.closest === "function" ? el.closest("[contenteditable]") : null;
@@ -65,6 +80,7 @@ export function installKeybinds(
 	const lastFired = new Map<KeybindAction, number>();
 
 	const onKeyDown = (ev: KeyboardEvent): void => {
+		if (ev.isComposing || options.enabled?.() === false) return;
 		const binds = getKeybinds();
 		if (isEditableTarget(ev.target) || ev.composedPath().some(isEditableTarget)) return;
 		for (const action of KEYBIND_ACTIONS) {

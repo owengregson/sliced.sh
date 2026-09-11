@@ -1,5 +1,11 @@
 # Focus discipline — verification procedure and results
 
+Current UI policy (owner instruction, 2026-09-11): the panel remains interactive during play.
+The historical hands-off restrictions below no longer disable controls or navigation. Space
+requests play-now across panel views outside text/keybind editing; click and Enter still activate
+controls. Automatic update/reload prompts are deferred during games. This change does not alter
+the executor's input/focus checks or turn the historical simulator rows into native Chrome evidence.
+
 Part I §13.4 rests on one empirical claim: **nothing the extension does may produce a `blur` or
 `focus` event on the game tab's `window` during a game.** Every `blur` is counted per move by
 chess.com's `fps` plugin (`BlurCount`, `DidBlurOn*Turn`, `DidFocusOn*Turn`, `TotalBlurTime`) and a
@@ -83,13 +89,9 @@ two reasons at once. Row 10's own tests are the evidence.
 
 ## 4. Decisions
 
-- **Hands-off mode stays as specified (§13.4) until rows 1 and 2 are recorded.** During a live
-  game the panel is display-only, all controls are disabled and the banner explains why; every
-  in-game control is a `chrome.commands` shortcut or an in-page keybind. The brief allows relaxing
-  hands-off to "no typing" *if* a panel button click turns out not to blur the page — that
-  relaxation is **not** taken here, because the measurement that would justify it does not exist
-  yet. Task 31 QA records rows 1 and 2 and then either confirms the current rule or proposes the
-  relaxation with the probe log as evidence.
+- **The original hands-off UI decision was superseded by the owner's 2026-09-11 instruction.**
+  Controls and navigation remain available during live games. The focus rows still describe the
+  measurements they originally tested; allowing panel interaction is an explicit product choice.
 - **The extension never restores focus itself.** When a move is due and the gate says the page is
   not focused, the executor waits and the panel's telemetry pill turns to "blur seen"; the move is
   played only after a fresh position arrives. Rows 8 and 9 are the simulator's proof of that.

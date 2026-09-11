@@ -68,6 +68,8 @@ export type OpponentView = NonNullable<PanelSnapshot["opponent"]>;
 
 /** What the broadcaster reads from one tab's `GameSession`. */
 export interface SessionSource {
+	/** Sidebar shortcuts use the same action path as the game page. */
+	onKeybind?(action: string): Promise<void>;
 	view(): SessionGameView;
 	/** The current position's recommendation (§3.2 step 4), if my turn has one. */
 	recommendation(): Recommendation | null;

@@ -27,8 +27,9 @@ import { createSegment, type SegmentHandle } from "./components/segment";
 import { clearToasts, mountToastLayer } from "./components/toast";
 import { COPY } from "./copy";
 import { mountIcons } from "./icons-mount";
+import { installPanelKeybinds } from "./keybinds";
 import { resetEscapeHandlers, viewSwitchIndex } from "./keys";
-import { isHandsOff, PanelRouter } from "./router";
+import { isHandsOff, isLiveGame, PanelRouter } from "./router";
 import { setUiSoundsEnabled } from "./sounds";
 import type { PanelStore } from "./store";
 import { instantiate, part } from "./template";
@@ -249,7 +250,7 @@ export function bootShell(root: HTMLElement, options: ShellOptions): PanelShell 
 	}
 
 	function applyUpdateBanner(): void {
-		const wanted = ui.updateAvailable && ui.updateDismissed && !handsOff;
+		const wanted = ui.updateAvailable && ui.updateDismissed && !(snapshot && isLiveGame(snapshot));
 		if (wanted && !updateBanner) {
 			updateBanner = showBanner(
 				"info",
@@ -258,7 +259,7 @@ export function bootShell(root: HTMLElement, options: ShellOptions): PanelShell 
 					{
 						label: COPY.banner.updateAction,
 						onClick: () => {
-							if (handsOff) return; // never mid-game (§13.4)
+							if (snapshot && isLiveGame(snapshot)) return; // Defer extension reload until the game ends.
 							options.onUpdate?.();
 						},
 						keepOpen: true,
@@ -301,6 +302,7 @@ export function bootShell(root: HTMLElement, options: ShellOptions): PanelShell 
 			text: p.text,
 		});
 		applyHandsOff(isHandsOff(next));
+		applyUpdateBanner();
 		reresolve();
 	}
 
@@ -314,6 +316,7 @@ export function bootShell(root: HTMLElement, options: ShellOptions): PanelShell 
 		setTab(tab);
 	};
 	doc.addEventListener("keydown", onKeyDown);
+	const uninstallKeybinds = installPanelKeybinds(doc, store);
 
 	const uninstallActions = installActionHandlers(root, {
 		setTab,
@@ -362,6 +365,7 @@ export function bootShell(root: HTMLElement, options: ShellOptions): PanelShell 
 			unsubscribe();
 			unsubscribeStorage();
 			uninstallActions();
+			uninstallKeybinds();
 			doc.removeEventListener("keydown", onKeyDown);
 			content.removeEventListener("keydown", keyboardGuard, true);
 			content.removeEventListener("keyup", keyboardGuard, true);

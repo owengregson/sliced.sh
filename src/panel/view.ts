@@ -30,6 +30,8 @@ export const PANEL_TABS: readonly PanelTab[] = ["game", "settings", "engine"];
 /** Local UI state that is not part of the SW snapshot (Appendix F §3.3 "memory" rows). */
 export interface PanelUiState {
 	tab: PanelTab;
+	/** Retain the selected settings category when switching views. */
+	settingsCategory?: string;
 	/** `LOCAL_KEYS.updateAvailable` mirrored by the shell. */
 	updateAvailable: boolean;
 	/** "Later" on the update interrupt: it then re-shows as an info banner instead. */

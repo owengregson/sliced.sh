@@ -5,6 +5,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { CDP } from "@core/constants/cdp";
 import { DEFAULT_KEYBINDS } from "@core/constants/defaults";
+import { MSG } from "@core/constants/messages";
 import { TIMINGS } from "@core/constants/timings";
 import { createGameHarness, type GameHarness } from "./harness";
 
@@ -24,6 +25,50 @@ const presses = (): unknown[] =>
 	);
 
 describe("game session: in-page keybinds (Step 2e)", () => {
+	it("the sidebar shortcut route interrupts the same active think and keeps one committed move", async () => {
+		h = await createGameHarness({
+			settings: { automation: { autoMove: true } },
+			head: {
+				id: "v1-parametric",
+				median: () => 12,
+				sample: () => ({ tSec: 12, mode: "normal", why: [] }),
+			},
+		});
+		await h.arrive();
+		expect(await h.until(() => h.executor()?.handState() === "orientation", 10_000)).toBe(true);
+		const deadline = h.session().recommendation()!.plan.deadlineMs;
+		const request = h.drive(() =>
+			h.router._dispatch({ type: MSG.PANEL_KEYBIND, tabId: h.tabId, action: "playMove" }, {})
+		);
+		expect(await h.until(() => h.site.board.lastMove() !== null, 2000)).toBe(true);
+		expect(h.sim.now()).toBeLessThan(deadline);
+		await h.advance(1000);
+		expect(await request).toMatchObject({ success: true });
+		expect(presses()).toHaveLength(1);
+	});
+
+	it("sidebar arm/disarm, speak and stop reuse the per-tab session controls", async () => {
+		h = await createGameHarness();
+		const action = async (name: string) => {
+			const request = h.drive(() =>
+				h.router._dispatch({ type: MSG.PANEL_KEYBIND, tabId: h.tabId, action: name }, {})
+			);
+			await h.advance(1000);
+			expect(await request).toMatchObject({ success: true });
+		};
+		await action("toggleAutoMove");
+		expect(h.executor()?.isArmed()).toBe(true);
+		await action("toggleAutoMove");
+		expect(h.executor()?.isArmed()).toBe(false);
+		await h.arrive();
+		expect(await h.until(() => h.session().recommendation() !== null, 10_000)).toBe(true);
+		await action("speakMove");
+		expect(h.spoken.length).toBeGreaterThan(0);
+		await action("disable");
+		expect(h.session().currentState()).toBe("idle");
+		expect(h.session().recommendation()).toBeNull();
+		expect(h.executor()?.isArmed()).toBe(false);
+	});
 	it("Space interrupts a long running think within one gesture and never submits twice", async () => {
 		h = await createGameHarness({
 			sendKeybinds: true,

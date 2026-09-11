@@ -442,7 +442,13 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 			attributeFilter: ["class"],
 		});
 		for (const clock of queryAllSafe(this.doc, S.clock))
-			this.observe(clock, { attributes: true, attributeFilter: ["class"] });
+			this.observe(clock, {
+				attributes: true,
+				attributeFilter: ["class"],
+				childList: true,
+				subtree: true,
+				characterData: true,
+			});
 		// SPA: board replacement, game-over modal, result row (filtered to those subtrees)
 		this.observe(this.doc.body, { childList: true, subtree: true }, (records) =>
 			this.touches(records, RELEVANT)

@@ -25,6 +25,8 @@ export const UI_TIMINGS = {
 	clockTenthsBelowMs: 10_000,
 	/** §5.9: active clock turns danger-text under 20 s. */
 	clockLowMs: 20_000,
+	/** Render running site clocks locally between panel snapshots, including tenths. */
+	clockTickMs: 100,
 	/** §5.5: eval jumps larger than this (fraction of the bar) use the faster transition. */
 	evalJumpFraction: 0.3,
 	/** §5.3: slider keyboard step multiplier with Shift / PageUp / PageDown. */
@@ -66,6 +68,8 @@ export const STRENGTH_UI = {
 	] as const,
 	/** Slider step for the target rating range in LIMITS. */
 	sliderStep: 50,
+	/** Begin the restrained strength glow in the top engine-strength range. */
+	glowElo: 3_200,
 } as const;
 
 /** Task 24 — Live view height strategy (Appendix F §8.2). */

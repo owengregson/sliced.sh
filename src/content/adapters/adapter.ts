@@ -404,6 +404,8 @@ export abstract class AdapterBase implements SiteAdapter {
 	private readonly observerDisposers: Array<() => void> = [];
 	private readonly pending: { trigger(): void; cancel(): void };
 	private lastKey: string | null = null;
+	/** Last delivered site reading; DOM churn with unchanged clocks is not a new snapshot. */
+	private lastClocks: PositionSnapshot["clocks"] | null = null;
 	/**
 	 * `myColor` of the last reading delivered. The colour of a live game arrives *after* its first
 	 * reading — the MAIN-world bridge answers `getPlayingAs()` a moment after the board appears, and
@@ -1072,6 +1074,7 @@ export abstract class AdapterBase implements SiteAdapter {
 		this.lastKey = reading.key;
 		this.lastColor = reading.snapshot.myColor;
 		this.lastTimeControl = reading.snapshot.timeControl ?? null;
+		this.lastClocks = reading.snapshot.clocks;
 		this.lastGameKey = reading.gameKey;
 		this.lastGameOver = reading.gameOver !== null;
 		this.scheduleTimeControlProbe(reading);
@@ -1095,6 +1098,9 @@ export abstract class AdapterBase implements SiteAdapter {
 		const gameChanged = this.lastGameKey !== null && reading.gameKey !== this.lastGameKey;
 		if (gameChanged) {
 			this.lastGameKey = reading.gameKey;
+			// An SPA destination's clock cannot republish the old, unchanged board as a new game.
+			// Baseline it now so the following bridge callback does not leak that clock-only change.
+			this.lastClocks = reading.snapshot.clocks;
 			this.lastGameOver = false;
 			this.timeControlProbes = 0;
 			this.colourCorrections = 0;
@@ -1180,14 +1186,23 @@ export abstract class AdapterBase implements SiteAdapter {
 		const timeControlLearned =
 			!gameChanged && this.lastTimeControl === null && reading.snapshot.timeControl !== undefined;
 		this.lastTimeControl = reading.snapshot.timeControl ?? null;
+		const clocks = snapshot.clocks;
+		const clockChanged =
+			this.lastClocks === null ||
+			this.lastClocks.w.ms !== clocks.w.ms ||
+			this.lastClocks.w.running !== clocks.w.running ||
+			this.lastClocks.b.ms !== clocks.b.ms ||
+			this.lastClocks.b.running !== clocks.b.running;
 		if (
 			reading.key !== this.lastKey ||
 			colourChanged ||
 			colourWithdrawn ||
 			colourLearned ||
-			timeControlLearned
+			timeControlLearned ||
+			(!gameChanged && clockChanged)
 		) {
 			this.lastKey = reading.key;
+			this.lastClocks = clocks;
 			// `lastColor` is what the session has actually been *told*, so it advances only with a
 			// delivery. Advancing it on every reading let a colour this class had just refused to
 			// deliver — a render flip — still overwrite the baseline, and the authoritative answer that

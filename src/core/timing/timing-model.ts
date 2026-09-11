@@ -129,7 +129,7 @@ function spentThenApproach(
 
 export class TimingModel {
 	private readonly head: DistributionHead;
-	private readonly settings: TimingSettings;
+	private settings: TimingSettings;
 	private readonly rng: Rng;
 	private readonly onEntry: ((entry: TimingLogEntry) => void) | undefined;
 	private meta: GameMeta | null = null;
@@ -159,6 +159,19 @@ export class TimingModel {
 
 	get state(): GameTimingState {
 		return this._state;
+	}
+
+	/** Apply live controls to future plans without resetting the game's random stream or history. */
+	updateSettings(settings: TimingSettings, persona: Pick<GameMeta, "profile" | "targetElo">): void {
+		this.settings = settings;
+		this._state.knobs = knobsFromSettings(settings);
+		if (
+			this.meta &&
+			(this.meta.profile !== persona.profile || this.meta.targetElo !== persona.targetElo)
+		) {
+			this.meta = { ...this.meta, ...persona };
+			this._persona = samplePersona(this.meta.gameId, persona.profile, persona.targetElo);
+		}
 	}
 
 	/** Discard all state and sample the persona fresh from the per-game seed (§8.4b item 4). */

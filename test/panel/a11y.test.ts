@@ -398,16 +398,18 @@ describe("tab order", () => {
 		banner.dismiss();
 	});
 
-	it("hands-off empties the tab sequence (content locked, switch disabled); game over restores it", async () => {
+	it("live play retains the topbar-to-content tab sequence through game over", async () => {
 		shell = bootShell(app(), {
 			store,
 			views: { live: kitchenSinkView(), waiting: kitchenSinkView() },
 		});
 		store.emit(makeSnapshot({ state: "live:opponent-turn" }));
 		await dom.tick(0);
-		expect(shell.handsOff).toBe(true);
+		expect(shell.handsOff).toBe(false);
 		expect(app().querySelectorAll(".sl-app__content button").length).toBeGreaterThan(0);
-		expect(tabSequence(app())).toEqual([]);
+		const liveRegions = tabSequence(app()).map((el) => tabRegionOf(el, app()));
+		expect(liveRegions[0]).toBe("topbar");
+		expect(liveRegions).toContain("content");
 		store.emit(makeSnapshot({ state: "game-over" }));
 		await dom.tick(0);
 		const regions = tabSequence(app()).map((el) => tabRegionOf(el, app()));

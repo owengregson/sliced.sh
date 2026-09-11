@@ -20,7 +20,12 @@ import { TIMINGS } from "@core/constants/timings";
 import { log } from "@core/logger";
 import { FAST_TOUCH, OPPONENT_EXPLORATION } from "@core/motor/constants";
 import { sampleRange } from "@core/motor/geometry";
-import { perGameProfile, perMoveProfile, profileFor } from "@core/motor/motor-profile";
+import {
+	perGameProfile,
+	perMoveProfile,
+	profileFor,
+	withMotorSpeed,
+} from "@core/motor/motor-profile";
 import type { OpponentExplorationCandidates } from "@core/motor/opponent-candidates";
 import { planOpponentExploration } from "@core/motor/opponent-exploration";
 import { plausibleStart } from "@core/motor/sampling";
@@ -81,6 +86,7 @@ export interface ExecutorLink {
 
 export interface ExecutorGameConfig {
 	persona: PersonaId;
+	motorSpeed?: number;
 	tcClass: TimeControlClass;
 	/** `Settings.execution.previewSelectScale`, 0 when previews are off. */
 	previewScale: number;
@@ -311,6 +317,7 @@ export class MoveExecutor {
 		this.scheduler = deps.scheduler ?? defaultScheduler;
 		this.config = {
 			persona: deps.persona,
+			motorSpeed: deps.motorSpeed ?? 1,
 			tcClass: deps.tcClass,
 			previewScale: deps.previewScale,
 			gameSeed: deps.gameSeed,
@@ -342,6 +349,13 @@ export class MoveExecutor {
 			to: tcClass,
 		});
 		this.config.tcClass = tcClass;
+	}
+
+	/** Next executions/bouts use live controls; a committed gesture keeps its sampled profile. */
+	updateSettings(
+		settings: Pick<ExecutorGameConfig, "persona" | "previewScale" | "verifyMoves" | "motorSpeed">
+	): void {
+		Object.assign(this.config, settings);
 	}
 
 	// ── lifecycle ─────────────────────────────────────────────────────────
@@ -517,12 +531,15 @@ export class MoveExecutor {
 					if (!reply || ac.signal.aborted || !candidates) return;
 					const geometry = boardGeometryOf(reply);
 					const cursor = this.ownership.position(this.tabId) ?? plausibleStart(geometry.boardRect, rng);
-					const profile = perMoveProfile(
-						perGameProfile(
-							profileFor(this.config.persona, this.config.tcClass, "normal"),
-							createRng(`${this.config.gameSeed}:hand`)
+					const profile = withMotorSpeed(
+						perMoveProfile(
+							perGameProfile(
+								profileFor(this.config.persona, this.config.tcClass, "normal"),
+								createRng(`${this.config.gameSeed}:hand`)
+							),
+							rng
 						),
-						rng
+						this.config.motorSpeed
 					);
 					const plan = planOpponentExploration(
 						{
@@ -846,6 +863,7 @@ export class MoveExecutor {
 		signal: AbortSignal,
 		replacement: boolean
 	): Promise<ExecutionResult> {
+		const config = { ...this.config };
 		const readAt = this.now();
 		const expected: ExpectedMove = { from: rec.chosen.from, to: rec.chosen.to };
 		if (rec.chosen.promotion) expected.promotion = rec.chosen.promotion;
@@ -865,7 +883,7 @@ export class MoveExecutor {
 		const geo = boardGeometryOf(reply);
 		const fromRect = geo.squareRect(rec.chosen.from);
 		const toRect = geo.squareRect(rec.chosen.to);
-		const moveRng = createRng(`${this.config.gameSeed}:${rec.fen}:${rec.chosen.uci}`);
+		const moveRng = createRng(`${config.gameSeed}:${rec.fen}:${rec.chosen.uci}`);
 		// A premove MUST be a drag, and since click-to-move was removed every committed move is
 		// one, so there is nothing to choose here any more. Keeping the reason on the record: a
 		// click-click premove would press the destination square as a second selection, and a
@@ -876,8 +894,8 @@ export class MoveExecutor {
 		const moveKind = ctx.moveKind ?? this.moveKindOf(rec);
 		const motor = perMoveProfile(
 			perGameProfile(
-				profileFor(this.config.persona, this.config.tcClass, moveKind),
-				createRng(`${this.config.gameSeed}:hand`)
+				profileFor(config.persona, config.tcClass, moveKind),
+				createRng(`${config.gameSeed}:hand`)
 			),
 			moveRng
 		);
@@ -912,6 +930,7 @@ export class MoveExecutor {
 				square: rec.chosen.to,
 			},
 			motor,
+			motorSpeed: config.motorSpeed ?? 1,
 			// `premove` here means "entered as a premove", which is what relaxes the hand's own
 			// destination guard — not merely "the §7.4 policy chose it" (a premove played after the
 			// predicted reply landed is an ordinary move and is guarded like one).
@@ -921,14 +940,14 @@ export class MoveExecutor {
 				candidates: ctx.candidates ?? candidatesFromLines(rec),
 				nReasonable: ctx.nReasonable ?? Math.max(1, rec.lines.length),
 				myClockMs: ctx.myClockMs ?? 0,
-				persona: this.config.persona,
-				previewScale: this.config.previewScale,
+				persona: config.persona,
+				previewScale: config.previewScale,
 				legalDestinations: ctx.legalDestinations ?? (() => []),
 			},
 		};
 		if (rec.chosen.promotion) plan.promotion = rec.chosen.promotion;
 		const check = (timeoutMs: number, checkSignal: AbortSignal): Promise<VerifyResult> =>
-			this.config.verifyMoves
+			config.verifyMoves
 				? verifyMove(this.link, this.tabId, expected, timeoutMs, checkSignal)
 				: Promise.resolve({ outcome: "ok" });
 		try {

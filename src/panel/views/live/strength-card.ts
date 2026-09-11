@@ -106,6 +106,7 @@ export function createStrengthCard(host: HTMLElement): StrengthCardHandle {
 			dangerHint: COPY.strength.warning,
 			ariaLabel: COPY_LIVE.strength.rating,
 			threshold: STRENGTH_NETWORK_THRESHOLD,
+			strength: true,
 			onChange: (value, commit) => {
 				if (commit) write({ strength: { targetElo: value } });
 			},
@@ -151,15 +152,13 @@ export function createStrengthCard(host: HTMLElement): StrengthCardHandle {
 	function update(state: StrengthCardState): void {
 		handsOff = state.handsOff;
 		strength = state.snapshot.settings.strength;
-		elo.textContent = String(strength.targetElo);
-		label.textContent = `${bandLabel(strength.targetElo)} · ${COPY.personaName[strength.persona]}`;
+		const activeElo = state.snapshot.opponent?.derivedTargetElo ?? strength.targetElo;
+		el.classList.toggle("sl-strength--hot", activeElo >= STRENGTH_UI.glowElo);
+		elo.textContent = String(activeElo);
+		label.textContent = `${bandLabel(activeElo)} · ${COPY.personaName[strength.persona]}`;
 		el.setAttribute(
 			"aria-label",
-			COPY.strength.card(
-				strength.targetElo,
-				bandLabel(strength.targetElo),
-				COPY.personaName[strength.persona]
-			)
+			COPY.strength.card(activeElo, bandLabel(activeElo), COPY.personaName[strength.persona])
 		);
 		if (handsOff) {
 			open.setAttribute("aria-disabled", "true");

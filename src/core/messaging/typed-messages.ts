@@ -33,6 +33,7 @@ export interface MessagePayloadMap {
 	/** `windowId`: the panel's window once known (see `PanelPortCommand`); else the last-focused one. */
 	[MSG.PANEL_GET_SNAPSHOT]: { windowId?: number };
 	[MSG.PANEL_PLAY_NOW]: { tabId: number };
+	[MSG.PANEL_KEYBIND]: { tabId: number; action: Exclude<keyof Keybinds, "global"> };
 	[MSG.PANEL_SET_AUTO_MOVE]: { tabId: number; armed: boolean };
 	[MSG.PANEL_CANCEL_PENDING]: { tabId: number };
 	[MSG.PANEL_SET_ENABLED]: { enabled: boolean };
@@ -70,6 +71,7 @@ export interface MessagePayloadMap {
 export interface MessageResponseMap {
 	[MSG.PANEL_GET_SNAPSHOT]: PanelSnapshot;
 	[MSG.PANEL_PLAY_NOW]: void;
+	[MSG.PANEL_KEYBIND]: void;
 	[MSG.PANEL_SET_AUTO_MOVE]: void;
 	[MSG.PANEL_CANCEL_PENDING]: void;
 	[MSG.PANEL_SET_ENABLED]: void;

@@ -146,7 +146,7 @@ describe("mounted view", () => {
 		expect(h.q(".sl-live__eval").hidden).toBe(false);
 		expect(h.q(".sl-live__strength").hidden).toBe(false);
 		expect(h.q(".sl-live__strength-chip").hidden).toBe(true);
-		expect(h.q(".sl-live__strength-chip").textContent).toBe(`1500 · ${COPY.personaName.balanced}`);
+		expect(h.q(".sl-live__strength-chip").textContent).toBe(`1893 · ${COPY.personaName.balanced}`);
 		expect(h.q(".sl-move").classList.contains("sl-move--compact")).toBe(true);
 		// The meter stays beside the persistent numeral, including compact scrolling layouts.
 		expect(h.q(".sl-live__eval-chip").contains(h.q(".sl-live__rail"))).toBe(true);

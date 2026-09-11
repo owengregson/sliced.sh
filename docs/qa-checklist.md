@@ -432,16 +432,17 @@ person, a screen reader and the OS settings.
 - [ ] Tab order in every view: top bar (view switch, then the status pill if focusable) →
       banner action → content top-to-bottom → toast action. No element is skipped or visited
       twice; no positive `tabindex` anywhere (`tabSequence` in `a11y.ts` is the reference).
-- [ ] `Alt+1/2/3` switch Game / Settings / Engine from anywhere in the panel; they do nothing
-      while a game is live (hands-off) and on the login view.
-- [ ] Arming with the keyboard: Tab to the auto-play toggle, hold Space for ~600 ms — the fill
-      grows, release before the hold completes cancels (tooltip once per session); a full hold
-      arms and the label reads "Auto-play on".
+- [ ] `Alt+1/2/3` switch Game / Settings / Engine during live play as well as between games;
+      they do nothing on the login view.
+- [ ] Space requests play-now from each panel view, including a focused non-text control. It
+      does not change that control. Text entry and keybind recording retain their normal input.
+- [ ] Arming with the keyboard: Tab to the auto-play toggle and hold Enter; release before the
+      hold completes cancels, while a completed hold arms the bot.
 - [ ] Cancelling a countdown: with the play button armed and counting, `Esc` cancels this move
       (toast "Skipped …"); auto-play stays on. `Esc` in a popover closes the popover; `Esc` in a
       keybind capture cancels the capture — in that priority when two are active at once.
-- [ ] Hands-off (game live): Tab skips every control in the content; Enter/Space on a remembered
-      element does nothing; the view switch is disabled but still reachable and named.
+- [ ] During live play, Tab reaches controls normally; click and Enter activate them, Settings
+      and Engine remain reachable, and no hands-off banner or blanket disabled state appears.
 - [ ] Focus ring: 2px ring at 2px offset visible on every control in both themes; never
       clipped by an overflow container (check the PV list rows and the log).
 

@@ -164,11 +164,12 @@ layout**. That is why the debugger attaches once, from the waiting view before t
 (`src/service/debugger-manager.ts`, `src/panel/views/waiting.ts`) — never inside a move window,
 where the layout shift would land in the same window as the move.
 
-**Hands-off mode is not a UI preference.** While a game is live the panel is display-only
-(§13.4): a click in the side panel moves focus out of the game tab, and chess.com counts every
-`blur` per move. In-game controls are `chrome.commands` shortcuts and in-page keybinds only. See
-`docs/qa/focus-discipline.md` — the rows that would justify relaxing this have not been recorded
-on real Chrome yet.
+**Panel controls stay available during play.** The owner's 2026-09-11 instruction supersedes the
+original §13.4 hands-off UI lock: Game, Settings, and Engine remain interactive while a game is
+live. The shared panel shortcut handler routes Space to play-now outside text/keybind editing;
+ordinary control activation remains available through click or Enter. Automatic reload prompts
+remain deferred until the game ends. This does not bypass the executor's independent input and
+focus checks. See `docs/qa/focus-discipline.md` for the historical measurements and current policy.
 
 **The vendored engine is copyleft, and `docs/third-party.md` is generated.** Stockfish 18 is
 GPL-3.0-or-later, the `@lichess-org/stockfish-web` glue is AGPL-3.0-or-later, and the ChessMimic

@@ -197,6 +197,15 @@ if (state === "unsupported") {
 if (state === "login") snapshot.license.status = "unknown";
 if (state === "expired") snapshot.license.status = "expired";
 if (query.has("elo")) snapshot.settings.strength.targetElo = Number(query.get("elo"));
+if (query.has("activeElo") && snapshot.opponent)
+	snapshot.opponent.derivedTargetElo = Number(query.get("activeElo"));
+if (query.get("clocks") === "running" && snapshot.session.clocks) {
+	snapshot.session.clocksAt = Date.now();
+	for (const color of ["w", "b"] as const) {
+		const clock = snapshot.session.clocks[color];
+		if (clock) clock.running = snapshot.session.sideToMove === color;
+	}
+}
 if (query.get("eval") === "off") snapshot.settings.display.evalBar = false;
 if (query.has("opponent")) snapshot.opponent.name = query.get("opponent") ?? "";
 const listeners = new Set<SnapshotListener>();

@@ -159,10 +159,33 @@ it("renders an accessible network boundary at its exact value as the range chang
 	expect(divider?.hidden).toBe(false);
 	expect(divider?.style.left).toBe("60.000%");
 	expect(divider?.dataset.value).toBe("60");
-	expect(handle.el.querySelector(".sl-slider__boundary")?.textContent).toContain("Large NNUE");
+	expect(handle.el.querySelector<HTMLElement>(".sl-slider__boundary")?.hidden).toBe(true);
 	expect(handle.el.querySelector("[role=slider]")?.getAttribute("aria-description")).toBe(
 		"Large NNUE starts at 60"
 	);
 	handle.update({ max: 120 });
 	expect(divider?.style.left).toBe("50.000%");
+});
+
+it("strength heat increases continuously and only high Elo adds the glow", () => {
+	handle = createSlider(document.body, {
+		min: LIMITS.eloMin,
+		max: LIMITS.eloMax,
+		step: 50,
+		value: LIMITS.eloMin,
+		label,
+		strength: true,
+		onChange: () => {},
+	});
+	let previous = -1;
+	for (const value of [400, 1200, 2000, 2600, 3200, 3650]) {
+		handle.update({ value });
+		const heat = Number(handle.el.style.getPropertyValue("--sl-slider-heat"));
+		expect(heat).toBeGreaterThan(previous);
+		previous = heat;
+		expect(handle.el.classList.contains("sl-slider--hot")).toBe(value >= 3200);
+	}
+	expect(previous).toBe(1);
+	handle.update({ value: 1500 });
+	expect(handle.el.classList.contains("sl-slider--hot")).toBe(false);
 });

@@ -329,6 +329,7 @@ export class SessionRegistry implements GameSessionRegistry, SnapshotSources {
 			now: this.now,
 			scheduler: this.scheduler,
 			persona: config.persona,
+			motorSpeed: settings.execution.motorSpeed,
 			tcClass: config.tcClass,
 			previewScale:
 				settings.execution.previewSelects === "off" ? 0 : settings.execution.previewSelectScale,

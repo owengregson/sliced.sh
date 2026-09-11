@@ -85,3 +85,26 @@ it("preserves executing state across repeated snapshots and clears it on the nex
 	expect(h.q(".sl-move__san").textContent).toBe("Nc6");
 	expect(h.q(".sl-move__progress-value").textContent).toBe(COPY.move.progress.waiting.value);
 });
+
+it("mirrors the running player clock between snapshots and switches on a new site reading", async () => {
+	const snapshot = liveSnapshot();
+	snapshot.session.clocksAt = Date.now();
+	h = await mountLive(dom.sim, snapshot);
+	const mine = () => h?.q('[data-row="me"] .sl-clock__time').textContent;
+	const theirs = () => h?.q('[data-row="opponent"] .sl-clock__time').textContent;
+	await dom.tick(2500);
+	expect(mine()).toBe("03:09");
+	expect(theirs()).toBe("02:58");
+	h.store.emit(snapshot);
+	expect(mine()).toBe("03:09");
+	const next = liveSnapshot({
+		state: "live:opponent-turn",
+		sideToMove: "b",
+		clocks: { w: { ms: 191000, running: false }, b: { ms: 178000, running: true } },
+	});
+	next.session.clocksAt = Date.now();
+	h.store.emit(next);
+	await dom.tick(2000);
+	expect(mine()).toBe("03:11");
+	expect(theirs()).toBe("02:56");
+});

@@ -168,6 +168,8 @@ export function createToggle(host: HTMLElement | null, options: ToggleOptions): 
 	};
 
 	const onPointerDown = (event: PointerEvent): void => {
+		// A new physical gesture can always disarm, even after an interrupted earlier hold.
+		if (!holding) swallowClick = false;
 		if (!armedVariant || event.isPrimary === false || checked) return;
 		startHold("pointer");
 	};
@@ -232,12 +234,11 @@ export function createToggle(host: HTMLElement | null, options: ToggleOptions): 
 			if (patch.locked !== undefined) locked = patch.locked;
 			if (patch.disabled !== undefined) disabled = patch.disabled;
 			if (!interactive()) cancelHold();
-			if (patch.checked !== undefined) {
+			if (patch.checked !== undefined && patch.checked !== checked) {
 				if (holding) cancelHold();
 				checked = patch.checked;
 				disarmed = false;
 			}
-			swallowClick = false;
 			render();
 		},
 		dispose() {

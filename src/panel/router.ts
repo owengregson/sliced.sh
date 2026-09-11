@@ -5,7 +5,7 @@
  * the binding rule order: `login` when there is no usable license; `expired` for
  * `invalid | expired | ip_limit`; `update` when the flag is set and no game is live;
  * `unsupported` when `site === null`; `waiting` when no game is live; `live`; the view switch
- * (`settings` / `engine`) is local UI state and is ignored while hands-off (§13.4). `PanelRouter`
+ * (`settings` / `engine`) is local UI state available during play. `PanelRouter`
  * mounts one `View` at a time and runs the previous cleanup before the next mount.
  */
 
@@ -34,9 +34,9 @@ export function isLiveGame(snapshot: PanelSnapshot): boolean {
 	return snapshot.session.state.startsWith("live:");
 }
 
-/** Hands-off mode (§13.4 / §10.4 amendment): display-only while a game is live. */
-export function isHandsOff(snapshot: PanelSnapshot): boolean {
-	return isLiveGame(snapshot);
+/** Panel controls remain available during play; the game owns its own focus/input policy. */
+export function isHandsOff(_snapshot: PanelSnapshot): boolean {
+	return false;
 }
 
 export function resolveView(snapshot: PanelSnapshot, ui: PanelUiState): ViewName {
@@ -48,9 +48,9 @@ export function resolveView(snapshot: PanelSnapshot, ui: PanelUiState): ViewName
 	}
 	if (status !== "valid") return "login";
 	if (ui.updateAvailable && !ui.updateDismissed && !live) return "update";
-	if (live) return "live"; // hands-off: the view switch is disabled during a game
 	if (ui.tab === "settings") return "settings";
 	if (ui.tab === "engine") return "engine";
+	if (live) return "live";
 	if (snapshot.site === null) return "unsupported";
 	return "waiting";
 }

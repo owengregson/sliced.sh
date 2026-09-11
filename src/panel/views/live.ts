@@ -1,36 +1,19 @@
-/**
- * Live game view (Part I §10.4, Appendix F §4.4–§4.5, §5.5–§5.10, §6.1–§6.3, §8.2). A pure
- * projection of `PanelSnapshot` plus local UI state (hover / pin / hold progress / layout):
- * eval rail and mirrored player rows, move card with the play button and countdown, PV lines,
- * strength card, toggles row, session strip. Every timer, observer and listener is disposed
- * by the cleanup the router runs before the next mount.
- *
- * Hands-off (§13.4 / §10.4 amendment): while `session.state` is a live state the view is
- * display-only — it locks every control itself (`aria-disabled` + `tabindex=-1`, the
- * `.sl-live--hands-off` class turns pointer events off) in addition to the shell's lock, the
- * Play button shows its keybind only, popovers close, keybinds in the panel are ignored (in-game
- * control is `chrome.commands` / the content script, with focus on the board), and the
- * detached banner is not raised (the shell's hands-off banner is the only one). No element is
- * ever focused programmatically.
- */
+/** Live scoreboard, move progress, analysis, and controls. Shortcuts are owned by the shell. */
 
 import { tabsQuery } from "@core/chrome/tabs";
 import type { PanelSnapshot } from "@core/constants/messages";
 import { MSG } from "@core/constants/messages";
 import { TOAST_KEYS } from "@core/constants/toasts";
-import { UI_TIMINGS } from "@core/constants/ui";
 import { log } from "@core/logger";
 import type { TypedMessage } from "@core/messaging/typed-messages";
 import { TOKENS } from "@design/tokens.generated";
 import type { Keybind } from "@typedefs/settings";
 import { type BannerHandle, showBanner } from "../components/banner";
-import { createCountdownRing } from "../components/countdown-ring";
 import { formatKeybind } from "../components/keybind";
 import { closePopovers } from "../components/popover";
-import { showToast, type ToastHandle, type ToastKind } from "../components/toast";
+import { showToast, type ToastKind } from "../components/toast";
 import { COPY, COPY_LIVE } from "../copy";
 import { mountIcons } from "../icons-mount";
-import { isHandsOff } from "../router";
 import type { PanelCommandType } from "../store";
 import { instantiate, part } from "../template";
 import { portToastText } from "../toast-text";
@@ -52,18 +35,6 @@ import liveHtml from "./templates/live.html?raw";
 
 /** §8.1: compact shows at most two PV rows. */
 const COMPACT_PV_MAX = 2;
-/** The pre-arm toast's ring drains at the ring's own linear cadence (§5.10). */
-const RING_TICK_MS = TOKENS.motion.durationMs[1];
-
-interface SavedFocusable {
-	ariaDisabled: string | null;
-	tabindex: string | null;
-}
-
-/** Everything the hands-off lock covers inside the view (mirrors the shell's selector). */
-const LOCK_SELECTOR =
-	'a[href], button, input, select, textarea, [tabindex], [role="switch"], [role="slider"], [role="tab"]';
-
 const TOAST_KIND: Readonly<Record<"info" | "warn" | "error", ToastKind>> = {
 	info: "info",
 	warn: "warn",
@@ -91,7 +62,6 @@ export const liveView: View = {
 
 function mountLive(ctx: ViewContext): () => void {
 	const { store, container } = ctx;
-	const doc = container.ownerDocument;
 	const root = instantiate(liveHtml);
 	const app = container.closest<HTMLElement>(".sl-app");
 	part(root, ".sl-live__eyebrow").textContent = COPY.workspace.live;
@@ -104,7 +74,7 @@ function mountLive(ctx: ViewContext): () => void {
 	}))
 		part(root, `[data-shortcut="${action}"] span`).textContent = label;
 	let snapshot: PanelSnapshot | null = ctx.snapshot ?? store.snapshot;
-	let handsOff = false;
+	const handsOff = false;
 	let disposed = false;
 	let tabId: number | null = null;
 	let metrics: LayoutMetrics = measureLayout(app);
@@ -113,12 +83,6 @@ function mountLive(ctx: ViewContext): () => void {
 	let wasAttached = false;
 	let detachedDismissed = false;
 	let detachedBanner: BannerHandle | null = null;
-	let preArmTimer: ReturnType<typeof setTimeout> | null = null;
-	let preArmToast: ToastHandle | null = null;
-	let preArmRing: ReturnType<typeof createCountdownRing> | null = null;
-	let preArmTick: ReturnType<typeof setInterval> | null = null;
-	/** Controls locked by hands-off with the attributes they had before (restored on exit). */
-	const locked = new Map<Element, SavedFocusable>();
 
 	// ── dispatch ────────────────────────────────────────────────────────────
 	function send<T extends PanelCommandType>(command: TypedMessage<T>): Promise<boolean> {
@@ -190,102 +154,6 @@ function mountLive(ctx: ViewContext): () => void {
 		if (!ok && !disposed && snapshot) toggles.autoplay.update({ checked: snapshot.autoMove.armed });
 	}
 
-	function cancelPreArm(): void {
-		if (preArmTimer !== null) {
-			clearTimeout(preArmTimer);
-			preArmTimer = null;
-		}
-		if (preArmTick !== null) {
-			clearInterval(preArmTick);
-			preArmTick = null;
-		}
-		preArmRing?.dispose();
-		preArmRing = null;
-		preArmToast?.dismiss();
-		preArmToast = null;
-	}
-
-	/** §6.1 step 5: the keybind pre-arms with a 1 s cancel window; disarms instantly. */
-	function onToggleKeybind(): void {
-		if (!snapshot) return;
-		if (snapshot.autoMove.armed) {
-			cancelPreArm();
-			void setAutoPlay(false);
-			return;
-		}
-		if (preArmTimer !== null) {
-			cancelPreArm();
-			return;
-		}
-		preArmToast = showToast(
-			"info",
-			COPY.toast.preArm(formatKeybind(snapshot.settings.keybinds.toggleAutoMove)),
-			{
-				label: COPY_LIVE.cancel,
-				onClick: cancelPreArm,
-			}
-		);
-		// §6.1 step 5: the toast carries a ring that drains over the 1 s window.
-		const startedAt = Date.now();
-		preArmRing = createCountdownRing(null, { size: "sm" });
-		preArmRing.update(UI_TIMINGS.preArmMs, UI_TIMINGS.preArmMs);
-		preArmToast.el.insertBefore(preArmRing.el, preArmToast.el.querySelector(".sl-toast__text"));
-		preArmTick = setInterval(() => {
-			preArmRing?.update(
-				Math.max(0, UI_TIMINGS.preArmMs - (Date.now() - startedAt)),
-				UI_TIMINGS.preArmMs
-			);
-		}, RING_TICK_MS);
-		preArmTimer = setTimeout(() => {
-			preArmTimer = null;
-			cancelPreArm(); // dismisses the toast, stops the ring
-			void setAutoPlay(true);
-		}, UI_TIMINGS.preArmMs);
-	}
-
-	const onKeyDown = (event: KeyboardEvent): void => {
-		if (disposed || handsOff || !snapshot || event.defaultPrevented) return;
-		const target = event.target;
-		if (target instanceof HTMLElement && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
-		const { keybinds } = snapshot.settings;
-		if (matchesKeybind(event, keybinds.toggleAutoMove)) {
-			event.preventDefault();
-			onToggleKeybind();
-		} else if (matchesKeybind(event, keybinds.playMove)) {
-			event.preventDefault();
-			void withTab((id) => ({ type: MSG.PANEL_PLAY_NOW, tabId: id }));
-		}
-	};
-	doc.addEventListener("keydown", onKeyDown);
-
-	// ── hands-off lock (§13.4) ──────────────────────────────────────────────
-	// Ordering with the shell: the view locks first (its own mount/render), the shell's
-	// `lockFocusables` then records "already disabled" and restores the same values on exit,
-	// while this view is unmounted by then (a live game always ends with a remount). The
-	// view-level restore only matters when the view itself survives a hands-off exit (tests).
-	function lockControls(): void {
-		for (const el of root.querySelectorAll(LOCK_SELECTOR)) {
-			if (!locked.has(el))
-				locked.set(el, {
-					ariaDisabled: el.getAttribute("aria-disabled"),
-					tabindex: el.getAttribute("tabindex"),
-				});
-			el.setAttribute("aria-disabled", "true");
-			el.setAttribute("tabindex", "-1");
-		}
-	}
-
-	/** Mirrors the shell: every control gets back exactly the attributes it had. */
-	function unlockControls(): void {
-		for (const [el, saved] of locked) {
-			if (saved.ariaDisabled === null) el.removeAttribute("aria-disabled");
-			else el.setAttribute("aria-disabled", saved.ariaDisabled);
-			if (saved.tabindex === null) el.removeAttribute("tabindex");
-			else el.setAttribute("tabindex", saved.tabindex);
-		}
-		locked.clear();
-	}
-
 	// ── detached banner (§4.4, §9.7) ────────────────────────────────────────
 	function applyDetachedBanner(snap: PanelSnapshot): void {
 		if (snap.executor.debuggerAttached) {
@@ -338,15 +206,6 @@ function mountLive(ctx: ViewContext): () => void {
 		const snap = snapshot;
 		if (!snap || disposed) return;
 		metrics = measureLayout(app); // cheap; a banner can appear without any resize
-		const nextHandsOff = isHandsOff(snap);
-		if (nextHandsOff !== handsOff) {
-			handsOff = nextHandsOff;
-			if (handsOff) {
-				cancelPreArm();
-				closePopovers();
-			} else unlockControls();
-		}
-		root.classList.toggle("sl-live--hands-off", handsOff);
 		const phase = moveProgressPhase(snap);
 		const phaseTitle = part(root, ".sl-live__title");
 		if (phaseTitle.textContent !== COPY.move.progress[phase].title)
@@ -357,7 +216,7 @@ function mountLive(ctx: ViewContext): () => void {
 			snap.settings.automation.highlightMoves,
 			snap.settings.automation.autoQueue
 		);
-		configuration.hidden = !handsOff;
+		configuration.hidden = true;
 		const automationStatus = part(root, ".sl-live__automation");
 		automationStatus.textContent = snap.autoMove.armed ? COPY.toggle.armed : COPY.toggle.off;
 		automationStatus.dataset.armed = String(snap.autoMove.armed);
@@ -386,12 +245,11 @@ function mountLive(ctx: ViewContext): () => void {
 			handsOff,
 		});
 		strength.update({ snapshot: snap, handsOff });
-		strengthHost.hidden = !handsOff && collapse.strengthChip;
-		toggles.update({ snapshot: snap, handsOff, strengthChip: !handsOff && collapse.strengthChip });
+		strengthHost.hidden = false;
+		toggles.update({ snapshot: snap, handsOff, strengthChip: false });
 		strip.update({ snapshot: snap, autoPlayUsed, wasAttached });
-		stripHost.hidden = !handsOff && collapse.stripHidden;
+		stripHost.hidden = false;
 		applyDetachedBanner(snap);
-		if (handsOff) lockControls();
 	}
 
 	const stopLayout = observeLayout({
@@ -435,8 +293,6 @@ function mountLive(ctx: ViewContext): () => void {
 		unsubscribe();
 		unsubscribePort();
 		stopLayout();
-		doc.removeEventListener("keydown", onKeyDown);
-		cancelPreArm();
 		detachedBanner?.dismiss();
 		detachedBanner = null;
 		closePopovers();
@@ -446,7 +302,6 @@ function mountLive(ctx: ViewContext): () => void {
 		strength.dispose();
 		toggles.dispose();
 		strip.dispose();
-		locked.clear();
 		root.remove();
 	};
 }

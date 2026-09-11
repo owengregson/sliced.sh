@@ -127,7 +127,7 @@ export function createWaitingView(options: WaitingViewOptions = {}): View {
 				icon: "toggle.autoplay",
 				armed: true,
 				checked: ctx.snapshot?.autoMove.armed ?? false,
-				locked: ctx.snapshot?.autoMove.armed ?? false,
+				locked: false,
 				hint: ctx.snapshot?.autoMove.armed ? COPY.waiting.preArmed : COPY.waiting.autoplayTooltip,
 				onChange: setArmed,
 			});
@@ -222,7 +222,7 @@ export function createWaitingView(options: WaitingViewOptions = {}): View {
 				// Patch only what differs from the toggle's own state: a snapshot that agrees with it
 				// must not touch the component (an update would cancel a hold in progress).
 				const armed = snapshot.autoMove.armed;
-				const locked = armed || assistantOff;
+				const locked = assistantOff && !armed;
 				const hint = assistantOff
 					? COPY.waiting.autoplayOff
 					: armed

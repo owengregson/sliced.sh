@@ -703,6 +703,50 @@ describe("content entry — commands", () => {
 });
 
 describe("content entry — document_start (no <body> yet)", () => {
+	it("captures shortcuts before page listeners registered during body loading, including with virtual input active", async () => {
+		const dom = createTabDom("https://www.chess.com/game/live/173765478164");
+		cleanups.push(installWindowGlobals(dom.window));
+		dom.document.documentElement.innerHTML = "<head></head>";
+		dom.document.body?.remove();
+		const { feed, factory } = fakeFeed();
+		const bridge = new FakeBridge();
+		bridge.responses.set("getState", () => ({}));
+		const handle = startContent({
+			window: pageWindow(dom),
+			document: pageDocument(dom),
+			bridge,
+			port: factory,
+		});
+		cleanups.push(() => handle?.dispose());
+		let pageKeys = 0;
+		dom.window.addEventListener(
+			"keydown",
+			(event) => {
+				pageKeys++;
+				event.stopImmediatePropagation();
+			},
+			true
+		);
+		loadFixtureInto(dom, "chesscom-live");
+		installPollingObserver(dom);
+		fire(dom, "document", "DOMContentLoaded");
+		feed.command({ kind: "cursorTo", x: 50, y: 60, down: false });
+		const press = () => {
+			const event = new dom.window.KeyboardEvent("keydown", {
+				key: " ",
+				code: "Space",
+				bubbles: true,
+				cancelable: true,
+			});
+			dom.document.body.dispatchEvent(event);
+			return event;
+		};
+		expect(press().defaultPrevented).toBe(true);
+		expect(pageKeys).toBe(0);
+		handle?.dispose();
+		expect(press().defaultPrevented).toBe(false);
+		expect(pageKeys).toBe(1);
+	});
 	it("boots without throwing on a body-less document, defers the adapter, and completes once the body appears", async () => {
 		const dom = createTabDom("https://www.chess.com/game/live/173765478164");
 		cleanups.push(installWindowGlobals(dom.window));

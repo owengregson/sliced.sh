@@ -89,16 +89,16 @@ describe("resolveView", () => {
 			"update",
 		],
 		[
-			"hands-off: live game ignores the settings tab",
+			"live game keeps the settings tab available",
 			{ state: "live:opponent-turn" },
 			ui({ tab: "settings" }),
-			"live",
+			"settings",
 		],
 		[
-			"hands-off: live game ignores the engine tab",
+			"live game keeps the engine tab available",
 			{ state: "live:my-turn:recommended" },
 			ui({ tab: "engine" }),
-			"live",
+			"engine",
 		],
 	];
 
@@ -110,7 +110,7 @@ describe("resolveView", () => {
 });
 
 describe("isHandsOff / isLiveGame", () => {
-	it("is true only for live:* session states", () => {
+	it("recognises live games without disabling panel interaction", () => {
 		for (const state of [
 			"live:opponent-turn",
 			"live:my-turn:analysing",
@@ -118,7 +118,7 @@ describe("isHandsOff / isLiveGame", () => {
 			"live:my-turn:executing",
 		] as const) {
 			expect(isLiveGame(makeSnapshot({ state }))).toBe(true);
-			expect(isHandsOff(makeSnapshot({ state }))).toBe(true);
+			expect(isHandsOff(makeSnapshot({ state }))).toBe(false);
 		}
 		for (const state of ["idle", "waiting-for-game", "game-over"] as const) {
 			expect(isLiveGame(makeSnapshot({ state }))).toBe(false);
@@ -187,7 +187,7 @@ describe("PanelRouter", () => {
 		await router.resolve(makeSnapshot(), ui());
 		expect(mounts).toBe(1);
 		await router.resolve(makeSnapshot({ state: "live:opponent-turn" }), ui({ tab: "engine" }));
-		expect(router.current).toBe("live");
+		expect(router.current).toBe("engine");
 		expect(mounts).toBe(2);
 		router.dispose();
 	});

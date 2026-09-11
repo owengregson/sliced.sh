@@ -84,6 +84,7 @@
 	gap: var(--sl-space-2);
 }
 .sl-live__eval-chip {
+	width: 100%;
 	gap: var(--sl-space-2);
 	padding: var(--sl-space-2) var(--sl-space-3);
 }
@@ -250,3 +251,41 @@
 [data-reduced-motion="true"] .sl-move__progress-fill {
 	transition: none;
 }
+
+/* Strength heat changes continuously across the entire Elo range. */
+.sl-slider--strength .sl-slider__fill {
+	background: var(--sl-color-brand);
+}
+.sl-slider--strength .sl-slider__hint {
+	color: var(--sl-color-danger-text);
+}
+.sl-slider--strength .sl-slider__fill::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	border-radius: inherit;
+	background: var(--sl-color-danger);
+	opacity: var(--sl-slider-heat);
+	transition: opacity var(--sl-motion-duration-4) var(--sl-motion-easing-standard);
+}
+.sl-slider--hot .sl-slider__fill,
+.sl-strength--hot .sl-live__strength-elo {
+	animation-name: sl-strength-glow;
+	animation-duration: calc(var(--sl-motion-duration-6) * 4);
+	animation-timing-function: var(--sl-motion-easing-standard);
+	animation-iteration-count: infinite;
+	animation-direction: alternate;
+}
+.sl-strength--hot .sl-live__strength-elo {
+	color: var(--sl-color-danger-text);
+}
+@keyframes sl-strength-glow {
+	from { filter: drop-shadow(0 0 0 var(--sl-color-danger)); }
+	to { filter: drop-shadow(0 0 var(--sl-space-2) var(--sl-color-danger)); }
+}
+@media (prefers-reduced-motion: reduce) {
+	.sl-slider--hot .sl-slider__fill,
+	.sl-strength--hot .sl-live__strength-elo { animation: none; }
+}
+[data-reduced-motion="true"] .sl-slider--hot .sl-slider__fill,
+[data-reduced-motion="true"] .sl-strength--hot .sl-live__strength-elo { animation: none; }

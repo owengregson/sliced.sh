@@ -159,3 +159,27 @@ describe("createToggle", () => {
 		expect(events).toEqual([true]);
 	});
 });
+
+it("live snapshots preserve an arm hold and its release click, while the next click disarms", async () => {
+	const events: boolean[] = [];
+	handle = createToggle(document.body, {
+		label: "Auto-play",
+		checked: false,
+		armed: true,
+		onChange: (v) => events.push(v),
+	});
+	pointer(handle.el, "pointerdown", { pointerId: 1, isPrimary: true });
+	for (let elapsed = 0; elapsed < UI_TIMINGS.armHoldMs; elapsed += 100) {
+		handle.update({ checked: false, disabled: false });
+		await dom.tick(100);
+	}
+	expect(events).toEqual([true]);
+	handle.update({ checked: true, disabled: false, hint: "Armed for next game" });
+	pointer(handle.el, "pointerup", { pointerId: 1 });
+	click(handle.el);
+	expect(events).toEqual([true]);
+	pointer(handle.el, "pointerdown", { pointerId: 2 });
+	pointer(handle.el, "pointerup", { pointerId: 2 });
+	click(handle.el);
+	expect(events).toEqual([true, false]);
+});

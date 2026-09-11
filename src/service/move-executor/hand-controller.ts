@@ -48,6 +48,7 @@ import {
 import { type ExplorationOptions, ExplorationPlanner } from "@core/motor/exploration";
 import { inRect, lastPoint, pathMs, rectShiftPx, sampleRange } from "@core/motor/geometry";
 import type { InputBackend } from "@core/motor/input-backend";
+import { boundedMotorSpeed, withMotorSpeed } from "@core/motor/motor-profile";
 import type { OpponentExplorationAction } from "@core/motor/opponent-exploration";
 import { fastPath, generatePath, grabWobble, idleTremor } from "@core/motor/path-generator";
 import { clickReleasePoint, samplePointInRect } from "@core/motor/sampling";
@@ -348,10 +349,15 @@ export class HandController {
 	}
 
 	async execute(
-		plan: ExecutionPlan,
+		inputPlan: ExecutionPlan,
 		timing: TimingPlan,
 		signal: AbortSignal
 	): Promise<ExecutionResult> {
+		const plan = {
+			...inputPlan,
+			motorSpeed: boundedMotorSpeed(inputPlan.motorSpeed),
+			motor: withMotorSpeed(inputPlan.motor, inputPlan.motorSpeed),
+		};
 		const t0 = this.now();
 		const tl = new Timeline(t0, this.now);
 		this.tabId = plan.tabId;
@@ -739,6 +745,12 @@ export class HandController {
 				touchMs: pathMs(travel),
 			};
 		}
+		const speed = plan.motorSpeed ?? 1;
+		const motorTiming = {
+			...timing,
+			dragDurationMs: timing.dragDurationMs / speed,
+			window: { ...timing.window, approachMs: timing.window.approachMs / speed },
+		};
 		const approachRaw = generatePath(cursor, press, rects.from, m, rng);
 		const pressAt = lastPoint(approachRaw, press);
 		const preGrabMs = sampleRange(CLICK.preGrabPauseMs, rng);
@@ -754,7 +766,7 @@ export class HandController {
 		const raw = generatePath(wobbleEnd, drop, rects.to, m, rng);
 		const travel = rescalePath(
 			raw,
-			Math.max(EXECUTOR.minTravelMs, timing.dragDurationMs),
+			Math.max(EXECUTOR.minTravelMs, motorTiming.dragDurationMs),
 			m,
 			wobbleEnd
 		);
@@ -768,7 +780,7 @@ export class HandController {
 		const settleMs = sampleRange(m.releaseSettleMs, rng);
 		const touchMs =
 			preGrabMs + grabDelayMs + pathMs(wobble) + pathMs(travel) + pathMs(hesitate) + settleMs;
-		const fitted = this.fitApproach(approachRaw, touchMs, timing, m, cursor);
+		const fitted = this.fitApproach(approachRaw, touchMs, motorTiming, m, cursor);
 		return {
 			approach: fitted.path,
 			pressAt,

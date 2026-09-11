@@ -295,14 +295,15 @@ describe("ChessComAdapter — only the site may correct a colour we already know
 		setClocks(dom, "b", "w");
 		await waitFor(() => adapter.getMyColor() === "b");
 		await sleep(SETTLE);
-		// the adapter's own reading follows the render (it is the orientation source), the session is
-		// never told
-		expect(seen).toEqual([]);
+		// The remapped clock readings are delivered, but they cannot change the session's colour.
+		expect(seen).toHaveLength(1);
+		expect(seen[0]?.myColor).toBe("w");
+		expect(seen[0]?.fen).toBe(WEBGL_FEN);
 	});
 
 	it("a refused flip does not ride in on the next real move either", async () => {
-		// The flip above delivered nothing — and then the position moved, the dedupe key changed, and
-		// the reading was published for its own sake carrying the render's flipped colour. That is the
+		// The flip above cannot change our colour; nor may the next changed position carry the
+		// render's flipped colour. That is the
 		// same outcome one move later, and worse: with the bridge silent there is no authoritative
 		// answer left to undo it, so the session recommends and marks for the opponent for the rest of
 		// the game (review R-2). A position advancing does not make the rendering authoritative.
@@ -320,7 +321,9 @@ describe("ChessComAdapter — only the site may correct a colour we already know
 		setClocks(dom, "b", "w");
 		await waitFor(() => adapter.getMyColor() === "b");
 		await sleep(SETTLE);
-		expect(seen).toEqual([]);
+		expect(seen).toHaveLength(1);
+		expect(seen[0]?.myColor).toBe("w");
+		seen.length = 0;
 
 		// …and now a move lands. The position is new, so it is published — with the colour the session
 		// already has, not the one the board is drawn in.
@@ -385,7 +388,7 @@ describe("ChessComAdapter — only the site may correct a colour we already know
 });
 
 describe("ChessComAdapter — reconciling as it reads keeps the dedupe key stable", () => {
-	it("a flapping active-clock class republishes nothing while the position stands still", async () => {
+	it("a flapping active-clock class updates only clocks while the position stands still", async () => {
 		// Why the reconcile belongs in `read()` and not only in `AdapterBase`: the dedupe key is
 		// `placement|sideToMove`, built from the same value the snapshot publishes. Settling the
 		// disagreement before the key is built keeps one position keyed one way; settling it afterwards
@@ -408,7 +411,10 @@ describe("ChessComAdapter — reconciling as it reads keeps the dedupe key stabl
 		// the position never moved, and the turn it publishes never moved either
 		expect(adapter.readSnapshot()?.fen).toBe(fen);
 		expect(adapter.readSnapshot()?.sideToMove).toBe("w");
-		expect(seen).toEqual([]);
+		expect(seen).toHaveLength(4);
+		expect(seen.every((snapshot) => snapshot.fen === fen && snapshot.sideToMove === "w")).toBe(true);
+		expect(seen.every((snapshot) => snapshot.myColor === "b")).toBe(true);
+		expect(seen.map((snapshot) => snapshot.clocks.w.running)).toEqual([true, false, true, false]);
 	});
 });
 

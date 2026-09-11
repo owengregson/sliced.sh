@@ -141,6 +141,8 @@ export interface GameSessionView {
 	sideToMove: Color | null;
 	ply: number;
 	clocks: PositionSnapshot["clocks"] | null;
+	/** Epoch time at which the site's remaining clock values were captured. */
+	clocksAt?: number;
 	/** Pending automatic matchmaking. dueAt is the next attempt's epoch time. */
 	autoQueue?: {
 		dueAt: number;

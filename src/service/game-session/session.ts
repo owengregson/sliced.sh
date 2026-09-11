@@ -483,6 +483,7 @@ export class GameSession implements SessionSource {
 			sideToMove: s?.sideToMove ?? null,
 			ply: s?.ply ?? 0,
 			clocks: s?.clocks ?? null,
+			...(s ? { clocksAt: s.capturedAt } : {}),
 		};
 		const tc = s?.timeControl ?? this.game?.timeControl;
 		const queue = this.deps.autoQueue.view(this.deps.tabId);
@@ -589,6 +590,20 @@ export class GameSession implements SessionSource {
 	 * could still do to the page, on picks the live position back up.
 	 */
 	onSettingsChanged(): void {
+		const settings = this.deps.getSettings();
+		const timing = timingSettingsFor(settings.timing, this.currentTimeControl());
+		this.profile = timing.profile;
+		this.timing?.updateSettings(timing, {
+			profile: settings.strength.persona,
+			targetElo: this.targetElo(),
+		});
+		this.executorHandle?.updateSettings({
+			persona: settings.strength.persona,
+			motorSpeed: settings.execution.motorSpeed,
+			previewScale:
+				settings.execution.previewSelects === "off" ? 0 : settings.execution.previewSelectScale,
+			verifyMoves: settings.execution.verifyMoves,
+		});
 		const on = this.mayAct();
 		const flipped = on !== this.acting;
 		this.acting = on;
@@ -1694,7 +1709,7 @@ export class GameSession implements SessionSource {
 					ponder: this.ponderer?.expectedReply(snapshot.fen) ?? undefined,
 					rng: this.rng,
 					// `Persona.pi_p` is in logit units; the policy takes a probability in [0, 1].
-					piP: 1 / (1 + Math.exp(-timing.persona.pi_p)),
+					piP: 1 / (1 + Math.exp(-(timing.persona.pi_p + timing.state.knobs.piOffset))),
 				},
 				{
 					analyseAfter: async (_fen, moves, opts) => {

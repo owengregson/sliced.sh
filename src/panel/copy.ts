@@ -473,7 +473,8 @@ export const SETTINGS_COPY = {
 		account: "Account",
 		advanced: "Advanced",
 	},
-	jump: "Jump to section",
+	jump: "Settings categories",
+	all: "All",
 	rows: {
 		enabled: {
 			label: "Assistant",
@@ -642,7 +643,7 @@ export const COPY_LIVE = {
 	you: "You",
 	cancel: "Cancel",
 	strength: {
-		header: "Strength",
+		header: "Active strength",
 		rating: "Target rating",
 		chip: (elo: number, persona: string): string => `${elo} · ${persona}`,
 		modes: { "engine-elo": "Engine", "persona-sampling": "Persona", hybrid: "Hybrid" },

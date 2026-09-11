@@ -224,6 +224,44 @@ describe("ChessComAdapter — focus edges (V2 §13.4)", () => {
 });
 
 describe("ChessComAdapter — position changes", () => {
+	it("publishes changed clock readings and pause/resume on the same board, without duplicate DOM churn", async () => {
+		const { dom, adapter } = boot("chesscom-live");
+		const seen: AdapterPositionSnapshot[] = [];
+		adapter.onPositionChange((snapshot) => seen.push(snapshot));
+		await sleep(SETTLE);
+		const clock = dom.query(".clock-bottom");
+		const time = dom.query(".clock-bottom .clock-time-monospace");
+		clock.classList.remove("clock-player-turn");
+		await sleep(SETTLE);
+		expect(seen).toHaveLength(1);
+		expect(seen[0]?.clocks.w).toEqual({ ms: 16_000, running: false });
+		clock.classList.add("clock-player-turn");
+		await sleep(SETTLE);
+		expect(seen).toHaveLength(2);
+		expect(seen[1]?.clocks.w).toEqual({ ms: 16_000, running: true });
+		// Native clocks can update either the existing text node or replace their text content.
+		const text = time.firstChild;
+		if (!text) throw new Error("clock fixture has no text");
+		text.textContent = "0:15.8";
+		await sleep(SETTLE);
+		expect(seen).toHaveLength(3);
+		expect(seen[2]?.clocks.w).toEqual({ ms: 15_800, running: true });
+		time.textContent = "0:17.2"; // authoritative correction / increment
+		await sleep(SETTLE);
+		expect(seen).toHaveLength(4);
+		expect(seen[3]?.clocks.w).toEqual({ ms: 17_200, running: true });
+		const lastAt = seen[3]?.capturedAt ?? 0;
+		clock.classList.add("clock-red");
+		time.textContent = "0:17.2";
+		await sleep(SETTLE);
+		expect(seen).toHaveLength(4);
+		expect(seen[3]?.capturedAt).toBe(lastAt);
+		expect(new Set(seen.map((snapshot) => snapshot.fen)).size).toBe(1);
+		expect(seen.map((snapshot) => snapshot.capturedAt)).toEqual(
+			seen.map((snapshot) => snapshot.capturedAt).sort((a, b) => a - b)
+		);
+	});
+
 	it("fires exactly once per move when board, list and clocks mutate inside one debounce window", async () => {
 		const { dom, adapter } = boot("chesscom-live");
 		const seen: AdapterPositionSnapshot[] = [];
@@ -243,6 +281,23 @@ describe("ChessComAdapter — position changes", () => {
 		expect(seen[0]?.clocks.b.running).toBe(true);
 		await sleep(SETTLE);
 		expect(seen.length).toBe(1);
+	});
+	it("does not let a clock-only change republish the same board after an SPA identity change", async () => {
+		const { dom, adapter } = boot("chesscom-live");
+		const seen: AdapterPositionSnapshot[] = [];
+		const starts: number[] = [];
+		adapter.onPositionChange((snapshot) => seen.push(snapshot));
+		adapter.onGameStart(() => starts.push(1));
+		dom.window.history.pushState({}, "", "/analysis");
+		dom.query(".clock-bottom").classList.remove("clock-player-turn");
+		dom.query(".clock-bottom .clock-time-monospace").textContent = "0:15.8";
+		await sleep(SETTLE);
+		expect(starts).toHaveLength(1);
+		expect(seen).toHaveLength(0);
+		// A later evaluation of exactly that reading must also remain a no-op.
+		dom.query(".clock-bottom").classList.add("clock-red");
+		await sleep(SETTLE);
+		expect(seen).toHaveLength(0);
 	});
 	it("does not fire while a piece is dragging, then fires once the drag ends", async () => {
 		const { dom, adapter } = boot("chesscom-live");
@@ -609,8 +664,20 @@ describe("ChessComAdapter — observer wiring (fix round 1)", () => {
 			},
 		]);
 		expect(registry.on(".clock-component").map((r) => r.init)).toEqual([
-			{ attributes: true, attributeFilter: ["class"] },
-			{ attributes: true, attributeFilter: ["class"] },
+			{
+				attributes: true,
+				attributeFilter: ["class"],
+				childList: true,
+				subtree: true,
+				characterData: true,
+			},
+			{
+				attributes: true,
+				attributeFilter: ["class"],
+				childList: true,
+				subtree: true,
+				characterData: true,
+			},
 		]);
 		expect(registry.on("body").map((r) => r.init)).toEqual([{ childList: true, subtree: true }]);
 		const initial = registry.active().length;

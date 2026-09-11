@@ -122,7 +122,12 @@ export function createEvalSection(options: EvalSectionOptions): EvalSectionHandl
 		row.el.dataset.active = active ? "true" : "false";
 		row.caret.hidden = !active;
 		const clock = session.clocks?.[color];
-		row.clock.update({ ms: clock ? clock.ms : null, active });
+		row.clock.update({
+			ms: clock ? clock.ms : null,
+			active,
+			running: clock?.running === true && session.state.startsWith("live:"),
+			...(session.clocksAt !== undefined ? { at: session.clocksAt } : {}),
+		});
 	}
 
 	function update(state: EvalSectionState): void {

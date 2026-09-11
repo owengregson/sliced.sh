@@ -186,6 +186,7 @@ function buildRow(spec: RowSpec, host: RowHost): RowControl {
 				label: spec.valueLabel,
 				format: spec.format,
 				ariaLabel: spec.label,
+				strength: spec.path === "strength.targetElo",
 				...(spec.scale ? { scale: spec.scale } : {}),
 				...(spec.threshold ? { threshold: spec.threshold } : {}),
 				...(spec.danger ? { danger: spec.danger } : {}),
@@ -546,6 +547,7 @@ export function createSettingsView(overrides: Partial<SettingsViewDeps> = {}): V
 				sectionEls.push(el);
 			}
 
+			let category = "all";
 			function filterSettings(): void {
 				const query = search.value.trim().toLocaleLowerCase();
 				let found = false;
@@ -562,39 +564,31 @@ export function createSettingsView(overrides: Partial<SettingsViewDeps> = {}): V
 						row.hidden = !matches;
 						sectionMatches ||= matches;
 					}
-					section.hidden = !sectionMatches;
-					found ||= sectionMatches;
+					section.hidden =
+						!sectionMatches || (category !== "all" && section.dataset.section !== category);
+					found ||= !section.hidden;
 				}
 				emptySearch.hidden = found;
-				jumpHost.hidden = query.length > 0;
 			}
 			search.addEventListener("input", filterSettings);
 			disposers.push(() => search.removeEventListener("input", filterSettings));
 
-			// ── jump chips + scroll-spy ──
+			// Category and text filters intersect; changing category never moves the scroll position.
 			const jump = createChipGroup<string>(jumpHost, {
-				items: SECTIONS.map((s) => ({ id: s.id, label: s.title })),
-				value: SECTIONS[0]?.id ?? null,
+				items: [
+					{ id: "all", label: SETTINGS_COPY.all },
+					...SECTIONS.map((s) => ({ id: s.id, label: s.title })),
+				],
+				value: category,
 				onChange: (id) => {
-					const target = sectionEls.find((el) => el.dataset.section === id);
-					if (target && typeof target.scrollIntoView === "function")
-						target.scrollIntoView({ block: "start" });
+					category = id ?? "all";
+					ctx.ui.settingsCategory = category;
+					filterSettings();
 				},
 			});
-			let observer: IntersectionObserver | null = null;
-			if (typeof IntersectionObserver === "function") {
-				const visible = new Set<Element>();
-				observer = new IntersectionObserver((entries) => {
-					for (const entry of entries) {
-						if (entry.isIntersecting) visible.add(entry.target);
-						else visible.delete(entry.target);
-					}
-					const first = sectionEls.find((el) => visible.has(el));
-					const id = first?.dataset.section;
-					if (id && jump.value !== id) jump.update({ value: id });
-				});
-				for (const el of sectionEls) observer.observe(el);
-			}
+			category = ctx.ui.settingsCategory ?? "all";
+			jump.update({ value: category });
+			filterSettings();
 
 			// ── account ──
 			function buildAccount(_section: SectionSpec, rows: HTMLElement): void {
@@ -809,8 +803,6 @@ export function createSettingsView(overrides: Partial<SettingsViewDeps> = {}): V
 
 			return () => {
 				unsubscribe();
-				observer?.disconnect();
-				observer = null;
 				closePopovers();
 				for (const d of disposers) d();
 				for (const control of controls.values()) control.dispose();

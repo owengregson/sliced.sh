@@ -17,6 +17,10 @@ export interface ClockState {
 	/** Remaining time, or null when the site clock cannot be read. */
 	ms: number | null;
 	active?: boolean;
+	/** Running is independent of the active-row highlight (for paused/site-stopped clocks). */
+	running?: boolean;
+	/** Epoch time of the site reading. Repeated snapshots must retain this anchor. */
+	at?: number;
 }
 
 export interface ClockHandle {
@@ -46,10 +50,16 @@ export function createClock(host: HTMLElement | null): ClockHandle {
 	const el = instantiate(html);
 	const time = part(el, ".sl-clock__time");
 	const tenths = part(el, ".sl-clock__tenths");
+	let current: ClockState = { ms: null };
+	let capturedAt = Date.now();
+	let timer: ReturnType<typeof setInterval> | null = null;
 
-	function update(state: ClockState): void {
-		const { ms } = state;
-		const active = state.active === true;
+	function paint(): void {
+		const ms =
+			current.ms === null
+				? null
+				: Math.max(0, current.ms - (current.running ? Math.max(0, Date.now() - capturedAt) : 0));
+		const active = current.active === true;
 		time.textContent = formatClock(ms);
 		const known = ms !== null && Number.isFinite(ms);
 		const low = known && active && (ms as number) < UI_TIMINGS.clockLowMs;
@@ -70,12 +80,23 @@ export function createClock(host: HTMLElement | null): ClockHandle {
 		}
 	}
 
+	function update(state: ClockState): void {
+		if (state.at !== undefined && Number.isFinite(state.at)) capturedAt = state.at;
+		else if (current.ms !== state.ms || current.running !== state.running) capturedAt = Date.now();
+		current = { ...state };
+		if (timer !== null) clearInterval(timer);
+		timer = state.running && state.ms !== null ? setInterval(paint, UI_TIMINGS.clockTickMs) : null;
+		paint();
+	}
+
 	update({ ms: null });
 	host?.append(el);
 	return {
 		el,
 		update,
 		dispose() {
+			if (timer !== null) clearInterval(timer);
+			timer = null;
 			el.remove();
 		},
 	};

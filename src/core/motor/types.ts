@@ -182,6 +182,8 @@ export interface ExecutionPlan {
 	to: { x: number; y: number; rect: Rect; square: Square };
 	promotion?: PromoPiece;
 	motor: MotorProfile;
+	/** Live movement-speed multiplier, captured when this gesture starts. */
+	motorSpeed?: number;
 	/** Last known cursor (the hand owns the pointer, §13.5). */
 	startPoint?: Pt;
 	expected: { san?: string; uci: string; premove: boolean };

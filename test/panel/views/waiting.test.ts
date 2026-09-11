@@ -212,14 +212,15 @@ describe("waitingView", () => {
 		click(el);
 		expect(store.dispatched).toHaveLength(1);
 
-		// The SW confirms: "Armed for next game", and the toggle locks until a game starts.
+		// The SW confirms: "Armed for next game", and the toggle can stop it before a game starts.
 		store.emit(makeSnapshot({ armed: true }));
 		expect(el.querySelector(".sl-toggle__hint")?.textContent).toBe(COPY.waiting.preArmed);
-		expect(el.classList.contains("sl-toggle--locked")).toBe(true);
-		expect(el.querySelector(".sl-toggle__lock")?.hasAttribute("hidden")).toBe(false);
+		expect(el.classList.contains("sl-toggle--locked")).toBe(false);
+		expect(el.querySelector(".sl-toggle__lock")?.hasAttribute("hidden")).toBe(true);
 		expect(el.getAttribute("aria-checked")).toBe("true");
 		click(el);
-		expect(store.dispatched).toHaveLength(1);
+		await dom.tick(0);
+		expect(store.dispatched.at(-1)).toEqual({ type: MSG.PANEL_SET_AUTO_MOVE, tabId, armed: false });
 	});
 
 	it("the assistant off: the status says so, and the arm toggle is locked rather than refused (§4.4)", async () => {
@@ -244,12 +245,15 @@ describe("waitingView", () => {
 		expect(el.querySelector(".sl-toggle__hint")?.textContent).toBe(COPY.waiting.autoplayTooltip);
 	});
 
-	it("pre-armed on mount: Armed for next game, locked, tooltip copy; the banner shows once per session", async () => {
+	it("pre-armed on mount can be stopped immediately and shows the armed hint", async () => {
 		await mountWaiting(makeSnapshot({ armed: true }));
 		const el = toggle();
 		expect(el.getAttribute("aria-checked")).toBe("true");
 		expect(el.classList.contains("sl-toggle--armed")).toBe(true);
-		expect(el.classList.contains("sl-toggle--locked")).toBe(true);
+		expect(el.classList.contains("sl-toggle--locked")).toBe(false);
+		click(el);
+		await dom.tick(0);
+		expect(store.dispatched.at(-1)).toEqual({ type: MSG.PANEL_SET_AUTO_MOVE, tabId, armed: false });
 		expect(el.querySelector(".sl-toggle__hint")?.textContent).toBe(COPY.waiting.preArmed);
 		expect(currentBannerKind()).toBeNull();
 		// Disarmed by the SW (Shift+A): the toggle opens up again with the default hint.

@@ -344,7 +344,7 @@ describe("engine view — executor", () => {
 		expect(root.querySelectorAll(".sl-engine__phase")).toHaveLength(0);
 	});
 
-	it("Detach / Reattach dispatch; Reattach is primary only while detached; both disabled hands-off", async () => {
+	it("Detach / Reattach dispatch and follow debugger state during live games", async () => {
 		const s = engineSnapshot();
 		s.executor = { debuggerAttached: true };
 		const root = await mountView(s);
@@ -368,32 +368,18 @@ describe("engine view — executor", () => {
 		expect(store.dispatched.at(-1)).toBe(MSG.PANEL_REATTACH_DEBUGGER);
 		expect(store.calls.at(-1)).toEqual({ type: MSG.PANEL_REATTACH_DEBUGGER, tabId });
 
-		// Hands-off (§13.4): a live game disables every command, whatever the debugger state.
+		// Live controls retain their own availability rules instead of a blanket session lock.
 		const live = makeSnapshot({ state: "live:opponent-turn" });
 		live.executor = { debuggerAttached: false };
 		store.emit(live);
 		await dom.tick(0);
-		const cmds = ["detach", "reattach", "copy", "export", "clear", "reset"];
-		for (const cmd of cmds) {
-			expect({
-				cmd,
-				disabled: root.querySelector(`[data-cmd="${cmd}"]`)?.getAttribute("aria-disabled"),
-			}).toEqual({ cmd, disabled: "true" });
-		}
+		expect(detach?.getAttribute("aria-disabled")).toBe("true");
+		for (const cmd of ["reattach", "copy", "export", "clear", "reset"])
+			expect(root.querySelector(`[data-cmd="${cmd}"]`)?.getAttribute("aria-disabled")).toBeNull();
 		const before = store.dispatched.length;
-		for (const cmd of cmds) click(root.querySelector(`[data-cmd="${cmd}"]`) as HTMLElement);
-		await dom.tick(0);
-		expect(store.dispatched).toHaveLength(before); // no detach/reattach/clear/reset dispatched
-		expect(copied).toEqual([]); // Copy inert
-		expect(root.querySelector<HTMLElement>('[data-cmd="export"]')?.dataset.url).toBeUndefined();
-		expect(root.querySelectorAll(".sl-engine__log-row").length).toBeGreaterThanOrEqual(0);
-
-		// Back to a non-live state: the controls return.
-		const d2 = engineSnapshot();
-		d2.executor = { debuggerAttached: false };
-		store.emit(d2);
-		await dom.tick(0);
-		expect(reattach?.getAttribute("aria-disabled")).toBeNull();
+		click(reattach as HTMLElement);
+		expect(store.dispatched).toHaveLength(before + 1);
+		expect(store.dispatched.at(-1)).toBe(MSG.PANEL_REATTACH_DEBUGGER);
 	});
 
 	it("shows the raw license verdict", async () => {
@@ -490,30 +476,30 @@ describe("engine view — timing rationale log", () => {
 		expect(app.querySelector<HTMLElement>('[data-cmd="export"]')?.dataset.url).toBeUndefined();
 	});
 
-	it("Export is refused by the shell while hands-off: no tab is created during a live game", async () => {
+	it("keeps Export, Copy, Clear and Reset available in the engine panel during a live game", async () => {
 		store.responses[MSG.PANEL_EXPORT_TIMING_LOG] = [timingEntry()];
 		const app = document.getElementById("app") as HTMLElement;
-		// During a live game the router mounts `live`, never `engine`; registering this view as the
-		// live view exercises the shell's hands-off refusal (§13.4) on this view's Export button.
-		shell = bootShell(app, { store, views: { engine: view(), live: view() } });
+		shell = bootShell(app, { store, views: { engine: view() } });
+		shell.setTab("engine");
 		store.emit(makeSnapshot({ state: "live:my-turn:recommended" }));
 		await dom.tick(0);
-		expect(shell.router.current).toBe("live");
-		expect(shell.handsOff).toBe(true);
-		expect(app.classList.contains("sl-hands-off")).toBe(true);
+		expect(shell.router.current).toBe("engine");
+		expect(shell.handsOff).toBe(false);
+		expect(app.classList.contains("sl-hands-off")).toBe(false);
 		const exportBtn = app.querySelector<HTMLElement>('[data-cmd="export"]');
-		expect(exportBtn?.getAttribute("aria-disabled")).toBe("true");
+		expect(exportBtn?.getAttribute("aria-disabled")).toBeNull();
 		const tabsBefore = dom.sim.tabs.all().length;
 		click(exportBtn as HTMLElement);
 		await dom.tick(0);
-		expect(dom.sim.tabs.all()).toHaveLength(tabsBefore);
+		expect(dom.sim.tabs.all()).toHaveLength(tabsBefore + 1);
+		expect(dom.sim.tabs.all().at(-1)?.url.startsWith("data:application/json")).toBe(true);
 		expect(exportBtn?.dataset.url).toBeUndefined();
-		// Copy / Clear / Reset are inert too.
 		for (const cmd of ["copy", "clear", "reset"])
 			click(app.querySelector(`[data-cmd="${cmd}"]`) as HTMLElement);
 		await dom.tick(0);
-		expect(copied).toEqual([]);
-		expect(store.dispatched.filter((t) => t !== MSG.PANEL_EXPORT_TIMING_LOG)).toEqual([]);
+		expect(copied).toHaveLength(1);
+		expect(store.dispatched).toContain(MSG.PANEL_CLEAR_TIMING_LOG);
+		expect(store.dispatched).toContain(MSG.PANEL_RESET_SESSION);
 	});
 });
 

@@ -4,6 +4,7 @@
  * the per-game path-style choice.
  */
 
+import { SETTINGS_RANGES } from "@core/constants/limits";
 import type { Rng } from "@core/rng";
 import type { PersonaId } from "@typedefs/settings";
 import {
@@ -23,6 +24,16 @@ import type { MotorMoveKind, MotorProfile, MotorStyle, MsRange, TimeControlClass
 export { sampleRange };
 
 const FAST_TC: ReadonlySet<TimeControlClass> = new Set(["bullet", "blitz"]);
+
+export function boundedMotorSpeed(speed: number | undefined): number {
+	if (speed === undefined || !Number.isFinite(speed)) return 1;
+	return Math.min(SETTINGS_RANGES.motorSpeed.max, Math.max(SETTINGS_RANGES.motorSpeed.min, speed));
+}
+
+/** Faster movement changes travel duration; the peak cap and button settling remain intact. */
+export function withMotorSpeed(profile: MotorProfile, speed: number | undefined): MotorProfile {
+	return { ...profile, travelSpeedScale: profile.travelSpeedScale / boundedMotorSpeed(speed) };
+}
 
 function scaleRange(r: MsRange, k: number): MsRange {
 	return [r[0] * k, r[1] * k];

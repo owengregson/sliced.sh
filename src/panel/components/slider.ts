@@ -5,7 +5,7 @@
  * `commit = true` on release (keyboard steps always commit). Danger zone past a threshold.
  */
 
-import { UI_TIMINGS } from "@core/constants/ui";
+import { STRENGTH_UI, UI_TIMINGS } from "@core/constants/ui";
 import { clamp } from "@core/util/clamp";
 import { playUiSound } from "../sounds";
 import { instantiate, part } from "../template";
@@ -31,6 +31,8 @@ export interface SliderOptions {
 	/** Optional marks row under the track. */
 	scale?: readonly string[];
 	threshold?: SliderThreshold;
+	/** Continuous orange-to-red rating fill, with a glow at very high strength. */
+	strength?: boolean;
 	danger?: (value: number) => boolean;
 	dangerHint?: string;
 	disabled?: boolean;
@@ -65,11 +67,8 @@ export function createSlider(host: HTMLElement | null, options: SliderOptions): 
 	const boundary = part(el, ".sl-slider__boundary");
 	if (options.threshold) {
 		divider.hidden = false;
-		boundary.hidden = false;
-		part(boundary, ".sl-slider__lower-label").textContent = options.threshold.lowerLabel;
-		part(boundary, ".sl-slider__threshold-label").textContent = options.threshold.label;
-		part(boundary, ".sl-slider__upper-label").textContent = options.threshold.upperLabel;
-		boundary.setAttribute("title", options.threshold.description);
+		boundary.hidden = true;
+		divider.setAttribute("title", options.threshold.description);
 		thumb.setAttribute("aria-description", options.threshold.description);
 	}
 	const format = options.format ?? ((v: number): string => String(v));
@@ -106,6 +105,9 @@ export function createSlider(host: HTMLElement | null, options: SliderOptions): 
 			divider.dataset.value = String(options.threshold.value);
 		}
 		fill.style.width = `${pct.toFixed(3)}%`;
+		el.classList.toggle("sl-slider--strength", options.strength === true);
+		el.classList.toggle("sl-slider--hot", options.strength === true && value >= STRENGTH_UI.glowElo);
+		el.style.setProperty("--sl-slider-heat", String(clamp(pct / 100, 0, 1)));
 		thumb.style.left = `${pct.toFixed(3)}%`;
 		thumb.setAttribute("aria-valuemin", String(min));
 		thumb.setAttribute("aria-valuemax", String(max));

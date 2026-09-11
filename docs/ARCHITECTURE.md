@@ -158,9 +158,10 @@ attaches once before the game so its infobar's layout shift never lands inside a
 One stylesheet framework (`sl-ui`), one token source ("Lattice", `src/design/tokens.ts` →
 `css/tokens.css`), one icon registry, one copy file. The shell owns the top bar, banner slot,
 content region, toast and overlay layers and the live regions; views are mounted one at a time
-and each `mount()` returns its own teardown. While a game is live the panel enters **hands-off**
-mode: pointer-events off, a capture-phase keyboard guard, every focusable `aria-disabled`, and a
-banner explaining why — because a panel interaction blurs the game tab (§13.4).
+and each `mount()` returns its own teardown. Game, Settings, and Engine stay interactive during a
+live game, following the owner's 2026-09-11 override of the original hands-off UI lock. Shared
+shortcuts work across views; Space requests play-now outside text and keybind editing. Automatic
+update/reload prompts wait until play ends. Executor input and focus checks remain independent.
 
 ### 4.8 Licence gate (§3.6; `src/service/license-gate.ts`)
 

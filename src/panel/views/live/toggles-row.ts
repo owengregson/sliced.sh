@@ -120,7 +120,7 @@ export function createTogglesRow(options: TogglesRowOptions): TogglesRowHandle {
 		highlight.update({ checked: automation.highlightMoves, disabled: state.handsOff });
 		autoqueue.update({ checked: automation.autoQueue, disabled: state.handsOff });
 		chip.textContent = COPY_LIVE.strength.chip(
-			strength.targetElo,
+			snap.opponent?.derivedTargetElo ?? strength.targetElo,
 			COPY.personaName[strength.persona]
 		);
 		chip.hidden = !state.strengthChip;

@@ -13,6 +13,7 @@ import type { MessageRouter } from "@core/messaging/router";
 import { registerCancelPendingHandler } from "@service/handlers/panel/cancel-pending";
 import { registerDebuggerHandlers } from "@service/handlers/panel/debugger";
 import { registerGetSnapshotHandler } from "@service/handlers/panel/get-snapshot";
+import { registerPanelKeybindHandler } from "@service/handlers/panel/keybind";
 import { registerPlayNowHandler } from "@service/handlers/panel/play-now";
 import { registerPreviewLineHandler } from "@service/handlers/panel/preview-line";
 import { registerSetAutoMoveHandler } from "@service/handlers/panel/set-auto-move";
@@ -56,6 +57,7 @@ export function registerPanelHandlers(router: MessageRouter, deps: PanelHandlerD
 	registerGetSnapshotHandler(router, deps.broadcaster);
 	registerSetAutoMoveHandler(router, deps);
 	registerPlayNowHandler(router, deps);
+	registerPanelKeybindHandler(router, deps);
 	registerCancelPendingHandler(router, deps);
 	registerPreviewLineHandler(router, deps);
 	registerDebuggerHandlers(router, deps);

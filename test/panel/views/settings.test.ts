@@ -1,6 +1,6 @@
 // test/panel/views/settings.test.ts — Task 25: the Settings view (Appendix F §4.6 / §7.2).
-// Every `Settings` leaf has a row; hands-off disables the whole view; a row change writes the
-// clamped value through `setSettings`; jump chips follow the scroll (IntersectionObserver);
+// Every `Settings` leaf has a row; live controls remain available; a row change writes the
+// clamped value through `setSettings`; category chips intersect with the text search;
 // strength labels per band and the ≥ 2600 warning; timing presets pre-select the detected time
 // control; keybind rows swap on conflict; the TTS voice select follows `display.tts`; the license
 // reveal re-masks after 10 s; reset confirms; the footer shows version and build.
@@ -376,134 +376,84 @@ describe("settings view · playing sessions", () => {
 	});
 });
 
-describe("settings view · hands-off", () => {
-	it("a live game disables the whole view: root aria-disabled, every control inert", async () => {
+describe("settings view · live interaction", () => {
+	it("keeps live settings writable through game transitions", async () => {
 		const h = await mountSettings(makeSnapshot({ state: "live:opponent-turn" }));
-		expect(h.root.getAttribute("aria-disabled")).toBe("true");
-		expect(h.root.classList.contains("sl-settings--locked")).toBe(true);
-		const controls = h.root.querySelectorAll(
-			".sl-toggle, .sl-slider__thumb, .sl-chip-group, .sl-segment, .sl-keybind, .sl-stepper, .sl-select, .sl-button"
-		);
-		expect(controls.length).toBeGreaterThan(30);
-		for (const c of controls) expect(c.getAttribute("aria-disabled"), c.className).toBe("true");
-		for (const s of h.root.querySelectorAll("select")) expect(s.disabled).toBe(true);
-		click(q(row(h.root, "strength.useOpeningBook"), "[role=switch]"));
-		key(q(row(h.root, "strength.targetElo"), "[role=slider]"), "keydown", { key: "End" });
-		click(q(row(h.root, "display.pvCount"), ".sl-stepper__button--inc"));
-		await dom.tick(0);
-		expect(h.patches).toEqual([]);
-		// Game over: the view unlocks from the next snapshot.
-		h.store.emit(makeSnapshot({ state: "game-over" }));
-		await dom.tick(0);
 		expect(h.root.getAttribute("aria-disabled")).toBeNull();
-		expect(
-			q(row(h.root, "strength.useOpeningBook"), "[role=switch]").getAttribute("aria-disabled")
-		).toBeNull();
-		click(q(row(h.root, "strength.useOpeningBook"), "[role=switch]"));
+		expect(h.root.classList.contains("sl-settings--locked")).toBe(false);
+		const book = q(row(h.root, "strength.useOpeningBook"), "[role=switch]");
+		expect(book.getAttribute("aria-disabled")).toBeNull();
+		click(book);
 		await dom.tick(0);
 		expect(h.patches).toEqual([{ strength: { useOpeningBook: false } }]);
-		// Back into a game: locked again through the store.
-		h.store.emit(makeSnapshot({ state: "live:my-turn:analysing" }));
+		for (const state of ["game-over", "live:my-turn:analysing"] as const) {
+			h.store.emit(makeSnapshot({ state }));
+			await dom.tick(0);
+			expect(h.root.getAttribute("aria-disabled")).toBeNull();
+			expect(
+				q(row(h.root, "strength.targetElo"), "[role=slider]").getAttribute("aria-disabled")
+			).toBeNull();
+		}
+		key(q(row(h.root, "strength.targetElo"), "[role=slider]"), "keydown", { key: "End" });
 		await dom.tick(0);
-		expect(h.root.getAttribute("aria-disabled")).toBe("true");
+		expect(h.patches.at(-1)).toEqual({ strength: { targetElo: LIMITS.eloMax } });
 	});
 
-	it("an open confirm popover is closed when the game goes live; Confirm cannot act mid-game", async () => {
+	it("keeps deliberate reset and sign-out confirmations available when a game starts", async () => {
 		const h = await mountSettings();
 		click(q(h.root, ".sl-settings-advanced__reset"));
-		const confirm = q(document, ".sl-popover .sl-settings-confirm__confirm");
-		expect(document.querySelector(".sl-popover")).not.toBeNull();
 		h.store.emit(makeSnapshot({ state: "live:opponent-turn" }));
 		await dom.tick(0);
-		expect(document.querySelector(".sl-popover")).toBeNull();
-		click(confirm); // a stale reference must not fire either
+		expect(document.querySelector(".sl-popover")).not.toBeNull();
+		click(q(document, ".sl-popover .sl-settings-confirm__confirm"));
 		await dom.tick(0);
-		expect(h.patches).toEqual([]);
-		// Sign-out confirm: the same, and no logout is dispatched.
-		h.store.emit(makeSnapshot({ state: "game-over" }));
-		await dom.tick(0);
+		expect(h.patches).toHaveLength(1);
+		expect(h.patches[0]).toEqual(DEFAULT_SETTINGS);
 		click(q(h.root, ".sl-settings-account__signout"));
 		expect(document.querySelector(".sl-popover")).not.toBeNull();
-		h.store.emit(makeSnapshot({ state: "live:opponent-turn" }));
+		click(q(document, ".sl-popover .sl-settings-confirm__confirm"));
 		await dom.tick(0);
-		expect(document.querySelector(".sl-popover")).toBeNull();
-		expect(h.store.dispatched).toEqual([]);
-		// While locked the buttons open nothing.
-		click(q(h.root, ".sl-settings-advanced__reset"));
-		expect(document.querySelector(".sl-popover")).toBeNull();
+		expect(h.store.dispatched).toContain(MSG.PANEL_LOGOUT);
 	});
 });
 
-describe("settings view · jump chips", () => {
-	it("scroll-spy follows the topmost visible section and is disposed on unmount", async () => {
-		interface Entry {
-			target: Element;
-			isIntersecting: boolean;
-		}
-		const instances: Array<{
-			cb: (entries: Entry[]) => void;
-			observed: Element[];
-			disconnected: boolean;
-		}> = [];
-		const g = globalThis as Record<string, unknown>;
-		const saved = g.IntersectionObserver;
-		class FakeIO {
-			readonly record: (typeof instances)[number];
-			constructor(cb: (entries: Entry[]) => void) {
-				this.record = { cb, observed: [], disconnected: false };
-				instances.push(this.record);
-			}
-			observe(el: Element): void {
-				this.record.observed.push(el);
-			}
-			unobserve(): void {}
-			disconnect(): void {
-				this.record.disconnected = true;
-			}
-			takeRecords(): never[] {
-				return [];
-			}
-		}
-		g.IntersectionObserver = FakeIO;
-		try {
-			const h = await mountSettings();
-			const io = instances[0];
-			if (!io) throw new Error("no observer");
-			expect(io.observed).toHaveLength(SECTIONS.length);
-			const chips = q(h.root, ".sl-settings__jump .sl-chip-group");
-			expect(chips.querySelectorAll(".sl-chip")).toHaveLength(SECTIONS.length);
-			expect(
-				chips.querySelector('.sl-chip[data-value="strength"]')?.getAttribute("aria-pressed")
-			).toBe("true");
-			const section = (id: string): Element => q(h.root, `[data-section="${id}"]`);
-			io.cb([
-				{ target: section("strength"), isIntersecting: false },
-				{ target: section("timing"), isIntersecting: true },
-				{ target: section("execution"), isIntersecting: true },
-			]);
-			expect(chips.querySelector('.sl-chip[data-value="timing"]')?.getAttribute("aria-pressed")).toBe(
-				"true"
-			);
-			io.cb([{ target: section("timing"), isIntersecting: false }]);
-			expect(
-				chips.querySelector('.sl-chip[data-value="execution"]')?.getAttribute("aria-pressed")
-			).toBe("true");
-			// Clicking a chip selects it and asks the section to scroll into view.
-			const scrolled: string[] = [];
-			for (const s of SECTIONS) {
-				(section(s.id) as HTMLElement).scrollIntoView = () => void scrolled.push(s.id);
-			}
-			click(q(chips, '.sl-chip[data-value="account"]'));
-			expect(scrolled).toEqual(["account"]);
-			expect(chips.querySelector('.sl-chip[data-value="account"]')?.getAttribute("aria-pressed")).toBe(
-				"true"
-			);
-			h.cleanup();
-			harness = null;
-			expect(io.disconnected).toBe(true);
-		} finally {
-			g.IntersectionObserver = saved;
-		}
+describe("settings view · category filters", () => {
+	it("defaults to All and filters sections without scrolling", async () => {
+		const h = await mountSettings();
+		const chips = q(h.root, ".sl-settings__jump .sl-chip-group");
+		expect(chips.querySelectorAll(".sl-chip")).toHaveLength(SECTIONS.length + 1);
+		expect(q(chips, '.sl-chip[data-value="all"]').getAttribute("aria-pressed")).toBe("true");
+		const sections = [...h.root.querySelectorAll<HTMLElement>("[data-section]")];
+		expect(sections.filter((section) => !section.hidden)).toHaveLength(SECTIONS.length);
+		const scrolled: string[] = [];
+		for (const section of sections)
+			section.scrollIntoView = () => void scrolled.push(section.dataset.section ?? "");
+		click(q(chips, '.sl-chip[data-value="account"]'));
+		expect(
+			sections.filter((section) => !section.hidden).map((section) => section.dataset.section)
+		).toEqual(["account"]);
+		expect(scrolled).toEqual([]);
+		click(q(chips, '.sl-chip[data-value="all"]'));
+		expect(sections.filter((section) => !section.hidden)).toHaveLength(SECTIONS.length);
+	});
+
+	it("intersects search with the selected category and restores matching sections on All", async () => {
+		const h = await mountSettings();
+		const chips = q(h.root, ".sl-settings__jump .sl-chip-group");
+		const search = q(h.root, ".sl-settings__search") as HTMLInputElement;
+		click(q(chips, '.sl-chip[data-value="timing"]'));
+		search.value = "opening book";
+		search.dispatchEvent(new Event("input", { bubbles: true }));
+		const visible = () =>
+			[...h.root.querySelectorAll<HTMLElement>("[data-section]")]
+				.filter((section) => !section.hidden)
+				.map((section) => section.dataset.section);
+		expect(visible()).toEqual([]);
+		click(q(chips, '.sl-chip[data-value="all"]'));
+		expect(visible()).toEqual(["strength"]);
+		search.value = "";
+		search.dispatchEvent(new Event("input", { bubbles: true }));
+		expect(visible()).toHaveLength(SECTIONS.length);
 	});
 });
 
@@ -538,8 +488,8 @@ describe("settings view · strength", () => {
 		expect(q(slider, ".sl-slider__divider").style.left).toBe(
 			`${(((LIMITS.nnueSmallEloMax - LIMITS.eloMin) / (LIMITS.eloMax - LIMITS.eloMin)) * 100).toFixed(3)}%`
 		);
-		expect(q(slider, ".sl-slider__boundary").textContent).toContain(COPY.strength.smallNetwork);
-		expect(q(slider, ".sl-slider__boundary").textContent).toContain(COPY.strength.largeNetwork);
+		expect(q<HTMLElement>(slider, ".sl-slider__boundary").hidden).toBe(true);
+		expect(q(slider, ".sl-slider__boundary").textContent?.trim()).toBe("");
 		expect(q(slider, ".sl-slider__bubble").textContent).toBe("Expert 1500");
 		expect([...slider.querySelectorAll(".sl-slider__mark")].map((m) => m.textContent)).toEqual([
 			COPY.strength.bands.casual,
@@ -816,7 +766,7 @@ describe("settings search and save feedback", () => {
 		expect(row(h.root, "timing.premoveTendency").hidden).toBe(false);
 		expect(row(h.root, "strength.targetElo").hidden).toBe(true);
 		expect(q<HTMLElement>(h.root, '[data-section="strength"]').hidden).toBe(true);
-		expect(q<HTMLElement>(h.root, ".sl-settings__jump").hidden).toBe(true);
+		expect(q<HTMLElement>(h.root, ".sl-settings__jump").hidden).toBe(false);
 		search.value = "Timing";
 		search.dispatchEvent(new Event("input", { bubbles: true }));
 		expect(row(h.root, "timing.respectBudget").hidden).toBe(false);

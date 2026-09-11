@@ -99,6 +99,8 @@ const LIVE_KINDS: ReadonlySet<PageKind> = new Set(["live-game", "vs-computer"]);
 interface CursorBinding {
 	tracker: CursorTracker;
 	onSample?: (sample: CursorSample) => void;
+	keybinds: Keybinds;
+	removeKeybinds: () => void;
 }
 
 const EMPTY_RECT: Rect = toRect({ x: 0, y: 0, width: 0, height: 0 });
@@ -112,7 +114,20 @@ export function startContent(options: ContentOptions = {}): ContentHandle | null
 	// Install capture at document_start, before page listeners; the board may be parsed much later.
 	const cursor: CursorBinding = {
 		tracker: createCursorTracker({ window: win, onSample: (sample) => cursor.onSample?.(sample) }),
+		keybinds: { ...DEFAULT_KEYBINDS, global: false },
+		removeKeybinds: () => {},
 	};
+	// Register keyboard capture before body/adapter initialization, just like pointer capture.
+	// A page listener installed while the body is still loading must not swallow our shortcuts.
+	cursor.removeKeybinds = installKeybinds(
+		() => cursor.keybinds,
+		(action) => {
+			sendTyped({ type: MSG.CONTENT_KEYBIND, action }).catch((error: unknown) => {
+				log.debug("content: keybind not delivered", error);
+			});
+		},
+		{ window: win }
+	);
 	if (doc.body) return bootContent(site, win, doc, options, cursor);
 	return deferUntilBody(site, win, doc, options, cursor);
 }
@@ -149,7 +164,10 @@ function deferUntilBody(
 		dispose() {
 			stop();
 			if (inner) inner.dispose();
-			else cursorBinding.tracker.dispose();
+			else {
+				cursorBinding.tracker.dispose();
+				cursorBinding.removeKeybinds();
+			}
 		},
 	};
 }
@@ -169,13 +187,12 @@ function bootContent(
 	// Fix D: the mirror of the hand's own pointer. Drawn by the MAIN-world bridge (§13.3), driven
 	// only by what the service worker dispatched — never by a pointer event read here.
 	const virtualCursor = createVirtualCursor(bridge, (shown) => cursor.setVirtualActive(shown));
-	let keybinds: Keybinds = { ...DEFAULT_KEYBINDS, global: false };
 	let pageKind = adapter.detectPageKind();
 	let sessionGameId: string | null = null;
 	let disposed = false;
 	let port: FeedPort | null = null;
 	let readyTimer: ReturnType<typeof setInterval> | null = null;
-	const disposers: Array<() => void> = [];
+	const disposers: Array<() => void> = [cursorBinding.removeKeybinds];
 
 	// ---- outgoing ---------------------------------------------------------------
 	const post = (msg: GamePortMessage): void => {
@@ -378,7 +395,7 @@ function bootContent(
 				});
 				return;
 			case "keybinds":
-				keybinds = cmd.keybinds;
+				cursorBinding.keybinds = cmd.keybinds;
 				return;
 			case "settings":
 				highlights.setEnabled(cmd.highlightMoves);
@@ -477,20 +494,9 @@ function bootContent(
 		win.removeEventListener("popstate", onPop);
 	});
 
-	disposers.push(
-		installKeybinds(
-			() => keybinds,
-			(action) => {
-				sendTyped({ type: MSG.CONTENT_KEYBIND, action }).catch((error: unknown) => {
-					log.debug("content: keybind not delivered", error);
-				});
-			},
-			{ window: win }
-		)
-	);
 	sendTyped({ type: MSG.CONTENT_HELLO })
 		.then((reply) => {
-			if (!disposed && reply && reply.keybinds) keybinds = reply.keybinds;
+			if (!disposed && reply && reply.keybinds) cursorBinding.keybinds = reply.keybinds;
 		})
 		.catch(() => {
 			// SW asleep or absent: keep the defaults until a `keybinds` command arrives
