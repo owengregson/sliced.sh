@@ -232,7 +232,11 @@ export async function createSimulatedSite(
 				},
 				{ window: win, now: sim.now }
 			);
-			port.post({ kind: "focus", hasFocus: true, visibility: "visible", at: sim.now() });
+			// No fabricated initial `focus` post here: the real `installFocusEdges` above reports the
+			// current state once at install, exactly as the content script does. Inventing the message
+			// in this fake made every simulated game start with focus *known*, which hid a production
+			// hold — `FocusGate.hasFocus` staying `null` for a tab that was focused the whole time —
+			// for as long as the fabrication existed.
 			const rest = SIM_TELEMETRY.restPoint;
 			port.post({ kind: "cursor", x: rest.x, y: rest.y, t: sim.now(), real: true });
 		},
@@ -249,6 +253,10 @@ export async function createSimulatedSite(
 			ply: board.ply(),
 			sideToMove: board.chess.turn() as Color,
 			myColor,
+			// Stated, like the real adapter states it: this FEN is the board's own, so it is exact. The
+			// service worker treats an *unstated* provenance as untrusted (§13.4), and a fake that left
+			// it out would be exercising a path production never takes.
+			approximate: false,
 			clocks: { w: { ms: clocks.w, running: true }, b: { ms: clocks.b, running: true } },
 			capturedAt: sim.now(),
 		};

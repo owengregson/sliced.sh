@@ -93,11 +93,6 @@ const LIVE_KINDS: ReadonlySet<PageKind> = new Set(["live-game", "vs-computer"]);
 
 const EMPTY_RECT: Rect = toRect({ x: 0, y: 0, width: 0, height: 0 });
 
-function stripApproximate(s: AdapterPositionSnapshot): PositionSnapshot {
-	const { approximate: _approximate, ...snapshot } = s;
-	return snapshot;
-}
-
 /** Boot the content script for the current page; `null` when the host is not a supported site. */
 export function startContent(options: ContentOptions = {}): ContentHandle | null {
 	const win = options.window ?? window;
@@ -181,7 +176,10 @@ function bootContent(
 
 	/** `gameStarted` (once per game id) then `position`. */
 	const publish = (s: AdapterPositionSnapshot): void => {
-		const snapshot = stripApproximate(s);
+		// `approximate` travels with the snapshot: the service worker cannot otherwise tell a FEN the
+		// page gave us from one the adapter reconstructed, and a reading derived from the move-list ply
+		// is exactly what a first-move decision must not trust (§13.4, the 2026-09-10 ruling).
+		const snapshot: PositionSnapshot = s;
 		if (snapshot.gameId !== sessionGameId) {
 			sessionGameId = snapshot.gameId;
 			stopReadyPoll();

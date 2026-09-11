@@ -265,6 +265,9 @@ describe("panel ↔ service worker: snapshot flow", () => {
 			},
 		};
 		executors.set(tabId, parked);
+		// `PANEL_PLAY_NOW` asks the *session* to play it (one re-plan, one `MoveContext`), so the
+		// stand-in session needs the hand — and it is the session that must name the parked move.
+		session.hand = parked;
 		await connectPanel();
 		await sim.time.advance(0);
 		const reply = (await panel?.send({ type: MSG.PANEL_PLAY_NOW, tabId })) as { success: boolean };

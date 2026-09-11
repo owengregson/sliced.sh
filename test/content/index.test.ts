@@ -152,7 +152,12 @@ describe("content entry — feed", () => {
 		expect(positions).toHaveLength(1);
 		expect(positions[0]?.snapshot.ply).toBe(6);
 		expect(typeof positions[0]?.snapshot.capturedAt).toBe("number");
-		expect("approximate" in (positions[0]?.snapshot ?? {})).toBe(false);
+		// Deliberate change (2026-09-10): this used to assert the flag was *stripped*. The service
+		// worker cannot otherwise tell a FEN the page gave us from one the adapter reconstructed from
+		// the DOM, whose `fullmove` is derived from the move-list ply — and a first-move decision must
+		// not trust that (§13.4, the 2026-09-10 ruling). The flag now travels, and this asserts its
+		// value rather than its absence.
+		expect(positions[0]?.snapshot.approximate).toBe(false);
 		expect(feed.posts.findIndex((m) => m.kind === "gameStarted")).toBeLessThan(
 			feed.posts.findIndex((m) => m.kind === "position")
 		);
@@ -271,10 +276,13 @@ describe("content entry — feed", () => {
 	});
 	it("forwards every focus / blur / visibilitychange edge as { kind: 'focus' } (§13.4)", () => {
 		const { feed, dom } = boot("chesscom-live");
+		// One edge is already there: `installFocusEdges` reports the state at install, so the service
+		// worker knows whether the page has focus without waiting for the first edge (§13.4).
+		expect(feed.of("focus")).toHaveLength(1);
 		fire(dom, "window", "blur");
 		fire(dom, "window", "focus");
 		fire(dom, "document", "visibilitychange");
-		const edges = feed.of("focus");
+		const edges = feed.of("focus").slice(1);
 		expect(edges).toHaveLength(3);
 		for (const e of edges) {
 			expect(typeof e.hasFocus).toBe("boolean");

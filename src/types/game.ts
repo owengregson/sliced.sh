@@ -42,6 +42,20 @@ export interface PositionSnapshot {
 	sideToMove: Color;
 	myColor: Color | null;
 	lastMove?: { from: Square; to: Square; san: string };
+	/**
+	 * The adapter reconstructed this FEN from the DOM rather than reading it from the page's own game
+	 * object (Appendix C §3's third source): the placement is real but the move counters, castling and
+	 * en-passant are heuristic — `fullmove` is `Math.floor(ply / 2) + 1`, derived from the move-list
+	 * ply.
+	 *
+	 * Absent means **not stated**, which is not the same as "exact": anything that draws a conclusion
+	 * from a counter rather than from the placement has to consult this first, and a §13.4 permission
+	 * treats anything but an explicit `false` as untrusted (`GameSession.isGameFirstMove`). The real
+	 * adapter always states it (`AdapterPositionSnapshot` requires it), so a producer that omits it is
+	 * a test fixture or a future one — either way it gets the safe answer rather than the permissive
+	 * one.
+	 */
+	approximate?: boolean;
 	clocks: { w: ClockState; b: ClockState };
 	timeControl?: TimeControl;
 	capturedAt: number;

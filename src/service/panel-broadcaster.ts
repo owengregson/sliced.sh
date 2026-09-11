@@ -73,6 +73,29 @@ export interface SessionSource {
 	recommendation(): Recommendation | null;
 	/** V2 §13.6 opponent identity with the derived target, once the adapter reported it. */
 	opponent(): OpponentView | null;
+	/**
+	 * The hand was armed from outside the session (`PANEL_SET_AUTO_MOVE`): act on whatever the
+	 * unarmed hand made the session withhold (§3.2 step 5).
+	 *
+	 * The session owns this, not the caller. Only it can answer whether a move is still owed for the
+	 * position it is holding (the §3.3 state, not the snapshot) and only it can build the
+	 * `MoveContext` the §13.2 exploration plans from — and a caller that scheduled for itself would
+	 * be a second hand-written copy of the "is a move already pending" gate, which is how a double
+	 * move gets shipped. Never rejects: the arm it follows has already succeeded, so a failure here
+	 * must not tell the panel the arm failed.
+	 */
+	handArmed(): Promise<void>;
+	/**
+	 * The panel asked for the move to play at once (`PANEL_PLAY_NOW`, §8.5's manual path). Resolves
+	 * `true` when there was a move — the scheduled one, else the standing recommendation — and it was
+	 * handed to the hand; `false` when there was nothing to play, which is the caller's cue to report
+	 * that. It does **not** wait for the hand: the outcome reaches the panel through the broadcaster.
+	 *
+	 * Here for the same reason as `handArmed()`: only the session can re-plan the move for an instant
+	 * play (`TimingModel.replan`) and build the `MoveContext` the hand's §13.2 exploration reads, so a
+	 * caller that played it for itself would hand the hand an empty context. Never rejects.
+	 */
+	playNowRequested(): Promise<boolean>;
 }
 
 /** The per-tab executor surface the panel handlers and the broadcaster use. */

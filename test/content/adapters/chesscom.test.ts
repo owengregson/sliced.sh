@@ -202,20 +202,24 @@ describe("ChessComAdapter — geometry", () => {
 });
 
 describe("ChessComAdapter — focus edges (V2 §13.4)", () => {
-	it("reports window blur/focus and visibilitychange", () => {
+	it("reports the state once at install, then window blur/focus and visibilitychange", () => {
 		const { dom, adapter } = boot("chesscom-live");
 		const edges: Array<{ hasFocus: boolean; visibility: string; at: number }> = [];
 		const off = adapter.onFocusEdge((e) => edges.push(e));
+		// The install report: without it `FocusGate` has no reading at all until the page first gains
+		// or loses focus, and `canExecute` answers `unfocused` while it has none (§13.4).
+		expect(edges.length).toBe(1);
+		const fired = (): typeof edges => edges.slice(1);
 		fire(dom, "window", "blur");
 		fire(dom, "window", "focus");
 		fire(dom, "document", "visibilitychange");
-		expect(edges.length).toBe(3);
-		expect(edges[0]).toMatchObject({ visibility: "visible" });
-		expect(typeof edges[0]?.hasFocus).toBe("boolean");
-		expect(edges[0]?.at).toBeGreaterThan(0);
+		expect(fired().length).toBe(3);
+		expect(fired()[0]).toMatchObject({ visibility: "visible" });
+		expect(typeof fired()[0]?.hasFocus).toBe("boolean");
+		expect(fired()[0]?.at).toBeGreaterThan(0);
 		off();
 		fire(dom, "window", "blur");
-		expect(edges.length).toBe(3);
+		expect(fired().length).toBe(3);
 	});
 });
 

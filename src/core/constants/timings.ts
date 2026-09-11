@@ -67,6 +67,19 @@ export const TIMINGS = {
 	 * the element is removed on hide, per the §13.3 presence rules.
 	 */
 	virtualCursorFadeMs: 400,
+	/**
+	 * How long a `GameSession` waits before re-delivering a my-turn position it could not act on
+	 * yet, and how many times it tries (`GameSession.reconsider`). Playing white at ply 0 the
+	 * position cannot change until the owner moves by hand, so nothing else will ever re-deliver it
+	 * and a momentary "not ready" — the hand still attaching the debugger, the engine still
+	 * answering nothing — would otherwise be permanent.
+	 *
+	 * Short, because the whole budget has to fit inside the first move's think time; bounded,
+	 * because a genuinely dead engine must give up and say so rather than poll for the rest of the
+	 * game. 250 ms × 12 covers the first three seconds of the move.
+	 */
+	sessionRetryMs: 250,
+	sessionRetryMax: 12,
 } as const;
 
 /**

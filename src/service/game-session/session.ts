@@ -44,18 +44,19 @@
  * what it would take to do better.
  */
 
-import { turnFieldOf } from "@core/chess/fen";
+import { type FenParts, parseFen, plyOf, turnFieldOf } from "@core/chess/fen";
 import { applyMoves, legalMoves, uciToSan } from "@core/chess/san";
 import { sanToSpeech } from "@core/chess/san-speech";
 import { isSquare } from "@core/chess/squares";
 import { chromeLocalGet, chromeLocalSet } from "@core/chrome/storage";
 import { PREMOVE } from "@core/constants/books";
 import { EXECUTOR } from "@core/constants/cdp";
+import { CHESS_START_FEN } from "@core/constants/chess";
 import { LIMITS } from "@core/constants/limits";
 import type { GamePortCommand, GamePortMessage } from "@core/constants/messages";
 import { LOCAL_KEYS } from "@core/constants/storage-keys";
 import { TELEMETRY_BANDS } from "@core/constants/telemetry";
-import type { TimingProfile } from "@core/constants/timings";
+import { TIMINGS, type TimingProfile } from "@core/constants/timings";
 import type { AnalysisHandle, AnalysisRequest } from "@core/engine/types";
 import { log } from "@core/logger";
 import type { TimeControlClass } from "@core/motor/types";
@@ -144,6 +145,47 @@ function queueStatsWrite(fold: (stats: SessionStats) => SessionStats): Promise<v
  */
 function isScoredMove(chosen: ChosenMove): boolean {
 	return chosen.source !== "premove" && chosen.rankInLines >= TOP_LINE_RANK;
+}
+
+/**
+ * The game's first move: ply 0 playing white, ply 1 playing black. The scope of the owner's
+ * 2026-09-10 §13.4 ruling (`docs/qa/focus-discipline.md` §4) and the only move where no later
+ * position can arrive to carry a second chance — as white the board cannot change until we play.
+ *
+ * Counted from the **FEN's own move counters** (`plyOf`), never from `PositionSnapshot.ply`. That
+ * field is `plyOf(readMoveList(document))`, a read of chess.com's move-list DOM, and it is **0**
+ * whenever the list element cannot be found — which on `/play/online` (no URL game id) also bumps
+ * the adapter's game serial, so the session starts a "new game" holding a *mid-game* position that
+ * claims `ply: 0`. Scoping the ruling on that would hand every remaining move of such a game the
+ * first-move relaxation the owner explicitly declined. The FEN comes from the MAIN-world bridge and
+ * cannot claim fullmove 1 on a mid-game board; the adapter guards the FEN against exactly this
+ * confusion (`chesscom.ts`, "an empty list must not 'prove' the start position") and `ply` never got
+ * the same cross-check.
+ */
+const FIRST_MOVE_LAST_PLY = 1;
+
+/** Placement field of the start position — the only one a fullmove-1 white-to-move FEN can carry. */
+const START_PLACEMENT = CHESS_START_FEN.split(" ")[0];
+
+/**
+ * Does this FEN's **placement** agree with its claim to be the game's first move? The counters say
+ * fullmove 1; the pieces have to say so too.
+ *
+ * This is deliberately independent of where the FEN came from. `PositionSnapshot.approximate` is a
+ * *provenance* claim — "the page gave us this" — and the predicate's safety would otherwise be the
+ * conjunction of three adapter code paths staying honest, one of which is already weaker than it
+ * reads: the SAN-replay source is uncorroborated on a canvas board (its only test there is
+ * `ply > 0`), so one parseable move-list node on a mid-game board can publish fullmove 1 with
+ * `approximate: false`. A placement check cannot be fooled by any of that: at fullmove 1 the board is
+ * either untouched (white to move) or one legal white move from untouched (black to move).
+ */
+function isFirstMovePlacement(parts: FenParts): boolean {
+	if (parts.turn === "w") return parts.placement === START_PLACEMENT;
+	for (const uci of legalMoves(CHESS_START_FEN)) {
+		const after = applyMoves(CHESS_START_FEN, [uci]);
+		if (after !== null && after.split(" ")[0] === parts.placement) return true;
+	}
+	return false;
 }
 
 /** `t_premove ~ U(0, maxS)` — §7.4 / Appendix D §3a.5 (120 ms). */
@@ -329,6 +371,22 @@ export class GameSession implements SessionSource {
 
 	/** Feed dedupe (Task 21 replays `lastPosition` and the outbox on reconnect). */
 	private lastPositionKey: string | null = null;
+	/**
+	 * The position a blur landed on while the session was holding it (§13.4). The
+	 * companion guard to `isGameFirstMove`, and **not** `FocusGate`'s own `blurSeenThisMove`: that
+	 * flag is per move *window*, and `positionArrived` reopens the window on every accepted position
+	 * — including the republish of an unmoved ply-0 position that carries the colour or the time
+	 * control, which `onPosition` documents as the normal case at move one. A §13.4 permission must
+	 * not be cleared by the thing that always happens, so the blur is remembered against the ply.
+	 *
+	 * What it records is every *transition* to unfocused that happens while this position is the one
+	 * the session holds — which is the only kind of blur a human, or chess.com's own per-move window,
+	 * would count against the move. It deliberately does not record a repeated "still not focused"
+	 * report (a `visibilitychange` while already blurred sets `FocusGate.blurSeen` but fires no edge):
+	 * that is the same blur, and if it predates the position then the owner was already in the side
+	 * panel when the move came up, which is exactly the case the ruling releases.
+	 */
+	private blurredPositionKey: string | null = null;
 	/** The position before the current one — what the §7.4 premove policy replays our move from. */
 	private priorFen: string | null = null;
 	/** The timing profile in force this game (§4.6); `null` until a game starts. */
@@ -367,6 +425,9 @@ export class GameSession implements SessionSource {
 	private startClockMs = 0;
 	/** A `playNow` issued while the pipeline was still running. */
 	private playWhenReady = false;
+	/** The one pending re-delivery of a withheld position (`reconsider`), and its attempt count. */
+	private retryTimer: unknown = null;
+	private retryAttempts = 0;
 	private disposed = false;
 	/** `mayAct()` as of the last settings write this session saw (§4.4 flip detection). */
 	private acting: boolean;
@@ -668,6 +729,7 @@ export class GameSession implements SessionSource {
 		this.deps.autoQueue.cancel(this.deps.tabId);
 		this.hideVirtualCursor();
 		this.window.discard();
+		this.clearRetry();
 		this.deps.onLivenessChanged?.();
 	}
 
@@ -790,9 +852,14 @@ export class GameSession implements SessionSource {
 		// the reconnect replay, is dropped here, and the whole first move is planned `untimed` —
 		// classical motor, no premoves, a 7.5 s think in a 1+0 game.
 		const tc = snapshot.timeControl;
+		// `approximate` belongs in the key for the same reason the colour and the time control do: it is
+		// information about the position that can arrive *after* the first reading of it (the bridge
+		// answers and the adapter republishes an exact FEN for the same ply), and it now gates a §13.4
+		// permission. Without it the republish is indistinguishable from the reconnect replay, is
+		// dropped here, and the first reading's provenance sticks for the whole position.
 		const key = `${snapshot.gameId}|${snapshot.ply}|${snapshot.fen}|${snapshot.myColor ?? "?"}|${
 			tc ? `${tc.baseMs}+${tc.incMs}` : "?"
-		}`;
+		}|${snapshot.approximate === true ? "~" : "="}`;
 		if (key === this.lastPositionKey) return; // the reconnect replay (Task 21)
 		if (
 			this.game?.gameId === snapshot.gameId &&
@@ -1105,6 +1172,12 @@ export class GameSession implements SessionSource {
 	private async runPipeline(snapshot: PositionSnapshot): Promise<void> {
 		const pipeline = this.pipeline;
 		const timing = this.timing;
+		// Fix G looked at this return first — "the engine is not ready yet" — and it is *not* the
+		// silent hold that loses the first move. Both halves are decided once, for good, before any
+		// position arrives: `SessionRegistry` always hands the session its `EngineController`
+		// (non-null from worker boot), and `this.pipeline` / `this.timing` are written only by
+		// `startGame` and `reprofile`. Nothing here becomes true a moment later, so there is nothing
+		// to re-deliver. The engine being slow reaches us further down, at `!outcome`.
 		if (!pipeline || !timing) return;
 		const ac = new AbortController();
 		this.pipelineAc = ac;
@@ -1142,6 +1215,11 @@ export class GameSession implements SessionSource {
 		this.pipelineAc = null;
 		if (!outcome) {
 			log.info("game-session: no recommendation for this position", { fen: snapshot.fen });
+			// Fix G: the engine produced no usable line and the book had nothing — a search that
+			// failed, crashed or answered `bestmove (none)` while Stockfish was still coming up. A
+			// moment later it would have. Every move but the first gets that moment from the
+			// opponent's reply; the first move as white has to ask again itself.
+			this.retryWhenReady("the engine produced no line for this position");
 			return;
 		}
 		this.rec = outcome.rec;
@@ -1205,6 +1283,207 @@ export class GameSession implements SessionSource {
 			if (isSquare(to)) out.push(to);
 		}
 		return out;
+	}
+
+	/**
+	 * One re-delivery of the position the session is still sitting on.
+	 *
+	 * The invariant: **a recommendation withheld because something was not ready yet is acted on
+	 * when that thing becomes ready.** For every move but the first, the opponent's reply is what
+	 * supplies that second chance — a fresh position runs the whole §3.2 pipeline again, so a
+	 * momentary "not ready" costs one move. Playing white at ply 0 there is no reply and the
+	 * position cannot change until the owner moves by hand, so the session has to carry its own
+	 * second chance; without it the game sits there until the clock runs out (owner's report,
+	 * 2026-09-10: "it sometimes doesnt make the first move (if youre on white)").
+	 *
+	 * One mechanism, because "not ready yet" is one condition. Its triggers are the moments a hold
+	 * is released: the automatic `executor.arm()` resolving (`attachExecutor` — the manual `arm()`
+	 * has always re-checked, this is the same re-check for the path that did not), and the
+	 * `retryWhenReady` timer armed where `runPipeline` gives up on a search that answered nothing.
+	 * It re-runs the *same* tail `onPosition` would: the standing recommendation if there is one, a
+	 * fresh pipeline run if there is not.
+	 *
+	 * The failure mode of all of this is playing twice, so every re-delivery goes through one gate:
+	 *
+	 *   - a move already pending (or on its way to the board) **is** this position's move — the
+	 *     check `arm()` makes, widened by the hand's own run because a timer can fire mid-move and
+	 *     a second request behind a cancelled run is parked, i.e. a second piece;
+	 *   - and the §3.3 state — not the snapshot — is what says whether a move is still owed at all.
+	 *     `live:opponent-turn` reaches here holding a *stale* my-turn snapshot and its
+	 *     recommendation whenever the owner played by hand (or our move landed and the page has not
+	 *     published the next position yet); running the pipeline on that would recommend, and an
+	 *     armed hand would play, a move for the **opponent**.
+	 *
+	 * A re-delivered plan is **re-planned** before it is handed over, and what that buys is a truthful
+	 * *record*, nothing more. `rec.plan.deadlineMs` is in the past by definition — that is what
+	 * "withheld" means — so `MoveExecutor.schedule` fits the plan's `thinkMs` down to
+	 * `EXECUTOR.minExecutionMs`, and the §8.6 row would then report a move that waited twenty seconds
+	 * as a 250 ms think. `TimingModel.replan(…, "engine-not-ready")` is the existing reason for "the
+	 * move could not be made when it was due": it folds the elapsed wait into the think, so
+	 * `plannedMs`, the panel's plan line and `preMoveHoverMs` all match the wall-clock hold chess.com
+	 * saw.
+	 *
+	 * It does **not** change the interval the page observes between the release and the move. That is
+	 * the hand's motor path, which was already drawn per move: measured over 14 seeds it is
+	 * 590–1010 ms with the re-plan and 590–1010 ms without it, 12 of the 14 byte-identical. An earlier
+	 * round of this lane claimed the re-plan removed a constant-250 ms signature; there was no
+	 * constant, and the claim was never measured. Keep the change for the record; do not claim the
+	 * interval.
+	 */
+	private async reconsider(reason: string): Promise<void> {
+		if (this.disposed) return;
+		const snapshot = this.snapshot;
+		// §4.4: the switch and the colour hold here exactly as they do on the position path.
+		if (!snapshot || !this.mayActOn(snapshot)) return;
+		const executor = this.executorHandle;
+		if (executor && (executor.pendingMove() !== null || executor.isRunning())) return;
+		if (this.state !== "live:my-turn:analysing" && this.state !== "live:my-turn:recommended") return;
+		const rec = this.rec;
+		if (rec) {
+			const paced = this.repaced(rec);
+			log.info("game-session: acting on the recommendation that was held back", {
+				tabId: this.deps.tabId,
+				ply: snapshot.ply,
+				uci: paced.chosen.uci,
+				thinkMs: Math.round(paced.plan.thinkMs),
+				reason,
+			});
+			this.rec = paced;
+			await this.actOnRecommendation(paced, this.deps.getSettings());
+			return;
+		}
+		// A search already running for this position is itself the second chance.
+		if (this.pipelineAc !== null) return;
+		log.info("game-session: running the pipeline again for the held position", {
+			tabId: this.deps.tabId,
+			ply: snapshot.ply,
+			reason,
+		});
+		await this.runPipeline(snapshot);
+	}
+
+	/**
+	 * The withheld recommendation with its plan re-planned for the wait (see `reconsider`). The
+	 * recommendation itself is unchanged — the move the panel is showing is the move that gets played
+	 * — and the session adopts the result so the panel's plan line and §8.6's row agree with what the
+	 * hand was actually given. Unchanged when there is no timing model or no usable context.
+	 */
+	private repaced(rec: Recommendation): Recommendation {
+		const timing = this.timing;
+		const ctx = timing ? this.timingContextFor(rec) : null;
+		if (!timing || !ctx) return rec;
+		// `engine-not-ready` folds `now - <the position's arrival>` into the think and applies no clock
+		// cap of its own (unlike `clock-jump`), so a long enough wait would record a `plannedMs` longer
+		// than the clock the move started with — a malformed §8.6 row, and the same number
+		// `report.py`'s think-time bands read. The clock in the snapshot is frozen at the moment the
+		// position was read, so it *is* the bound; clamp the elapsed time the model is told about
+		// rather than the plan it returns, and every window the plan carries stays consistent.
+		//
+		// `affordable` is deliberately not floored at 0. A clock shorter than the approach makes it
+		// negative, which tells the model the move started *after* now — and that cannot change the
+		// answer, because `engine-not-ready` returns `max(plan.thinkMs, spent + approach)` and
+		// `approachMs <= thinkMs` by construction, so the `plan.thinkMs` term wins for any negative
+		// `spent`. Measured identical (think and window sum, to the millisecond) with and without a
+		// floor at clocks of 200 ms and 50 ms against a 20 s wait. A floor here would be a line no
+		// mutation could kill.
+		// An untimed game has no clock to exceed, so nothing is clamped and the whole wait folds in.
+		const startedAt = rec.plan.deadlineMs - rec.plan.thinkMs;
+		const affordable = ctx.myClockMs - rec.plan.window.approachMs;
+		const nowMs = ctx.myClockMs > 0 ? Math.min(ctx.nowMs, startedAt + affordable) : ctx.nowMs;
+		return { ...rec, plan: timing.replan(rec.plan, { ...ctx, nowMs }, "engine-not-ready") };
+	}
+
+	/**
+	 * `reconsider`, guaranteed not to reject. Every trigger is either a fire-and-forget callback (an
+	 * arm's `.then`, the retry timer) or a command whose own result must not become an error because
+	 * the follow-up failed — and the two that replaced synchronous code (`arm`'s tail, `handArmed`)
+	 * would otherwise have turned a rejection into an unhandled one.
+	 */
+	private async reconsiderGuarded(reason: string): Promise<void> {
+		try {
+			await this.reconsider(reason);
+		} catch (error) {
+			log.warn("game-session: acting on the held position failed", {
+				tabId: this.deps.tabId,
+				reason,
+				error: errorMessage(error),
+			});
+		}
+	}
+
+	/**
+	 * `SessionSource`: the hand was armed from outside the session — the panel's auto-move toggle
+	 * (`PANEL_SET_AUTO_MOVE`). One gate, one `MoveContext`, one definition: the handler must not
+	 * schedule for itself.
+	 */
+	handArmed(): Promise<void> {
+		return this.reconsiderGuarded("the hand was armed");
+	}
+
+	/**
+	 * Will `playNow()` reach the hand if called right now? Every condition `playNow` itself checks —
+	 * §4.4's switch, §13.4's armed hand, and something to play — because `playNowRequested` answers
+	 * the panel `true` on the strength of this and nothing may fall between the two: they run in one
+	 * synchronous step, and `playNow` is synchronous up to its own `await`.
+	 */
+	private hasPlayableMove(): boolean {
+		const executor = this.executorHandle;
+		if (!executor || !this.mayAct() || !executor.isArmed()) return false;
+		return executor.pendingMove() !== null || this.rec !== null;
+	}
+
+	/**
+	 * `SessionSource`: the panel's `PANEL_PLAY_NOW`. Same reason as `handArmed()` — the
+	 * `MoveContext` and the §8.5 re-plan are the session's, and the handler used to pass neither.
+	 *
+	 * The run is started and deliberately **not** awaited: the panel's reply must not wait for the
+	 * hand (the outcome reaches it through the broadcaster), which is the shape the handler had.
+	 * `playNow()` is synchronous up to its own `await`, so the §3.3 transition and the notify have
+	 * both happened by the time this resolves. `false` means there was nothing to play — and unlike
+	 * the keybind path it does not queue `playWhenReady`, because a command the panel is waiting on
+	 * answers now or says why not.
+	 */
+	playNowRequested(): Promise<boolean> {
+		if (!this.hasPlayableMove()) return Promise.resolve(false);
+		void this.playNow().catch((error: unknown) =>
+			log.warn("game-session: playNow failed", {
+				tabId: this.deps.tabId,
+				error: errorMessage(error),
+			})
+		);
+		return Promise.resolve(true);
+	}
+
+	/**
+	 * Arm the one re-delivery above, `TIMINGS.sessionRetryMs` from now. The budget
+	 * (`TIMINGS.sessionRetryMax`) is per position — `cancelInFlight` resets it — and when it is
+	 * spent the session says so at `warn` rather than sitting silently: the service worker's own
+	 * `log.*` calls reach the panel's log stream, where `warn` is already a rendered kind
+	 * (`COPY.engine.logKinds.warn`).
+	 */
+	private retryWhenReady(reason: string): void {
+		if (this.disposed || this.retryTimer !== null) return;
+		if (this.retryAttempts >= TIMINGS.sessionRetryMax) {
+			log.warn("game-session: nothing became ready — this position cannot be played", {
+				tabId: this.deps.tabId,
+				ply: this.snapshot?.ply ?? null,
+				attempts: this.retryAttempts,
+				reason,
+			});
+			return;
+		}
+		this.retryAttempts += 1;
+		this.retryTimer = this.scheduler.setTimeout(() => {
+			this.retryTimer = null;
+			void this.reconsiderGuarded(reason);
+		}, TIMINGS.sessionRetryMs);
+	}
+
+	/** Drop the pending re-delivery and its budget (the position it belonged to is over). */
+	private clearRetry(): void {
+		if (this.retryTimer !== null) this.scheduler.clearTimeout(this.retryTimer);
+		this.retryTimer = null;
+		this.retryAttempts = 0;
 	}
 
 	// ── premove (§7.4) ─────────────────────────────────────────────────────
@@ -1789,9 +2068,10 @@ export class GameSession implements SessionSource {
 			this.deps.notify();
 			return;
 		}
-		const rec = this.rec;
-		if (rec && this.state === "live:my-turn:recommended" && !executor.pendingMove())
-			executor.schedule(rec, rec.plan, this.moveContext(rec));
+		// The recommendation this arm may have raced is acted on through the one re-delivery path, not
+		// a copy of it here: the gate, the `MoveContext` and the §3.3 answer all live in one place,
+		// so the manual arm, the automatic arm and the panel's toggle cannot drift apart.
+		await this.reconsiderGuarded("the hand was armed");
 		this.deps.notify();
 	}
 
@@ -2003,8 +2283,15 @@ export class GameSession implements SessionSource {
 		// happens here — before the first position of the game, i.e. outside every move window
 		// (§13.4) — never once a move is due.
 		// §4.4: neither default arms anything while the assistant is off.
+		// Fix G: and the arm is awaited for its *result*, not fired and forgotten. `arm()` attaches
+		// the debugger, which is slow enough to lose the race with the first position — and the
+		// manual arm (Shift+A) has always re-checked the recommendation it may have raced, while
+		// this path did not. At ply 0 as white that re-check is the only one there will ever be.
 		if (this.mayAct() && (wasArmed || this.deps.getSettings().automation.autoMove))
-			void executor.arm().catch((error: unknown) => log.warn("game-session: re-arm failed", error));
+			void executor.arm().then(
+				() => this.reconsiderGuarded("the hand finished arming"),
+				(error: unknown) => log.warn("game-session: re-arm failed", error)
+			);
 	}
 
 	private detachExecutor(): void {
@@ -2117,7 +2404,15 @@ export class GameSession implements SessionSource {
 		// Fix F: a premove's drag runs in a fork of the opponent-turn window, and §13.2 wants the
 		// edges of the window the input was actually in.
 		this.premoveEntry?.window.edge(hasFocus, at);
-		if (hasFocus) return;
+		if (hasFocus) {
+			this.onFocusRegained();
+			return;
+		}
+		// Remember which position the blur landed on, before anything else: §13.4's permission to
+		// play the first move after a refocus hangs off this, and it has to outlive a republish of
+		// the same ply (see `blurredPositionKey`).
+		const blurred = this.snapshot;
+		if (blurred) this.blurredPositionKey = this.positionIdentity(blurred);
 		const executor = this.executorHandle;
 		const pending = executor?.pendingMove() ?? null;
 		if (!executor || (!pending && !executor.isRunning())) {
@@ -2134,6 +2429,75 @@ export class GameSession implements SessionSource {
 		const ctx = rec && timing ? this.timingContextFor(rec) : null;
 		if (rec && timing && ctx) timing.replan(rec.plan, ctx, "blur");
 		this.deps.notify();
+	}
+
+	/**
+	 * Is this the game's first move? The scope of the relaxation below, named rather than compared
+	 * inline so that the ruling's boundary is visible at the call site and cannot quietly widen to
+	 * every move — which is the version the owner explicitly did not choose.
+	 */
+	private isGameFirstMove(snapshot: PositionSnapshot): boolean {
+		// Provenance, and it fails **closed**: only an explicit `false` counts. An approximate FEN is
+		// the adapter's own reconstruction from the DOM placement, and its fullmove counter is
+		// `Math.floor(ply / 2) + 1` — the very field this predicate stopped trusting — so a mid-game
+		// placement with an unreadable move list can be published as fullmove 1. A snapshot that does
+		// not state its provenance at all is not evidence either: absent must not mean trusted on a
+		// §13.4 permission, or a future producer inherits the relaxation by omission.
+		if (snapshot.approximate !== false) return false;
+		const parts = parseFen(snapshot.fen);
+		// A FEN we cannot parse is not evidence of anything: refuse rather than widen.
+		if (parts === null || plyOf(parts) > FIRST_MOVE_LAST_PLY) return false;
+		// And the counters have to be corroborated by the pieces (`isFirstMovePlacement`): provenance
+		// is a claim about the source, not a consistency check on the position.
+		return isFirstMovePlacement(parts);
+	}
+
+	/**
+	 * The page got focus back (the owner clicked into the board). §13.4's rule is that a move which
+	 * could not run because the page was not focused *waits for the next position* — and at the
+	 * game's first move there is no next position, so it waits for ever (owner's report, 2026-09-10:
+	 * "it sometimes doesnt make the first move (if youre on white)").
+	 *
+	 * The owner ruled on 2026-09-10 that the first move may be played when focus comes back, and
+	 * **only** the first move: a real player's first move usually does carry a focus change, because
+	 * they have just clicked to start the game, so spending the focus-discipline margin there is
+	 * defensible in a way that spending it on every move is not. He explicitly did not take the
+	 * every-move relaxation. `docs/qa/focus-discipline.md` §4 records the decision, its scope and the
+	 * evidence that would change it.
+	 *
+	 * Two conditions, neither optional:
+	 *   - `isGameFirstMove` — the whole scope of the ruling;
+	 *   - no blur landed *inside* this move's window. That is `FocusGate`'s own per-window
+	 *     bookkeeping (`blurSeen`, set on the blur and cleared only by `positionArrived`), and it is
+	 *     exactly what chess.com counts against the move: a blur followed by a focus inside one
+	 *     window is §13.2's `DidToggle`, the strongest client signal the corpus documents. Such a
+	 *     move is spent, and its second chance is the next position, not this click.
+	 *
+	 * This is a reaction to the owner's own focus change, never a focus change of ours: §13.4's
+	 * absolute rule — nothing here raises a notification, activates a tab or calls
+	 * `Page.bringToFront` — is untouched. The hand still asks `FocusGate.canExecute` for itself when
+	 * the re-delivered move is dispatched, so this only gives the move a second chance; it does not
+	 * grant it permission.
+	 */
+	private onFocusRegained(): void {
+		const snapshot = this.snapshot;
+		if (!snapshot || !this.isGameFirstMove(snapshot)) return;
+		if (this.blurredPositionKey === this.positionIdentity(snapshot)) return;
+		void this.reconsiderGuarded("the page regained focus on the game's first move");
+	}
+
+	/**
+	 * The identity a blur is remembered against: the game and the **FEN**, never `snapshot.ply`. The
+	 * ply is the adapter's move-list read and can be 0 — or simply wrong — on a board that has moved
+	 * (the same reason `isGameFirstMove` reads the FEN), and a lying ply on a republished position
+	 * would make the remembered blur stop matching and release a move it should hold. The FEN comes
+	 * from the bridge and is identical across the republish that carries the colour or the clock.
+	 * A repeated position later in the game cannot collide with this: the only release this gates is
+	 * the game's first move, whose FEN cannot recur. Including the `gameId` is what makes a reset on
+	 * `startGame` unnecessary — a key from the previous game can never match this one's.
+	 */
+	private positionIdentity(snapshot: PositionSnapshot): string {
+		return `${snapshot.gameId}|${snapshot.fen}`;
 	}
 
 	// ── helpers ────────────────────────────────────────────────────────────
@@ -2159,6 +2523,9 @@ export class GameSession implements SessionSource {
 		const pre = this.preAnalysis;
 		this.preAnalysis = null;
 		if (pre) void pre.stop();
+		// Fix G: whatever the held position was waiting for, it is not this session's business any
+		// more — and the per-position retry budget starts fresh with the next one.
+		this.clearRetry();
 	}
 
 	/** Content-script settings that gate what it may draw (§13.3 rule 4). */

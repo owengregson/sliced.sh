@@ -430,6 +430,94 @@ describe("UciEngine crash and recovery (d)", () => {
 	});
 });
 
+describe("UciEngine: a handshake that fails without crashing (Fix G round 2)", () => {
+	// `analyse` before `init()` resolves is *queued* (`pump` bails on `!initialised`). Every way the
+	// handshake can fail must therefore settle that queue, because the caller above it
+	// (`RecommendationPipeline.runSearch` awaits `handle.result`) has no timeout of its own: an
+	// unsettled promise leaves the session in `live:my-turn:analysing` behind a non-null
+	// `pipelineAc` for the rest of the game, and at ply 0 as white no later position arrives to
+	// reset it. A promise that never settles is worse than any early return.
+	//
+	// The *timeout* legs are covered: `sendAndWait`'s timer calls `onCrash`, which fails the queue.
+	// A synchronous `transport.send` throw is the leg that is not — it rejects the waiter directly,
+	// and `handshake`'s catch only marks the state. `EngineTransport.send` is a `void` sync API and
+	// the client already defends against it throwing, so this is a contract hole, not a theory.
+	it("settles requests queued before a handshake the transport breaks synchronously", async () => {
+		const t = new FakeEngineTransport();
+		const sched = new FakeScheduler();
+		const eng = new UciEngine(t, { scheduler: sched.scheduler });
+		const h = eng.analyse({ id: "r1", fen: START, multiPv: 1, limit: { movetimeMs: 100 } });
+		// Probed rather than awaited: an unsettled promise would hang the test instead of failing it.
+		const settled: Array<Awaited<typeof h.result>> = [];
+		void h.result.then((r) => void settled.push(r));
+		const send = t.send.bind(t);
+		t.send = (line: string): void => {
+			if (line === "uci") throw new Error("port closed");
+			send(line);
+		};
+
+		await expect(eng.init()).rejects.toThrow(/port closed/);
+		expect(eng.state()).toBe("crashed");
+		await flush();
+
+		expect(settled).toHaveLength(1);
+		expect(settled[0]?.status).toBe("failed");
+		expect(settled[0]?.bestmove).toBeNull();
+		expect(settled[0]?.request.id).toBe("r1");
+		// The iterator ends too, so an `updates` consumer is not left hanging either.
+		const it = h.updates[Symbol.asyncIterator]();
+		expect((await next(it)).value?.id).toBe("r1");
+		expect((await next(it)).done).toBe(true);
+		// It was never dispatched: the engine never became usable.
+		expect(t.sent.filter((l) => l.startsWith("go"))).toEqual([]);
+		expect(sched.pending).toBe(0);
+	});
+
+	it("a later init still succeeds and serves new requests", async () => {
+		// Failing the queue must not poison the engine: the panel's "Restart engine" (and an
+		// offscreen document that comes up late) has to work afterwards.
+		const t = new FakeEngineTransport();
+		const sched = new FakeScheduler();
+		const eng = new UciEngine(t, { scheduler: sched.scheduler });
+		const dead = eng.analyse({ id: "r1", fen: START, multiPv: 1, limit: { movetimeMs: 100 } });
+		const send = t.send.bind(t);
+		let broken = true;
+		t.send = (line: string): void => {
+			if (broken && line === "uci") throw new Error("port closed");
+			send(line);
+		};
+		await expect(eng.init()).rejects.toThrow(/port closed/);
+		expect((await dead.result).status).toBe("failed");
+
+		broken = false;
+		expect((await eng.init()).name).toBe("Fake 1");
+		expect(eng.state()).toBe("idle");
+		const h = eng.analyse({ id: "r2", fen: START, multiPv: 1, limit: { movetimeMs: 100 } });
+		expect(t.sent.at(-1)).toBe("go movetime 100");
+		t.feed("bestmove e2e4");
+		expect((await h.result).status).toBe("complete");
+		eng.dispose();
+	});
+
+	it("the timeout legs already settle the queue through onCrash", async () => {
+		// Recorded because round 1 of this lane reported the timeout leg as the hole and it is not:
+		// `sendAndWait`'s timer calls `onCrash`, which fails the queue. This is the production
+		// "the offscreen document never answers" path (`RemoteEngine.post` never throws), so it is
+		// the one that matters most — and it is already covered. The assertion is here so a future
+		// change to `sendAndWait` cannot quietly remove that coverage.
+		const t = new FakeEngineTransport();
+		t.autoReply = false;
+		const sched = new FakeScheduler();
+		const eng = new UciEngine(t, { scheduler: sched.scheduler });
+		const h = eng.analyse({ id: "r1", fen: START, multiPv: 1, limit: { movetimeMs: 100 } });
+		const p = eng.init();
+		sched.advance(TIMINGS.engineReadyTimeoutMs);
+		await expect(p).rejects.toThrow(/uciok/);
+		expect((await h.result).status).toBe("failed");
+		expect(eng.state()).toBe("crashed");
+	});
+});
+
 describe("UciEngine after an unrecovered crash", () => {
 	it("fails new requests immediately instead of queueing them forever", async () => {
 		const { t, eng } = await setup();
