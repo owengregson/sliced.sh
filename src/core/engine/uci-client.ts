@@ -8,7 +8,7 @@
  * and the timers are injected.
  */
 
-import { applyMoves, pvToSan } from "@core/chess/san";
+import { applyMoves, legalMoves, pvToSan } from "@core/chess/san";
 import { LIMITS } from "@core/constants/limits";
 import { TIMINGS } from "@core/constants/timings";
 import { newId } from "@core/util/ids";
@@ -149,6 +149,15 @@ function toEval(score: NonNullable<Info["score"]>): Eval {
 	return score.type === "mate" ? { mate: score.value } : { cp: score.value };
 }
 
+/** Exact UCI ordering: every winning mate outranks cp, every losing mate ranks below it. */
+function compareScores(a: NonNullable<Info["score"]>, b: NonNullable<Info["score"]>): number {
+	const tier = (score: NonNullable<Info["score"]>): number =>
+		score.type === "cp" ? 0 : score.value > 0 ? 1 : -1;
+	const tierDifference = tier(b) - tier(a);
+	if (tierDifference !== 0) return tierDifference;
+	return a.type === "cp" ? b.value - a.value : a.value - b.value;
+}
+
 /** One queued or running analysis: accumulates lines and owns the handle. */
 class Pending {
 	readonly priority: AnalysisPriority;
@@ -162,13 +171,20 @@ class Pending {
 	private readonly mailbox = new Mailbox<AnalysisUpdate>();
 	private readonly latest = new Map<number, Info>();
 	private last: Info | undefined;
+	private readonly metrics = { nodes: 0, nps: 0, timeMs: 0 };
 	private iterDepth = 0;
 	private readonly seen = new Set<number>();
+	/** A UCI output cycle starts at multipv 1; prior cycles never fill its missing slots. */
+	private frame: Info[] = [];
+	private completedFrame: AnalysisUpdate | undefined;
+	private partialFrame: AnalysisUpdate | undefined;
 	private atFeatureDepth: AnalysisUpdate | undefined;
 	private flushTimer: unknown;
 	private lastEmitAt = Number.NEGATIVE_INFINITY;
 	private readonly sanMemo = new Map<string, string[]>();
-	private positionFen: string | null | undefined;
+	private readonly positionFen: string | null;
+	private readonly legalRoots: ReadonlySet<string>;
+	private readonly expectedMultiPv: number;
 
 	constructor(
 		readonly req: AnalysisRequest,
@@ -176,6 +192,14 @@ class Pending {
 	) {
 		this.priority = req.priority ?? "move";
 		this.rank = PRIORITY_RANK[this.priority];
+		this.positionFen = req.moves?.length ? applyMoves(req.fen, req.moves) : req.fen;
+		const restricted = req.searchmoves?.length ? new Set(req.searchmoves) : undefined;
+		this.legalRoots = new Set(
+			(this.positionFen === null ? [] : legalMoves(this.positionFen)).filter(
+				(move) => restricted === undefined || restricted.has(move)
+			)
+		);
+		this.expectedMultiPv = Math.min(req.multiPv, this.legalRoots.size);
 		this.result = new Promise((resolve) => {
 			this.resolveResult = resolve;
 		});
@@ -192,11 +216,19 @@ class Pending {
 	}
 
 	get complete(): boolean {
-		return this.seen.size >= this.req.multiPv;
+		if (this.expectedMultiPv === 0) return false;
+		for (let k = 1; k <= this.expectedMultiPv; k++) if (!this.seen.has(k)) return false;
+		return true;
 	}
 
 	push(info: Info): void {
 		if (this.finished) return;
+		// Search totals may arrive without a PV, on an interim bound, or beside an older depth.
+		if (info.nps !== undefined && (info.time === undefined || info.time >= this.metrics.timeMs))
+			this.metrics.nps = info.nps;
+		this.metrics.nodes = Math.max(this.metrics.nodes, info.nodes ?? 0);
+		this.metrics.timeMs = Math.max(this.metrics.timeMs, info.time ?? 0);
+		this.captureFrame(info);
 		if (
 			info.string !== undefined ||
 			info.pv === undefined ||
@@ -208,7 +240,6 @@ class Pending {
 		const k = info.multipv ?? 1;
 		if (info.depth < this.iterDepth) return;
 		if (info.depth > this.iterDepth) {
-			this.captureFeatureDepth();
 			this.iterDepth = info.depth;
 			this.seen.clear();
 		}
@@ -227,9 +258,45 @@ class Pending {
 		else this.scheduleFlush();
 	}
 
-	/** Called when the current iteration is left (or on finish): keep depth 10 if it completed. */
-	private captureFeatureDepth(): void {
-		if (this.iterDepth === FEATURE_DEPTH && this.complete) this.atFeatureDepth = this.snapshot();
+	/** Retain only exact, same-depth, unique-root cycles in the engine's score order. */
+	private captureFrame(info: Info): void {
+		if (info.pv === undefined || info.depth === undefined || info.score === undefined) return;
+		const k = info.multipv ?? 1;
+		if (k === 1) this.frame = [];
+		const previous = this.frame.at(-1);
+		const root = info.pv[0];
+		if (
+			k !== this.frame.length + 1 ||
+			k > this.expectedMultiPv ||
+			info.score.bound !== undefined ||
+			root === undefined ||
+			!this.legalRoots.has(root) ||
+			this.frame.some((line) => line.pv?.[0] === root) ||
+			(previous !== undefined &&
+				(previous.depth !== info.depth ||
+					(previous.score !== undefined && compareScores(previous.score, info.score) > 0)))
+		) {
+			this.frame = [];
+			return;
+		}
+		this.frame.push(info);
+		const complete = this.frame.length === this.expectedMultiPv;
+		const captured = this.snapshot(
+			new Map(this.frame.map((line, index) => [index + 1, line])),
+			info.depth,
+			complete
+		);
+		if (complete) {
+			if (captured.depth >= (this.completedFrame?.depth ?? 0)) this.completedFrame = captured;
+			if (captured.depth === FEATURE_DEPTH) this.atFeatureDepth = captured;
+		} else if (
+			!this.partialFrame ||
+			captured.depth > this.partialFrame.depth ||
+			(captured.depth === this.partialFrame.depth &&
+				captured.lines.length >= this.partialFrame.lines.length)
+		) {
+			this.partialFrame = captured;
+		}
 	}
 
 	private emit(): void {
@@ -264,17 +331,17 @@ class Pending {
 		const key = pv.join(" ");
 		const memo = this.sanMemo.get(key);
 		if (memo) return memo;
-		if (this.positionFen === undefined) {
-			const { fen, moves } = this.req;
-			this.positionFen = moves && moves.length > 0 ? applyMoves(fen, moves) : fen;
-		}
 		const out = this.positionFen === null ? [] : pvToSan(this.positionFen, pv);
 		this.sanMemo.set(key, out);
 		return out;
 	}
 
-	private snapshot(): AnalysisUpdate {
-		const lines: EvalLine[] = [...this.latest.entries()]
+	private snapshot(
+		entries: ReadonlyMap<number, Info> = this.latest,
+		depth = this.iterDepth,
+		complete = this.latest.size > 0 && this.complete
+	): AnalysisUpdate {
+		const lines: EvalLine[] = [...entries.entries()]
 			.sort(([a], [b]) => a - b)
 			.map(([multipv, info]) => {
 				const pv = info.pv ?? [];
@@ -292,14 +359,12 @@ class Pending {
 			});
 		const u: AnalysisUpdate = {
 			id: this.req.id,
-			depth: this.iterDepth,
+			depth,
 			lines,
-			nodes: this.last?.nodes ?? 0,
-			nps: this.last?.nps ?? 0,
-			timeMs: this.last?.time ?? 0,
-			complete: this.latest.size > 0 && this.complete,
+			...this.metrics,
+			complete,
 		};
-		const seldepth = this.latest.get(1)?.seldepth ?? this.last?.seldepth;
+		const seldepth = entries.get(1)?.seldepth ?? this.last?.seldepth;
 		if (seldepth !== undefined) u.seldepth = seldepth;
 		return u;
 	}
@@ -309,8 +374,12 @@ class Pending {
 		this.finished = true;
 		this.clearFlush();
 		this.clearDeadline();
-		this.captureFeatureDepth();
-		const final = this.snapshot();
+		// Live updates may mix depths. A recommendation instead gets the last coherent cycle;
+		// if none completed, retain its best usable partial and explicitly mark it incomplete.
+		const final = {
+			...(this.completedFrame ?? this.partialFrame ?? this.snapshot(new Map(), 0, false)),
+			...this.metrics,
+		};
 		const result: AnalysisResult = {
 			id: this.req.id,
 			bestmove: bm.bestmove,

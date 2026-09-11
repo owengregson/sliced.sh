@@ -200,19 +200,27 @@ describe("UciEngine.analyse (b)", () => {
 		expect((await next(it)).value?.depth).toBe(4);
 	});
 	it("ignores bound lines on multipv 1, accepts them on k > 1, never overwrites an exact score with a bound", async () => {
-		const { t, eng } = await setup();
+		const { t, sched, eng } = await setup();
 		const h = eng.analyse({ id: "r1", fen: START, multiPv: 2, limit: { infinite: true } });
+		const updates = h.updates[Symbol.asyncIterator]();
 		t.feed(info(3, 1, 30, "e2e4"), info(3, 2, 20, "d2d4"));
 		t.feed(info(3, 1, 99, "e2e4", " upperbound"));
 		t.feed(info(3, 2, 99, "d2d4", " upperbound"));
 		t.feed(info(4, 2, 15, "c2c4", " upperbound"));
+		sched.advance(TIMINGS.engineInfoCoalesceMs);
+		const streamed = (await next(updates)).value as AnalysisUpdate;
+		expect(streamed.lines[0]?.score).toEqual({ cp: 30 });
+		expect(streamed.lines[1]?.score).toEqual({ cp: 15 });
+		expect(streamed.lines[1]?.bound).toBe("upper");
+		expect(streamed.depth).toBe(4);
+		expect(streamed.complete).toBe(false);
 		t.feed("bestmove e2e4");
 		const r = await h.result;
 		expect(r.final.lines[0]?.score).toEqual({ cp: 30 });
-		expect(r.final.lines[1]?.score).toEqual({ cp: 15 });
-		expect(r.final.lines[1]?.bound).toBe("upper");
-		expect(r.final.depth).toBe(4);
-		expect(r.final.complete).toBe(false);
+		expect(r.final.lines[1]?.score).toEqual({ cp: 20 });
+		expect(r.final.lines[1]?.bound).toBeUndefined();
+		expect(r.final.depth).toBe(3);
+		expect(r.final.complete).toBe(true);
 	});
 	it("ignores info string / currmove lines and handles bestmove (none)", async () => {
 		const { t, eng } = await setup();
@@ -284,6 +292,155 @@ describe("UciEngine.analyse (b)", () => {
 		expect(eng.state()).toBe("stopping");
 		t.feed("bestmove e2e4");
 		expect((await h.result).status).toBe("complete");
+	});
+});
+
+describe("UciEngine completed MultiPV integrity", () => {
+	it("keeps a completed cycle when stop interrupts the next depth, retaining final search totals", async () => {
+		const { t, eng } = await setup();
+		const h = eng.analyse({ id: "cycle", fen: START, multiPv: 3, limit: { infinite: true } });
+		t.feed(
+			"info depth 14 seldepth 20 multipv 1 score cp 38 nodes 19000 nps 95000 time 200 pv e2e4 e7e5",
+			"info depth 14 seldepth 18 multipv 2 score cp 30 nodes 19000 nps 95000 time 200 pv d2d4 d7d5",
+			"info depth 14 seldepth 19 multipv 3 score cp 25 nodes 19000 nps 95000 time 200 pv g1f3 g8f6",
+			"info depth 15 seldepth 22 multipv 1 score cp 40 nodes 28000 nps 93333 time 300 pv d2d4 d7d5"
+		);
+		const stopped = h.stop();
+		t.feed("info nodes 31000 nps 88571 time 350", "bestmove d2d4 ponder d7d5");
+		await stopped;
+		const result = await h.result;
+		expect(result.bestmove).toBe("d2d4");
+		expect(result.final.depth).toBe(14);
+		expect(result.final.complete).toBe(true);
+		expect(result.final.lines.map((line) => line.depth)).toEqual([14, 14, 14]);
+		expect(result.final.lines.map((line) => line.pvUci[0])).toEqual(["e2e4", "d2d4", "g1f3"]);
+		expect(result.final.nodes).toBe(31000);
+		expect(result.final.nps).toBe(88571);
+		expect(result.final.timeMs).toBe(350);
+		expect(result.final.seldepth).toBe(20);
+	});
+
+	it("does not splice a same-depth replacement root into the previous output cycle", async () => {
+		const { t, eng } = await setup();
+		const h = eng.analyse({ id: "same-depth", fen: START, multiPv: 2, limit: { infinite: true } });
+		t.feed(info(12, 1, 50, "e2e4"), info(12, 2, 30, "d2d4"));
+		t.feed(info(12, 1, 40, "g1f3"), "bestmove g1f3");
+		const result = await h.result;
+		expect(result.final.lines.map((line) => line.pvUci[0])).toEqual(["e2e4", "d2d4"]);
+		expect(result.final.lines.map((line) => line.score.cp)).toEqual([50, 30]);
+		expect(result.final.complete).toBe(true);
+	});
+
+	it("rejects the score-reordered final output after Skill promotes a weaker root", async () => {
+		const { t, eng } = await setup();
+		const h = eng.analyse({
+			id: "skill",
+			fen: START,
+			multiPv: 3,
+			elo: 1500,
+			limit: { infinite: true },
+		});
+		t.feed(info(13, 1, 37, "e2e4"), info(13, 2, 30, "d2d4"), info(13, 3, 22, "g1f3"));
+		t.feed(info(13, 1, 22, "g1f3"), info(13, 2, 30, "d2d4"), info(13, 3, 37, "e2e4"));
+		t.feed("bestmove g1f3");
+		const result = await h.result;
+		expect(result.bestmove).toBe("g1f3");
+		expect(result.final.lines.map((line) => line.score.cp)).toEqual([37, 30, 22]);
+		expect(result.final.lines.map((line) => line.pvUci[0])).toEqual(["e2e4", "d2d4", "g1f3"]);
+	});
+
+	it("rejects duplicate roots, skipped indices, and mixed-depth cycles", async () => {
+		for (const tail of [
+			[info(11, 1, 40, "e2e4"), info(11, 2, 30, "e2e4"), info(11, 3, 20, "g1f3")],
+			[info(11, 1, 40, "e2e4"), info(11, 3, 30, "d2d4"), info(11, 4, 20, "g1f3")],
+			[info(11, 1, 40, "e2e4"), info(10, 2, 30, "d2d4"), info(10, 3, 20, "g1f3")],
+		]) {
+			const { t, eng } = await setup();
+			const h = eng.analyse({
+				id: "invalid-cycle",
+				fen: START,
+				multiPv: 3,
+				limit: { infinite: true },
+			});
+			t.feed(info(10, 1, 35, "e2e4"), info(10, 2, 25, "d2d4"), info(10, 3, 15, "g1f3"));
+			t.feed(...tail, "bestmove e2e4");
+			const result = await h.result;
+			expect(result.final.depth).toBe(10);
+			expect(result.final.lines.map((line) => line.score.cp)).toEqual([35, 25, 15]);
+			expect(new Set(result.final.lines.map((line) => line.pvUci[0])).size).toBe(3);
+			eng.dispose();
+		}
+	});
+
+	it("does not regress to a later complete output cycle from an older depth", async () => {
+		const { t, eng } = await setup();
+		const h = eng.analyse({ id: "regression", fen: START, multiPv: 2, limit: { infinite: true } });
+		t.feed(info(14, 1, 60, "e2e4"), info(14, 2, 50, "d2d4"));
+		t.feed(info(12, 1, 30, "d2d4"), info(12, 2, 20, "e2e4"), "bestmove d2d4");
+		const result = await h.result;
+		expect(result.final.depth).toBe(14);
+		expect(result.final.lines.map((line) => line.score.cp)).toEqual([60, 50]);
+		expect(result.final.timeMs).toBe(28);
+		expect(result.final.nodes).toBe(1400);
+	});
+
+	it("retains only usable exact partial lines when no full cycle completed", async () => {
+		const { t, eng } = await setup();
+		const h = eng.analyse({ id: "partial", fen: START, multiPv: 3, limit: { infinite: true } });
+		t.feed(info(10, 1, 40, "e2e4"), info(10, 2, 30, "d2d4"));
+		t.feed(info(10, 3, 20, "g1f3", " upperbound"));
+		t.feed(info(11, 1, 99, "e2e5"), info(11, 2, 20, "e2e4")); // illegal root, then orphan index
+		t.feed("bestmove e2e4");
+		const result = await h.result;
+		expect(result.final.complete).toBe(false);
+		expect(result.final.depth).toBe(10);
+		expect(result.final.lines.map((line) => line.pvUci[0])).toEqual(["e2e4", "d2d4"]);
+		expect(result.final.lines.every((line) => line.bound === undefined)).toBe(true);
+		expect(result.final.timeMs).toBe(22);
+	});
+
+	it("recognizes a forced move after applying the request's move history", async () => {
+		const { t, eng } = await setup();
+		const h = eng.analyse({
+			id: "forced",
+			fen: "7k/5K2/8/6R1/8/8/8/8 w - - 0 1",
+			moves: ["g5g6"],
+			multiPv: 4,
+			limit: { infinite: true },
+		});
+		t.feed(info(12, 1, -500, "h8h7"), "bestmove h8h7");
+		const result = await h.result;
+		expect(result.final.complete).toBe(true);
+		expect(result.final.lines).toHaveLength(1);
+		expect(result.final.lines[0]?.pvSan).toEqual(["Kh7"]);
+	});
+
+	it("counts unique legal searchmoves rather than requiring the requested MultiPV count", async () => {
+		const { t, eng } = await setup();
+		const h = eng.analyse({
+			id: "restricted",
+			fen: START,
+			multiPv: 4,
+			searchmoves: ["e2e4", "e2e4", "d2d4", "e2e5"],
+			limit: { infinite: true },
+		});
+		t.feed(info(12, 1, 30, "e2e4"), info(12, 2, 20, "d2d4"), "bestmove e2e4");
+		const result = await h.result;
+		expect(result.final.complete).toBe(true);
+		expect(result.final.lines).toHaveLength(2);
+	});
+
+	it("orders mate scores correctly relative to extreme cp and longer losing mates", async () => {
+		const { t, eng } = await setup();
+		const h = eng.analyse({ id: "mates", fen: START, multiPv: 4, limit: { infinite: true } });
+		t.feed(
+			"info depth 8 multipv 1 score mate 3 pv e2e4",
+			"info depth 8 multipv 2 score cp 30000 pv d2d4",
+			"info depth 8 multipv 3 score mate -8 pv g1f3",
+			"info depth 8 multipv 4 score mate -2 pv b1c3",
+			"bestmove e2e4"
+		);
+		expect((await h.result).final.complete).toBe(true);
 	});
 });
 
@@ -611,15 +768,15 @@ describe("UciEngine atFeatureDepth (f)", () => {
 		const h = eng.analyse({ id: "r1", fen: START, multiPv: 2, limit: { movetimeMs: 800 } });
 		t.feed(info(9, 1, 10, "e2e4"), info(9, 2, 5, "d2d4"));
 		t.feed(info(FEATURE_DEPTH, 1, 20, "e2e4"), info(FEATURE_DEPTH, 2, 15, "d2d4"));
-		t.feed(info(FEATURE_DEPTH, 1, 22, "e2e4 e7e5")); // PV change within the same iteration
+		t.feed(info(FEATURE_DEPTH, 1, 22, "e2e4 e7e5")); // a new incomplete output cycle
 		t.feed(info(11, 1, 30, "e2e4"), info(11, 2, 25, "d2d4"));
 		t.feed(info(12, 1, 33, "e2e4"));
 		t.feed("bestmove e2e4");
 		const r = await h.result;
-		expect(r.final.depth).toBe(12);
+		expect(r.final.depth).toBe(11);
 		expect(r.atFeatureDepth?.depth).toBe(FEATURE_DEPTH);
 		expect(r.atFeatureDepth?.complete).toBe(true);
-		expect(r.atFeatureDepth?.lines.map((l) => l.score.cp)).toEqual([22, 15]);
+		expect(r.atFeatureDepth?.lines.map((l) => l.score.cp)).toEqual([20, 15]);
 	});
 	it("is undefined when depth 10 never completed", async () => {
 		const { t, eng } = await setup();

@@ -68,6 +68,13 @@ export function formatSetOption(name: string, value: EngineOptionValue): string 
 	return `setoption name ${name} value ${String(value)}`;
 }
 
+/** Native strength for one session's active target; an absent Elo requests full search. */
+export function requestEloForTarget(targetElo: number): number | undefined {
+	return targetElo > LIMITS.engineEloMax
+		? undefined
+		: clampInt(targetElo, LIMITS.engineEloMin, LIMITS.engineEloMax);
+}
+
 export interface OptionsEnv {
 	hardwareConcurrency: number;
 	/** `SharedArrayBuffer` available (cross-origin isolated): the multi-threaded build runs. */

@@ -21,6 +21,7 @@ import { loadPosition } from "@core/chess/fen";
 import { applyMoves } from "@core/chess/san";
 import { SEARCH_BUDGET } from "@core/constants/search";
 import { TIMINGS } from "@core/constants/timings";
+import { requestEloForTarget } from "@core/engine/options";
 import type { AnalysisHandle, AnalysisRequest, AnalysisResult } from "@core/engine/types";
 import { log } from "@core/logger";
 import { errorMessage } from "@core/util/errors";
@@ -38,6 +39,8 @@ export interface PonderEngine {
 
 export interface PonderControllerDeps {
 	engine: PonderEngine;
+	/** Session-derived strength, including opponent matching. */
+	getTargetElo?: () => number;
 	scheduler?: Scheduler;
 	now?: () => number;
 	/** Cap on one `go infinite` (default `TIMINGS.ponderMaxMs`). */
@@ -54,6 +57,7 @@ interface Running {
 	handle: AnalysisHandle;
 	timer: unknown;
 	settled: Promise<void>;
+	elo: number | undefined;
 }
 
 export class PonderController {
@@ -61,6 +65,7 @@ export class PonderController {
 	private readonly scheduler: Scheduler;
 	private readonly now: () => number;
 	private readonly maxMs: number;
+	private readonly getTargetElo: (() => number) | undefined;
 	private readonly onExpectedReply: ((uci: string | null) => void) | undefined;
 	private readonly onUpdate: (() => void) | undefined;
 	private running: Running | null = null;
@@ -75,6 +80,7 @@ export class PonderController {
 		this.scheduler = deps.scheduler ?? defaultScheduler;
 		this.now = deps.now ?? defaultNow;
 		this.maxMs = deps.maxMs ?? TIMINGS.ponderMaxMs;
+		this.getTargetElo = deps.getTargetElo;
 		this.onExpectedReply = deps.onExpectedReply;
 		this.onUpdate = deps.onUpdate;
 	}
@@ -120,7 +126,10 @@ export class PonderController {
 		const reached = moves.length ? applyMoves(fen, moves) : fen;
 		if (reached === null) return;
 		const current = this.running;
-		if (current && current.kind === kind && current.fen === reached) return;
+		const elo = this.getTargetElo
+			? requestEloForTarget(this.getTargetElo())
+			: this.engine.engineElo();
+		if (current && current.kind === kind && current.fen === reached && current.elo === elo) return;
 		await this.stop();
 		if (this.disposed) return;
 		const req: AnalysisRequest = {
@@ -131,7 +140,6 @@ export class PonderController {
 			priority: kind === "opponent" ? "ponder" : "panel",
 		};
 		if (moves.length > 0) req.moves = [...moves];
-		const elo = this.engine.engineElo();
 		if (elo !== undefined) req.elo = elo;
 		let handle: AnalysisHandle;
 		try {
@@ -150,7 +158,7 @@ export class PonderController {
 				log.debug("ponder: failed", { error: errorMessage(error) });
 			}
 		);
-		this.running = { kind, fen: reached, handle, timer, settled };
+		this.running = { kind, fen: reached, handle, timer, settled, elo };
 		void this.observe(reached, handle);
 		log.debug("ponder: started", { kind, fen, at: this.now() });
 	}

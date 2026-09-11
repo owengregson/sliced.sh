@@ -132,7 +132,7 @@ describe("AnalysisCache", () => {
 		expect(c.get(START, 6, 8)).toBe(shallow);
 		expect(c.get(START, 8, 8)).toBeUndefined();
 	});
-	it("caches every complete result, superseded ones only with a complete final iteration", () => {
+	it("requires a complete final iteration even when the request finished normally", () => {
 		const c = new AnalysisCache();
 		// a ponder cancelled by the next analyse, with a complete depth-20 iteration → cached
 		const ponder = result(START, 20, { status: "superseded", limit: { infinite: true } });
@@ -148,14 +148,28 @@ describe("AnalysisCache", () => {
 		c.set(result(OTHER, 20, { status: "failed", limit: { depth: 20 } }));
 		expect(c.get(OTHER, 4, 1)).toBeUndefined();
 		expect(c.size).toBe(1);
-		// a movetime search that stopped mid-iteration is still a complete result → cached;
-		// get's minDepth is the quality gate
+		// Normal request completion does not imply a complete MultiPV iteration.
 		const partial = result(OTHER, 12, { finalComplete: false });
-		expect(isCacheable(partial)).toBe(true);
+		expect(isCacheable(partial)).toBe(false);
 		c.set(partial);
-		expect(c.get(OTHER, 4, 12)).toBe(partial);
+		expect(c.get(OTHER, 4, 12)).toBeUndefined();
 		expect(c.get(OTHER, 4, 13)).toBeUndefined();
-		expect(c.size).toBe(2);
+		expect(c.size).toBe(1);
+	});
+	it("does not let a deep partial pair masquerade as a twenty-candidate search", () => {
+		const cache = new AnalysisCache();
+		const partial = result(START, 18, { multiPv: 20, finalComplete: false, elo: 1650 });
+		partial.final.lines = ["e2e4", "d2d4"].map((move, index) => ({
+			multipv: index + 1,
+			depth: 18,
+			score: { cp: 30 - index * 10 },
+			pvUci: [move],
+			pvSan: [],
+		}));
+		cache.set(partial);
+		expect(cache.get(START, 20, 6, 1650)).toBeUndefined();
+		expect(cache.get(START, 2, 6, 1650)).toBeUndefined();
+		expect(cache.size).toBe(0);
 	});
 	it("replaces an entry with the same key", () => {
 		const c = new AnalysisCache();

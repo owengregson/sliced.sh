@@ -1,6 +1,6 @@
 // test/service/engine-controller.test.ts
 import { describe, expect, it } from "bun:test";
-import { pvToSan } from "@core/chess/san";
+import { applyMoves, legalMoves, pvToSan } from "@core/chess/san";
 import { AnalysisCache } from "@core/engine/analysis-cache";
 import type { AnalysisHandle, AnalysisRequest } from "@core/engine/types";
 import { FEATURE_DEPTH, UciEngine } from "@core/engine/uci-client";
@@ -98,15 +98,25 @@ function infoLine(depth: number, multipv: number, cp: number, pv: string): strin
 
 /** Complete `depth` for every multipv line, then `bestmove`. */
 function finish(t: FakeEngineTransport, multiPv: number, depth: number, pv = "e2e4 e7e5"): void {
+	const position =
+		t.sent
+			.filter((line) => line.startsWith("position fen "))
+			.at(-1)
+			?.slice(13) ?? START;
+	const [start = START, moves] = position.split(" moves ");
+	const fen = moves ? (applyMoves(start, moves.split(" ")) ?? start) : start;
+	const roots = legalMoves(fen);
+	const first = pv.split(" ")[0] ?? "";
+	const variations = [pv, ...roots.filter((move) => move !== first)];
 	for (let d = 1; d <= depth; d++)
-		for (let k = 1; k <= multiPv; k++) t.feed(infoLine(d, k, 30 - k, pv));
+		for (let k = 1; k <= multiPv; k++) t.feed(infoLine(d, k, 30 - k, variations[k - 1] ?? pv));
 	t.feed(`bestmove ${pv.split(" ")[0]}`);
 }
 
 const setoptions = (lines: string[]): string[] => lines.filter((l) => l.startsWith("setoption"));
 
 describe("EngineController options", () => {
-	it("waits for a large network, replays options, and only then searches at unlimited strength", async () => {
+	it("waits for a large network and preserves the request's active rating through reconfiguration", async () => {
 		let release = (): void => {};
 		const loading = new Promise<void>((resolve) => {
 			release = resolve;
@@ -130,9 +140,13 @@ describe("EngineController options", () => {
 		expect(t.sent).toContain("setoption name UCI_LimitStrength value false");
 		expect(t.sent).not.toContain("setoption name UCI_Elo value 3800");
 		expect(ctrl.engineElo()).toBeUndefined();
+		expect(t.sent).toContain("setoption name UCI_Elo value 1500");
+		expect(t.sent.filter((line) => line.startsWith("setoption name UCI_LimitStrength")).at(-1)).toBe(
+			"setoption name UCI_LimitStrength value true"
+		);
 		expect(t.sent.indexOf("isready")).toBeLessThan(t.sent.indexOf("go infinite"));
 		finish(t, 2, 12);
-		expect((await move.result).request.elo).toBeUndefined();
+		expect((await move.result).request.elo).toBe(1500);
 		ctrl.dispose();
 	});
 

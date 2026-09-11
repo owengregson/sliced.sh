@@ -79,6 +79,24 @@ function fakeEngine(best: (fen: string) => string) {
 }
 
 describe("PonderController", () => {
+	it("uses the active persona rating and restarts a cached position when that rating changes", async () => {
+		const engine = fakeEngine(() => "e7e5");
+		const { scheduler } = fakeScheduler();
+		let targetElo = 1650;
+		const p = new PonderController({ engine, scheduler, getTargetElo: () => targetElo });
+		await p.start("opponent", FEN, ["e2e4"]);
+		expect(engine.requests[0]?.elo).toBe(1650);
+		targetElo = 1673;
+		await p.start("opponent", FEN, ["e2e4"]);
+		expect(engine.requests[1]?.elo).toBe(1673);
+		expect(engine.stops()).toBe(1);
+		targetElo = 3800;
+		await p.start("opponent", FEN, ["e2e4"]);
+		expect(engine.requests[2]?.elo).toBeUndefined();
+		expect(engine.stops()).toBe(2);
+		p.dispose();
+	});
+
 	it("starts `go infinite` MultiPV 3 at ponder priority on the opponent's position", async () => {
 		const engine = fakeEngine(() => "e7e5");
 		const { scheduler } = fakeScheduler();

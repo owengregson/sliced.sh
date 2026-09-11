@@ -338,11 +338,9 @@ export class EngineController {
 		const started = change.then(
 			() => {
 				if (cancelled || this.disposed) return null;
-				const corrected = { ...req };
-				const elo = this.engineElo();
-				if (elo === undefined) delete corrected.elo;
-				else corrected.elo = elo;
-				inner = this.engine.analyse(corrected);
+				// The request carries the active session's strength. Global fixed settings
+				// must not overwrite a persona-matched target after a network/game wait.
+				inner = this.engine.analyse(req);
 				return inner;
 			},
 			() => null
