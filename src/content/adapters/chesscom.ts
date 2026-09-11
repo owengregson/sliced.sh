@@ -4,8 +4,10 @@
  * colour / mode and for native markings when it is available.
  */
 
+import { turnFieldOf } from "@core/chess/fen";
 import { squareOf } from "@core/chess/squares";
 import { TIMINGS } from "@core/constants/timings";
+import { log } from "@core/logger";
 import type {
 	Color,
 	GameResult,
@@ -159,9 +161,25 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 
 	getMyColor(): Color | null {
 		const s = this.bridgeState;
-		if (s?.mode) {
-			return s.mode === "playing" ? bridgeColor(s.playingAs) : null;
-		}
+		// The bridge has spoken about the board's mode, so the ladder ends at the site's own
+		// `getPlayingAs()`, whatever the mode is *called*.
+		//
+		// It is the one reading only a **player** has: a spectator's board answers nothing, and so
+		// does a board in a mode we cannot read. Both halves matter.
+		//   - `"playing"` with a colour is the answer, and with no colour the honest `null` — as
+		//     before.
+		//   - A mode name we do not hard-code (chess.com is free to rename or add one) no longer
+		//     returns `null` on its own: `mayActOn` holds on a null colour with nothing to release it,
+		//     so one renamed mode would strand a live game colourless for its whole length. But it
+		//     must not reach the *render* either (below), because the bottom of the board is something
+		//     a spectator has just as much as a player — that would hand the owner the bottom
+		//     player's colour for a game they are only watching.
+		//   - `"observing"` / `"analysis"` during a game of our own — the brief's stranding case — is
+		//     the same rung: `getPlayingAs()` still names our colour there, and a real spectator's
+		//     board still does not.
+		if (s?.mode !== undefined) return bridgeColor(s.playingAs);
+		// No mode at all: the live page's first second, before the bridge has answered anything, which
+		// is the case the DOM ladder below exists for.
 		const kind = this.detectPageKind();
 		if (kind !== "live-game" && kind !== "vs-computer" && kind !== "daily") return null;
 		const playing = bridgeColor(s?.playingAs);
@@ -411,8 +429,7 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 		if (!info) return null;
 		// A board that renders pieces but cannot be read is mid-animation: retry on the next record.
 		if (domPieces && placement === null) return null;
-		const sideToMove =
-			this.sideToMoveFor(placement, list) ?? (info.fen.split(" ")[1] === "b" ? "b" : "w");
+		const sideToMove = this.reconciledTurn(info, this.sideToMoveFor(placement, list));
 		const ply = plyOf(list);
 		const replay = replayMoves(list.sans.slice(0, ply));
 		const lastMove = replay?.lastMove ?? this.bridgeLastMove();
@@ -530,6 +547,41 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 			...(this.lastMoveBetween(placement, this.highlightSquares()) ?? {}),
 		});
 		return { fen, approximate: true, source: "dom" };
+	}
+
+	/**
+	 * One turn per snapshot: the side to move published beside a FEN is that FEN's own.
+	 *
+	 * `positionInfoFor` and `sideToMoveFor` are two different ladders over the same page (bridge →
+	 * replay → DOM against bridge → active clock → move-list parity), so they can answer
+	 * differently — a replay that is white to move while the clocks still mark black's, say. Every
+	 * search, every recommendation and every plan downstream is for whoever the **FEN** says is to
+	 * move, while `GameSession.myTurn` is `sideToMove === myColor`: publish the contradiction and the
+	 * session recommends the *opponent's* move and calls it ours (owner's live game, 2026-09-10 —
+	 * white's first move, shown to a black player).
+	 *
+	 * So the FEN wins whenever it carries a turn field. A DOM approximation is no exception and needs
+	 * no special case: `approximateFen` is built *from* `observed`, so the two already agree there.
+	 * A FEN with no readable turn field (the site answering a bare placement) is the only case left
+	 * to the observed value — nothing else is known about it.
+	 *
+	 * The read is `turnFieldOf`, not `sideToMove`: whose move it is does not depend on chess.js
+	 * accepting the rest of the position, and a strict parse would answer `null` for a FEN with one
+	 * malformed field and quietly hand the turn back to the clocks — the very disagreement this
+	 * exists to settle. `reconciledTurn` runs on every reading; `AdapterBase` holds the same line for
+	 * every *published* snapshot, whatever the adapter.
+	 */
+	private reconciledTurn(info: PositionInfo, observed: Color | null): Color {
+		const fromFen = turnFieldOf(info.fen);
+		if (fromFen === null) return observed ?? "w";
+		if (observed !== null && observed !== fromFen)
+			log.debug("adapter.turnDisagreed", {
+				site: SITE,
+				source: info.source,
+				fen: fromFen,
+				observed,
+			});
+		return fromFen;
 	}
 
 	/** Bridge FEN (when consistent with the DOM) → active clock → move-list parity. */

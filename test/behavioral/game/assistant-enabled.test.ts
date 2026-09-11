@@ -210,10 +210,18 @@ describe("game session: the assistant switch (Settings.enabled, §4.4)", () => {
 		const session = h.session();
 
 		// An opponent-turn position, held because the switch is off (nothing is searched for it).
+		//
+		// The FEN is written out rather than taken from `h.site.board.fen()`: the sim board has not been
+		// advanced here, so that call answers the *start* position — white to move — while this
+		// snapshot says `ply: 1`, `sideToMove: "b"` and `lastMove: e4`. A snapshot whose `sideToMove`
+		// contradicts the turn field of its own `fen` is now held outright
+		// (`GameSession.selfConsistent`, fix B), because that contradiction is what made the assistant
+		// recommend the opponent's move and call it ours. Every assertion below is unchanged; only the
+		// position the fixture describes is now the position it states.
 		const snapshot: PositionSnapshot = {
 			site: "chesscom",
 			gameId: h.site.gameId,
-			fen: h.site.board.fen(),
+			fen: "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1",
 			ply: 1,
 			sideToMove: "b",
 			myColor: "w",

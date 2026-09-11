@@ -17,7 +17,20 @@ import html from "../views/templates/components/move-card.html?raw";
 import { type ButtonHandle, createButton } from "./button";
 import { type CountdownRingHandle, createCountdownRing } from "./countdown-ring";
 
-export type MoveCardState = "your-move" | "opponent" | "thinking" | "disabled" | "engine-stopped";
+/**
+ * `colour-unknown` is the three-valued colour's third value reaching the card: the page has not said
+ * which side the owner is playing (the live board's first second) or the adapter has **withdrawn** the
+ * answer it gave. The card must not name a side there — `headerYours` reads `color === "b" ? black :
+ * white`, so a null colour would have it state "white" — and it must not look idle either, because the
+ * assistant really is doing nothing and the owner is owed the reason.
+ */
+export type MoveCardState =
+	| "your-move"
+	| "opponent"
+	| "thinking"
+	| "colour-unknown"
+	| "disabled"
+	| "engine-stopped";
 
 export interface MoveCardData {
 	state: MoveCardState;
@@ -151,7 +164,12 @@ export function createMoveCard(
 		el.classList.toggle("sl-move--armed", next.armed === true && next.state === "your-move");
 		el.classList.toggle("sl-move--disabled", next.state === "disabled");
 		el.classList.toggle("sl-move--opponent", next.state === "opponent");
-		el.classList.toggle("sl-move--thinking", next.state === "thinking");
+		// `colour-unknown` wears the thinking treatment: nothing is on the board for it either, and it
+		// needs no style (or token) of its own.
+		el.classList.toggle(
+			"sl-move--thinking",
+			next.state === "thinking" || next.state === "colour-unknown"
+		);
 		header.textContent =
 			next.state === "disabled"
 				? COPY.move.disabled
@@ -159,13 +177,19 @@ export function createMoveCard(
 					? COPY.move.engineStopped
 					: next.state === "thinking"
 						? COPY.move.thinking
-						: next.state === "opponent"
-							? COPY.move.headerTheirs
-							: COPY.move.headerYours(next.color === "b" ? COPY.move.black : COPY.move.white);
-		const showSan = next.state !== "thinking" && next.state !== "engine-stopped" && next.san;
+						: next.state === "colour-unknown"
+							? COPY.waiting.reading
+							: next.state === "opponent"
+								? COPY.move.headerTheirs
+								: COPY.move.headerYours(next.color === "b" ? COPY.move.black : COPY.move.white);
+		const showSan =
+			next.state !== "thinking" &&
+			next.state !== "colour-unknown" &&
+			next.state !== "engine-stopped" &&
+			next.san;
 		const sanText = showSan ? (next.san ?? "") : "";
 		if (sanText !== (san.textContent ?? "")) {
-			if (lastSan && sanText && prev.state !== "thinking") {
+			if (lastSan && sanText && prev.state !== "thinking" && prev.state !== "colour-unknown") {
 				void ANIM.exitUp(san).then(() => {
 					san.textContent = sanText;
 					void ANIM.spring(san);

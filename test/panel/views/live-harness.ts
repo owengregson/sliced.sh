@@ -76,7 +76,8 @@ export function makeRecommendation(o: Partial<Recommendation> = {}): Recommendat
 
 export interface LiveOverrides {
 	state?: PanelSnapshot["session"]["state"];
-	myColor?: "w" | "b";
+	/** `null` is the third value of the three-valued colour: the page has not said, or it was withdrawn. */
+	myColor?: "w" | "b" | null;
 	sideToMove?: "w" | "b";
 	clocks?: PanelSnapshot["session"]["clocks"];
 	hand?: PanelSnapshot["session"]["hand"];
@@ -94,7 +95,8 @@ export interface LiveOverrides {
 /** A live game, my turn, with a recommendation — the §4.4 wireframe. */
 export function liveSnapshot(o: LiveOverrides = {}): PanelSnapshot {
 	const state = o.state ?? "live:my-turn:recommended";
-	const myColor = o.myColor ?? "w";
+	// `??` would read an explicit `null` as "absent", and `null` is a state the panel has to render.
+	const myColor = "myColor" in o ? o.myColor : "w";
 	const live = state.startsWith("live:");
 	const rec = o.recommendation === null ? undefined : (o.recommendation ?? makeRecommendation());
 	const session: PanelSnapshot["session"] = {
@@ -103,7 +105,7 @@ export function liveSnapshot(o: LiveOverrides = {}): PanelSnapshot {
 		site: "chesscom",
 		pageKind: "live-game",
 		myColor,
-		sideToMove: o.sideToMove ?? myColor,
+		sideToMove: o.sideToMove ?? myColor ?? null,
 		ply: 3,
 		clocks:
 			o.clocks === undefined

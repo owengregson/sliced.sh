@@ -11,8 +11,10 @@
  * drive. No adapter method reads or writes page storage (§13.3).
  */
 
+import { turnFieldOf } from "@core/chess/fen";
 import type { UciParts } from "@core/chess/san";
 import { EXECUTOR } from "@core/constants/cdp";
+import { LIMITS } from "@core/constants/limits";
 import { TIME_CONTROL, TIMINGS } from "@core/constants/timings";
 import { log } from "@core/logger";
 import { rectShiftPx } from "@core/motor/geometry";
@@ -392,6 +394,14 @@ export abstract class AdapterBase implements SiteAdapter {
 	private lastTimeControl: TimeControl | null = null;
 	/** Bridge re-asks spent on a time control this game has not been told (`TIME_CONTROL.maxProbes`). */
 	private timeControlProbes = 0;
+	/** Colour *corrections* this game has already published (`LIMITS.colourCorrectionsPerGame`). */
+	private colourCorrections = 0;
+	/**
+	 * This game spent its corrections and the site then offered another, so the colour is **withheld**
+	 * for the rest of it: the cap may bound the republishing, but it may never leave the session
+	 * holding a colour we know to be wrong (review R-1).
+	 */
+	private colourWithheld = false;
 	private timeControlTimer: ReturnType<typeof setTimeout> | null = null;
 	private lastGameKey: string | null = null;
 	private lastGameOver = false;
@@ -518,7 +528,7 @@ export abstract class AdapterBase implements SiteAdapter {
 
 	readSnapshot(): AdapterPositionSnapshot | null {
 		if (this.destroyed) return null;
-		return this.read()?.snapshot ?? null;
+		return this.reading()?.snapshot ?? null;
 	}
 
 	onPositionChange(cb: (s: AdapterPositionSnapshot) => void): () => void {
@@ -943,8 +953,82 @@ export abstract class AdapterBase implements SiteAdapter {
 	}
 
 	/** Record the current state without firing (subscribers get changes, not the initial position). */
+	/**
+	 * Every reading this class hands out or publishes, with the one invariant that must hold of
+	 * every published `PositionSnapshot`: **`sideToMove` is the turn field of the `fen` beside it.**
+	 *
+	 * It lives here rather than only in the adapter because this is the single place every snapshot
+	 * passes through — `readSnapshot()` (the content script's first publish), `prime()` and
+	 * `apply()`. A site adapter that derives the two from different ladders, as the chess.com one
+	 * does (bridge → clock → move-list parity against bridge → replay → DOM), can answer
+	 * `sideToMove: "b"` beside a FEN that says white; `GameSession.myTurn` reads `sideToMove` while
+	 * every search, plan and mark downstream is for whoever the FEN says is to move, so the
+	 * contradiction is what makes the assistant recommend the opponent's move and call it ours
+	 * (owner's live game, 2026-09-10). `ChessComAdapter.reconciledTurn` settles it as it reads, where
+	 * the dedupe key is built from the same value; this is the backstop for every adapter.
+	 *
+	 * The corrected turn is **appended to the dedupe key**. The key is the subclass's own string and
+	 * normally embeds the turn it published, so correcting one without the other would let two
+	 * different positions share a key; appending keeps the key a function of what is actually
+	 * published without this class having to know the subclass's format.
+	 *
+	 * `turnFieldOf`, not `sideToMove`: see the note on the former — a strict parse would answer
+	 * `null` for a FEN with one malformed field and silently leave the contradiction in place.
+	 */
+	private reading(): AdapterReading | null {
+		const raw = this.read();
+		if (raw === null) return null;
+		const myColor = this.statedColour(raw.snapshot.myColor);
+		const reading =
+			myColor === raw.snapshot.myColor ? raw : { ...raw, snapshot: { ...raw.snapshot, myColor } };
+		const turn = turnFieldOf(reading.snapshot.fen);
+		if (turn === null || turn === reading.snapshot.sideToMove) return reading;
+		log.warn("adapter.turnInvariantViolated", {
+			site: this.site,
+			fenTurn: turn,
+			sideToMove: reading.snapshot.sideToMove,
+		});
+		return {
+			...reading,
+			key: `${reading.key}|${turn}`,
+			snapshot: { ...reading.snapshot, sideToMove: turn },
+		};
+	}
+
+	/**
+	 * Which colour this class is willing to *state*, given what it has already delivered.
+	 *
+	 * `getMyColor()`'s last rung is the board's own rendering, and a board the owner turned round by
+	 * hand reads the other way. So the render may **supply** a colour when none is known and may never
+	 * **replace** one: only the site's own `getPlayingAs()` can change a colour already delivered.
+	 *
+	 * That rule is about the evidence, not about the position — which is the whole of review R-2.
+	 * Gating only the republish of an *unmoved* position left the refused flip riding in on the next
+	 * real move, where the key changes and the reading is published for its own sake; with the bridge
+	 * silent there is then no authoritative answer to undo it, so the owner got recommendations and
+	 * marks for the opponent's side for the rest of the game. A position advancing does not make the
+	 * rendering authoritative, and whether the owner flipped the board between moves or during one
+	 * makes no difference to what the flip means.
+	 */
+	private statedColour(offered: Color | null): Color | null {
+		if (this.colourWithheld) return null;
+		const known = this.lastColor;
+		// Nothing delivered yet (the live page's first second), or nothing new to say.
+		if (known === null || offered === known) return offered;
+		// The site's own answer is the only thing that may overturn a delivered colour…
+		if (offered !== null && offered === this.authoritativeColour()) return offered;
+		// …and anything else keeps what the session already has. Including `null`: losing sight of the
+		// clocks for a frame is not evidence that the colour changed.
+		return known;
+	}
+
+	/** The colour as the *site* states it (`getPlayingAs()`), as opposed to as the board renders it. */
+	protected authoritativeColour(): Color | null {
+		return bridgeColor(this.bridgeState?.playingAs);
+	}
+
 	private prime(): void {
-		const reading = this.read();
+		const reading = this.reading();
 		if (!reading) return;
 		this.primed = true;
 		this.lastKey = reading.key;
@@ -964,7 +1048,7 @@ export abstract class AdapterBase implements SiteAdapter {
 
 	private apply(): void {
 		if (this.destroyed) return;
-		const reading = this.read();
+		const reading = this.reading();
 		if (!reading) return; // unstable: the next mutation re-triggers
 		if (!this.primed) {
 			this.prime();
@@ -975,23 +1059,104 @@ export abstract class AdapterBase implements SiteAdapter {
 			this.lastGameKey = reading.gameKey;
 			this.lastGameOver = false;
 			this.timeControlProbes = 0;
+			this.colourCorrections = 0;
+			this.colourWithheld = false;
 			for (const cb of this.startCbs) cb();
 			this.probe();
 		}
-		// Only for the game already being followed: a *different* board (an SPA hop to another page)
-		// changes the colour along with everything else, and republishing its position would start a
-		// second session on the same board.
-		const colourLearned =
-			!gameChanged && this.lastColor === null && reading.snapshot.myColor !== null;
+		// A colour that *changes* from one definite answer to another is delivered, whatever else
+		// moved — but only on the authority of the site's own `getPlayingAs()`, and only a bounded
+		// number of times per game.
+		//
+		// Why it must be delivered at all: the dedupe key is the position, so every reading of ply 0
+		// shares one string, and the live page's first readable moment can answer the wrong colour —
+		// the clocks before the board is turned round, a lobby board still showing white at the
+		// bottom, or the bridge cache holding the previous game's `playingAs` (`refreshBridgeState`
+		// merges, and `evaluate()` reads before it refreshes). Publishing only `null → known` left a
+		// `"w" → "b"` correction with no way through at all, and the session kept predicting,
+		// highlighting and playing for the *opponent* until the position itself moved on (owner's live
+		// game, 2026-09-10: white's first move, recommended to a black player, for the whole of
+		// white's turn). The new game's own first reading is the likeliest place to need it, because
+		// the lobby board it replaces answered the colour of the *last* game.
+		//
+		// Why only the bridge may do it: `getMyColor()`'s last rung is the board's own **rendering**
+		// (`bottomColor()`), and the rendering is exactly what a manual board flip changes, so a render
+		// reading may introduce a colour but never overturn one. `statedColour` is where that rule
+		// lives — it applies to every reading, on a new position as much as on an unmoved one — and the
+		// authority test here is the republish side of it: a correction is a reason to deliver an
+		// *unmoved* position again.
+		//
+		// Why it is capped: every other republish trigger here is structurally one-shot
+		// (`colourLearned` needs `lastColor === null`, `timeControlLearned` needs `lastTimeControl ===
+		// null`, and nothing restores either). This one is not, so an alternating answer would start
+		// and abort a pipeline — and flood the game port with marks — once per reading, for ever.
+		//
+		// And what the cap does when it runs out is **withhold the colour**, not keep the one we have.
+		// A cap that keeps a stale colour fails in the one direction this whole lane forbids: the site
+		// has just told us the owner is playing the other side, so continuing to state the old one
+		// leaves the session recommending, marking and scheduling for the opponent — silently, and for
+		// the rest of the game, with a snapshot internally consistent enough that every guard passes
+		// (review R-1). Answering "no colour" is the honest tail: `GameSession.mayActOn` holds on it
+		// exactly as it holds on the live page's first second, so the assistant acts for *neither*
+		// side, and the refusal says so in the log.
+		const authoritative = this.authoritativeColour();
+		if (
+			!this.colourWithheld &&
+			this.lastColor !== null &&
+			authoritative !== null &&
+			authoritative !== this.lastColor &&
+			this.colourCorrections >= LIMITS.colourCorrectionsPerGame
+		) {
+			this.colourWithheld = true;
+			log.warn("adapter.colourWithheld", {
+				site: this.site,
+				told: this.lastColor,
+				offered: authoritative,
+				corrections: this.colourCorrections,
+			});
+		}
+		// `reading` was built before that decision, so the withhold is applied to what is published
+		// here (`statedColour` applies it to every later reading, `readSnapshot()` included).
+		const snapshot = this.colourWithheld
+			? ({ ...reading.snapshot, myColor: null } as typeof reading.snapshot)
+			: reading.snapshot;
+		// Neither the authority test nor the cap appears here, and both absences are deliberate:
+		// `statedColour` has already decided what this class is *willing* to state, so a colour that
+		// differs from the last delivered one is authoritative by construction, and the withhold above
+		// fires at the cap and empties `snapshot.myColor`. Both conjuncts were in this expression and
+		// both were dead — mutations removing them survived the whole suite, which is the measurement
+		// that says the rule lives in one place now rather than three.
+		const colourChanged =
+			this.lastColor !== null && snapshot.myColor !== null && this.lastColor !== snapshot.myColor;
+		if (colourChanged) this.colourCorrections += 1;
+		// The withhold itself has to reach the session, or it is just as silent as keeping the stale
+		// colour was. It fires once: `lastColor` is `null` afterwards.
+		const colourWithdrawn = this.colourWithheld && this.lastColor !== null;
+		// Learning a colour from nothing is different, and stays limited to the game already being
+		// followed: an SPA hop to another page (`/game/<id>` → `/analysis/…` → `/play/computer`)
+		// changes the derived game id and re-reads the colour from a board that is no longer the one
+		// we were following, and republishing there would start a second session on it.
+		const colourLearned = !gameChanged && this.lastColor === null && snapshot.myColor !== null;
 		// Same shape, same reason (§4.3): the time control arrives after the first reading of the
 		// game it belongs to, on a position that has not moved.
 		const timeControlLearned =
 			!gameChanged && this.lastTimeControl === null && reading.snapshot.timeControl !== undefined;
-		this.lastColor = reading.snapshot.myColor;
 		this.lastTimeControl = reading.snapshot.timeControl ?? null;
-		if (reading.key !== this.lastKey || colourLearned || timeControlLearned) {
+		if (
+			reading.key !== this.lastKey ||
+			colourChanged ||
+			colourWithdrawn ||
+			colourLearned ||
+			timeControlLearned
+		) {
 			this.lastKey = reading.key;
-			for (const cb of this.positionCbs) cb(reading.snapshot);
+			// `lastColor` is what the session has actually been *told*, so it advances only with a
+			// delivery. Advancing it on every reading let a colour this class had just refused to
+			// deliver — a render flip — still overwrite the baseline, and the authoritative answer that
+			// arrived next then looked like no change at all and was dropped in its turn. (Measured:
+			// it broke the owner's own repro, `colour-turn.test.ts:94`.)
+			this.lastColor = snapshot.myColor;
+			for (const cb of this.positionCbs) cb(snapshot);
 		}
 		this.scheduleTimeControlProbe(reading);
 		const over = reading.gameOver !== null;

@@ -50,7 +50,12 @@ export function moveCardState(snapshot: PanelSnapshot): MoveCardData["state"] {
 	if (snapshot.engine.state === "crashed") return "engine-stopped";
 	const { session, recommendation } = snapshot;
 	const myColor = session.myColor;
-	if (myColor && session.sideToMove && session.sideToMove !== myColor) return "opponent";
+	// The colour is three-valued (§4.4's hold applied to it), and its third value is not "thinking":
+	// with no colour the session plans nothing at all, so a spinner would promise something that is not
+	// coming. It covers both the live page's first second and a colour the adapter has withdrawn after
+	// the site contradicted the one it gave (review R2-1).
+	if (myColor === null) return "colour-unknown";
+	if (session.sideToMove && session.sideToMove !== myColor) return "opponent";
 	if (session.state === "live:my-turn:analysing" || !recommendation) return "thinking";
 	return "your-move";
 }
