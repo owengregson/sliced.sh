@@ -121,12 +121,17 @@ two reasons at once. Row 10's own tests are the evidence.
   - **What he did not choose.** Options (1) and (3) above. (3) in particular was offered and
     declined, so §13.4's rule stands unchanged from move two onward, and the simulator asserts that
     (row 10's third assertion). Do not widen the scope without a new ruling.
-  - **The released move is re-planned, not collapsed.** A withheld plan's deadline is in the past, so
-    `MoveExecutor.schedule` would fit it into `EXECUTOR.minExecutionMs` — a first move landing a
-    constant 250 ms after the click, every game, which is a sharper machine signature than the ones
-    §13.2 removes. `reconsider` re-plans through `TimingModel.replan(…, "engine-not-ready")`, folding
-    the wait into the think so the realised hold covers the whole time since the position arrived and
-    the part after the release is the plan's own `approachMs`.
+  - **The released move is re-planned, and what that fixes is the *record*.** A withheld plan's
+    deadline is in the past, so `MoveExecutor.schedule` fits its `thinkMs` down to
+    `EXECUTOR.minExecutionMs` and the §8.6 row would report a move that waited twenty seconds as a
+    250 ms think. `reconsider` re-plans through `TimingModel.replan(…, "engine-not-ready")`, so
+    `plannedMs`, the panel's plan line and `preMoveHoverMs` match the wall-clock hold chess.com saw —
+    bounded by the clock the move started with, because a recorded think the clock could not have
+    afforded is a malformed row. It is **not** what makes the post-click interval vary: measured over
+    14 seeds that interval is 590–1010 ms with the re-plan and 590–1010 ms without it, 12 of 14
+    byte-identical, because the interval is the hand's motor path and was already drawn per move. An
+    earlier round of Fix G claimed the re-plan removed a constant-250 ms signature; nobody had
+    measured it, and there was no constant.
   - **`report.py` will print `[FAIL] zero blur/toggle` on a game that exercised this, and that is
     expected.** The band requires `focusFieldsSet == 0`; the released move sets `DidFocusOnOwnTurn`
     and a non-null `LastFocusToMoveTime`. The band is deliberately **not** relaxed — a carve-out would
@@ -137,7 +142,9 @@ two reasons at once. Row 10's own tests are the evidence.
     carrying a `DidToggle` (a blur *and* a focus inside one move window) rather than a bare
     `DidFocusOnOwnTurn`, or if `BlurCount` on move one is ≥ 1 where a human's first move is typically
     0, the guard is not doing its job and the relaxation should be withdrawn. A `LastFocusToMoveTime`
-    that is the same number every game is the other withdrawal case. The reverse evidence — a corpus
+    that is the same number every game is the other withdrawal case — note that nothing in the code
+    guarantees it varies; the simulator measures 590–1010 ms, and the variation comes from the hand's
+    motor path, not from the re-plan. The reverse evidence — a corpus
     showing human first moves carry a focus edge at a comparable rate — is what would justify
     widening it, and nobody has recorded that either.
 - **The debugger attaches once, in the waiting view.** Rows 6/6r exist because an attach inside a

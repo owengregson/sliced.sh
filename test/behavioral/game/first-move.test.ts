@@ -105,9 +105,16 @@ function setAutoMove(armed: boolean): Promise<unknown> | undefined {
  * **0** whenever the move-list element cannot be found — which on `/play/online` also bumps the
  * adapter's game serial, so a mid-game board can publish `ply: 0` under a fresh `gameId`.
  */
-function postPosition(over: { gameId?: string; ply?: number }): void {
+function postPosition(over: {
+	gameId?: string;
+	ply?: number;
+	fen?: string;
+	approximate?: boolean;
+	clockMs?: number;
+}): void {
 	const board = h.site.board;
-	const fen = board.fen();
+	const fen = over.fen ?? board.fen();
+	const clockMs = over.clockMs ?? 300_000;
 	h.site.post({
 		kind: "position",
 		snapshot: {
@@ -115,9 +122,10 @@ function postPosition(over: { gameId?: string; ply?: number }): void {
 			gameId: over.gameId ?? h.site.gameId,
 			fen,
 			ply: over.ply ?? board.ply(),
-			sideToMove: sideToMove(fen) ?? "w",
+			sideToMove: sideToMove(fen) ?? board.myColor,
 			myColor: board.myColor,
-			clocks: { w: { ms: 300_000, running: true }, b: { ms: 300_000, running: true } },
+			...(over.approximate === undefined ? {} : { approximate: over.approximate }),
+			clocks: { w: { ms: clockMs, running: true }, b: { ms: clockMs, running: true } },
 			capturedAt: h.sim.now(),
 		},
 	});
@@ -846,6 +854,156 @@ describe("game session: the first move as white (Fix G)", () => {
 
 		await h.drive(() => h.session().dispose());
 		expect(h.sim.time.pendingTimers()).toBe(before);
+	});
+
+	it("an approximate FEN is never move one, whatever its counters say", async () => {
+		// The residual of the same root cause. `positionInfoFor`'s DOM fallback writes
+		// `fullmove = Math.floor(ply / 2) + 1`, so an unreadable move list publishes a *mid-game
+		// placement with fullmove 1* — a FEN that parses and reads as the first move. The flag that says
+		// "the adapter reconstructed this" now travels with the snapshot, and a reconstruction is not
+		// evidence about a move counter.
+		h = await createGameHarness({
+			manualStart: true,
+			settings: { automation: { autoMove: true } },
+		});
+		await h.drive(() => {
+			h.site.hello();
+			h.site.startGame();
+		});
+		const session = h.session();
+		expect(await h.until(() => h.executor()?.isArmed() === true, 5_000)).toBe(true);
+
+		await h.drive(() => h.site.panelClick());
+		// The real start position — so the *counters* say move one — published as a reconstruction.
+		await h.drive(() => postPosition({ approximate: true }));
+		expect(await h.until(() => session.recommendation() !== null, 5_000)).toBe(true);
+		expect(await h.until(() => h.executor()?.pendingMove() === null, 60_000)).toBe(true);
+
+		await h.drive(() => h.site.clickIntoBoard());
+		await h.advance(60_000);
+		expect(h.site.board.lastMove()).toBeNull();
+	});
+
+	it("a FEN that cannot be parsed is never move one", async () => {
+		// The refusal direction of the predicate that closes all of this: no reading is not a reading
+		// that says yes.
+		h = await createGameHarness({
+			manualStart: true,
+			settings: { automation: { autoMove: true } },
+		});
+		await h.drive(() => {
+			h.site.hello();
+			h.site.startGame();
+		});
+		const session = h.session();
+		expect(await h.until(() => h.executor()?.isArmed() === true, 5_000)).toBe(true);
+
+		await h.drive(() => h.site.panelClick());
+		await h.arrive(); // a real ply-0 position, so a recommendation stands and the hand skips it
+		expect(await h.until(() => session.recommendation() !== null, 5_000)).toBe(true);
+		expect(await h.until(() => h.executor()?.pendingMove() === null, 60_000)).toBe(true);
+		// …and then the same ply republished with a FEN nothing can read. Let that position's own move
+		// be scheduled and skipped too, so the click is the only thing left that could release it.
+		await h.drive(() => postPosition({ fen: "not a fen at all", ply: 0 }));
+		expect(await h.until(() => h.executor()?.pendingMove() === null, 60_000)).toBe(true);
+		expect(h.site.board.lastMove()).toBeNull();
+
+		await h.drive(() => h.site.clickIntoBoard());
+		await h.advance(60_000);
+		expect(h.site.board.lastMove()).toBeNull();
+	});
+
+	it("the re-planned think never exceeds the clock the move started with", async () => {
+		// `engine-not-ready` folds the wait into the think and caps nothing, so a wait longer than the
+		// clock would record a §8.6 row claiming a think the clock could not have afforded — and that
+		// number is what `report.py`'s think bands read.
+		h = await createGameHarness({
+			manualStart: true,
+			settings: { automation: { autoMove: true } },
+		});
+		await h.drive(() => {
+			h.site.hello();
+			h.site.startGame();
+		});
+		const session = h.session();
+		expect(await h.until(() => h.executor()?.isArmed() === true, 5_000)).toBe(true);
+
+		const CLOCK_MS = 4_000;
+		await h.drive(() => h.site.panelClick());
+		await h.arrive(null, { w: CLOCK_MS, b: CLOCK_MS });
+		expect(await h.until(() => session.recommendation() !== null, 5_000)).toBe(true);
+		expect(await h.until(() => h.executor()?.pendingMove() === null, 60_000)).toBe(true);
+
+		await h.advance(30_000); // away far longer than the whole clock
+		await h.drive(() => h.site.clickIntoBoard());
+		const thinkMs = session.recommendation()?.plan.thinkMs ?? 0;
+		expect(thinkMs).toBeGreaterThan(0);
+		expect(thinkMs).toBeLessThanOrEqual(CLOCK_MS);
+	});
+
+	it("the re-delivery gate consults the hand's own run, not only the state", async () => {
+		// There is a real window in which `isRunning()` is true, `pendingMove()` is null and the state
+		// is back at `recommended`: `runOne` emits its terminal event — which `onNotExecuted` turns into
+		// `failed`, i.e. `executing` → `recommended` — before `execute`'s `finally` clears `running`. It
+		// is a microtask or two wide and no trigger can be driven into it, so the property is asserted
+		// directly instead: the gate must ask.
+		h = await createGameHarness({
+			manualStart: true,
+			settings: { automation: { autoMove: true } },
+		});
+		const release = holdAttach(h);
+		await openGameWithTheArmInFlight();
+		const session = h.session();
+		const executor = h.executor();
+		if (!executor) throw new Error("first-move: the session has no executor");
+		await h.arrive();
+		expect(await h.until(() => session.recommendation() !== null, 5_000)).toBe(true);
+		expect(session.currentState()).toBe("live:my-turn:recommended");
+
+		let schedules = 0;
+		const realSchedule = executor.schedule.bind(executor);
+		executor.schedule = (rec, plan, ctx): void => {
+			schedules += 1;
+			realSchedule(rec, plan, ctx);
+		};
+		executor.isRunning = (): boolean => true;
+		executor.pendingMove = (): null => null;
+
+		await h.drive(() => release());
+		await h.advance(10_000);
+		expect(schedules).toBe(0);
+	});
+
+	it("play-now answers false rather than true when the hand cannot take the move", async () => {
+		// `playNowRequested` tells the panel `true` on the strength of `hasPlayableMove()`, so that
+		// predicate has to be every condition `playNow()` itself checks — §4.4's switch and §13.4's
+		// armed hand included — or the panel is told a move was handed over when none was.
+		h = await createGameHarness({
+			manualStart: true,
+			settings: { automation: { autoMove: true } },
+		});
+		await h.drive(() => {
+			h.site.hello();
+			h.site.startGame();
+		});
+		const session = h.session();
+		expect(await h.until(() => h.executor()?.isArmed() === true, 5_000)).toBe(true);
+		await h.arrive();
+		expect(await h.until(() => session.recommendation() !== null, 5_000)).toBe(true);
+		expect(await h.until(() => h.site.board.lastMove() !== null, 60_000)).toBe(true);
+		const played = [...h.site.board.chess.history()];
+
+		// A recommendation still stands, but the hand is no longer armed.
+		await h.drive(() => void session.command("disarm"));
+		expect(h.executor()?.isArmed()).toBe(false);
+		expect(session.recommendation()).not.toBeNull();
+		expect(await h.drive(() => session.playNowRequested())).toBe(false);
+
+		// And with the hand armed but the assistant off.
+		await h.patch({ enabled: false });
+		expect(await h.drive(() => session.playNowRequested())).toBe(false);
+		await h.advance(10_000);
+		expect(h.site.board.chess.history()).toEqual(played);
 	});
 
 	it("the owner played the first move by hand while the arm was in flight: nothing is dispatched", async () => {

@@ -158,14 +158,50 @@ describe("FeedPort", () => {
 			{ kind: "focus", hasFocus: true, visibility: "visible", at: 9 },
 		]);
 		// the new port dies at once (SW still gone): Chrome loses what was flushed into it, so the
-		// next reconnect gets hello + last position again
+		// next reconnect gets hello + last position again — and the last focus reading with them.
+		//
+		// That last entry is a deliberate change (2026-09-10). This assertion used to read
+		// `[hello, newer]`, i.e. it asserted that a focus reading was *not* replayed. It has to be:
+		// `FocusGate` holds the page's focus state in the service worker's memory, nothing can ask the
+		// page for it, and `canExecute` answers `unfocused` while it holds none — so a restarted worker
+		// on a tab the owner has not blurred since load would skip every move with nothing to release
+		// it. Everything the old assertion checked is still checked: `hello` and the last position
+		// still go first, and a reading queued during the outage still wins over the remembered one
+		// (the test below).
 		rt.ports[1]?.emitDisconnect();
 		scheduler.fire();
-		expect(rt.ports[2]?.posted).toEqual([hello, newer]);
+		expect(rt.ports[2]?.posted).toEqual([
+			hello,
+			newer,
+			{ kind: "focus", hasFocus: true, visibility: "visible", at: 9 },
+		]);
 		feed.post({ kind: "focus", hasFocus: false, visibility: "hidden", at: 3 });
-		expect(rt.ports[2]?.posted).toHaveLength(3);
+		expect(rt.ports[2]?.posted).toHaveLength(4);
 		feed.dispose();
 	});
+	it("replays the last focus reading, and a newer one queued during the outage wins", async () => {
+		const rt = installFakeRuntime();
+		const scheduler = makeScheduler();
+		const feed = createFeedPort({ onCommand: () => {}, scheduler });
+		await feed.ready;
+		const focused: GamePortMessage = { kind: "focus", hasFocus: true, visibility: "visible", at: 1 };
+		const blurred: GamePortMessage = { kind: "focus", hasFocus: false, visibility: "hidden", at: 2 };
+		feed.post(hello);
+		feed.post(focused);
+		rt.ports[0]?.emitDisconnect();
+		scheduler.fire();
+		// Nothing else was sent, so the remembered reading is replayed on its own.
+		expect(rt.ports[1]?.posted).toEqual([hello, focused]);
+
+		// A newer reading posted during the next outage is the one that matters, and it must not be
+		// sent twice: the remembered one is skipped when the outage queue already carries a `focus`.
+		rt.ports[1]?.emitDisconnect();
+		feed.post(blurred);
+		scheduler.fire();
+		expect(rt.ports[2]?.posted).toEqual([hello, blurred]);
+		feed.dispose();
+	});
+
 	it("re-sends only what it has: hello alone before any position", async () => {
 		const rt = installFakeRuntime();
 		const scheduler = makeScheduler();

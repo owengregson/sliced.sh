@@ -163,7 +163,7 @@ action and whether the counters moved.
 | 6r | Debugger **attach** (arm auto-play) | no blur; infobar appears; note the **layout shift in px** and whether the board moves | | | |
 | 6r′ | Debugger **detach** (disarm) | no blur; infobar disappears; layout shifts back | | | |
 | 8/9 | Switch tab / focus another window and return | blur then focus — the user's own toggle. Confirm the extension never causes one | | | |
-| 10r | **Move one after a refocus** (the owner's 2026-09-10 ruling). Use a **rapid or classical** game so the first move's think window is seconds, not milliseconds. Arm from the waiting view, then click into the **side panel** and stay there while the game starts, so the first position arrives with the page unfocused. **Before clicking back in, check the panel's telemetry pill: it must *not* say "blur seen"** — if it does, the window saw a blur and a pass here means nothing. Then click once into the board. | The first move is played shortly after the click. Then Settings → Advanced → **Export timing log** and read `telemetry.ac` on move one's entry: expect `DidFocusOnOwnTurn` set, **`DidToggle` clear, `BlurCount` 0**, and a `LastFocusToMoveTime` that is **not** the same value every game | | | |
+| 10r | **Move one after a refocus** (the owner's 2026-09-10 ruling). Use a **rapid or classical** game so the first move's think window is seconds, not milliseconds. Arm from the waiting view, then click into the **side panel** and stay there while the game starts, so the first position arrives with the page unfocused. **Before clicking back in, check the panel's telemetry pill: it must *not* say "blur seen"** — if it does, the window saw a blur and a pass here means nothing. Then click once into the board. | The first move is played shortly after the click. Then Settings → Advanced → **Export timing log** and read `telemetry.ac` on move one's entry: expect `DidFocusOnOwnTurn` set, **`DidToggle` clear, `BlurCount` 0**, and a `LastFocusToMoveTime` that is **not** the same value every game. Move one's recorded think (`plannedMs`) will be as long as you were away — that is the re-plan making the record truthful, capped at the clock the move started with; it is not the interval you waited after clicking | | | |
 | 10r′ | Same time control, but click the side panel **during** the first move's think window, then click back into the board. As white at ply 0 nothing else is coming, so after the check play the move by hand to continue (or abort the game) | The move is **not** played; it waits for the next position (§13.4 unchanged). If it plays, the blur guard has failed — that is a regression, not a ruling | | | |
 
 **Row 6r matters twice.** The event side is asserted by the simulator; what is unknown is
@@ -189,8 +189,9 @@ running.
 
 **What it looks like if it goes wrong:** a per-move focus count where move one carries `DidToggle` (a
 blur *and* a focus inside one window) or `BlurCount ≥ 1`, where a human's first move is typically 0 —
-or a `LastFocusToMoveTime` that is identical game after game (a machine interval, which is what the
-re-plan exists to prevent) — or, on 10r′, a move that plays after the refocus when it should have
+or a `LastFocusToMoveTime` that is identical game after game (a machine interval — nothing in the code
+guarantees it varies; the simulator measures 590–1010 ms across seeds, from the hand's motor path, and
+the re-plan does **not** change that distribution) — or, on 10r′, a move that plays after the refocus when it should have
 waited. Any of those is a withdrawal case, not a tuning case.
 
 **`report.py` will print `[FAIL] zero blur/toggle` for a game that exercised the ruling, and that is

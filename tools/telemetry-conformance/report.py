@@ -391,8 +391,14 @@ def render(summary: dict[str, Any], paths: list[str]) -> tuple[str, bool]:
         # unexpected cases — a focus field on move two, or on every move, which is the every-move
         # relaxation the owner declined and Critical 1 of the Fix G review showed can happen by
         # accident. The reading to apply instead: one failing game whose only focus field is on move
-        # one is the ruling working; anything else is a bug. `LastFocusToMoveTime` on that move is the
-        # number worth looking at — a constant floor there would be a machine signature.
+        # one is the ruling working; anything else is a bug.
+        #
+        # `LastFocusToMoveTime` on that move is the number worth looking at — a constant there would be
+        # a machine signature. Nothing in the code guarantees it varies: it is the hand's motor path,
+        # measured at 590-1010 ms across 14 simulator seeds, and the session's re-plan of a released
+        # first move does not change that distribution (it makes the recorded `plannedMs` truthful
+        # instead). If it ever does read constant, that is a finding about the motor, not about this
+        # band.
         blur_ok = ac["blur"] <= BANDS["blurCountMax"] and ac["toggles"] == 0 and ac["focusFieldsSet"] == 0
         lines.append(
             f"  [{verdict(blur_ok)}] blur {ac['blur']} (max {BANDS['blurCountMax']}) · toggles {ac['toggles']}"

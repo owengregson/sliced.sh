@@ -1103,15 +1103,21 @@ export class GameSession implements SessionSource {
 	 *     published the next position yet); running the pipeline on that would recommend, and an
 	 *     armed hand would play, a move for the **opponent**.
 	 *
-	 * A re-delivered plan is **re-planned** before it is handed over. Its `deadlineMs` is by
-	 * definition in the past — that is what "withheld" means — and `MoveExecutor.schedule` would
-	 * collapse such a plan to `EXECUTOR.minExecutionMs`, so the first move of every game would land a
-	 * constant quarter-second after whatever released it. A move that always happens but always
-	 * happens in exactly 250 ms is not a fix, it is a sharper machine signature than the one §13.2
-	 * spends all its effort removing. `TimingModel.replan(…, "engine-not-ready")` is the existing
-	 * reason for "the move could not be made when it was due": it folds the elapsed wait into the
-	 * think, so the realised hold covers the whole time since the position arrived and the part after
-	 * the release is the plan's own `approachMs` — drawn per move by the motor, not a floor.
+	 * A re-delivered plan is **re-planned** before it is handed over, and what that buys is a truthful
+	 * *record*, nothing more. `rec.plan.deadlineMs` is in the past by definition — that is what
+	 * "withheld" means — so `MoveExecutor.schedule` fits the plan's `thinkMs` down to
+	 * `EXECUTOR.minExecutionMs`, and the §8.6 row would then report a move that waited twenty seconds
+	 * as a 250 ms think. `TimingModel.replan(…, "engine-not-ready")` is the existing reason for "the
+	 * move could not be made when it was due": it folds the elapsed wait into the think, so
+	 * `plannedMs`, the panel's plan line and `preMoveHoverMs` all match the wall-clock hold chess.com
+	 * saw.
+	 *
+	 * It does **not** change the interval the page observes between the release and the move. That is
+	 * the hand's motor path, which was already drawn per move: measured over 14 seeds it is
+	 * 590–1010 ms with the re-plan and 590–1010 ms without it, 12 of the 14 byte-identical. An earlier
+	 * round of this lane claimed the re-plan removed a constant-250 ms signature; there was no
+	 * constant, and the claim was never measured. Keep the change for the record; do not claim the
+	 * interval.
 	 */
 	private async reconsider(reason: string): Promise<void> {
 		if (this.disposed) return;
@@ -1155,7 +1161,16 @@ export class GameSession implements SessionSource {
 		const timing = this.timing;
 		const ctx = timing ? this.timingContextFor(rec) : null;
 		if (!timing || !ctx) return rec;
-		return { ...rec, plan: timing.replan(rec.plan, ctx, "engine-not-ready") };
+		// `engine-not-ready` folds `now - <the position's arrival>` into the think and applies no clock
+		// cap of its own (unlike `clock-jump`), so a long enough wait would record a `plannedMs` longer
+		// than the clock the move started with — a malformed §8.6 row, and the same number
+		// `report.py`'s think-time bands read. The clock in the snapshot is frozen at the moment the
+		// position was read, so it *is* the bound; clamp the elapsed time the model is told about
+		// rather than the plan it returns, and every window the plan carries stays consistent.
+		const startedAt = rec.plan.deadlineMs - rec.plan.thinkMs;
+		const affordable = Math.max(0, ctx.myClockMs - rec.plan.window.approachMs);
+		const nowMs = ctx.myClockMs > 0 ? Math.min(ctx.nowMs, startedAt + affordable) : ctx.nowMs;
+		return { ...rec, plan: timing.replan(rec.plan, { ...ctx, nowMs }, "engine-not-ready") };
 	}
 
 	/**
@@ -1504,7 +1519,6 @@ export class GameSession implements SessionSource {
 		this.lastOppMoveAt = null;
 		this.lastMyMoveAt = null;
 		this.lastPositionKey = null;
-		this.blurredPositionKey = null;
 		this.priorFen = null;
 		this.selection = createSelectionState();
 		const gameSeed = `${this.seed}:${meta.gameId}`;
@@ -1744,6 +1758,11 @@ export class GameSession implements SessionSource {
 	 * every move — which is the version the owner explicitly did not choose.
 	 */
 	private isGameFirstMove(snapshot: PositionSnapshot): boolean {
+		// An approximate FEN is the adapter's own reconstruction from the DOM placement, and its
+		// fullmove counter is `Math.floor(ply / 2) + 1` — the very field this predicate stopped
+		// trusting. A mid-game placement with an unreadable move list therefore *can* be published as
+		// fullmove 1, so reading the counter is only safe when the page itself supplied it.
+		if (snapshot.approximate === true) return false;
 		const parts = parseFen(snapshot.fen);
 		// A FEN we cannot parse is not evidence of anything: refuse rather than widen.
 		return parts !== null && plyOf(parts) <= FIRST_MOVE_LAST_PLY;
@@ -1790,7 +1809,8 @@ export class GameSession implements SessionSource {
 	 * would make the remembered blur stop matching and release a move it should hold. The FEN comes
 	 * from the bridge and is identical across the republish that carries the colour or the clock.
 	 * A repeated position later in the game cannot collide with this: the only release this gates is
-	 * the game's first move, whose FEN cannot recur.
+	 * the game's first move, whose FEN cannot recur. Including the `gameId` is what makes a reset on
+	 * `startGame` unnecessary — a key from the previous game can never match this one's.
 	 */
 	private positionIdentity(snapshot: PositionSnapshot): string {
 		return `${snapshot.gameId}|${snapshot.fen}`;

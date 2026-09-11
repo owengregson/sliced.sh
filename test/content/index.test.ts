@@ -152,7 +152,12 @@ describe("content entry — feed", () => {
 		expect(positions).toHaveLength(1);
 		expect(positions[0]?.snapshot.ply).toBe(6);
 		expect(typeof positions[0]?.snapshot.capturedAt).toBe("number");
-		expect("approximate" in (positions[0]?.snapshot ?? {})).toBe(false);
+		// Deliberate change (2026-09-10): this used to assert the flag was *stripped*. The service
+		// worker cannot otherwise tell a FEN the page gave us from one the adapter reconstructed from
+		// the DOM, whose `fullmove` is derived from the move-list ply — and a first-move decision must
+		// not trust that (§13.4, the 2026-09-10 ruling). The flag now travels, and this asserts its
+		// value rather than its absence.
+		expect(positions[0]?.snapshot.approximate).toBe(false);
 		expect(feed.posts.findIndex((m) => m.kind === "gameStarted")).toBeLessThan(
 			feed.posts.findIndex((m) => m.kind === "position")
 		);

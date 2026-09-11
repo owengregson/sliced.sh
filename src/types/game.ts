@@ -42,6 +42,14 @@ export interface PositionSnapshot {
 	sideToMove: Color;
 	myColor: Color | null;
 	lastMove?: { from: Square; to: Square; san: string };
+	/**
+	 * The adapter reconstructed this FEN from the DOM rather than reading it from the page's own game
+	 * object (Appendix C §3's third source): the placement is real but the move counters, castling and
+	 * en-passant are heuristic — `fullmove` is `Math.floor(ply / 2) + 1`, derived from the move-list
+	 * ply. Absent means "not approximate". Anything in the service worker that draws a conclusion from
+	 * a counter rather than from the placement has to consult this first.
+	 */
+	approximate?: boolean;
 	clocks: { w: ClockState; b: ClockState };
 	timeControl?: TimeControl;
 	capturedAt: number;
