@@ -799,7 +799,7 @@ describe("game session: what a premove may and may not claim (Fix F)", () => {
 			// move in the position it was sent from, which is the whole point of a premove.
 			expect(snap.session.lastExecution?.san).toBe(scenario.san);
 			expect(h.toasts.slice(toastMark)).toHaveLength(0);
-			expect(h.toasts.slice(0, toastMark).map((t) => t.key)).toContain(TOAST_KEYS.played);
+			expect(h.toasts.slice(0, toastMark).map((t) => t.key)).not.toContain(TOAST_KEYS.played);
 		}
 		expect(entered).toBe(true);
 	}, 180_000);

@@ -202,7 +202,8 @@ table {
 }
 
 :focus-visible {
-	outline: none;
+	outline: calc(var(--sl-unit) / 2) solid var(--sl-color-focus);
+	outline-offset: calc(var(--sl-unit) / 2);
 	box-shadow:
 		0 0 0 calc(var(--sl-unit) / 2) var(--sl-color-canvas),
 		0 0 0 var(--sl-unit) var(--sl-color-focus);

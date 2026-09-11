@@ -1358,7 +1358,6 @@ export class GameSession implements SessionSource {
 		this.apply("recommended");
 		this.postHighlight(outcome.rec);
 		this.deps.notify();
-		if (settings.display.tts) void this.speakRecommendation();
 		await this.actOnRecommendation(outcome.rec, settings);
 	}
 

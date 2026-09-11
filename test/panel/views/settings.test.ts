@@ -179,7 +179,9 @@ function leafPaths(value: unknown, prefix = ""): string[] {
 describe("settings view · rows", () => {
 	it("every setting in DEFAULT_SETTINGS has a row (a new setting without one fails here)", async () => {
 		const h = await mountSettings();
-		const paths = leafPaths(DEFAULT_SETTINGS);
+		// Legacy automatic speech is retained in storage, but deliberately has no UI control.
+		const paths = leafPaths(DEFAULT_SETTINGS).filter((path) => path !== "display.tts");
+		expect(h.root.querySelector('[data-path="display.tts"]')).toBeNull();
 		expect(paths.length).toBeGreaterThan(40);
 		for (const path of paths) {
 			expect(h.root.querySelector(`[data-path="${path}"]`), `row for ${path}`).not.toBeNull();
@@ -455,6 +457,13 @@ describe("settings view · strength", () => {
 		const slider = row(h.root, "strength.targetElo");
 		const thumb = q(slider, "[role=slider]");
 		expect(thumb.getAttribute("aria-valuetext")).toBe("Expert 1500");
+		expect(thumb.getAttribute("aria-valuemax")).toBe(String(LIMITS.eloMax));
+		expect(q(slider, ".sl-slider__divider").dataset.value).toBe(String(LIMITS.nnueSmallEloMax));
+		expect(q(slider, ".sl-slider__divider").style.left).toBe(
+			`${(((LIMITS.nnueSmallEloMax - LIMITS.eloMin) / (LIMITS.eloMax - LIMITS.eloMin)) * 100).toFixed(3)}%`
+		);
+		expect(q(slider, ".sl-slider__boundary").textContent).toContain(COPY.strength.smallNetwork);
+		expect(q(slider, ".sl-slider__boundary").textContent).toContain(COPY.strength.largeNetwork);
 		expect(q(slider, ".sl-slider__bubble").textContent).toBe("Expert 1500");
 		expect([...slider.querySelectorAll(".sl-slider__mark")].map((m) => m.textContent)).toEqual([
 			COPY.strength.bands.casual,
@@ -593,11 +602,11 @@ describe("settings view · keybinds", () => {
 });
 
 describe("settings view · display", () => {
-	it("populates the TTS voice select from chrome.tts.getVoices and disables it while TTS is off", async () => {
+	it("populates the explicit-speech voice select independently of the legacy automatic TTS flag", async () => {
 		const h = await mountSettings();
 		const voice = row(h.root, "display.ttsVoice");
 		const select = q<HTMLSelectElement>(voice, "select");
-		expect(select.disabled).toBe(true);
+		expect(select.disabled).toBe(false);
 		const labels = [...select.querySelectorAll("option")].map((o) => o.textContent);
 		expect(labels).toEqual([
 			SETTINGS_COPY.voice.default,
@@ -605,9 +614,8 @@ describe("settings view · display", () => {
 			"Sim British (en-GB)",
 		]);
 		expect(select.value).toBe("");
-		click(q(row(h.root, "display.tts"), "[role=switch]"));
 		await dom.tick(0);
-		expect(h.patches.at(-1)).toEqual({ display: { tts: true } });
+		expect(h.patches).toEqual([]);
 		expect(select.disabled).toBe(false);
 		select.value = "Sim British";
 		select.dispatchEvent(new Event("change", { bubbles: true }));
@@ -721,4 +729,70 @@ describe("settings view · advanced and footer", () => {
 		);
 		expect(COPY.notices.timing).toContain("PolyForm Noncommercial 1.0.0");
 	});
+});
+
+describe("settings search and save feedback", () => {
+	it("filters matching rows and sections, explains an empty result, and restores every row", async () => {
+		const h = await mountSettings();
+		const search = q<HTMLInputElement>(h.root, ".sl-settings__search");
+		search.value = "premove";
+		search.dispatchEvent(new Event("input", { bubbles: true }));
+		expect(row(h.root, "timing.premoveTendency").hidden).toBe(false);
+		expect(row(h.root, "strength.targetElo").hidden).toBe(true);
+		expect(q<HTMLElement>(h.root, '[data-section="strength"]').hidden).toBe(true);
+		expect(q<HTMLElement>(h.root, ".sl-settings__jump").hidden).toBe(true);
+		search.value = "Timing";
+		search.dispatchEvent(new Event("input", { bubbles: true }));
+		expect(row(h.root, "timing.respectBudget").hidden).toBe(false);
+		expect(row(h.root, "timing.speedScale").hidden).toBe(false);
+		search.value = "no setting could match this";
+		search.dispatchEvent(new Event("input", { bubbles: true }));
+		expect(q<HTMLElement>(h.root, ".sl-settings__empty").hidden).toBe(false);
+		search.value = "";
+		search.dispatchEvent(new Event("input", { bubbles: true }));
+		expect(q<HTMLElement>(h.root, ".sl-settings__empty").hidden).toBe(true);
+		for (const el of h.root.querySelectorAll<HTMLElement>(".sl-settings-row, .sl-settings__section"))
+			expect(el.hidden).toBe(false);
+	});
+
+	it("shows failed saves and restores the persisted switch value", async () => {
+		const h = await mountSettings(makeSnapshot(), {
+			view: createSettingsView({
+				setSettings: async () => {
+					throw new Error("storage unavailable");
+				},
+			}),
+		});
+		const toggle = q(row(h.root, "strength.useOpeningBook"), "[role=switch]");
+		expect(toggle.getAttribute("aria-checked")).toBe("true");
+		click(toggle);
+		expect(q(h.root, ".sl-settings__save").textContent).toBe(COPY.workspace.saving);
+		await dom.tick(0);
+		expect(toggle.getAttribute("aria-checked")).toBe("true");
+		expect(q(h.root, ".sl-settings__save").textContent).toBe(COPY.workspace.saveFailed);
+		expect(q(h.root, ".sl-settings__save").getAttribute("role")).toBe("status");
+	});
+});
+
+it("keeps the save indicator pending until the final queued write finishes", async () => {
+	const finishes: Array<(settings: Settings) => void> = [];
+	const h = await mountSettings(makeSnapshot(), {
+		view: createSettingsView({
+			setSettings: () =>
+				new Promise<Settings>((resolve) => {
+					finishes.push(resolve);
+				}),
+		}),
+	});
+	click(q(row(h.root, "strength.useOpeningBook"), "[role=switch]"));
+	click(q(row(h.root, "automation.autoQueue"), "[role=switch]"));
+	await dom.tick(0);
+	expect(finishes).toHaveLength(1);
+	finishes[0]?.(normalizeSettings(DEFAULT_SETTINGS));
+	await dom.tick(0);
+	expect(finishes).toHaveLength(2);
+	expect(q(h.root, ".sl-settings__save").textContent).toBe(COPY.workspace.saving);
+	finishes[1]?.(normalizeSettings(DEFAULT_SETTINGS));
+	await dom.tick(0);
+	expect(q(h.root, ".sl-settings__save").textContent).toBe(COPY.workspace.saved);
 });

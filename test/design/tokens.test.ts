@@ -92,13 +92,13 @@ describe("semantic colours", () => {
 	it("aliases --sl-color-accent to brand.500 in both themes", () => {
 		const dark = squash(block(css, '[data-theme="dark"]')).toLowerCase();
 		const light = squash(block(css, '[data-theme="light"]')).toLowerCase();
-		expect(dark).toContain("--sl-color-accent:#f5a623;");
-		expect(light).toContain("--sl-color-accent:#f5a623;");
+		expect(dark).toContain("--sl-color-accent:#ffa71f;");
+		expect(light).toContain("--sl-color-accent:#ffa71f;");
 	});
 
 	it("resolves alpha references to rgb(r g b / a) with Appendix F alpha steps", () => {
 		const dark = block(css, '[data-theme="dark"]');
-		expect(dark).toContain("--sl-color-hl-from: rgb(245 166 35 / 0.32);");
+		expect(dark).toContain("--sl-color-hl-from: rgb(255 167 31 / 0.32);");
 		expect(dark).toContain("--sl-color-border-subtle: rgb(255 255 255 / 0.08);");
 		expect(dark).toContain("--sl-color-text-disabled: rgb(216 222 230 / 0.32);");
 		expect(dark).toContain("--sl-color-hl-arrow-3: rgb(79 127 176 / 0.48);");
@@ -146,7 +146,7 @@ describe("type roles", () => {
 describe("TOKENS (generated TS)", () => {
 	it("mirrors the CSS values so JS consumers never disagree with the stylesheet", async () => {
 		const { TOKENS } = await import("../../src/design/tokens.generated");
-		expect(TOKENS.color.dark.hlFrom).toBe("rgb(245 166 35 / 0.32)");
+		expect(TOKENS.color.dark.hlFrom).toBe("rgb(255 167 31 / 0.32)");
 		expect(block(css, '[data-theme="dark"]')).toContain(
 			`--sl-color-hl-from: ${TOKENS.color.dark.hlFrom};`
 		);

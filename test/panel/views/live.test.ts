@@ -27,7 +27,9 @@ import {
 	THINK_MS,
 } from "./live-harness";
 
-const LIVE_CSS = readFileSync(path.resolve(import.meta.dir, "../../../css/views/live.css"), "utf8");
+const LIVE_CSS =
+	readFileSync(path.resolve(import.meta.dir, "../../../css/views/live.css"), "utf8") +
+	readFileSync(path.resolve(import.meta.dir, "../../../css/views/workspace.css"), "utf8");
 
 let dom: PanelDom;
 let h: LiveHarness | null = null;
@@ -76,7 +78,7 @@ describe("hands-off mode (§13.4 / §10.4)", () => {
 		expect(button.querySelector(".sl-button__kbd")?.textContent).toBe(COPY.keybind.keys.space);
 		expect(h.q(".sl-move").classList.contains("sl-move--hands-off")).toBe(true);
 		expect(LIVE_CSS).toMatch(
-			/\.sl-move--hands-off[^{]*\.sl-button__label[^{]*\{[^}]*display:\s*none/
+			/\.sl-move--hands-off[^{]*\.sl-button__label[^{]*\{[^}]*display:\s*inline/
 		);
 		expect(document.activeElement).toBe(document.body);
 		// Nothing dispatches from pointer or keyboard while hands-off.
@@ -109,9 +111,10 @@ describe("hands-off mode (§13.4 / §10.4)", () => {
 		expect(currentBannerKind()).toBe("hands-off");
 		const banner = app.querySelector(".sl-banner--hands-off")?.textContent?.trim() ?? "";
 		expect(banner).toBe(COPY.banner.handsOff);
-		expect(banner).toContain("Shift+A");
-		expect(banner).toContain("Space");
-		expect(banner).toContain("Shift+X");
+		const shortcuts = app.querySelector(".sl-shortcuts")?.textContent ?? "";
+		expect(shortcuts).toContain("Shift+A");
+		expect(shortcuts).toContain("Space");
+		expect(shortcuts).toContain("Shift+X");
 		expect(app.querySelectorAll(".sl-banner")).toHaveLength(1); // no second (detached) banner
 		const live = app.querySelector<HTMLElement>(".sl-live");
 		expect(live?.classList.contains("sl-live--hands-off")).toBe(true);
@@ -473,9 +476,7 @@ describe("move card states (§5.6)", () => {
 		});
 		await dom.tick(0);
 		expect(h.toasts()).toHaveLength(1);
-		expect(h.toasts()[0]?.querySelector(".sl-toast__text")?.textContent).toBe(
-			COPY.toast.played("Nf3", "3.9", COPY.execution.drag)
-		);
+		expect(h.toasts()[0]?.querySelector(".sl-toast__text")?.textContent).toBe(COPY.toast.notVerified);
 	});
 });
 
@@ -575,6 +576,9 @@ describe("strength card (§4.4 item 7, §5.12)", () => {
 		const thumb = pop?.querySelector<HTMLElement>('[role="slider"]');
 		expect(thumb?.getAttribute("aria-valuemin")).toBe("400");
 		expect(thumb?.getAttribute("aria-valuemax")).toBe(String(LIMITS.eloMax));
+		expect(pop?.querySelector<HTMLElement>(".sl-slider__divider")?.dataset.value).toBe(
+			String(LIMITS.nnueSmallEloMax)
+		);
 		expect(thumb?.getAttribute("aria-valuenow")).toBe("1500");
 		if (thumb) key(thumb, "keydown", { key: "ArrowRight", code: "ArrowRight" });
 		await dom.tick(0);
@@ -853,4 +857,79 @@ describe("cleanup", () => {
 		expect(store.calls).toEqual([]);
 		expect(content.children).toHaveLength(0);
 	});
+});
+
+it("the visible board shortcut guide follows custom keybindings", async () => {
+	const snapshot = liveSnapshot();
+	snapshot.settings.keybinds = {
+		...snapshot.settings.keybinds,
+		playMove: { ...snapshot.settings.keybinds.playMove, key: "f", code: "KeyF" },
+		disable: { ...snapshot.settings.keybinds.disable, key: "q", code: "KeyQ" },
+	};
+	h = await mountLive(dom.sim, snapshot);
+	expect(h.q('[data-shortcut="playMove"] kbd').textContent).toBe("F");
+	expect(h.q('[data-shortcut="disable"] kbd').textContent).toBe("Shift+Q");
+	expect(h.q(".sl-shortcuts").textContent).not.toContain("Shift+X");
+});
+
+it("keeps one evaluation chip anchored through recommendation gaps, turn changes and compact mode", async () => {
+	const first = liveSnapshot();
+	h = await mountLive(dom.sim, first);
+	const chip = h.q(".sl-live__eval-chip");
+	const slot = h.q(".sl-live__eval");
+	expect(slot.parentElement).toBe(h.root);
+	expect(slot.previousElementSibling?.classList.contains("sl-live__heading")).toBe(true);
+	expect(chip.dataset.evaluation).toBe("current");
+	for (const state of ["live:opponent-turn", "live:my-turn:analysing"] as const) {
+		h.store.emit(
+			liveSnapshot({
+				state,
+				sideToMove: state === "live:opponent-turn" ? "b" : "w",
+				recommendation: null,
+			})
+		);
+		expect(h.q(".sl-live__eval-chip")).toBe(chip);
+		expect(slot.hidden).toBe(false);
+		expect(h.q(".sl-live__eval-score").textContent).toBe("+1.34");
+		expect(chip.dataset.evaluation).toBe("cached");
+		expect(chip.getAttribute("aria-label")).toContain("Last evaluation");
+		expect(h.q(".sl-live__eval-label").textContent).toBe(COPY.eval.cachedLabel);
+		expect(slot.previousElementSibling?.classList.contains("sl-live__heading")).toBe(true);
+	}
+	const nextGame = liveSnapshot({ recommendation: null });
+	nextGame.session.gameId = "g2";
+	h.store.emit(nextGame);
+	expect(h.q(".sl-live__eval-score").textContent).toBe(COPY.eval.pending);
+	expect(chip.dataset.evaluation).toBe("pending");
+	expect(slot.hidden).toBe(false);
+	h.store.emit(
+		liveSnapshot({ settings: { display: { ...first.settings.display, evalBar: false } } })
+	);
+	expect(slot.hidden).toBe(true);
+	h.store.emit(first);
+	expect(slot.hidden).toBe(false);
+	expect(h.q(".sl-live__eval-score").textContent).toBe("+1.34");
+});
+
+it("updates the fixed evaluation chip from current-position pondering in White's POV", async () => {
+	h = await mountLive(dom.sim, liveSnapshot());
+	const chip = h.q(".sl-live__eval-chip");
+	const opponent = liveSnapshot({ state: "live:opponent-turn", sideToMove: "b" });
+	opponent.session.evaluation = { fen: FEN_B, eval: { cp: -280 }, wdl: [100, 200, 700] };
+	h.store.emit(opponent);
+	expect(h.q(".sl-live__eval-chip")).toBe(chip);
+	expect(h.q(".sl-live__eval-score").textContent).toBe("+2.80");
+	expect(chip.dataset.evaluation).toBe("current");
+	expect(h.q(".sl-live__eval-label").textContent).toBe(COPY.eval.label);
+	expect(h.q('[data-wdl="w"]').textContent).toBe("W 70");
+	expect(h.q('[data-wdl="l"]').textContent).toBe("L 10");
+	const analysing = liveSnapshot({ state: "live:my-turn:analysing", recommendation: null });
+	analysing.session.evaluation = { fen: makeRecommendation().fen, eval: { cp: 310 } };
+	h.store.emit(analysing);
+	expect(h.q(".sl-live__eval-score").textContent).toBe("+3.10");
+	expect(chip.dataset.evaluation).toBe("current");
+	delete analysing.session.evaluation;
+	h.store.emit(analysing);
+	expect(h.q(".sl-live__eval-score").textContent).toBe("+3.10");
+	expect(chip.dataset.evaluation).toBe("cached");
 });

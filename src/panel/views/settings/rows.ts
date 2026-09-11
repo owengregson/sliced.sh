@@ -10,6 +10,8 @@ import { STRENGTH_LABEL_BANDS, type StrengthBand, UI_TIMINGS } from "@core/const
 import { clamp, clampInt } from "@core/util/clamp";
 import type { TimeControl } from "@typedefs/game";
 import type { Keybind, Keybinds, Settings } from "@typedefs/settings";
+import type { SliderThreshold } from "../../components/slider";
+import { STRENGTH_NETWORK_THRESHOLD } from "../../components/strength-threshold";
 import { COPY, SETTINGS_COPY } from "../../copy";
 
 // ── paths ───────────────────────────────────────────────────────────────────────────────────
@@ -49,6 +51,7 @@ export interface SliderRow extends RowBase {
 	/** Resting numeric text. */
 	format: (value: number) => string;
 	scale?: readonly string[];
+	threshold?: SliderThreshold;
 	danger?: (value: number) => boolean;
 	dangerHint?: string;
 }
@@ -212,6 +215,7 @@ export const ROWS: readonly RowSpec[] = [
 		valueLabel: strengthLabel,
 		format: String,
 		scale: STRENGTH_LABEL_BANDS.map((b) => COPY.strength.bands[b.band]),
+		threshold: STRENGTH_NETWORK_THRESHOLD,
 		danger: (v) => v >= UI_TIMINGS.strengthDangerElo,
 		dangerHint: COPY.strength.warning,
 	},
@@ -356,7 +360,6 @@ export const ROWS: readonly RowSpec[] = [
 		max: LIMITS.multiPvMax,
 	},
 	toggle("display.uiSounds"),
-	toggle("display.tts"),
 	{ kind: "select", path: "display.ttsVoice", ...rowCopy("display.ttsVoice"), options: "voices" },
 	{
 		kind: "chips",

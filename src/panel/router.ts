@@ -75,6 +75,8 @@ export class PanelRouter implements Router {
 	private lastSnapshot: PanelSnapshot | null = null;
 	private lastUi: PanelUiState | null = null;
 	private switching: Promise<void> = Promise.resolve();
+	private disposed = false;
+	private mountingController: AbortController | null = null;
 
 	constructor(container: HTMLElement, views: Partial<ViewRegistry>, options: RouterOptions = {}) {
 		this.container = container;
@@ -100,7 +102,7 @@ export class PanelRouter implements Router {
 	}
 
 	private async doSwitch(name: ViewName, options: { transition?: Transition }): Promise<void> {
-		if (this.mounted?.name === name) return;
+		if (this.disposed || this.mounted?.name === name) return;
 		const view = this.views[name];
 		if (!view) {
 			log.warn("panel router: unknown view", { name });
@@ -110,6 +112,7 @@ export class PanelRouter implements Router {
 		this.container.replaceChildren();
 
 		const controller = new AbortController();
+		this.mountingController = controller;
 		const store = this.options.store;
 		const ctx: ViewContext = {
 			router: this,
@@ -127,6 +130,12 @@ export class PanelRouter implements Router {
 		} catch (error) {
 			log.error("panel router: mount failed", { name, error });
 			controller.abort();
+			return;
+		}
+		this.mountingController = null;
+		if (this.disposed || controller.signal.aborted) {
+			cleanup();
+			this.container.replaceChildren();
 			return;
 		}
 		this.mounted = { name, cleanup, controller };
@@ -150,6 +159,9 @@ export class PanelRouter implements Router {
 
 	/** Unmount the current view and drop its DOM. */
 	dispose(): void {
+		this.disposed = true;
+		this.mountingController?.abort();
+		this.mountingController = null;
 		this.unmount();
 		this.container.replaceChildren();
 		delete this.container.dataset.view;

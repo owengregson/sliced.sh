@@ -57,8 +57,8 @@ describe("ui sounds", () => {
 		setUiSoundsEnabled(false);
 		expect(playUiSound("movePlayed")).toBe(false);
 		setUiSoundsEnabled(true);
-		expect(playUiSound("movePlayed" satisfies UiSoundEvent)).toBe(true);
-		expect(played.at(-1)).toContain(SOUNDS.makeMove);
+		expect(playUiSound("movePlayed" satisfies UiSoundEvent)).toBe(false);
+		expect(played.some((url) => url.includes(SOUNDS.makeMove))).toBe(false);
 		setUiSoundPlayer(prev);
 	});
 });

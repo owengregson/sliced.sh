@@ -11,6 +11,14 @@ import { playUiSound } from "../sounds";
 import { instantiate, part } from "../template";
 import html from "../views/templates/components/slider.html?raw";
 
+export interface SliderThreshold {
+	value: number;
+	label: string;
+	lowerLabel: string;
+	upperLabel: string;
+	description: string;
+}
+
 export interface SliderOptions {
 	min: number;
 	max: number;
@@ -22,6 +30,7 @@ export interface SliderOptions {
 	format?: (value: number) => string;
 	/** Optional marks row under the track. */
 	scale?: readonly string[];
+	threshold?: SliderThreshold;
 	danger?: (value: number) => boolean;
 	dangerHint?: string;
 	disabled?: boolean;
@@ -52,6 +61,17 @@ export function createSlider(host: HTMLElement | null, options: SliderOptions): 
 	const valueEl = part(el, ".sl-slider__value");
 	const scale = part(el, ".sl-slider__scale");
 	const hint = part(el, ".sl-slider__hint");
+	const divider = part(el, ".sl-slider__divider");
+	const boundary = part(el, ".sl-slider__boundary");
+	if (options.threshold) {
+		divider.hidden = false;
+		boundary.hidden = false;
+		part(boundary, ".sl-slider__lower-label").textContent = options.threshold.lowerLabel;
+		part(boundary, ".sl-slider__threshold-label").textContent = options.threshold.label;
+		part(boundary, ".sl-slider__upper-label").textContent = options.threshold.upperLabel;
+		boundary.setAttribute("title", options.threshold.description);
+		thumb.setAttribute("aria-description", options.threshold.description);
+	}
 	const format = options.format ?? ((v: number): string => String(v));
 
 	let min = options.min;
@@ -79,6 +99,12 @@ export function createSlider(host: HTMLElement | null, options: SliderOptions): 
 
 	function render(): void {
 		const pct = max > min ? ((value - min) / (max - min)) * 100 : 0;
+		if (options.threshold) {
+			const thresholdPct =
+				max > min ? clamp((options.threshold.value - min) / (max - min), 0, 1) * 100 : 0;
+			divider.style.left = `${thresholdPct.toFixed(3)}%`;
+			divider.dataset.value = String(options.threshold.value);
+		}
 		fill.style.width = `${pct.toFixed(3)}%`;
 		thumb.style.left = `${pct.toFixed(3)}%`;
 		thumb.setAttribute("aria-valuemin", String(min));

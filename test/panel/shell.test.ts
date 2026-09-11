@@ -67,7 +67,7 @@ describe("bootShell", () => {
 		shell = bootShell(app(), { store });
 		expect(app().classList.contains("sl-app")).toBe(true);
 		expect(app().querySelector(".sl-topbar")).not.toBeNull();
-		expect(app().querySelector(".sl-topbar__wordmark")?.textContent).toBe(COPY.brand.name);
+		expect(app().querySelector(".sl-topbar__wordmark")?.textContent).toBe(COPY.brand.product);
 		expect(app().querySelector(".sl-segment[role=tablist]")).not.toBeNull();
 		expect(app().querySelectorAll(".sl-segment__item")).toHaveLength(3);
 		expect(app().querySelector(".sl-segment__icon")?.className).toContain("fa-fw");
@@ -139,7 +139,10 @@ describe("bootShell", () => {
 		shell.setTab("engine");
 		await dom.tick(0);
 		expect(shell.router.current).toBe("live");
-		expect(shell.ui.tab).toBe("settings"); // unchanged
+		expect(shell.ui.tab).toBe("settings"); // remembered preference
+		expect(
+			app().querySelector('.sl-topbar__switch [aria-selected="true"]')?.getAttribute("data-value")
+		).toBe("game");
 
 		// Game over: controls return, the banner leaves, the remembered tab comes back.
 		store.emit(makeSnapshot({ state: "game-over" }));

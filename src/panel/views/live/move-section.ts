@@ -4,8 +4,8 @@
  * disabled / engine-stopped), the play button's label transitions (`Play move` →
  * `Auto-playing in 4.2s` → hover `Cancel this move` → `Playing…`), the countdown driven from
  * `autoMove.scheduledAt` (the absolute execution time) against `plan.thinkMs`, and the §6.3
- * "played" flash + sound when `session.lastExecution` reports an executed move (the "Played …"
- * toast itself is the service worker's, over the panel port).
+ * "played" flash when `session.lastExecution` reports an executed move (the "Played …"
+ * notification is intentionally suppressed).
  *
  * The countdown ticks on a `setInterval` at the ring's own transition cadence
  * (`motion.duration.1`, the linear real-time curve of §5.10); it is cleared on disarm,
@@ -19,7 +19,6 @@ import type { Color } from "@typedefs/game";
 import { formatKeybind } from "../../components/keybind";
 import { createMoveCard, type MoveCardData, type MoveCardHandle } from "../../components/move-card";
 import { COPY } from "../../copy";
-import { playUiSound } from "../../sounds";
 
 const MS = 1000;
 const TICK_MS = TOKENS.motion.durationMs[1];
@@ -161,20 +160,15 @@ export function createMoveSection(options: MoveSectionOptions): MoveSectionHandl
 			if (seenSnapshot && exec?.at === undefined) lastExecutionKey = null;
 		}
 		const key = exec ? executionKey(exec) : null;
-		if (exec && key !== lastExecutionKey && seenSnapshot) onExecution(exec, snap);
+		if (exec && key !== lastExecutionKey && seenSnapshot) onExecution(exec);
 		lastExecutionKey = key;
 		seenSnapshot = true;
 	}
 
-	function onExecution(
-		exec: NonNullable<PanelSnapshot["session"]["lastExecution"]>,
-		snap: PanelSnapshot
-	): void {
-		// The "Played …" toast is the service worker's (a `toast` port message, Task 28); the card
-		// flash and the sound stay keyed on the result here.
+	function onExecution(exec: NonNullable<PanelSnapshot["session"]["lastExecution"]>): void {
+		// Keep the existing subtle card acknowledgement; successful moves make no sound or toast.
 		if (exec.outcome !== "executed") return;
 		card.played();
-		if (snap.settings.display.uiSounds) playUiSound("movePlayed");
 	}
 
 	return {
@@ -198,6 +192,8 @@ export function executionKey(exec: NonNullable<PanelSnapshot["session"]["lastExe
 }
 
 function noteFor(snapshot: PanelSnapshot, state: MoveCardData["state"]): string | null {
+	if (state === "engine-stopped")
+		return COPY.move.engineStoppedHint(formatKeybind(snapshot.settings.keybinds.disable));
 	if (state !== "your-move" || !snapshot.recommendation) return null;
 	// The play button is disabled until the hand is armed (§13.4, and auto-play ships off), so the
 	// card would otherwise sit there with a move on it and nothing happening. Say what to press.

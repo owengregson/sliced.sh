@@ -23,7 +23,7 @@ export const palette = {
 	bone: "#F3EFE6", // Eval bar white half (warm so it reads as a piece colour, not UI).
 	"slate.900": "#3A3531", // Eval bar black half (warm, distinct from UI charcoal).
 	"brand.300": "#FFC65C", // Brand text on dark, hover.
-	"brand.500": "#F5A623", // Brand core (logo orange). Fills, focus, hero SAN.
+	"brand.500": "#ffa71f", // Brand core (logo orange). Fills, focus, hero SAN.
 	"brand.700": "#C7800E", // Pressed, dark-theme border of brand fills.
 	"brand.900": "#6A4507", // Text on brand fills (light theme only).
 	"line.500": "#6FA3D6", // Secondary PV arrow / line 2.
@@ -84,7 +84,7 @@ const darkColors = {
 	// text tiers
 	"text.primary": { ref: "charcoal.200" },
 	"text.secondary": { ref: "charcoal.400" },
-	"text.tertiary": { ref: "charcoal.500" },
+	"text.tertiary": { ref: "charcoal.400" },
 	"text.disabled": { ref: "charcoal.200", alpha: "a32" },
 	"text.on-brand": { ref: "charcoal.900" },
 	"text.on-danger": { ref: "white" },

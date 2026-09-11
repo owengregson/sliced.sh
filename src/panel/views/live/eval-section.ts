@@ -33,7 +33,9 @@ export interface EvalView {
 }
 
 /** `Recommendation.eval` / `.wdl` (side to move) → White's point of view. */
-export function evalFromRecommendation(rec: PanelSnapshot["recommendation"]): EvalView {
+export function evalFromRecommendation(
+	rec: PanelSnapshot["recommendation"] | PanelSnapshot["session"]["evaluation"]
+): EvalView {
 	if (!rec) return { score: null, wdl: null };
 	const stm: Color = sideToMove(rec.fen) ?? "w";
 	const score = toWhitePov(rec.eval, stm);
@@ -106,7 +108,12 @@ export function createEvalSection(options: EvalSectionOptions): EvalSectionHandl
 		d: part(wdlHost, '[data-wdl="d"]'),
 		l: part(wdlHost, '[data-wdl="l"]'),
 	};
+	const label = part(options.evalRow, ".sl-live__eval-label");
+	const chip = part(options.evalRow, ".sl-live__eval-chip");
 	let lastScoreText = "";
+	let lastEvaluation: EvalView = { score: null, wdl: null };
+	let lastGameId: string | null | undefined;
+	let lastPly = 0;
 
 	function renderRow(row: Row, color: Color, state: EvalSectionState): void {
 		const { session } = state.snapshot;
@@ -136,41 +143,52 @@ export function createEvalSection(options: EvalSectionOptions): EvalSectionHandl
 		me.rating.textContent = "";
 		me.rating.hidden = true;
 
-		const view = evalFromRecommendation(snap.recommendation);
-		const stale = snap.engine.state !== "searching" && snap.engine.state !== "ready";
+		if (snap.session.gameId !== lastGameId || snap.session.ply < lastPly)
+			lastEvaluation = { score: null, wdl: null };
+		lastGameId = snap.session.gameId;
+		lastPly = snap.session.ply;
+		const recommendationIsCurrent =
+			snap.session.state !== "live:opponent-turn" && snap.session.state !== "live:my-turn:analysing";
+		const current = evalFromRecommendation(
+			snap.session.evaluation ?? (recommendationIsCurrent ? snap.recommendation : undefined)
+		);
+		if (current.score) lastEvaluation = current;
+		const view = current.score ? current : lastEvaluation;
+		const stale =
+			!current.score || (snap.engine.state !== "searching" && snap.engine.state !== "ready");
 		const evalBarOn = snap.settings.display.evalBar;
 		bar.el.hidden = !evalBarOn;
+		options.rail.hidden = !evalBarOn;
 		if (view.score) {
 			bar.update({ score: view.score, ...(view.wdl ? { wdl: view.wdl } : {}), stale });
 		} else bar.update({ neutral: true });
 
-		const text = view.score ? formatScore(view.score) : "";
+		const text = view.score ? formatScore(view.score) : COPY.eval.pending;
 		if (text !== lastScoreText) {
 			score.textContent = text;
 			lastScoreText = text;
 		}
 		const pct = view.wdl ? roundPercentages(view.wdl) : null;
-		wdlParts.w.textContent = pct ? `W ${pct[0]}` : "";
-		wdlParts.d.textContent = pct ? `D ${pct[1]}` : "";
-		wdlParts.l.textContent = pct ? `L ${pct[2]}` : "";
-		wdlHost.hidden = !pct;
+		wdlParts.w.textContent = pct ? COPY.eval.wdlWin(pct[0]) : "";
+		wdlParts.d.textContent = pct ? COPY.eval.wdlDraw(pct[1]) : "";
+		wdlParts.l.textContent = pct ? COPY.eval.wdlLoss(pct[2]) : "";
+		wdlHost.hidden = !pct || state.inline || state.compact;
 		const valueText = view.score ? evalValueText(view.score, view.wdl ?? undefined) : "";
 
-		// Folded (§8.2 step 3) or compact (§4.5): numeral-md inline in the opponent row, WDL as
-		// its tooltip and the rail's `aria-valuetext`.
-		const inline = state.inline || state.compact;
-		options.evalRow.hidden = inline;
-		opponent.inline.hidden = !inline;
-		opponent.inline.textContent = text;
-		// The numeral speaks the full value (score + WDL) too: in the scroll state the rail is
-		// hidden, so the meter's accessible value would otherwise be lost.
-		if (inline && valueText) {
-			opponent.inline.setAttribute("title", valueText);
-			opponent.inline.setAttribute("aria-label", valueText);
-		} else {
-			opponent.inline.removeAttribute("title");
-			opponent.inline.removeAttribute("aria-label");
-		}
+		// The evaluation chip has one fixed slot in every layout and turn state. Retain the
+		// latest known evaluation while the next position is being searched, clearly labelled.
+		options.evalRow.hidden = !evalBarOn;
+		chip.dataset.evaluation = !view.score ? "pending" : stale ? "cached" : "current";
+		label.textContent = view.score && stale ? COPY.eval.cachedLabel : COPY.eval.label;
+		const accessible = view.score
+			? stale
+				? COPY.eval.cached(valueText)
+				: valueText
+			: COPY.eval.pendingLabel;
+		chip.setAttribute("aria-label", accessible);
+		chip.setAttribute("title", accessible);
+		opponent.inline.hidden = true;
+		opponent.inline.textContent = "";
 		me.inline.hidden = true;
 	}
 

@@ -17,6 +17,7 @@
 import { tabsQuery } from "@core/chrome/tabs";
 import type { PanelSnapshot } from "@core/constants/messages";
 import { MSG } from "@core/constants/messages";
+import { TOAST_KEYS } from "@core/constants/toasts";
 import { UI_TIMINGS } from "@core/constants/ui";
 import { log } from "@core/logger";
 import type { TypedMessage } from "@core/messaging/typed-messages";
@@ -93,6 +94,14 @@ function mountLive(ctx: ViewContext): () => void {
 	const doc = container.ownerDocument;
 	const root = instantiate(liveHtml);
 	const app = container.closest<HTMLElement>(".sl-app");
+	part(root, ".sl-live__eyebrow").textContent = COPY.workspace.live;
+	part(root, ".sl-shortcuts__title").textContent = COPY.workspace.shortcuts;
+	for (const [action, label] of Object.entries({
+		playMove: COPY.workspace.playNow,
+		toggleAutoMove: COPY.workspace.autoPlay,
+		disable: COPY.workspace.stop,
+	}))
+		part(root, `[data-shortcut="${action}"] span`).textContent = label;
 	let snapshot: PanelSnapshot | null = ctx.snapshot ?? store.snapshot;
 	let handsOff = false;
 	let disposed = false;
@@ -317,7 +326,10 @@ function mountLive(ctx: ViewContext): () => void {
 	function computeCollapse(snap: PanelSnapshot): CollapseState {
 		const setting = Math.max(1, snap.settings.display.pvCount);
 		const pvCount = metrics.compact ? Math.min(setting, COMPACT_PV_MAX) : setting;
-		return collapseFor(metrics.availablePx, pvCount);
+		const extraHeight =
+			part(root, ".sl-live__heading").offsetHeight + part(root, ".sl-shortcuts").offsetHeight;
+		const extraBudget = extraHeight > 0 ? extraHeight + TOKENS.space[5] * 2 : 0;
+		return collapseFor(metrics.availablePx - extraBudget, pvCount);
 	}
 
 	// ── render ──────────────────────────────────────────────────────────────
@@ -334,6 +346,17 @@ function mountLive(ctx: ViewContext): () => void {
 			} else unlockControls();
 		}
 		root.classList.toggle("sl-live--hands-off", handsOff);
+		part(root, ".sl-live__title").textContent =
+			snap.session.myColor && snap.session.sideToMove === snap.session.myColor
+				? COPY.workspace.yourTurn
+				: COPY.workspace.theirTurn;
+		const automationStatus = part(root, ".sl-live__automation");
+		automationStatus.textContent = snap.autoMove.armed ? COPY.toggle.armed : COPY.toggle.off;
+		automationStatus.dataset.armed = String(snap.autoMove.armed);
+		for (const action of ["playMove", "toggleAutoMove", "disable"] as const)
+			part(root, `[data-shortcut="${action}"] kbd`).textContent = formatKeybind(
+				snap.settings.keybinds[action]
+			);
 		collapse = computeCollapse(snap);
 		root.dataset.collapse = collapse.name;
 		root.classList.toggle("sl-live--compact", metrics.compact);
@@ -383,7 +406,8 @@ function mountLive(ctx: ViewContext): () => void {
 		render();
 	});
 	const unsubscribePort = store.onPortMessage((message) => {
-		if (message.kind === "toast") showToast(TOAST_KIND[message.level], portToastText(message));
+		if (message.kind === "toast" && message.key !== TOAST_KEYS.played)
+			showToast(TOAST_KIND[message.level], portToastText(message));
 	});
 
 	tabsQuery({ active: true, currentWindow: true })

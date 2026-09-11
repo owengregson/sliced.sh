@@ -133,6 +133,7 @@ export function createMoveCard(
 
 	function stopCounting(): void {
 		counting = false;
+		el.classList.remove("sl-move--counting");
 		lastSpokenSecond = -1;
 		unregisterEscape?.();
 		unregisterEscape = null;
@@ -213,6 +214,7 @@ export function createMoveCard(
 		if (!(data.armed && data.state === "your-move")) return;
 		if (!counting) {
 			counting = true;
+			el.classList.add("sl-move--counting");
 			unregisterEscape = registerEscape("countdown", () => options.onCancel?.());
 		}
 		ring.update(remainingMs, totalMs);

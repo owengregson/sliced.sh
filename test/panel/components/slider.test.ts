@@ -138,3 +138,31 @@ describe("createSlider", () => {
 		]);
 	});
 });
+
+it("renders an accessible network boundary at its exact value as the range changes", () => {
+	handle = createSlider(mount(document.createElement("div")), {
+		min: 0,
+		max: 100,
+		step: 1,
+		value: 40,
+		label: String,
+		threshold: {
+			value: 60,
+			label: "60",
+			lowerLabel: "Small NNUE",
+			upperLabel: "Large NNUE",
+			description: "Large NNUE starts at 60",
+		},
+		onChange: () => {},
+	});
+	const divider = handle.el.querySelector<HTMLElement>(".sl-slider__divider");
+	expect(divider?.hidden).toBe(false);
+	expect(divider?.style.left).toBe("60.000%");
+	expect(divider?.dataset.value).toBe("60");
+	expect(handle.el.querySelector(".sl-slider__boundary")?.textContent).toContain("Large NNUE");
+	expect(handle.el.querySelector("[role=slider]")?.getAttribute("aria-description")).toBe(
+		"Large NNUE starts at 60"
+	);
+	handle.update({ max: 120 });
+	expect(divider?.style.left).toBe("50.000%");
+});

@@ -227,6 +227,8 @@ export function createEngineView(deps: EngineViewDeps = {}): View {
 		mount(ctx: ViewContext): Cleanup {
 			const { store } = ctx;
 			const el = instantiate(html);
+			part(el, ".sl-engine__title").textContent = COPY.workspace.engineTitle;
+			part(el, ".sl-engine__intro").textContent = COPY.workspace.engineBody;
 			const initialLevel =
 				ctx.snapshot?.settings.advanced.logLevel ?? DEFAULT_SETTINGS.advanced.logLevel;
 			let disposed = false;

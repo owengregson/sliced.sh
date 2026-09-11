@@ -294,19 +294,12 @@ describe("panel ↔ service worker: arm and play", () => {
 		expect(after.autoMove.scheduledAt).toBeUndefined();
 		expect(after.autoMove.armed).toBe(true);
 		expect(after.session.hand).toBe("resting");
-		// The toast names a registry key and its arguments; the copy is the panel's (Task 28).
-		expect(toasts).toEqual([
-			{
-				kind: "toast",
-				level: "info",
-				key: TOAST_KEYS.played,
-				args: { san: "e2e4", elapsedMs: after.session.lastExecution?.elapsedMs ?? 0 },
-			},
-		]);
+		// Successful moves update the dashboard silently.
+		expect(toasts).toEqual([]);
 		expect(snapshots.some((s) => s.session.hand === "moving")).toBe(true);
 	});
 
-	it("playNow executes the pending move at once with an instant plan; `executed` → toast on the port", async () => {
+	it("playNow executes the pending move at once with an instant plan; `executed` updates the snapshot silently", async () => {
 		const { deadlineMs } = await recommend(4000);
 		await dispatch({ type: MSG.PANEL_SET_AUTO_MOVE, tabId, armed: true });
 		await settle();
@@ -324,8 +317,7 @@ describe("panel ↔ service worker: arm and play", () => {
 		// well before the plan's deadline: the instant plan drops the pre-touch window
 		expect((releases()[0]?.at ?? 0) - at).toBeLessThan(deadlineMs - at - 1000);
 		expect(latest().session.lastExecution).toMatchObject({ ok: true, outcome: "executed" });
-		expect(toasts).toHaveLength(1);
-		expect(toasts[0]).toMatchObject({ key: TOAST_KEYS.played, args: { san: "e2e4" } });
+		expect(toasts).toHaveLength(0);
 	});
 
 	it("playNow with nothing scheduled plays the current recommendation; without an armed hand it is refused", async () => {
@@ -476,7 +468,7 @@ describe("panel ↔ service worker: arm and play", () => {
 			await sw.run(() => sim.time.advanceUntilIdle({ maxAdvanceMs: 30_000 }));
 			await settle();
 			expect(latest().session.lastExecution).toMatchObject({ outcome: "executed" });
-			expect(toasts.map((t) => t.key)).toEqual([TOAST_KEYS.played]);
+			expect(toasts).toEqual([]);
 			expect(otherToasts).toEqual([]);
 			// … and the other window's snapshot never carries the first tab's execution.
 			expect(otherSnapshots.at(-1)?.session.lastExecution).toBeUndefined();

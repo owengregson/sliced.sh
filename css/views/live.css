@@ -286,7 +286,6 @@
 }
 
 /* the Play button is a keybind hint only */
-.sl-move--hands-off .sl-move__action .sl-button__label,
 .sl-move--hands-off .sl-move__action .sl-button__icon {
 	display: none;
 }

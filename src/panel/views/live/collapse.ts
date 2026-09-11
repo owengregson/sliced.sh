@@ -10,11 +10,8 @@
  * under the top bar). Each step is a discrete state (`data-collapse` on the view root; no fluid
  * scaling) so the layout is stable while the user drags the panel edge.
  *
- * Reachability under the literal rule: after the PV step the layout is 504 px at every PV count
- * (the rows are what the count adds), and the WDL fold brings it to 440 < 480, so at any
- * available height ≥ 480 the chain has fitted by `wdl` at the latest. The reachable states are
- * therefore `{full, strip, pv, wdl, scroll}`; the `strength` and `move` branches are kept as the
- * transcription of steps 4–5 but the budget arithmetic never selects them.
+ * The evaluation chip remains visible at every height. Folding WDL no longer removes its row,
+ * so that step cannot claim height savings; the next step folds the strength card instead.
  *
  * Measurement: the VIEWPORT (`window.innerHeight` / `documentElement.clientWidth`), never the
  * content box — `.sl-app` is `min-height: 100vh` and grows with its content, so its own box
@@ -129,8 +126,7 @@ export function collapseFor(availablePx: number, pvCount: number): CollapseState
 	state.level = 3;
 	state.name = "wdl";
 	state.wdlFolded = true;
-	need -= b.evalRow + b.gap;
-	if (fits()) return state;
+	// The persistent evaluation chip still occupies this row after WDL is folded.
 
 	state.level = 4;
 	state.name = "strength";
@@ -186,7 +182,7 @@ export function viewportSize(app: HTMLElement | null): { width: number; height: 
 export function measureLayout(app: HTMLElement | null): LayoutMetrics {
 	const { width, height } = viewportSize(app);
 	const topbar = app?.querySelector<HTMLElement>(".sl-topbar") ?? null;
-	const topbarHeight = topbar && !topbar.hidden ? LIVE_BUDGET.topBar : 0;
+	const topbarHeight = topbar && !topbar.hidden ? heightOf(topbar) || LIVE_BUDGET.topBar : 0;
 	const banner = app?.querySelector<HTMLElement>(".sl-app__banner") ?? null;
 	return {
 		availablePx: Math.max(0, height - topbarHeight - heightOf(banner)),

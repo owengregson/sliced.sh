@@ -20,7 +20,7 @@
  *
  * `observeExecutor()` is how a tab's `MoveExecutor` reaches the panel: every
  * result is stamped with `at` (Task 24 keys the played flash on it), kept as
- * `session.lastExecution`, and an executed move / unverified move becomes a
+ * `session.lastExecution`, and an unverified move becomes a
  * `toast` port message named by `TOAST_KEYS` (the copy is the panel's — the
  * service worker never imports `@panel/copy`); hand-state changes push a snapshot.
  */
@@ -203,19 +203,8 @@ async function readStats(): Promise<SessionStats> {
 	return (await chromeLocalGet(LOCAL_KEYS.sessionStats)) ?? { ...EMPTY_SESSION_STATS };
 }
 
-/** The port toast an execution result earns, if any (the Live view toasts cancels itself). */
-function toastFor(
-	rec: Recommendation,
-	result: ExecutionResult
-): { level: ToastLevel; toast: PanelToast } | null {
-	if (result.outcome === "executed")
-		return {
-			level: "info",
-			toast: {
-				key: TOAST_KEYS.played,
-				args: { san: rec.chosen.san, elapsedMs: result.elapsedMs },
-			},
-		};
+/** Only execution problems notify; successful moves update the snapshot silently. */
+function toastFor(result: ExecutionResult): { level: ToastLevel; toast: PanelToast } | null {
 	if (result.outcome === "failed" && result.reason === EXECUTOR.reasons.unverified)
 		return { level: "warn", toast: { key: TOAST_KEYS.notVerified } };
 	return null;
@@ -295,7 +284,7 @@ export class PanelBroadcaster {
 		const surface = (report: ExecutionReport): void => {
 			const result: ExecutionResult = { ...report.result, at: this.now() };
 			this.lastExecutions.set(tabId, result);
-			const toast = toastFor(report.rec, result);
+			const toast = toastFor(result);
 			if (toast) void this.toast(toast.level, toast.toast, tabId);
 			this.notify();
 		};

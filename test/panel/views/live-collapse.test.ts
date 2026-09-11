@@ -75,8 +75,8 @@ describe("collapseFor (pure)", () => {
 		expect(collapseFor(532, 3)).toMatchObject({ name: "pv", pvMax: 2 });
 		expect(collapseFor(531, 3)).toMatchObject({ name: "pv", pvMax: 1 });
 		expect(collapseFor(504, 3)).toMatchObject({ name: "pv", pvMax: 1 });
-		expect(collapseFor(503, 3)).toMatchObject({ name: "wdl", pvMax: 1, wdlFolded: true }); // 48 + 16
-		expect(collapseFor(480, 3).name).toBe("wdl");
+		expect(collapseFor(503, 3)).toMatchObject({ name: "strength", pvMax: 1, wdlFolded: true });
+		expect(collapseFor(480, 3).name).toBe("strength");
 		// §8.2 step 6, literally: below 480 px of available height the view scrolls with every
 		// step applied and the card pinned — whatever the arithmetic would otherwise reach.
 		expect(collapseFor(479, 3)).toEqual(SCROLL);
@@ -84,14 +84,12 @@ describe("collapseFor (pure)", () => {
 		expect(collapseFor(0, 3)).toEqual(SCROLL);
 		// Never 0 rows while a line exists; a 1-line setting (556 px) skips the PV step.
 		expect(collapseFor(556, 1).name).toBe("full");
-		expect(collapseFor(500, 1)).toMatchObject({ name: "wdl", pvMax: 1 });
-		// Five lines (668 px). After the PV step the layout is 504 px at every PV count and the
-		// WDL fold makes it 440 < 480, so under the literal rule the reachable states are
-		// {full, strip, pv, wdl, scroll}; the `strength` / `move` branches are never selected.
+		expect(collapseFor(500, 1)).toMatchObject({ name: "strength", pvMax: 1 });
+		// Five lines (668 px). WDL folds, but the fixed eval row remains; strength folds next.
 		expect(collapseFor(700, 5).name).toBe("full");
 		expect(collapseFor(650, 5).name).toBe("strip"); // 668 − 52 = 616 fits
 		expect(collapseFor(600, 5)).toMatchObject({ name: "pv", pvMax: 4 }); // 588 fits
-		expect(collapseFor(500, 5)).toMatchObject({ name: "wdl", pvMax: 1 });
+		expect(collapseFor(500, 5)).toMatchObject({ name: "strength", pvMax: 1 });
 		expect(collapseFor(479, 5)).toEqual(SCROLL);
 	});
 });
@@ -121,13 +119,13 @@ describe("mounted view", () => {
 		expect(h.qa(".sl-pv")).toHaveLength(1);
 		expect(h.q(".sl-live__eval").hidden).toBe(false);
 
-		resize(360, 540); // available 496: the WDL row folds into the numeral's tooltip (440 fits)
-		expect(h.root.dataset.collapse).toBe("wdl");
-		expect(h.q(".sl-live__eval").hidden).toBe(true);
-		expect(h.q(".sl-live__eval-inline").hidden).toBe(false);
-		expect(h.q(".sl-live__eval-inline").textContent).toBe("+1.34");
-		expect(h.q(".sl-live__eval-inline").getAttribute("title")).toContain("71");
-		expect(h.q(".sl-live__strength").hidden).toBe(false);
+		resize(360, 540); // available 496: WDL and strength fold; the eval chip remains.
+		expect(h.root.dataset.collapse).toBe("strength");
+		expect(h.q(".sl-live__eval").hidden).toBe(false);
+		expect(h.q(".sl-live__eval-inline").hidden).toBe(true);
+		expect(h.q(".sl-live__eval-score").textContent).toBe("+1.34");
+		expect(h.q(".sl-live__eval-chip").getAttribute("title")).toContain("71");
+		expect(h.q(".sl-live__strength").hidden).toBe(true);
 		// A banner appearing without a resize is picked up on the next snapshot render.
 		const bannerSlot = h.app.querySelector<HTMLElement>(".sl-app__banner");
 		if (!bannerSlot) throw new Error("no banner slot");
@@ -136,24 +134,24 @@ describe("mounted view", () => {
 		expect(h.root.dataset.collapse).toBe("scroll");
 		Object.defineProperty(bannerSlot, "offsetHeight", { configurable: true, value: 0 });
 		h.store.emit(liveSnapshot());
-		expect(h.root.dataset.collapse).toBe("wdl");
+		expect(h.root.dataset.collapse).toBe("strength");
 
 		resize(360, 480); // available 436 < 480: the view scrolls, everything folded, card pinned
 		expect(h.root.dataset.collapse).toBe("scroll");
 		expect(h.root.classList.contains("sl-live--scroll")).toBe(true);
 		expect(h.q(".sl-live__strip").hidden).toBe(true);
 		expect(h.qa(".sl-pv")).toHaveLength(1);
-		expect(h.q(".sl-live__eval").hidden).toBe(true);
+		expect(h.q(".sl-live__eval").hidden).toBe(false);
 		expect(h.q(".sl-live__strength").hidden).toBe(true);
 		expect(h.q(".sl-live__strength-chip").hidden).toBe(false);
 		expect(h.q(".sl-live__strength-chip").textContent).toBe(`1500 · ${COPY.personaName.balanced}`);
 		expect(h.q(".sl-move").classList.contains("sl-move--compact")).toBe(true);
 		// The rail is hidden in this state: the inline numeral carries the meter's value.
 		expect(LIVE_CSS).toMatch(/\.sl-live--scroll \.sl-live__rail[^{]*\{[^}]*display:\s*none/);
-		expect(h.q(".sl-live__eval-inline").getAttribute("aria-label")).toBe(
+		expect(h.q(".sl-live__eval-chip").getAttribute("aria-label")).toBe(
 			h.q(".sl-evalbar").getAttribute("aria-valuetext")
 		);
-		expect(h.q(".sl-live__eval-inline").getAttribute("aria-label")).toContain("71% win");
+		expect(h.q(".sl-live__eval-chip").getAttribute("aria-label")).toContain("71% win");
 		// The card is pinned to the viewport under the sticky top bar for the whole scroll.
 		expect(LIVE_CSS).toMatch(
 			/\.sl-live--scroll \.sl-live__move[^{]*\{[^}]*position:\s*sticky;[^}]*top:\s*var\(--sl-size-control-lg\)/
@@ -185,8 +183,8 @@ describe("mounted view", () => {
 		expect(h.qa(".sl-pv")).toHaveLength(2);
 		expect(h.q(".sl-move").classList.contains("sl-move--compact")).toBe(true);
 		expect(h.q(".sl-move__action .sl-button__label").textContent).toBe(COPY.move.playShort);
-		expect(h.q(".sl-live__eval-inline").hidden).toBe(false);
-		expect(h.q(".sl-live__eval").hidden).toBe(true);
+		expect(h.q(".sl-live__eval-inline").hidden).toBe(true);
+		expect(h.q(".sl-live__eval").hidden).toBe(false);
 		expect(h.root.dataset.collapse).toBe("full"); // width, not height, drove this
 		expect(h.q(".sl-pv__depth").hidden).toBe(true);
 		resize(360, 720);

@@ -1,14 +1,20 @@
 <div class="sl-app__shell">
-	<header class="sl-topbar" hidden>
+	<header class="sl-topbar">
 		<div class="sl-topbar__brand">
 			<img class="sl-topbar__mark" src="../assets/images/sliced_256.png" alt="" width="24" height="24" />
 			<span class="sl-topbar__wordmark sl-type-title"></span>
 		</div>
 		<div class="sl-topbar__status"></div>
-		<div class="sl-topbar__switch"></div>
+		<nav class="sl-topbar__switch"></nav>
 	</header>
 	<div class="sl-app__banner"></div>
-	<div class="sl-app__content sl-scroll"></div>
+	<main class="sl-app__content sl-scroll" aria-busy="true">
+		<section class="sl-startup" role="status">
+			<div class="sl-startup__skeleton" aria-hidden="true"></div>
+			<p class="sl-startup__title sl-type-title"></p>
+			<p class="sl-startup__body sl-type-body"></p>
+		</section>
+	</main>
 	<div class="sl-app__toasts"></div>
 	<div class="sl-app__overlay"></div>
 	<div class="sl-app__live"></div>

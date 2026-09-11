@@ -112,9 +112,12 @@ export function bootShell(root: HTMLElement, options: ShellOptions): PanelShell 
 	root.classList.add("sl-app");
 	root.replaceChildren(instantiate(shellHtml));
 	const topbar = part(root, ".sl-topbar");
-	part(root, ".sl-topbar__wordmark").textContent = COPY.brand.name;
+	part(root, ".sl-topbar__wordmark").textContent = COPY.brand.product;
+	part(root, ".sl-startup__title").textContent = COPY.workspace.connecting;
+	part(root, ".sl-startup__body").textContent = COPY.workspace.connectingBody;
 	const statusHost = part(root, ".sl-topbar__status");
 	const switchHost = part(root, ".sl-topbar__switch");
+	switchHost.setAttribute("aria-label", COPY.nav.viewSwitch);
 	const bannerSlot = part(root, ".sl-app__banner");
 	const content = part(root, ".sl-app__content");
 	const toastLayer = part(root, ".sl-app__toasts");
@@ -162,6 +165,10 @@ export function bootShell(root: HTMLElement, options: ShellOptions): PanelShell 
 			store,
 			onMounted: (name) => {
 				topbar.hidden = VIEWS_WITHOUT_TOPBAR.has(name);
+				content.removeAttribute("aria-busy");
+				viewSwitch.update({
+					value: name === "live" || name === "waiting" || name === "unsupported" ? "game" : ui.tab,
+				});
 				clearToasts(); // §3.3: the toast queue is cleared on view change
 				closePopovers();
 				lockFocusables(); // a view mounted while hands-off starts disabled
@@ -266,7 +273,7 @@ export function bootShell(root: HTMLElement, options: ShellOptions): PanelShell 
 	}
 
 	function setTab(tab: PanelTab): void {
-		if (handsOff && tab !== ui.tab) return; // the view switch is disabled during a game
+		if (handsOff) return; // every navigation request is inert during a game
 		ui.tab = tab;
 		viewSwitch.update({ value: tab });
 		reresolve();

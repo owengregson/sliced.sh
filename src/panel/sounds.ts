@@ -70,7 +70,7 @@ export function createSoundPlayer(factory: SoundFactory = defaultFactory): Sound
 		},
 		urlFor,
 		play(event) {
-			if (!enabled) return false;
+			if (!enabled || event === "movePlayed") return false;
 			try {
 				const source = factory(urlFor(event));
 				if (!source) return false;

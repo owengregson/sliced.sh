@@ -5,6 +5,7 @@
  * literal shown to the user may live anywhere else under `src/panel/`.
  */
 
+import { LIMITS } from "@core/constants/limits";
 import type { PersonaId } from "@typedefs/settings";
 
 /** The one supported site, as the panel names it — defined once, like every other string here. */
@@ -16,7 +17,29 @@ export const COPY = {
 		product: "sliced.gg",
 		tagline: `Chess assistant for ${SITE}`,
 	},
-	nav: { game: "Game", settings: "Settings", engine: "Engine", viewSwitch: "View" },
+	nav: { game: "Game", settings: "Settings", engine: "Engine", viewSwitch: "Panel navigation" },
+	workspace: {
+		connecting: "Connecting…",
+		connectingBody: "Loading session and settings.",
+		live: "Live",
+		yourTurn: "Your move",
+		theirTurn: "Waiting…",
+		setup: "Session setup",
+		settingsTitle: "Settings",
+		settingsBody: "Changes save automatically.",
+		engineTitle: "Engine diagnostics",
+		engineBody: "Engine, input and timing status.",
+		shortcuts: "Page shortcuts",
+		playNow: "Play now",
+		autoPlay: "Auto-play",
+		stop: "Stop",
+		searchSettings: "Search settings",
+		searchPlaceholder: "Search settings…",
+		noSettings: "No matching settings.",
+		saving: "Saving…",
+		saved: "Saved",
+		saveFailed: "Save failed. Previous values restored.",
+	},
 	login: {
 		title: "sliced",
 		subtitle: `Chess assistant for ${SITE}`,
@@ -24,51 +47,53 @@ export const COPY = {
 		hint: "Keys look like SL-XXXX-XXXX-XXXX.",
 		button: "Continue",
 		loading: "Checking key…",
-		invalid: "That key isn't valid. Check for typos, or copy it from your sliced.gg account.",
-		deviceLimit: (n: number): string =>
-			`This key is already active on ${n} devices. Sign out on one of them, or manage devices at sliced.gg.`,
-		offline: "Can't reach sliced.gg. Check your connection and try again.",
+		invalid: "Invalid license key. Verify the key in Account.",
+		deviceLimit: (n: number): string => `Device limit reached (${n}). Remove a device in Account.`,
+		offline: "Connection failed. Check network access and retry.",
 		expired: (date: string): string => `This key expired on ${date}.`,
-		link: "Don't have a key? Get one at sliced.gg",
+		link: "Get a license key",
 		reveal: "Show key",
 		hide: "Hide key",
 	},
 	unsupported: {
-		title: "Open a game to get started",
-		body: `sliced works on ${SITE}. Open a game in this tab and the panel will follow along.`,
+		title: "Unsupported page",
+		body: `Open a ${SITE} game in this tab.`,
 		note: "Auto-play stays off until a game starts.",
 	},
 	nonGame: {
-		title: "This page isn't a game.",
-		body: "Start or join a game and the panel will pick it up.",
+		title: "No game detected",
+		body: "Start or join a game.",
 	},
 	waiting: {
-		title: "Waiting for a game",
-		meta: (engine: string): string => `On ${SITE} · ${engine}`,
+		title: "Waiting…",
+		meta: (engine: string): string => `${SITE} · ${engine}`,
 		engineReady: "engine ready",
 		engineLoading: "engine loading",
-		watching: "Watching this tab",
-		reading: "Reading the board…",
+		watching: "Connected",
+		reading: "Reading position…",
 		autoplayTooltip: "Turns on when a game starts",
 		preArmed: "Armed for next game",
 		/** §4.4: the master switch is off, so there is nothing to arm (`COPY.move.disabled` names it). */
-		autoplayOff: "Turn the assistant on in Settings first",
+		autoplayOff: "Assistant disabled in Settings",
 	},
 	move: {
 		headerYours: (color: string): string => `Your move · ${color}`,
 		headerTheirs: "Opponent to move",
 		thinking: "Thinking…",
 		engineStopped: "Engine stopped",
+		engineStoppedHint: (stop: string): string =>
+			`Analysis unavailable. ${stop}: release pointer. Engine diagnostics available after the game.`,
 		noteBook: "Book move",
 		noteOnly: "Only move",
 		noteMate: (n: number): string => `Mate in ${n}`,
 		noteForced: "Forced",
 		/** Your move, a recommendation shown, but the hand is not armed: say how to arm it. */
-		noteUnarmed: (key: string): string => `Auto-play off · ${key} to let it play`,
+		noteUnarmed: (key: string): string =>
+			`Auto-play unarmed. Arm before the game. ${key}: pause / resume.`,
 		// There is no "D" shortcut: the only control is the Settings view's Assistant toggle.
-		disabled: "Assistant off · turn it on in Settings",
+		disabled: "Assistant disabled",
 		plan: (seconds: string, method: string, premove: boolean): string =>
-			`thinking ${seconds}s · ${method}${premove ? " · premove" : ""}`,
+			`Delay ${seconds}s · ${method}${premove ? " · premove" : ""}`,
 		play: "Play move",
 		playShort: "Play",
 		armed: (seconds: string): string => `Auto-playing in ${seconds}s`,
@@ -80,18 +105,23 @@ export const COPY = {
 		white: "white",
 		black: "black",
 	},
-	lines: { header: "Lines", empty: "No lines yet", depth: (d: number): string => `d${d}` },
+	lines: { header: "Lines", empty: "No lines", depth: (d: number): string => `d${d}` },
 	strength: {
 		card: (elo: number, band: string, persona: string): string => `${elo} ${band} · ${persona}`,
 		popoverFooter: "Applies from next move",
 		bands: { casual: "Casual", club: "Club", expert: "Expert", master: "Master", elite: "Elite" },
-		warning: "Very high ratings draw attention. Keep it plausible for your account.",
+		warning: "High-strength range",
+		smallNetwork: "Small NNUE",
+		largeNetwork: "Large NNUE",
+		networkCutoff: (elo: number): string => String(elo),
+		networkDescription: (cutoff: number, max: number): string =>
+			`Above ${cutoff}: automatic large NNUE download. ${max}: maximum engine strength; approximate rating.`,
 	},
 	persona: {
-		cautious: "Cautious: prefers solid moves and longer thinks.",
-		balanced: "Balanced: plays like a typical club player.",
-		aggressive: "Aggressive: favours sharp lines and faster replies.",
-		blitz: "Blitz-demon: fast, confident, occasionally reckless.",
+		cautious: "Solid moves; longer think times.",
+		balanced: "Balanced move selection and timing.",
+		aggressive: "Tactical lines; faster replies.",
+		blitz: "Fast timing; higher move variance.",
 	} satisfies Record<PersonaId, string>,
 	personaName: {
 		cautious: "Cautious",
@@ -106,7 +136,7 @@ export const COPY = {
 		arming: "Hold to turn on",
 		armed: "Auto-play on",
 		off: "Auto-play off",
-		armTooltip: "Hold for a moment to turn on auto-play",
+		armTooltip: "Hold to arm auto-play",
 		locked: "Locked",
 	},
 	session: (games: number, pct: number, avg: string): string =>
@@ -114,8 +144,8 @@ export const COPY = {
 	telemetry: { clean: "clean", blur: "blur seen", mouse: "mouse touched", label: "Telemetry" },
 	executor: { attached: "Attached", detached: "Detached", notStarted: "Not started" },
 	engine: {
-		idle: "Idle",
-		thinking: (depth: number): string => `Thinking · d${depth}`,
+		idle: "Ready",
+		thinking: (depth: number): string => (depth > 0 ? `Thinking · d${depth}` : "Thinking…"),
 		locked: "Locked",
 		stopped: "Stopped",
 		loading: "Loading…",
@@ -131,9 +161,8 @@ export const COPY = {
 			`Played ${san} · ${seconds}s · ${method}`,
 		skipped: (san: string): string => `Skipped ${san} · auto-play stays on`,
 		disarmed: (san: string): string => `Auto-play off · ${san} not played`,
-		verifyFailed: (san: string): string =>
-			`Played ${san} but the board looks different. Auto-play turned off.`,
-		playFailed: "Couldn't play the move. Auto-play turned off.",
+		verifyFailed: (san: string): string => `Position mismatch after ${san}. Auto-play disabled.`,
+		playFailed: "Move failed. Auto-play disabled.",
 		keybind: (action: string, key: string): string => `${action} is now ${key}`,
 		preArm: (key: string): string => `Turning on auto-play… press ${key} again to cancel`,
 		reattached: "Auto-play back on",
@@ -150,27 +179,26 @@ export const COPY = {
 		restartEngine: "Restart engine",
 		update: (version: string): string => `sliced ${version} is ready`,
 		updateAction: "Update",
-		debugger: "Chrome will show a 'sliced is debugging this browser' bar. Don't click Cancel.",
-		gotIt: "Got it",
-		handsOff:
-			"Hands off during a game — clicking here takes focus from the board, and the hand owns the mouse until you stop it. Shift+A arm/disarm · Space play now · Shift+X stop.",
-		focus: "Board window not focused — click into the board once, then keep your hands off",
+		debugger: "Debugger attached. Cancel pauses auto-play.",
+		gotIt: "Dismiss",
+		handsOff: "Read-only during live play. Control auto-play with shortcuts.",
+		focus: "Page focus unavailable. Auto-play paused.",
 	},
 	update: {
 		title: (version: string): string => `sliced ${version} is ready`,
 		primary: "Restart and update",
 		later: "Later",
-		note: "Updating restarts the extension. A game in progress is not affected.",
+		note: "Restart pauses assistance; the game continues. Update between games.",
 	},
 	expired: {
-		title: "Your license expired",
+		title: "License expired",
 		body: (date: string): string =>
-			`sliced stopped assisting on ${date}. Renew to pick up where you left off — your settings are kept.`,
+			`Assistance disabled since ${date}. Renewal required. Settings retained.`,
 		renew: "Renew at sliced.gg",
 		differentKey: "Enter a different key",
-		revokedTitle: "This key is no longer valid",
-		revokedBody: "It may have been revoked or replaced. Check your sliced.gg account.",
-		ipLimitTitle: "This key is active on too many devices",
+		revokedTitle: "License invalid",
+		revokedBody: "Key revoked or replaced. Verify the key in Account.",
+		ipLimitTitle: "Device limit reached",
 	},
 	keybind: {
 		capturing: "Press a key…",
@@ -210,7 +238,7 @@ export const COPY = {
 	},
 	execution: {
 		debugger:
-			'Chrome shows a "sliced is debugging this browser" bar while auto-play is on. Don\'t click Cancel — that closes the session and pauses auto-play. You can hide the bar by keeping the debugger attached between games.',
+			"Chrome debugger required for input. Cancel detaches the debugger and pauses auto-play.",
 		verify: "After each move, checks the board matches the expected position.",
 		drag: "drag",
 	},
@@ -227,6 +255,14 @@ export const COPY = {
 	},
 	clock: { unavailable: "clock unavailable", unknown: "—:—" },
 	eval: {
+		label: "Eval",
+		pending: "—",
+		pendingLabel: "Evaluation pending",
+		cachedLabel: "Last eval",
+		cached: (value: string): string => `Last evaluation · ${value}`,
+		wdlWin: (value: number): string => `W ${value}`,
+		wdlDraw: (value: number): string => `D ${value}`,
+		wdlLoss: (value: number): string => `L ${value}`,
 		valueText: (score: string, win: number, draw: number, loss: number): string =>
 			`${score}, ${win}% win, ${draw}% draw, ${loss}% loss`,
 		mateFor: (n: number, side: string): string => `Mate in ${n} for ${side}`,
@@ -257,7 +293,7 @@ export const COPY = {
 		castleKing: "castles kingside",
 		castleQueen: "castles queenside",
 		promotes: "promotes to",
-		toggleHoldHint: "Hold for a moment to turn on auto-play",
+		toggleHoldHint: "Hold to arm auto-play",
 	},
 	// ── Task 26: Engine & diagnostics view (Appendix F §4.7, V2 §3.6) ─────────────────────────
 	engineView: {
@@ -321,14 +357,14 @@ export const COPY = {
 		export: "Export",
 		clear: "Clear",
 		copied: "Log copied",
-		copyFailed: "Couldn't copy the log",
-		logEmpty: "No timing entries yet",
+		copyFailed: "Copy failed",
+		logEmpty: "No timing entries",
 		session: (games: number, moves: number, avg: string): string =>
 			`${games} games · ${moves} moves · ${avg}s avg move`,
 		reset: "Reset session",
 		level: "Level",
 		levels: { silent: "Silent", error: "Error", warn: "Warn", info: "Info", debug: "Debug" },
-		consoleEmpty: "No log entries yet",
+		consoleEmpty: "No log entries",
 	},
 	// ── Task 23: login / expired / unsupported / waiting / update views (Appendix F §4.1–4.3,
 	// §4.8–4.10) — strings the §7.2 table leaves implicit ──────────────────────────────────────
@@ -341,8 +377,7 @@ export const COPY = {
 		version: (version: string): string => `v${version}`,
 	},
 	expiredView: {
-		bodyNoDate:
-			"sliced stopped assisting. Renew to pick up where you left off — your settings are kept.",
+		bodyNoDate: "Assistance disabled. Renewal required. Settings retained.",
 		recheck: "Check again",
 		signedIn: (maskedKey: string): string => `Signed in with ${maskedKey}`,
 	},
@@ -350,7 +385,7 @@ export const COPY = {
 	waitingView: {
 		engineStopped: "engine stopped",
 		opponent: "Opponent",
-		noOpponent: "No opponent yet",
+		noOpponent: "No opponent",
 		bot: "Bot",
 		rating: (rating: number): string => `Rated ${rating}`,
 		ratingUnknown: "opponent rating unknown",
@@ -421,13 +456,15 @@ export const SETTINGS_COPY = {
 	rows: {
 		enabled: {
 			label: "Assistant",
-			help:
-				"Off stops analysis, recommendations and auto-play until you turn it back on; auto-play needs arming again.",
+			help: "Off stops analysis and auto-play. Re-arming required after enabling.",
 		},
-		"strength.targetElo": { label: "Target rating" },
+		"strength.targetElo": {
+			label: "Target rating",
+			help: COPY.strength.networkDescription(LIMITS.nnueSmallEloMax, LIMITS.eloMax),
+		},
 		"strength.matchOpponentRating": {
 			label: "Match opponent rating",
-			help: "Derives the target rating from your opponent each game.",
+			help: "Uses the opponent rating plus persona offset each game.",
 		},
 		"strength.personaEloOffset": {
 			label: "Persona offset",
@@ -452,7 +489,7 @@ export const SETTINGS_COPY = {
 		"execution.motorSpeed": { label: "Motor speed" },
 		"execution.calibrateFromMyMouse": {
 			label: "Calibrate from my mouse",
-			help: "Fits the hand to your own mouse movement between games.",
+			help: "Calibrates input from mouse movement between games.",
 		},
 		"execution.keepDebuggerAttached": { label: "Keep debugger attached" },
 		"execution.verifyMoves": { label: "Verify moves after playing" },
@@ -472,8 +509,7 @@ export const SETTINGS_COPY = {
 		},
 		"automation.highlightMoves": {
 			label: "Highlight moves",
-			help:
-				"Draws the recommended move on the board. Off by default: drawing on the page adds DOM the site can see (§13.3).",
+			help: "Marks the recommended move on the board.",
 		},
 		"automation.highlightStyle": { label: "Highlight style" },
 		"keybinds.playMove": { label: COPY.keybind.actions.playMove },
@@ -483,21 +519,32 @@ export const SETTINGS_COPY = {
 		"keybinds.global": { label: "Scope" },
 		"display.evalBar": { label: "Eval bar" },
 		"display.pvCount": { label: "Lines shown" },
-		"display.uiSounds": { label: "UI sounds" },
-		"display.tts": { label: "Speak moves (TTS)" },
-		"display.ttsVoice": { label: "Voice" },
+		"display.uiSounds": {
+			label: "Control sounds",
+			help: "Feedback for settings and controls. Moves are always silent.",
+		},
+		"display.tts": {
+			label: "Spoken move shortcut",
+			help: "Read the move when you use the speak shortcut. Moves are never announced automatically.",
+		},
+		"display.ttsVoice": {
+			label: "Spoken move voice",
+			help: "Voice for the speak move shortcut.",
+		},
 		"display.theme": { label: "Theme" },
 		"display.reducedMotion": { label: "Reduced motion" },
 		"display.virtualCursor": {
-			label: "Show the hand's pointer",
-			help:
-				"Draws where the virtual hand's pointer is on the game page. Your own mouse is not tracked.",
+			label: "Virtual pointer",
+			help: "Hides the system pointer and blocks physical mouse input while active.",
 		},
 		"engine.threads": { label: "Engine threads" },
 		"engine.hashMb": { label: "Hash" },
 		"engine.depthCap": { label: "Depth cap" },
 		"engine.multiPv": { label: "Engine lines" },
-		"engine.nnue": { label: "Network" },
+		"engine.nnue": {
+			label: "Network",
+			help: COPY.strength.networkDescription(LIMITS.nnueSmallEloMax, LIMITS.eloMax),
+		},
 		"advanced.logLevel": { label: "Debug log level" },
 		"advanced.timingLogEnabled": {
 			label: "Timing log",
@@ -517,7 +564,7 @@ export const SETTINGS_COPY = {
 		scope: { page: "In page", global: "Global" },
 		theme: { dark: "Dark", light: "Light", system: "System" },
 		reducedMotion: { system: "System", on: "On", off: "Off" },
-		nnue: { small: "Small", big: "Big", auto: "Auto" },
+		nnue: { small: "Small", big: "Large", auto: "Auto" },
 		logLevel: { silent: "Silent", error: "Error", warn: "Warn", info: "Info", debug: "Debug" },
 	},
 	format: {
@@ -574,7 +621,7 @@ export const COPY_LIVE = {
 		resting: "resting",
 		exploring: "exploring",
 		moving: "moving",
-		paused: "paused (your mouse)",
+		paused: "paused",
 		detached: "detached",
 	},
 	band: {

@@ -187,6 +187,7 @@ function buildRow(spec: RowSpec, host: RowHost): RowControl {
 				format: spec.format,
 				ariaLabel: spec.label,
 				...(spec.scale ? { scale: spec.scale } : {}),
+				...(spec.threshold ? { threshold: spec.threshold } : {}),
 				...(spec.danger ? { danger: spec.danger } : {}),
 				...(spec.dangerHint ? { dangerHint: spec.dangerHint } : {}),
 				onChange: (v, commit) => {
@@ -409,6 +410,15 @@ export function createSettingsView(overrides: Partial<SettingsViewDeps> = {}): V
 			const root = instantiate(settingsHtml);
 			const jumpHost = part(root, ".sl-settings__jump");
 			const sectionsHost = part(root, ".sl-settings__sections");
+			part(root, ".sl-settings__title").textContent = COPY.workspace.settingsTitle;
+			part(root, ".sl-settings__intro").textContent = COPY.workspace.settingsBody;
+			const search = part<HTMLInputElement>(root, ".sl-settings__search");
+			search.placeholder = COPY.workspace.searchPlaceholder;
+			search.setAttribute("aria-label", COPY.workspace.searchSettings);
+			const emptySearch = part(root, ".sl-settings__empty");
+			emptySearch.textContent = COPY.workspace.noSettings;
+			const saveStatus = part(root, ".sl-settings__save");
+			saveStatus.textContent = COPY.workspace.saved;
 			jumpHost.setAttribute("aria-label", SETTINGS_COPY.jump);
 			part(root, ".sl-settings__footer-version").textContent = COPY.footer(deps.version, deps.build);
 			part(root, '.sl-settings__footer-notice[data-notice="engine"]').textContent =
@@ -428,16 +438,35 @@ export function createSettingsView(overrides: Partial<SettingsViewDeps> = {}): V
 			/** Non-setting rows (plan) re-rendered on every snapshot. */
 			const refreshers: Array<() => void> = [];
 			let queue: Promise<void> = Promise.resolve();
+			let pendingWrites = 0;
+			let writeFailed = false;
 
 			function write(patch: SettingsPatch): void {
+				if (locked || ctx.signal.aborted) return;
+				if (pendingWrites === 0) writeFailed = false;
+				pendingWrites += 1;
+				saveStatus.textContent = COPY.workspace.saving;
+				saveStatus.dataset.state = "saving";
 				queue = queue
 					.then(async () => {
+						if (locked || ctx.signal.aborted) return;
 						const next = await deps.setSettings(patch);
 						if (ctx.signal.aborted) return;
 						settings = next;
 						refreshValues();
 					})
-					.catch((error: unknown) => log.warn("settings: write failed", error));
+					.catch((error: unknown) => {
+						log.warn("settings: write failed", error);
+						if (ctx.signal.aborted) return;
+						refreshValues();
+						writeFailed = true;
+					})
+					.finally(() => {
+						pendingWrites -= 1;
+						if (ctx.signal.aborted || pendingWrites > 0) return;
+						saveStatus.textContent = writeFailed ? COPY.workspace.saveFailed : COPY.workspace.saved;
+						saveStatus.dataset.state = writeFailed ? "error" : "saved";
+					});
 			}
 
 			function readDetection(snapshot: PanelSnapshot | null): void {
@@ -455,9 +484,8 @@ export function createSettingsView(overrides: Partial<SettingsViewDeps> = {}): V
 				voices: () => voiceOptions,
 			};
 
-			function disabledFor(path: SettingsLeafPath): boolean {
+			function disabledFor(_path: SettingsLeafPath): boolean {
 				if (locked) return true;
-				if (path === "display.ttsVoice") return !settings.display.tts;
 				return false;
 			}
 
@@ -474,6 +502,7 @@ export function createSettingsView(overrides: Partial<SettingsViewDeps> = {}): V
 				if (locked) root.setAttribute("aria-disabled", "true");
 				else root.removeAttribute("aria-disabled");
 				jump.update({ disabled: locked });
+				search.disabled = locked;
 				for (const b of buttons) b.update({ disabled: locked });
 				for (const [path, control] of controls) control.setDisabled(disabledFor(path));
 			}
@@ -497,6 +526,31 @@ export function createSettingsView(overrides: Partial<SettingsViewDeps> = {}): V
 				sectionsHost.append(el);
 				sectionEls.push(el);
 			}
+
+			function filterSettings(): void {
+				const query = search.value.trim().toLocaleLowerCase();
+				let found = false;
+				for (const section of sectionEls) {
+					const titleMatches = (section.querySelector(".sl-section__title")?.textContent ?? "")
+						.toLocaleLowerCase()
+						.includes(query);
+					let sectionMatches = false;
+					for (const row of section.querySelectorAll<HTMLElement>(
+						".sl-settings-row, .sl-settings-advanced__actions, .sl-settings-account__actions"
+					)) {
+						const matches =
+							!query || titleMatches || (row.textContent ?? "").toLocaleLowerCase().includes(query);
+						row.hidden = !matches;
+						sectionMatches ||= matches;
+					}
+					section.hidden = !sectionMatches;
+					found ||= sectionMatches;
+				}
+				emptySearch.hidden = found;
+				jumpHost.hidden = query.length > 0;
+			}
+			search.addEventListener("input", filterSettings);
+			disposers.push(() => search.removeEventListener("input", filterSettings));
 
 			// ── jump chips + scroll-spy ──
 			const jump = createChipGroup<string>(jumpHost, {

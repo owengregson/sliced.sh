@@ -64,7 +64,6 @@ export const SECTIONS: readonly SectionSpec[] = [
 		"display.evalBar",
 		"display.pvCount",
 		"display.uiSounds",
-		"display.tts",
 		"display.ttsVoice",
 		"display.theme",
 		"display.reducedMotion",

@@ -1,6 +1,6 @@
 /**
  * Strength card (Appendix F §4.4 item 7, §5.12): one row — big Elo in `numeral-sm`, band label
- * + persona in `body`, a chevron that opens a popover anchored to the card with the 400–3200
+ * + persona in `body`, a chevron that opens a popover anchored to the card with the rating
  * slider, the four persona chips and the selection-mode segment. Changes apply immediately
  * through `setSettings`; the footer says "Applies from next move". The card itself follows
  * the snapshot (never the popover's local value), so the SW's normalised settings win.
@@ -16,6 +16,7 @@ import { type ChipGroupHandle, createChipGroup } from "../../components/chip";
 import { openPopover, type PopoverHandle } from "../../components/popover";
 import { createSegment, type SegmentHandle } from "../../components/segment";
 import { createSlider, type SliderHandle } from "../../components/slider";
+import { STRENGTH_NETWORK_THRESHOLD } from "../../components/strength-threshold";
 import { COPY, COPY_LIVE } from "../../copy";
 import { mountIcons } from "../../icons-mount";
 import { instantiate, part } from "../../template";
@@ -104,6 +105,7 @@ export function createStrengthCard(host: HTMLElement): StrengthCardHandle {
 			danger: (v) => v >= UI_TIMINGS.strengthDangerElo,
 			dangerHint: COPY.strength.warning,
 			ariaLabel: COPY_LIVE.strength.rating,
+			threshold: STRENGTH_NETWORK_THRESHOLD,
 			onChange: (value, commit) => {
 				if (commit) write({ strength: { targetElo: value } });
 			},
