@@ -516,6 +516,18 @@ export class UciEngine {
 			return this.initInfo;
 		} catch (err) {
 			if (this.st === "initialising") this.st = "crashed";
+			// A request made before `init()` resolved is *queued* (`pump` bails on `!initialised`), and
+			// the `finally` below can only drain a queue into an *idle* engine — so a handshake that
+			// fails must settle it here or those promises are never settled at all. Callers above have
+			// no timeout of their own (`RecommendationPipeline.runSearch` awaits `handle.result`), and
+			// an unsettled search wedges a `GameSession` in `live:my-turn:analysing` for the rest of
+			// the game: at ply 0 as white no later position arrives to reset it.
+			//
+			// The timeout legs reach this through `onCrash` (`sendAndWait`'s timer), which fails the
+			// queue itself; a synchronous `transport.send` throw — the `void` sync API the client
+			// already defends against — does not, and neither does a throw from the option replay or
+			// `ucinewgame` below it. One settle here covers every way the handshake can end badly.
+			this.failQueued();
 			throw err;
 		} finally {
 			this.busy = false;
