@@ -301,6 +301,16 @@ describe("the relative-clock urgency factor (§8, fix C)", () => {
 		}
 	});
 
+	it("is a fraction of `base_s`, not `base_eff`: a 3+2 game starts at 1, not at 0.69", () => {
+		// Review M8: `pressure.ts` explains why `base_eff` is the wrong denominator — it folds in
+		// `40 · inc`, so a 3+2 game would read 0.69 on its very first move and be hurried before
+		// anything had happened — and nothing asserted it. This is that assertion.
+		const full = features(180, 180, 2);
+		expect(full.base_eff).toBeGreaterThan(full.base_s); // the denominator that would be wrong
+		expect(relativeClock(full)).toBe(1);
+		expect(urgencyFactor(full)).toBe(1);
+	});
+
 	it("an increment floors it: a 3+2 player in time trouble still gets 2 s a move", () => {
 		const f = features(180, 10, 2);
 		expect(f.inc_s).toBeGreaterThanOrEqual(U.incFloorIncS);

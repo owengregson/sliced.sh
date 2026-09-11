@@ -324,15 +324,19 @@ export const TIMING_CONSTANTS = {
 		 */
 		fixtureProbTolerance: 2e-3,
 		/**
-		 * How fast a move has to be, in seconds, to count towards the `instant` share the head is
-		 * allowed (`instantShareCap`). A plan in `instant` mode is `orientation + motor + U(0.05,
-		 * 0.25) s`, so it reaches the page as a 0.7–1.1 s move — a bucket-0-or-1 move in the model's
-		 * own terms. The cap is therefore anchored on the share of *real* moves under this bound in
-		 * the bands' empirical priors (`buckets.json`, 1 000 000 human blitz moves a band): 17.8 %
-		 * at 1200–1300, 21.3 % at 1500–1600, 24.7 % at 1800–1900. Buckets are selected by their
-		 * upper edge against this value, never by index.
+		 * How quickly a move has to reach the board, in seconds, to count as a *fast move* for the
+		 * per-game budget (`fastShareCap`). Two seconds, because that is bucket 1's upper edge and the
+		 * bands' empirical priors are quoted against bucket edges.
+		 *
+		 * The anchor is the share of **real** human moves that arrive inside this bound
+		 * (`buckets.json`, 1 000 000 blitz moves a band): 17.8 % at 1200–1300, 21.3 % at 1500–1600,
+		 * 24.7 % at 1800–1900. Note carefully what that number is and is not — it is a **marginal over
+		 * positions**, so it is used as a budget on a *game's* realised rate and never as a ceiling on
+		 * any single position's conditional. A marginal does not license a per-position ceiling of the
+		 * same value: a calibrated model is supposed to answer "this position is obvious" sometimes.
+		 * Buckets are selected by upper edge against this value, never by index.
 		 */
-		instantShareBucketMaxS: 2,
+		fastMoveMaxS: 2,
 		/** The top 4 buckets (≥ 26 s, §3b.1) or `t > longMedianMultiple·median` label the sample `long`. */
 		longBucketFrom: 26,
 		longMedianMultiple: 6,

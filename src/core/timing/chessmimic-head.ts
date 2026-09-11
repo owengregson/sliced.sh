@@ -23,7 +23,6 @@ import {
 	CHESSMIMIC_BUCKETS,
 	CLOCK_BUCKET_BOUNDARIES,
 	distributionMedianSec,
-	maskedBucketShare,
 	sampleBucket,
 	sampleWithinBucket,
 } from "./chessmimic-buckets";
@@ -101,40 +100,61 @@ export function buildInputs(ctx: TimingContext): ChessMimicInputs {
 // ---------------------------------------------------------------------------
 
 /**
- * The share of *real* human moves fast enough to count as `instant`, read off the band's own
- * empirical prior: `buckets.json` `bucket_probabilities` over 1 000 000 human blitz moves a band,
- * summed across every bucket whose upper edge is at or below `instantShareBucketMaxS`. 17.8 % at
- * 1200–1300, 21.3 % at 1500–1600, 24.7 % at 1800–1900 — stronger players snap more often, and the
- * cap follows the data rather than a guess.
+ * The share of **real** human moves that reach the board inside `fastMoveMaxS`, read off the band's
+ * own empirical prior: `buckets.json` `bucket_probabilities` over 1 000 000 human blitz moves a band,
+ * summed across every bucket whose upper edge is at or below that bound. 17.8 % at 1200–1300, 21.3 %
+ * at 1500–1600, 24.7 % at 1800–1900 — stronger players snap more often, and the budget follows the
+ * data rather than a guess.
+ *
+ * This is a **marginal over positions**, which is what makes it a budget on a game's realised rate
+ * rather than a ceiling on one position's conditional (see `fastShareCap`).
  */
 export function humanFastShare(band: ChessMimicBand): number {
 	const prior = CHESSMIMIC_BUCKETS[band]?.bucket_probabilities ?? [];
 	let share = 0;
 	for (let b = 0; b < prior.length; b++) {
 		const upper = CLOCK_BUCKET_BOUNDARIES[b + 1] ?? Number.POSITIVE_INFINITY;
-		if (upper <= CM.instantShareBucketMaxS) share += prior[b] ?? 0;
+		if (upper <= CM.fastMoveMaxS) share += prior[b] ?? 0;
 	}
 	return share;
 }
 
 /**
- * Ceiling on the share of plans that may come back `instant`: `1 − urgency · (1 − humanFastShare)`.
+ * Budget for the share of this game's plans that may reach the page inside `fastMoveMaxS`:
+ * `1 − urgency · (1 − humanFastShare)`.
  *
- * On a full clock that is exactly the human rate. It then widens as the clock falls, on the same
+ * On a full clock that is the band's human rate. It then widens as the clock falls, on the same
  * relative-clock basis as `urgencyFactor`, because a player with a tenth of their clock left really
  * does play most moves in under two seconds.
  *
- * The cap exists because the model's clock feature is partly a game-phase proxy and it has no
- * base-clock input: a 10+0 game at 480 s reads to it like a 5+3 opening, and it puts 85 % of its mass
- * on bucket 0. Measured on a realistic 10+0 trajectory, plies 10–24 came out 50–85 % instant — four
- * opening moves in five fired off without a pause, which is a mechanical tell.
- *
- * Why the relative clock and not the phase: a 10+0 at 480 s and a 3+0 at 18 s are both middlegames,
- * and 85 % instant is wrong in the first and right in the second. Phase cannot separate those two;
- * the fraction of the game's own clock still on the board can.
+ * It exists because the model's clock feature is partly a game-phase proxy and it has no base-clock
+ * input: a 10+0 game at 480 s reads to it like a 5+3 opening, and it answers with 18.6 % of its mass
+ * on bucket 0 and 49.1 % on bucket 1 — measured, real bands — so the page saw 61.6 % of moves inside
+ * two seconds there. Why the relative clock and not the phase: a 10+0 at 480 s and a 3+0 at 18 s are
+ * both middlegames, and 61 % fast is wrong in the first and right in the second. Phase cannot separate
+ * those two; the fraction of the game's own clock still on the board can.
  */
-export function instantShareCap(f: Features, band: ChessMimicBand): number {
+export function fastShareCap(f: Features, band: ChessMimicBand): number {
 	return 1 - urgencyFactor(f) * (1 - humanFastShare(band));
+}
+
+/**
+ * This game's realised share of plans that reached the page inside `fastMoveMaxS`, straight off
+ * `state.plannedMs` — the page-visible think time itself, not a proxy for it.
+ *
+ * Reading the budget off the realised rate is what puts `sampleGuarded`'s CV-guard redraws *inside*
+ * the controlled loop: those redraws give every rejected draw another chance at `instant`, which leaked
+ * up to +10 pp past a per-draw cap, but they cannot leak past a budget that is measured after the fact.
+ * It is also why the first move of a game needs no exemption written anywhere — an empty history is a
+ * realised share of 0, which is under every budget.
+ */
+export function fastPlanShare(state: Pick<GameTimingState, "plannedMs">): number {
+	const plans = state.plannedMs;
+	if (plans.length === 0) return 0;
+	const fastMs = CM.fastMoveMaxS * 1000;
+	let fast = 0;
+	for (const ms of plans) if (ms < fastMs) fast++;
+	return fast / plans.length;
 }
 
 // ---------------------------------------------------------------------------
@@ -276,12 +296,17 @@ export class ChessMimicHead implements DistributionHead {
 		// a move that cannot be predicted cannot be pre-entered.
 		//
 		// Until 2026-09-10 an ineligible bucket-0 draw was discarded and re-drawn from buckets ≥ 1.
-		// Measured on the real ONNX bands: ≈ 21 % of the mass sits on bucket 0 at a full 3+0 clock, and
-		// redistributing all of it upward left the shipped head with 0 instant-mode plans in 2000
-		// against 222 for the v1 fallback — the model's entire fast tail was being thrown away on every
-		// position that was not a recapture, a book move, a ponder hit or the only legal move. The owner
-		// asked about exactly that on 2026-09-09 ("the bot never is able to come up with the move nearly
-		// instantly"); we were causing it.
+		// Measured on the real ONNX bands: the shipped head produced 0 instant-mode plans in 2000 against
+		// 222 for the v1 fallback — the model's entire fast tail was thrown away on every position that
+		// was not a recapture, a book move, a ponder hit or the only legal move. The owner asked about
+		// exactly that on 2026-09-09 ("the bot never is able to come up with the move nearly instantly");
+		// we were causing it.
+		//
+		// What bounds it is `fastShareCap` against this game's *realised* page-level fast rate, not a
+		// per-position ceiling: while the game is inside its budget the model's own conditional is
+		// honoured, and once the game has sent more fast moves to the page than a human would, the
+		// channel closes until it has not. Over the budget the draw falls back to the next affordable
+		// bucket — which is what this branch did for *every* draw before 2026-09-10.
 		if (bucket === 0) {
 			if (f.premove_eligible) {
 				const pPre = sigmoid(premoveLogit(f, p, st.knobs));
@@ -291,30 +316,14 @@ export class ChessMimicHead implements DistributionHead {
 						mode: "premove",
 						why: [...why, `bucket 0 → premove p=${pPre.toFixed(2)}`],
 					};
-				// §7.4-eligible and the premove draw missed: still instant, and deliberately NOT capped.
-				// A book move, a recapture, a ponder hit or the only legal move is the case where playing
-				// at once is most clearly right — the first move of a game is all of these — so the cap,
-				// which exists to stop the model's bucket-0 mass dominating *ordinary* positions, has no
-				// business here. Without this the owner's "we should make first move really quickly" fell
-				// to 62 % fast at bullet instead of the 90 % the model asked for.
-				return {
-					tSec: this.instantSec(c.band, rng),
-					mode: "instant",
-					why: [...why, "bucket 0 → instant (premove-eligible, uncapped)"],
-				};
 			}
-			// Thinned to `instantShareCap`, so the realised instant share is the cap rather than
-			// whatever mass the model happened to put on bucket 0. Over the cap the draw falls back to
-			// the next affordable bucket — which is what this branch did for *every* draw until
-			// 2026-09-10, so a capped game is never slower than the build before this lane, only less
-			// often instant than an uncapped one.
-			const share = maskedBucketShare(c.probs, mask, this.temperature, 0);
-			const cap = instantShareCap(f, c.band);
-			if (share <= cap || rng.next() * share < cap)
+			const realised = fastPlanShare(st);
+			const cap = fastShareCap(f, c.band);
+			if (realised <= cap)
 				return {
 					tSec: this.instantSec(c.band, rng),
 					mode: "instant",
-					why: [...why, `bucket 0 → instant (share ${share.toFixed(2)} cap ${cap.toFixed(2)})`],
+					why: [...why, `bucket 0 → instant (game ${realised.toFixed(2)} ≤ budget ${cap.toFixed(2)})`],
 				};
 			const rest = mask.map((m, b) => m && b > 0);
 			const again = sampleBucket(c.probs, rest, this.temperature, rng);
@@ -322,10 +331,10 @@ export class ChessMimicHead implements DistributionHead {
 				return {
 					tSec: this.instantSec(c.band, rng),
 					mode: "instant",
-					why: [...why, "bucket 0 over the instant cap; nothing else affordable → instant"],
+					why: [...why, "bucket 0 over the fast budget; nothing else affordable → instant"],
 				};
 			bucket = again;
-			why.push(`bucket 0 over the instant cap (${cap.toFixed(2)}) → re-sampled bucket ${bucket}`);
+			why.push(`bucket 0 over the fast budget (${cap.toFixed(2)}) → re-sampled bucket ${bucket}`);
 		}
 		let t = sampleWithinBucket(c.band, bucket, rng);
 		if (!st.freezeEps) {

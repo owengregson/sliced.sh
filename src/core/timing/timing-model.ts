@@ -252,10 +252,35 @@ export class TimingModel {
 		const comp = paceFactor(f);
 		const capSec = hardCapSec(f);
 		tSec *= comp;
-		if (mode === "premove" && (!f.premove_eligible || this.forbidPremove)) {
+		// `premove` mode skips `boundByCap` and the physical floor below, because the hand is supposed to
+		// be on the piece already: pre-positioned during the opponent's think, leaving only press and
+		// release. `allocateWindow` then hands the plan `approachMs = thinkMs` with zero orientation.
+		//
+		// Nothing actually pre-positions the hand from this mode. Checked: the only readers of
+		// `plan.mode === "premove"` are `move-window.ts` (the window split), `preview-select.ts` (no
+		// previews) and the panel's copy — the executor's premove path is keyed on
+		// `rec.chosen.source === "premove"`, a different quantity. So the mode on its own produces a
+		// **100–220 ms whole move from a cold start** (measured p50 157 ms at ply 0 on the real bands)
+		// unless we really were waiting on this position with the move already entered, and no hand can
+		// deliver that — the brief's own figure for approach + press + drag + release is 400–900 ms.
+		//
+		// The condition for "we really were waiting" is `ponder_hit`: we predicted the opponent's reply
+		// and they played it. `premove_eligible`'s other three predictors (recapture, in book, only legal
+		// move) say a premove would have been *reasonable to enter*, not that one *was* entered — at ply 0
+		// `in_book` alone made the flick reachable, and at ply 2 with no prediction at all it made one
+		// reachable again. Appendix D §3a.5's premove logit is untouched; what is gated is whether the
+		// resulting mode is physically honourable.
+		const noPreEntry = f.ponder_hit === 0;
+		if (mode === "premove" && (!f.premove_eligible || this.forbidPremove || noPreEntry)) {
 			mode = "instant";
 			tSec = Math.max(tSec, C.instant.minS + C.instant.rangeS);
-			why.push(this.forbidPremove ? "no premove entered → instant" : "premove not eligible → instant");
+			why.push(
+				this.forbidPremove
+					? "no premove entered → instant"
+					: !f.premove_eligible
+						? "premove not eligible → instant"
+						: "nothing was pre-entered for this position (no ponder hit) → instant"
+			);
 		}
 		if (mode !== "premove") tSec *= this.settings.speedScale;
 		const median = this.head.median(f, this._persona, st, alloc) * comp;

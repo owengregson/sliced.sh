@@ -67,6 +67,22 @@ describe("f_clock across the whole clock (fix C step 4)", () => {
 		}
 	});
 
+	it("is flat at and above the knee — `clockPressureFraction` itself, pinned", () => {
+		// Review M4: raising the knee to 1.0 (which deletes the flat top, so the error rate starts
+		// rising the instant the clock leaves full) left the whole of test/core/strength green. The
+		// documented guarantee is "at or above this fraction of the base clock `f_clock` is 1", and this
+		// is the assertion for it. Below the knee it must have left 1 by the next sweep point, or the
+		// knee has been pushed down instead.
+		for (const [name, baseMs] of SPEEDS) {
+			expect(terms(baseMs, baseMs).fClock, name).toBe(1);
+			expect(terms(baseMs * B.clockPressureFraction, baseMs).fClock, name).toBe(1);
+			// just inside the knee it is still 1 …
+			expect(terms(baseMs * (B.clockPressureFraction + 0.05), baseMs).fClock, name).toBe(1);
+			// … and just outside it, it is not
+			expect(terms(baseMs * (B.clockPressureFraction - 0.05), baseMs).fClock, name).toBeGreaterThan(1);
+		}
+	});
+
 	it("means the same thing in 1+0, 3+0 and 10+0 at the same fraction of the base clock", () => {
 		// The actual defect in `clockPressureMs = 20_000`: 20 s is a third of a 1+0 game and 3 % of a
 		// 10+0. Compared at fractions where the absolute term is not the binding one.
