@@ -39,7 +39,7 @@ import { createRng } from "@core/rng";
 import { CHESSMIMIC_BUCKETS } from "@core/timing/chessmimic-buckets";
 import {
 	ChessMimicHead,
-	fastPlanShare,
+	fastAddedShare,
 	fastShareCap,
 	humanFastShare,
 	type InferResult,
@@ -50,7 +50,7 @@ import { urgencyFactor } from "@core/timing/pressure";
 import { freshState, TimingModel } from "@core/timing/timing-model";
 import type { Features, GameMeta, Persona, TimingContext } from "@core/timing/types";
 import { V1ParametricHead } from "@core/timing/v1-head";
-import { ctx } from "./helpers";
+import { AFTER_EXD5, ctx } from "./helpers";
 
 const persona: Persona = { s_game: 0, iota: 0.5, pi_p: 0, tau: 0.65, rho_mirror: 0.15, motor_k: 1 };
 
@@ -185,21 +185,26 @@ describe("fastShareCap", () => {
 	});
 });
 
-describe("fastPlanShare: the budget is this game's own realised page-level rate", () => {
+describe("fastAddedShare: the budget is this game's own realised rate for the added channel", () => {
 	it("is 0 on an empty history — which is why the first move of a game is always allowed", () => {
 		// Round 3 needed an explicit §7.4-eligibility exemption to keep 1.e4 instant, and that exemption
 		// covered plies 0-15 whenever we played the top move. This replaces it with nothing at all: a
-		// game with no plans yet has a realised fast share of 0, which is under every cap.
-		expect(fastPlanShare(freshState("g"))).toBe(0);
+		// game with no plans yet has a realised rate of 0, which is under every budget.
+		expect(fastAddedShare(freshState("g"))).toBe(0);
 	});
 
-	it("counts the plans that reached the page inside fastMoveMaxS, and nothing else", () => {
-		const fastMs = TIMING_CONSTANTS.chessmimic.fastMoveMaxS * 1000;
+	it("counts only the added channel, over every plan", () => {
 		const st = freshState("g");
-		st.plannedMs.push(fastMs - 1, fastMs - 1, fastMs + 1, fastMs + 1);
-		expect(fastPlanShare(st)).toBeCloseTo(0.5, 12);
-		st.plannedMs.push(fastMs - 1, fastMs - 1, fastMs - 1, fastMs - 1);
-		expect(fastPlanShare(st)).toBeCloseTo(0.75, 12);
+		st.plannedMs.push(100, 100, 100, 100);
+		st.fastAdded = 2;
+		expect(fastAddedShare(st)).toBeCloseTo(0.5, 12);
+		st.fastAdded = 3;
+		expect(fastAddedShare(st)).toBeCloseTo(0.75, 12);
+		// plans that did NOT come from the added channel are in the denominator only — a game full of
+		// the model's own bucket-1 moves does not consume the lane's budget, which is what stopped the
+		// actuator saturating.
+		st.plannedMs.push(100, 100, 100, 100);
+		expect(fastAddedShare(st)).toBeCloseTo(0.375, 12);
 	});
 });
 
@@ -212,9 +217,9 @@ describe("ChessMimicHead: the realised page-level fast share respects the budget
 		expect(f.premove_eligible).toBe(0);
 		const cap = fastShareCap(f, "1500_1600");
 		const { underFast, instant } = await planShares(c);
-		expect(underFast).toBeLessThanOrEqual(cap * 1.2);
+		expect(underFast).toBeLessThanOrEqual(cap * 1.06);
 		// and the fast tail is still there rather than thinned to nothing
-		expect(instant).toBeGreaterThan(0.05);
+		expect(instant).toBeGreaterThan(0.15);
 	});
 
 	it("no (speed class, game phase) cell exceeds the budget at the plan, on a full clock", async () => {
@@ -245,12 +250,94 @@ describe("ChessMimicHead: the realised page-level fast share respects the budget
 				expect(premove).toBe(0);
 				rows.push(`${speed}/${f.phase} ${(100 * underFast).toFixed(1)} %`);
 				expect(underFast, `${speed}/${phaseName}`).toBeLessThanOrEqual(
-					fastShareCap(f, "1500_1600") * 1.2
+					fastShareCap(f, "1500_1600") * 1.06
 				);
 				// "cannot dominate" in the plainest sense
 				expect(underFast, `${speed}/${phaseName}`).toBeLessThan(0.5);
 			}
 		console.log(`plan-level share under fastMoveMaxS by cell, full clock: ${rows.join(" · ")}`);
+	});
+
+	it("never slower than pre-lane: over budget, the added channel falls back to what 2c6b7d3 did", async () => {
+		// The assertion review M1 and m11 asked for, and the one that would have caught round 4's
+		// 15-of-60 never-slower breach. The property is structural rather than statistical: the budget's
+		// *closed* path is the pre-lane path, so a closed budget cannot be slower than `2c6b7d3`, and its
+		// open path returns `instant`, which is faster. Both halves are asserted here.
+		const c = ctx({ baseSec: 180, myClockMs: 180_000, oppClockMs: 180_000, chosenMove: "a2a4" });
+		const f = computeFeatures(c);
+		expect(f.premove_eligible).toBe(0);
+		const h = headWith(heavyBucketZero());
+		await h.prepare(c);
+		const rng = createRng("never-slower");
+
+		// A game far over its budget: every draw from the added channel must come back as a bucket ≥ 1
+		// sample — which is exactly, and only, what the pre-lane branch produced for this position.
+		const over = freshState("g");
+		over.fen = c.fen;
+		over.plannedMs.push(...new Array<number>(20).fill(1000));
+		over.fastAdded = 20;
+		expect(fastAddedShare(over)).toBeGreaterThan(fastShareCap(f, "1500_1600"));
+		let rejected = 0;
+		for (let i = 0; i < 400; i++) {
+			const sample = h.sample(f, persona, over, rng, 1);
+			expect(sample.addedFast).toBeUndefined();
+			expect(sample.mode === "normal" || sample.mode === "long").toBe(true);
+			if (sample.why.join(" ").includes("over the fast budget")) rejected++;
+		}
+		// bucket 0 carries 90 % of this fixture, and every one of those draws was turned away; the rest
+		// never entered the branch at all (they drew bucket 5 directly).
+		expect(rejected / 400).toBeGreaterThan(0.8);
+
+		// And under budget it is the faster path, marked so `planMove` can count it.
+		const under = freshState("g");
+		under.fen = c.fen;
+		let added = 0;
+		for (let i = 0; i < 400; i++) {
+			const sample = h.sample(f, persona, under, rng, 1);
+			if (sample.addedFast === true) {
+				added++;
+				expect(sample.mode).toBe("instant");
+			}
+		}
+		expect(added).toBeGreaterThan(0);
+	});
+
+	it("never slower than pre-lane: the §7.4-eligible channel is not budgeted at all", async () => {
+		// The other half of the breach: round 4 budgeted this channel, and because `2c6b7d3` returned
+		// `instant` here unconditionally, budgeting it made the in-book opening of every time control
+		// slower than the build the owner played. It is ungated again, and that is asserted against a
+		// state that is far over budget.
+		const c = ctx({
+			fen: AFTER_EXD5,
+			myColor: "b",
+			ply: 3,
+			moves: ["e2e4", "d7d5", "e4d5"],
+			expectedOppReply: "e4d5",
+			chosenMove: "d8d5",
+			lines: [
+				{ multipv: 1, score: { cp: -10 }, depth: 10, pvUci: ["d8d5"], pvSan: [] },
+				{ multipv: 2, score: { cp: -60 }, depth: 10, pvUci: ["g8f6"], pvSan: [] },
+			],
+		});
+		const f = computeFeatures(c);
+		expect(f.premove_eligible).toBe(1);
+		const h = headWith(heavyBucketZero());
+		await h.prepare(c);
+		const over = freshState("g");
+		over.fen = c.fen;
+		over.plannedMs.push(...new Array<number>(20).fill(1000));
+		over.fastAdded = 20;
+		expect(fastAddedShare(over)).toBeGreaterThan(fastShareCap(f, "1500_1600"));
+		const rng = createRng("eligible-ungated");
+		let fast = 0;
+		for (let i = 0; i < 400; i++) {
+			const sample = h.sample(f, persona, over, rng, 1);
+			// never counted against the budget, whatever the game has done
+			expect(sample.addedFast).toBeUndefined();
+			if (sample.mode === "instant" || sample.mode === "premove") fast++;
+		}
+		// bucket 0 carries 90 % of this fixture, and all of it still gets through
+		expect(fast / 400).toBeGreaterThan(0.8);
 	});
 
 	it("still lets a game in real time trouble play fast", async () => {

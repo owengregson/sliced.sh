@@ -171,6 +171,13 @@ export interface GameTimingState {
 	myThinkMs: number[];
 	/** `thinkMs` of every plan this game (the CV guard reads it). */
 	plannedMs: number[];
+	/**
+	 * How many adopted plans this game came from the fast channel **this lane added** — a bucket-0
+	 * draw on a position §7.4 cannot pre-enter. `fastAddedShare` divides it by `plannedMs.length` to
+	 * get the rate `fastShareCap` budgets. Counted in `planMove` rather than in the head, so a sample
+	 * the CV guard discards is not counted.
+	 */
+	fastAdded: number;
 	/** `ln t_actual − ln t_model_body` per observed move (`my_pace_resid`). */
 	paceResiduals: number[];
 	/** Eval (our POV) after our previous move; drives the tilt trigger. */
@@ -183,6 +190,12 @@ export interface HeadSample {
 	tSec: number;
 	mode: TimingMode;
 	why: string[];
+	/**
+	 * This sample came from the fast channel the fix-C lane added (an `instant` from a bucket-0 draw on
+	 * a position that is not §7.4 premove-eligible). `planMove` counts it into `state.fastAdded` when
+	 * it adopts the sample, which is what `fastShareCap` budgets.
+	 */
+	addedFast?: boolean;
 	/** Per-term contributions (`β_i f_i`) for the debug view / timing log. */
 	terms?: Array<[string, number]>;
 }

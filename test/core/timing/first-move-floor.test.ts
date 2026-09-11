@@ -111,13 +111,22 @@ describe("a premove-mode plan requires that a move really was pre-entered", () =
 		expect(median).toBeLessThan(2000);
 	});
 
-	it("a ponder hit mid-game is physical, and is left alone", () => {
-		// The mutation guard in the other direction: this must not disable premoves generally. §7.4's
-		// whole point is the move entered during the opponent's think, and with the reply predicted and
-		// played — `ponder_hit` — that is exactly what happened, so the mode stands.
+	it("a ponder hit mid-game keeps premove mode — but the plan still clears the physical floor", () => {
+		// Two assertions that have to hold together, and review Important 4 found the second one missing:
+		// this must not disable premoves generally (§7.4's whole point is the move entered during the
+		// opponent's think, and `ponder_hit` says the reply was predicted and played), **and** the plan
+		// must still be physically deliverable. It was not: with `ponder_hit = 1` the premove branch
+		// produced a 100–209 ms whole move, p50 154 ms, `approachMs = thinkMs`, orientation 0 — the same
+		// signature the ponder-hit gate removed for the no-prediction case.
+		//
+		// `ponder_hit` is a proxy: the only thing that actually enters a move is the session's §7.4 path,
+		// which sets `chosen.source = "premove"` and builds its own plan in `session.ts` — it never
+		// reaches `planMove` (verified: `source: "premove"` is assigned only inside `tryPremove`). So a
+		// premove-mode plan out of `planMove` is a hovered hand that has not pressed, and press + drag +
+		// release still cost the physical floor.
 		const m = model("later");
 		let premoves = 0;
-		for (let i = 0; i < 200; i++) {
+		for (let i = 0; i < 400; i++) {
 			const plan = m.planMove(
 				firstMove({
 					ply: 4,
@@ -128,6 +137,7 @@ describe("a premove-mode plan requires that a move really was pre-entered", () =
 				})
 			);
 			if (plan.mode === "premove") premoves++;
+			expect(plan.thinkMs).toBeGreaterThanOrEqual(PHYSICAL_FLOOR_MS);
 		}
 		expect(premoves).toBeGreaterThan(0);
 	});

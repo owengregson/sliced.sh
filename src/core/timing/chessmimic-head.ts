@@ -139,22 +139,26 @@ export function fastShareCap(f: Features, band: ChessMimicBand): number {
 }
 
 /**
- * This game's realised share of plans that reached the page inside `fastMoveMaxS`, straight off
- * `state.plannedMs` — the page-visible think time itself, not a proxy for it.
+ * This game's realised rate for the fast channel **this lane added** — adopted `instant` plans that came
+ * from a bucket-0 draw on a position §7.4 cannot pre-enter — over every plan so far.
  *
- * Reading the budget off the realised rate is what puts `sampleGuarded`'s CV-guard redraws *inside*
- * the controlled loop: those redraws give every rejected draw another chance at `instant`, which leaked
- * up to +10 pp past a per-draw cap, but they cannot leak past a budget that is measured after the fact.
- * It is also why the first move of a game needs no exemption written anywhere — an empty history is a
- * realised share of 0, which is under every budget.
+ * Scoped to the addition, not to every fast move on the page, and that scope is the whole point. The
+ * shipped bands put ~49 % of their mass on bucket 1, which reaches the page inside two seconds on its
+ * own and which this lane has no actuator for; budgeting the *total* against a 21.3 % human prior
+ * therefore held the actuator shut for whole games (measured: 17 of 18 real-ONNX cells) and, because
+ * the pre-lane build's own in-book `instant` lived in the same channel, made the in-book opening of
+ * every time control slower than `2c6b7d3`. Bounding the excess instead leaves the model's baseline
+ * alone, keeps the budget's authority, and makes "never slower than pre-lane" structural: the closed
+ * path through this gate *is* the pre-lane path.
+ *
+ * Counted from `state.fastAdded`, which `planMove` increments only for samples it adopts, so
+ * `sampleGuarded`'s CV-guard re-draws cannot buy extra chances at it — the bound is on the realised
+ * rate and the re-draws land inside it.
  */
-export function fastPlanShare(state: Pick<GameTimingState, "plannedMs">): number {
-	const plans = state.plannedMs;
-	if (plans.length === 0) return 0;
-	const fastMs = CM.fastMoveMaxS * 1000;
-	let fast = 0;
-	for (const ms of plans) if (ms < fastMs) fast++;
-	return fast / plans.length;
+export function fastAddedShare(state: Pick<GameTimingState, "fastAdded" | "plannedMs">): number {
+	const plans = state.plannedMs.length;
+	if (plans === 0) return 0;
+	return state.fastAdded / plans;
 }
 
 // ---------------------------------------------------------------------------
@@ -316,20 +320,35 @@ export class ChessMimicHead implements DistributionHead {
 						mode: "premove",
 						why: [...why, `bucket 0 → premove p=${pPre.toFixed(2)}`],
 					};
+				// §7.4-eligible and the premove roll missed: `instant`, ungated, exactly as `2c6b7d3`
+				// did. This is NOT an exemption bolted on — it is the pre-lane path, and leaving it alone
+				// is what makes "never slower than pre-lane" hold in the in-book opening, where round 4's
+				// total-scoped budget made 15 of 60 cells slower than the build the owner played.
+				return {
+					tSec: this.instantSec(c.band, rng),
+					mode: "instant",
+					why: [...why, "bucket 0 → instant (premove-eligible, as pre-lane)"],
+				};
 			}
-			const realised = fastPlanShare(st);
+			// The channel this lane added: a sub-second draw on a position no premove can cover. Budgeted
+			// against the band's human fast rate, measured over this game's adopted plans. Over budget the
+			// draw falls back to the next affordable bucket — which is what this branch did for *every*
+			// draw before 2026-09-10, so the closed path is the pre-lane path and cannot be slower.
+			const realised = fastAddedShare(st);
 			const cap = fastShareCap(f, c.band);
 			if (realised <= cap)
 				return {
 					tSec: this.instantSec(c.band, rng),
 					mode: "instant",
-					why: [...why, `bucket 0 → instant (game ${realised.toFixed(2)} ≤ budget ${cap.toFixed(2)})`],
+					addedFast: true,
+					why: [...why, `bucket 0 → instant (added ${realised.toFixed(2)} ≤ budget ${cap.toFixed(2)})`],
 				};
 			const rest = mask.map((m, b) => m && b > 0);
 			const again = sampleBucket(c.probs, rest, this.temperature, rng);
 			if (again === 0)
 				return {
 					tSec: this.instantSec(c.band, rng),
+					addedFast: true,
 					mode: "instant",
 					why: [...why, "bucket 0 over the fast budget; nothing else affordable → instant"],
 				};

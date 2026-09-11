@@ -67,19 +67,21 @@ describe("f_clock across the whole clock (fix C step 4)", () => {
 		}
 	});
 
-	it("is flat at and above the knee — `clockPressureFraction` itself, pinned", () => {
-		// Review M4: raising the knee to 1.0 (which deletes the flat top, so the error rate starts
-		// rising the instant the clock leaves full) left the whole of test/core/strength green. The
-		// documented guarantee is "at or above this fraction of the base clock `f_clock` is 1", and this
-		// is the assertion for it. Below the knee it must have left 1 by the next sweep point, or the
-		// knee has been pushed down instead.
+	it("is flat above 0.85 of base and rising by 0.75 — `clockPressureFraction` pinned at FIXED points", () => {
+		// Review M4, twice. The first pin read the constant to place its own test points
+		// (`B.clockPressureFraction ± 0.05`), so moving the constant moved the assertions with it and
+		// 0.8 → 1.0 was satisfied by every value in (0, 1]: measured 0 fail at the tip and 0 at
+		// `fd972c7`. These points are absolute numbers and do not move: 0.85 of base must be flat (so the
+		// knee cannot be raised towards 1.0, which would make the error rate rise the instant the clock
+		// leaves full) and 0.75 of base must already be rising (so the knee cannot be lowered far).
+		const FLAT_AT = 0.85;
+		const RISING_AT = 0.75;
+		expect(FLAT_AT).toBeGreaterThan(B.clockPressureFraction);
+		expect(RISING_AT).toBeLessThan(B.clockPressureFraction);
 		for (const [name, baseMs] of SPEEDS) {
 			expect(terms(baseMs, baseMs).fClock, name).toBe(1);
-			expect(terms(baseMs * B.clockPressureFraction, baseMs).fClock, name).toBe(1);
-			// just inside the knee it is still 1 …
-			expect(terms(baseMs * (B.clockPressureFraction + 0.05), baseMs).fClock, name).toBe(1);
-			// … and just outside it, it is not
-			expect(terms(baseMs * (B.clockPressureFraction - 0.05), baseMs).fClock, name).toBeGreaterThan(1);
+			expect(terms(baseMs * FLAT_AT, baseMs).fClock, `${name} at ${FLAT_AT}`).toBe(1);
+			expect(terms(baseMs * RISING_AT, baseMs).fClock, `${name} at ${RISING_AT}`).toBeGreaterThan(1);
 		}
 	});
 

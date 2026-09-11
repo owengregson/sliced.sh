@@ -77,6 +77,7 @@ export function freshState(gameId: string, knobs?: TimingKnobs): GameTimingState
 		oppThinkMs: [],
 		myThinkMs: [],
 		plannedMs: [],
+		fastAdded: 0,
 		paceResiduals: [],
 		lastEvalOurPov: null,
 		lastPlan: null,
@@ -182,6 +183,7 @@ export class TimingModel {
 		st.oppThinkMs = [...previous.oppThinkMs];
 		st.myThinkMs = [...previous.myThinkMs];
 		st.plannedMs = [...previous.plannedMs];
+		st.fastAdded = previous.fastAdded;
 		st.paceResiduals = [...previous.paceResiduals];
 		st.lastEvalOurPov = previous.lastEvalOurPov;
 		st.lastPlan = previous.lastPlan;
@@ -293,7 +295,16 @@ export class TimingModel {
 		const clockEmergency = f.tc !== "untimed" && ctx.myClockMs < C.replan.emergencyClockMs;
 		let totalS: number;
 		let emergency = false;
-		if (mode === "premove") totalS = tSec;
+		// A premove plan still has to be physically deliverable. `ponder_hit` (above) says we predicted
+		// the reply, not that a move was *entered*: the only thing that enters one is the session's own
+		// §7.4 path, which sets `chosen.source = "premove"` and builds its own plan in `session.ts` —
+		// it never reaches here. So a premove-mode plan out of `planMove` is a hand that has hovered
+		// (the previous plan's `preMoveHoverMs`) but has not pressed, and the press, drag and release
+		// still cost `PHYSICAL_FLOOR_S`. Without this floor the plan was a 100–209 ms whole move
+		// (measured p50 154 ms), which is the same non-human signature the ponder-hit gate removed for
+		// the no-prediction case. `replan("opponent-moved")` computes the fire time itself and is
+		// unaffected.
+		if (mode === "premove") totalS = Math.max(tSec, PHYSICAL_FLOOR_S);
 		else {
 			// Instant: orientation + motor + the head's U(0.05, 0.25). Normal/long: Appendix D §5's
 			// `max(tSec, motor.total)` with the §8.4b item 2 orientation inside the window. A
@@ -339,6 +350,10 @@ export class TimingModel {
 		if (motor.promoS > 0) plan.promotionDelayMs = motor.promoS * 1000;
 
 		st.plannedMs.push(thinkMs);
+		// Counted here and not in the head: `sampleGuarded` discards re-sampled candidates, and a
+		// discarded sample must not consume the budget. `mode` is re-read because the premove/physical
+		// gates above can have converted the sample since the head produced it.
+		if (sample.addedFast === true && mode === "instant") st.fastAdded++;
 		st.lastPlan = plan;
 		st.lastEvalOurPov = f.eval_cp;
 		st.oppThinkMs = [...ctx.oppThinkMsHistory];
