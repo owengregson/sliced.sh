@@ -190,8 +190,11 @@ describe("ExplorationPlanner.plan", () => {
 		expect(r("bullet")).toBeLessThan(r("blitz"));
 		expect(r("blitz")).toBeLessThan(r("rapid"));
 		expect(r("classical")).toBeCloseTo(r("rapid"), 1);
-		// and in **no** class is hovering the hand's default: the owner's complaint was that it
-		// always touches pieces first, and the unscaled rapid model hovered on 0.775 of these moves
+		// and in **no** class is hovering the hand's default: the owner's complaint was that it always
+		// touches pieces first, and the unscaled rapid model hovered on 0.775 of these moves. This
+		// holds at `opts().nReasonable`, which is at or below the shipped `engine.multiPv`; the rate
+		// rises with `n_reasonable` by design and the bound is only claimed up to that default
+		// (`TC_EXPLORATION`, and the rule test in `motor-profile.test.ts`).
 		for (const tc of ["bullet", "blitz", "rapid", "classical"] as const)
 			expect(r(tc)).toBeLessThan(0.5);
 	});

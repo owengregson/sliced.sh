@@ -1,5 +1,6 @@
 // test/core/motor/motor-profile.test.ts — Appendix G §8 modulation.
 import { describe, expect, it } from "bun:test";
+import { LIMITS } from "@core/constants/limits";
 import {
 	EXPLORATION,
 	MOTOR_DEFAULTS,
@@ -16,6 +17,7 @@ import {
 } from "@core/motor/motor-profile";
 import type { TimeControlClass } from "@core/motor/types";
 import { createRng } from "@core/rng";
+import { DEFAULT_SETTINGS } from "@typedefs/settings";
 
 describe("profileFor", () => {
 	it("blitz is faster and sloppier than rapid; classical slower with more hesitation", () => {
@@ -51,13 +53,21 @@ describe("profileFor", () => {
 		// moving and holds it there. `TC_EXPLORATION` is the modulation; rapid is the unscaled model.
 		const hover = (tc: TimeControlClass): number =>
 			profileFor("balanced", tc, "normal").exploration.hoverProb;
-		// The rule the table is derived from: hovering is never the hand's *default*. On a window
-		// that saturates the ramp, at the richest position the harness draws (four reasonable moves,
-		// where the planner's n-term is 1 + hoverNSlope·3), the rate stays under one half for every
-		// class — which is what caps the scale at 0.5 / 1.6 / 0.55 = 0.568.
-		const nTermAtFour = 1 + EXPLORATION.hoverNSlope * (4 - 1);
+		// The rule the table is derived from: hovering is never the hand's *default*. On a window that
+		// saturates the ramp, at production's worst case — `n_reasonable` cannot exceed the line
+		// count, so the shipped `engine.multiPv` is the ceiling, and the planner's n-term there is
+		// 1 + hoverNSlope·(multiPv − 1) — the rate stays under one half for every class, which is
+		// what caps the scale at 0.5 / 1.6 / 0.55 = 0.568.
+		//
+		// The guarantee is bounded by that default, not universal: the n-term keeps rising, and at
+		// `LIMITS.multiPvMax` (8) the rapid model is 0.726 — back to the rate the owner complained
+		// about. Reading the bound from `DEFAULT_SETTINGS` rather than writing 4 is what makes
+		// raising the shipped default fail here, instead of silently voiding the rule.
+		const worstCaseN = DEFAULT_SETTINGS.engine.multiPv;
+		expect(worstCaseN).toBeLessThanOrEqual(LIMITS.multiPvMax);
+		const nTerm = 1 + EXPLORATION.hoverNSlope * (worstCaseN - 1);
 		for (const tc of ["bullet", "blitz", "rapid", "classical"] as const) {
-			expect(hover(tc) * nTermAtFour).toBeLessThan(0.5);
+			expect(hover(tc) * nTerm).toBeLessThan(0.5);
 			expect(hover(tc)).toBeCloseTo(
 				MOTOR_DEFAULTS.exploration.hoverProb * TC_EXPLORATION[tc].hoverProb,
 				6
