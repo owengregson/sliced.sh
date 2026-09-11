@@ -60,6 +60,7 @@ import { TELEMETRY_BANDS } from "@core/constants/telemetry";
 import { TIMINGS, type TimingProfile } from "@core/constants/timings";
 import type { AnalysisHandle, AnalysisRequest } from "@core/engine/types";
 import { log } from "@core/logger";
+import { opponentExplorationCandidates } from "@core/motor/opponent-candidates";
 import type { TimeControlClass } from "@core/motor/types";
 import { createRng, type Rng } from "@core/rng";
 import type { BookPolicy } from "@core/strength/book/book-policy";
@@ -480,6 +481,13 @@ export class GameSession implements SessionSource {
 		};
 		const tc = s?.timeControl ?? this.game?.timeControl;
 		if (tc) view.timeControl = tc;
+		if (s) {
+			const liveLine = this.ponderer?.latestLines(s.fen)[0];
+			const currentRec = this.rec?.fen === s.fen ? this.rec : null;
+			const evaluation = liveLine?.score ?? currentRec?.eval;
+			const wdl = liveLine ? liveLine.wdl : currentRec?.wdl;
+			if (evaluation) view.evaluation = { fen: s.fen, eval: evaluation, ...(wdl ? { wdl } : {}) };
+		}
 		return view;
 	}
 
@@ -1116,8 +1124,36 @@ export class GameSession implements SessionSource {
 		});
 	}
 
+	/** Fresh candidate bouts share the hand with moves, and are invalidated with the position. */
+	private startOpponentExploration(): void {
+		const snapshot = this.snapshot;
+		const executor = this.executorHandle;
+		if (!snapshot || !executor?.isArmed()) return;
+		const eligible = () =>
+			!this.disposed &&
+			this.snapshot === snapshot &&
+			this.state === "live:opponent-turn" &&
+			this.mayActOn(snapshot) &&
+			snapshot.myColor !== snapshot.sideToMove &&
+			this.selfConsistent(snapshot) &&
+			executor.isArmed();
+		if (!eligible()) return;
+		let lastLines: ReturnType<PonderController["latestLines"]> | undefined;
+		let cached: ReturnType<typeof opponentExplorationCandidates> | undefined;
+		executor.exploreOpponent(() => {
+			if (!eligible() || snapshot.myColor === null) return null;
+			const lines = this.ponderer?.latestLines(snapshot.fen);
+			if (!cached || lines !== lastLines) {
+				cached = opponentExplorationCandidates(snapshot.fen, snapshot.myColor, lines);
+				lastLines = lines;
+			}
+			return cached;
+		});
+	}
+
 	/** Opponent's turn: ponder (§6.4) and prepare a premove candidate (§7.4). */
 	private async onOpponentTurn(snapshot: PositionSnapshot): Promise<void> {
+		this.startOpponentExploration();
 		const ponderer = this.ponderer;
 		if (!ponderer) return;
 		const history = this.historyFor(snapshot.fen);
@@ -1515,8 +1551,9 @@ export class GameSession implements SessionSource {
 	 * (`PANEL_SET_AUTO_MOVE`). One gate, one `MoveContext`, one definition: the handler must not
 	 * schedule for itself.
 	 */
-	handArmed(): Promise<void> {
-		return this.reconsiderGuarded("the hand was armed");
+	async handArmed(): Promise<void> {
+		await this.reconsiderGuarded("the hand was armed");
+		this.startOpponentExploration();
 	}
 
 	/**
@@ -1930,6 +1967,7 @@ export class GameSession implements SessionSource {
 		// The position that was waiting for this report (the race above) settles the premove now.
 		const waiting = entry.settleWith;
 		if (waiting !== null && this.premoveEntry === entry) this.reconcilePremove(waiting);
+		this.startOpponentExploration();
 		this.deps.notify();
 		return true;
 	}
@@ -2183,6 +2221,7 @@ export class GameSession implements SessionSource {
 		// a copy of it here: the gate, the `MoveContext` and the §3.3 answer all live in one place,
 		// so the manual arm, the automatic arm and the panel's toggle cannot drift apart.
 		await this.reconsiderGuarded("the hand was armed");
+		this.startOpponentExploration();
 		this.deps.notify();
 	}
 
@@ -2330,6 +2369,7 @@ export class GameSession implements SessionSource {
 				engine,
 				scheduler: this.scheduler,
 				now: this.now,
+				onUpdate: () => this.deps.notify(),
 			});
 		}
 		this.pipeline = this.deps.createPipeline
@@ -2412,7 +2452,10 @@ export class GameSession implements SessionSource {
 		// this path did not. At ply 0 as white that re-check is the only one there will ever be.
 		if (this.mayAct() && (wasArmed || this.deps.getSettings().automation.autoMove))
 			void executor.arm().then(
-				() => this.reconsiderGuarded("the hand finished arming"),
+				async () => {
+					await this.reconsiderGuarded("the hand finished arming");
+					this.startOpponentExploration();
+				},
 				(error: unknown) => log.warn("game-session: re-arm failed", error)
 			);
 	}

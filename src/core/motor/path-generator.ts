@@ -165,6 +165,9 @@ function bezierSegment(b: Pt, durMs: number, m: MotorProfile, rng: Rng, em: Emit
 	let jx = 0;
 	let jy = 0;
 	const target = { x: Math.round(b.x), y: Math.round(b.y) };
+	const chord = Math.hypot(b.x - a.x, b.y - a.y);
+	const [quietPx, fullNoisePx] = PATH.noiseRampPx;
+	const noiseScale = Math.min(1, Math.max(0, (chord - quietPx) / (fullNoisePx - quietPx)));
 	for (let i = 1; i <= n; i++) {
 		const tau = i / n;
 		if (i === n) {
@@ -172,7 +175,7 @@ function bezierSegment(b: Pt, durMs: number, m: MotorProfile, rng: Rng, em: Emit
 			break;
 		}
 		const p = cubicBezier(a, c1, c2, b, tAtArc(table, minJerk(tau)));
-		const env = Math.sin(Math.PI * tau);
+		const env = Math.sin(Math.PI * tau) * noiseScale;
 		jx = PATH.tremorRho * jx + rng.normal(0, m.jitterPx);
 		jy = PATH.tremorRho * jy + rng.normal(0, m.jitterPx);
 		em.push({ x: Math.round(p.x + jx * env), y: Math.round(p.y + jy * env) }, m.sampleIntervalMs);
@@ -228,7 +231,10 @@ export function generatePath(
 			x: cur.x + rng.normal(0, PATH.microCorrection.sigmaPx),
 			y: cur.y + rng.normal(0, PATH.microCorrection.sigmaPx),
 		};
-		if (inRect(adj, targetRect, PATH.microCorrection.padPx)) {
+		if (
+			Math.hypot(adj.x - cur.x, adj.y - cur.y) >= PATH.microCorrection.minShiftPx &&
+			inRect(adj, targetRect, PATH.microCorrection.padPx)
+		) {
 			em.delay(sampleRange(PATH.microCorrection.pauseMs, rng));
 			bezierSegment(adj, sampleRange(PATH.microCorrection.durMs, rng), m, rng, em);
 		}
@@ -245,50 +251,49 @@ export function generatePath(
 	return out;
 }
 
-/** Small "grab" wobble right after mousePressed, before the real travel begins (scaled by the hand's tremor). */
+/** A grip settles along one short direction; never a sequence of unrelated tiny reversals. */
 export function grabWobble(p: Pt, m: MotorProfile, rng: Rng): PathPoint[] {
 	const n = rng.int(PATH.grabWobble.points[0], PATH.grabWobble.points[1]);
 	const sigma = (PATH.grabWobble.sigmaPx * m.jitterPx) / MOTOR_DEFAULTS.jitterPx;
-	const pts: PathPoint[] = [];
+	const intervals: number[] = [];
 	let x = p.x;
 	let y = p.y;
 	for (let i = 0; i < n; i++) {
 		x += rng.normal(0, sigma);
 		y += rng.normal(0, sigma);
-		pts.push({ x: Math.round(x), y: Math.round(y), dtMs: sampleRange(PATH.grabWobble.dtMs, rng) });
+		intervals.push(sampleRange(PATH.grabWobble.dtMs, rng));
 	}
+	const start = { x: Math.round(p.x), y: Math.round(p.y) };
+	const target = limitStep(
+		start,
+		{ x: Math.round(x), y: Math.round(y) },
+		PATH.grabWobble.maxOffsetPx
+	);
+	const pts: PathPoint[] = [];
+	const em = new Emitter(start, pts, (m.peakSpeedCapPxPerS * m.sampleIntervalMs) / 1000);
+	for (let i = 0; i < n; i++) {
+		const progress = minJerk((i + 1) / n);
+		em.push(
+			{
+				x: Math.round(start.x + (target.x - start.x) * progress),
+				y: Math.round(start.y + (target.y - start.y) * progress),
+			},
+			intervals[i] ?? m.sampleIntervalMs
+		);
+	}
+	em.flush();
 	return pts;
 }
 
-/**
- * Slow idle tremor while resting: 1–2 px AR(1) drift around `p` at 40–120 ms
- * cadence, totalling at most `maxMs`. Never strays more than `idle.maxOffsetPx`.
- */
+/** A pause can stay completely still, or contain one bounded adjustment after a quiet interval. */
 export function idleTremor(p: Pt, maxMs: number, m: MotorProfile, rng: Rng): PathPoint[] {
-	const pts: PathPoint[] = [];
-	let jx = 0;
-	let jy = 0;
-	let spent = 0;
-	let prev = { x: Math.round(p.x), y: Math.round(p.y) };
+	if (maxMs < PATH.idle.minRestMs || !rng.chance(PATH.idle.adjustmentProb)) return [];
+	const dtMs = sampleRange(PATH.idle.delayMs, rng);
+	if (dtMs > maxMs) return [];
 	const sigma = Math.min(PATH.idle.sigmaPx, m.jitterPx);
-	for (;;) {
-		const dt = sampleRange(PATH.idle.dtMs, rng);
-		if (spent + dt > maxMs) break;
-		spent += dt;
-		jx = PATH.tremorRho * jx + rng.normal(0, sigma);
-		jy = PATH.tremorRho * jy + rng.normal(0, sigma);
-		const lim = PATH.idle.maxOffsetPx;
-		const q = {
-			x: Math.round(p.x + Math.max(-lim, Math.min(lim, jx))),
-			y: Math.round(p.y + Math.max(-lim, Math.min(lim, jy))),
-		};
-		if (q.x === prev.x && q.y === prev.y) {
-			const last = pts[pts.length - 1];
-			if (last) last.dtMs += dt;
-			continue;
-		}
-		pts.push({ x: q.x, y: q.y, dtMs: dt });
-		prev = q;
-	}
-	return pts;
+	const lim = PATH.idle.maxOffsetPx;
+	const x = Math.round(p.x + Math.max(-lim, Math.min(lim, rng.normal(0, sigma))));
+	const y = Math.round(p.y + Math.max(-lim, Math.min(lim, rng.normal(0, sigma))));
+	if (x === Math.round(p.x) && y === Math.round(p.y)) return [];
+	return [{ x, y, dtMs }];
 }

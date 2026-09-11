@@ -4,7 +4,7 @@
  * (hover 1–3 candidate from-squares weighted by selection probability, dwell
  * with micro-drift, occasional trace toward the to-square or a feint over the
  * piece without pressing) → [preview selections at the §9.3a rate] → decision
- * pause (15–40 % of the budget) with idle tremor. Surplus budget lengthens the
+ * pause (15–40 % of the budget) with an optional idle adjustment. Surplus budget lengthens the
  * orientation and hover dwells rather than the pause. Total = `waitMs −
  * reactionMs`; too short a window yields `[rest]` only. Every action is
  * continuous with the previous one.
@@ -130,7 +130,10 @@ export class ExplorationPlanner {
 			cursor = actionEnd(a, cursor);
 		};
 
-		// Orientation: slow idle drift where the hand rests.
+		// Decide browsing before optional rest adjustments consume random draws.
+		const wantHover = rng.chance(hoverAnyProb(profile, opts.nReasonable, waitMs));
+
+		// Orientation: usually a stationary pause where the hand rests.
 		const orientMs = sampleRange(EXPLORATION.orientationFrac, rng) * b.explore;
 		const drift = idleTremor(cursor, orientMs, profile, rng);
 		push({ kind: "drift", path: drift, dwellMs: orientMs - pathMs(drift) });
@@ -142,7 +145,7 @@ export class ExplorationPlanner {
 		const reserve = wantPreview ? PREVIEW.reserveMs * (wantSecond ? 2 : 1) : 0;
 
 		// Scan: hover candidate pieces, sometimes trace toward the to-square or feint a grab.
-		if (rng.chance(hoverAnyProb(profile, opts.nReasonable, waitMs))) {
+		if (wantHover) {
 			const pool = aggregate(candidates);
 			const wanted = rng.weighted([1, 2, 3], EXPLORATION.hoverCountWeights);
 			for (let i = 0; i < wanted && pool.length > 0; i++) {
@@ -198,13 +201,13 @@ export class ExplorationPlanner {
 			}
 		}
 
-		// Surplus (budget − spent − pause) lengthens hover dwells, then the orientation drift,
+		// Surplus (budget − spent − pause) lengthens hover dwells, then the stationary orientation pause,
 		// so the decision pause stays inside its 15–40 % band. Each hover is topped up toward a
 		// *fresh draw* from `hoverDwellMs` rather than filled to the range's ceiling: filling it
 		// meant every hover on a window with time to spare dwelled exactly `hoverDwellMs[1]` —
 		// measured at 63 % of hovers over a simulated 3+0 game and 84 % over a 10+0 one, which is
 		// a hand that pauses on a piece for the same 0.9 s every single time. Whatever the hovers
-		// do not take goes to the orientation drift below, which is idle tremor and not a pose.
+		// do not take goes to a stationary orientation pause.
 		let surplus = budget - b.spent - b.pauseMs;
 		for (const a of actions) {
 			if (surplus <= 0) break;
@@ -216,12 +219,12 @@ export class ExplorationPlanner {
 		}
 		const orientation = actions[0];
 		if (surplus > 0 && orientation?.kind === "drift") {
-			extendDrift(orientation, surplus, profile, rng);
+			extendDrift(orientation, surplus);
 			surplus = 0;
 		}
 		b.spent = planDurationMs(actions);
 
-		// Decision pause: rest with idle tremor for whatever remains (= the pause).
+		// Decision pause: rest with an optional adjustment for whatever remains (= the pause).
 		const restMs = Math.max(0, budget - b.spent);
 		const tremor = idleTremor(cursor, restMs * EXPLORATION.restTremorFrac, profile, rng);
 		const rest: HandAction = { kind: "rest", dwellMs: restMs - pathMs(tremor) };
@@ -312,27 +315,9 @@ export class ExplorationPlanner {
 	}
 }
 
-/** Lengthen a drift action by `extraMs` with more idle tremor that ends where the drift ended. */
-function extendDrift(drift: HandAction, extraMs: number, profile: MotorProfile, rng: Rng): void {
-	const path = drift.path ?? [];
-	const end = path[path.length - 1];
-	if (!end) {
-		drift.dwellMs += extraMs;
-		return;
-	}
-	const extra = idleTremor(end, extraMs * EXPLORATION.restTremorFrac, profile, rng);
-	const tail = extra[extra.length - 1];
-	if (tail) {
-		// Return to the original end point so the next action's path still starts there.
-		const prev = extra[extra.length - 2] ?? end;
-		if (prev.x === end.x && prev.y === end.y) extra.pop();
-		else {
-			tail.x = end.x;
-			tail.y = end.y;
-		}
-	}
-	drift.path = [...path, ...extra];
-	drift.dwellMs += extraMs - pathMs(extra);
+/** Surplus thinking time is a stationary pause at the action's endpoint. */
+function extendDrift(drift: HandAction, extraMs: number): void {
+	drift.dwellMs += extraMs;
 }
 
 /** Dwell that fits in `room` (shrunk to `min` at most), else `null`. */

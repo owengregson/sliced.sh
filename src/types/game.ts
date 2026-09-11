@@ -141,6 +141,12 @@ export interface GameSessionView {
 	sideToMove: Color | null;
 	ply: number;
 	clocks: PositionSnapshot["clocks"] | null;
+	/** Latest analysis for the current position, including opponent-turn pondering. Side-to-move POV. */
+	evaluation?: {
+		fen: string;
+		eval: EvalLine["score"];
+		wdl?: [number, number, number];
+	};
 	timeControl?: TimeControl;
 	hand: "resting" | "exploring" | "moving" | "paused" | "detached";
 	lastExecution?: ExecutionResult;

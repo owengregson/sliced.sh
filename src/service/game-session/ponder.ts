@@ -27,6 +27,7 @@ import { errorMessage } from "@core/util/errors";
 import { newId } from "@core/util/ids";
 import type { Scheduler } from "@core/util/scheduler";
 import { defaultNow, defaultScheduler } from "@core/util/scheduler";
+import type { EvalLine } from "@typedefs/engine";
 
 export type PonderKind = "opponent" | "panel";
 
@@ -43,6 +44,8 @@ export interface PonderControllerDeps {
 	maxMs?: number;
 	/** Called when a ponder produced a new expected reply. */
 	onExpectedReply?: (uci: string | null) => void;
+	/** A new current-position line is available to the panel and free pointer planner. */
+	onUpdate?: () => void;
 }
 
 interface Running {
@@ -59,10 +62,12 @@ export class PonderController {
 	private readonly now: () => number;
 	private readonly maxMs: number;
 	private readonly onExpectedReply: ((uci: string | null) => void) | undefined;
+	private readonly onUpdate: (() => void) | undefined;
 	private running: Running | null = null;
 	private expected: string | null = null;
 	private expectedFen: string | null = null;
 	private lastResult: AnalysisResult | null = null;
+	private latest: { fen: string; lines: readonly EvalLine[] } | null = null;
 	private disposed = false;
 
 	constructor(deps: PonderControllerDeps) {
@@ -71,6 +76,7 @@ export class PonderController {
 		this.now = deps.now ?? defaultNow;
 		this.maxMs = deps.maxMs ?? TIMINGS.ponderMaxMs;
 		this.onExpectedReply = deps.onExpectedReply;
+		this.onUpdate = deps.onUpdate;
 	}
 
 	/** `lines[0].pvUci[0]` of the last ponder on `fen`, or `null`. */
@@ -86,6 +92,15 @@ export class PonderController {
 	/** The last finished ponder result (the panel's eval while the opponent thinks). */
 	result(): AnalysisResult | null {
 		return this.lastResult;
+	}
+
+	/** Current-position candidates, including updates from an unfinished ponder. */
+	latestLines(fen: string): readonly EvalLine[] {
+		const latest = this.latest;
+		if (!latest) return [];
+		if (latest.fen === fen) return latest.lines;
+		const queried = loadPosition(fen);
+		return queried && loadPosition(latest.fen)?.fen() === queried.fen() ? latest.lines : [];
 	}
 
 	isRunning(): boolean {
@@ -136,6 +151,7 @@ export class PonderController {
 			}
 		);
 		this.running = { kind, fen: reached, handle, timer, settled };
+		void this.observe(reached, handle);
 		log.debug("ponder: started", { kind, fen, at: this.now() });
 	}
 
@@ -160,10 +176,24 @@ export class PonderController {
 	}
 
 	private settle(fen: string, result: AnalysisResult): void {
+		this.latest = { fen, lines: result.final.lines };
+		if (!this.disposed) this.onUpdate?.();
 		this.lastResult = result;
 		const reply = result.final.lines[0]?.pvUci[0] ?? result.bestmove ?? null;
 		this.expected = reply;
 		this.expectedFen = fen;
 		this.onExpectedReply?.(reply);
+	}
+
+	private async observe(fen: string, handle: AnalysisHandle): Promise<void> {
+		try {
+			for await (const update of handle.updates) {
+				if (this.disposed || this.running?.handle !== handle) return;
+				this.latest = { fen, lines: update.lines };
+				this.onUpdate?.();
+			}
+		} catch (error) {
+			log.debug("ponder: candidate update ended", { error: errorMessage(error) });
+		}
 	}
 }

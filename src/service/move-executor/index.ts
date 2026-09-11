@@ -19,6 +19,8 @@ import type { BoardGeometryReply, ExpectedMove } from "@core/constants/messages"
 import { TIMINGS } from "@core/constants/timings";
 import { log } from "@core/logger";
 import { perGameProfile, perMoveProfile, profileFor } from "@core/motor/motor-profile";
+import type { OpponentExplorationCandidates } from "@core/motor/opponent-candidates";
+import { planOpponentExploration } from "@core/motor/opponent-exploration";
 import { plausibleStart } from "@core/motor/sampling";
 import type {
 	ExecutionPlan,
@@ -281,6 +283,10 @@ export class MoveExecutor {
 	private disposed = false;
 	private armVersion = 0;
 	private focusReservation: number | null = null;
+	private inputVersion = 0;
+	private exploration: { ac: AbortController; done: Promise<void> } | null = null;
+	private explorationSeed = 0;
+	private waitingForExploration = 0;
 
 	constructor(deps: MoveExecutorDeps) {
 		this.tabId = deps.tabId;
@@ -398,7 +404,9 @@ export class MoveExecutor {
 	 * executor really is idle.
 	 */
 	async whenIdle(): Promise<void> {
-		while (this.running) await this.running.done.catch(() => null);
+		while (this.running || this.exploration) {
+			await Promise.all([this.running?.done.catch(() => null), this.exploration?.done]);
+		}
 	}
 
 	isArmed(): boolean {
@@ -454,6 +462,83 @@ export class MoveExecutor {
 		return () => void set?.delete(cb as (payload: never) => void);
 	}
 
+	/** Start cancellable free movement; the live source also supplies the position/turn gate. */
+	exploreOpponent(source: () => OpponentExplorationCandidates | null): void {
+		if (this.disposed || !this.isArmed()) return;
+		const previous = this.exploration;
+		if (previous && !previous.ac.signal.aborted) return;
+		const ac = new AbortController();
+		const task = { ac, done: Promise.resolve() };
+		this.exploration = task;
+		task.done = Promise.resolve()
+			.then(async () => {
+				if (previous) await previous.done;
+				// A completed premove reports before its execution promise settles. Let its last
+				// stationary rest/release finish, then resume from the actual hand endpoint.
+				while (this.running && !ac.signal.aborted) await this.running.done.catch(() => null);
+				if (
+					ac.signal.aborted ||
+					this.pending ||
+					this.waitingForExploration > 0 ||
+					this.disposed ||
+					!this.isArmed()
+				)
+					return;
+				await this.settleAfterAttach(ac.signal);
+				const rng = createRng(`${this.config.gameSeed}:opponent:${this.explorationSeed++}`);
+				let previousTarget: Square | undefined;
+				while (!ac.signal.aborted && !this.disposed && this.isArmed() && !this.pending) {
+					const candidates = source();
+					if (!candidates) return;
+					const reply = await this.readGeometry(this.tabId, undefined, ac.signal);
+					if (!reply || ac.signal.aborted || !source()) return;
+					const geometry = boardGeometryOf(reply);
+					const cursor = this.ownership.position(this.tabId) ?? plausibleStart(geometry.boardRect, rng);
+					const profile = perMoveProfile(
+						perGameProfile(
+							profileFor(this.config.persona, this.config.tcClass, "normal"),
+							createRng(`${this.config.gameSeed}:hand`)
+						),
+						rng
+					);
+					const plan = planOpponentExploration(
+						{
+							geometry,
+							profile,
+							cursor,
+							...candidates,
+							...(previousTarget ? { previousTarget } : {}),
+						},
+						rng
+					);
+					const controller = new HandController({
+						backend: this.createBackend(cursor),
+						focus: this.focus,
+						ownership: this.ownership,
+						geometry: this.geometry,
+						...(this.board ? { board: this.board } : {}),
+						rng,
+						now: this.now,
+						scheduler: this.scheduler,
+						// No execution hand event: a position transition can arrive during any await.
+					});
+					await controller.explore(this.tabId, plan.actions, ac.signal, geometry.boardRect);
+					previousTarget = plan.lastTarget ?? undefined;
+				}
+			})
+			.catch((error: unknown) => {
+				if (!ac.signal.aborted)
+					log.debug("executor: opponent exploration ended", { error: errorMessage(error) });
+			})
+			.finally(() => {
+				if (this.exploration === task) this.exploration = null;
+			});
+	}
+
+	isExploring(): boolean {
+		return this.exploration !== null && !this.exploration.ac.signal.aborted;
+	}
+
 	// ── scheduling ────────────────────────────────────────────────────────
 
 	/**
@@ -463,6 +548,7 @@ export class MoveExecutor {
 	schedule(rec: Recommendation, plan: TimingPlan, ctx: MoveContext = {}): void {
 		if (this.disposed) return;
 		this.clearPending();
+		this.exploration?.ac.abort();
 		this.parked?.ac.abort();
 		const now = this.now();
 		const available = plan.deadlineMs - now;
@@ -514,6 +600,8 @@ export class MoveExecutor {
 	 * hand releases at once) and the board check in flight, if any.
 	 */
 	cancel(): void {
+		this.inputVersion += 1;
+		this.exploration?.ac.abort();
 		this.clearPending();
 		this.parked?.ac.abort();
 		this.running?.ac.abort();
@@ -551,6 +639,19 @@ export class MoveExecutor {
 		timing: TimingPlan,
 		ctx: MoveContext
 	): Promise<ExecutionResult> {
+		const version = this.inputVersion;
+		const exploration = this.exploration;
+		if (exploration) {
+			exploration.ac.abort();
+			this.waitingForExploration += 1;
+			try {
+				await exploration.done;
+			} finally {
+				this.waitingForExploration -= 1;
+			}
+			if (version !== this.inputVersion || this.disposed || !this.isArmed())
+				return this.droppedReplacement(rec);
+		}
 		let replacement = false;
 		if (this.running) {
 			if (!this.running.ac.signal.aborted) {

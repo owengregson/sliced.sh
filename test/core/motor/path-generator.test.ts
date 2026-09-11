@@ -1,7 +1,7 @@
 // test/core/motor/path-generator.test.ts — Step 1 geometry tests (Appendix G §7.3).
 import { describe, expect, it } from "bun:test";
 import { MIN_JERK, MOTOR_DEFAULTS } from "@core/motor/constants";
-import { generatePath, grabWobble } from "@core/motor/path-generator";
+import { generatePath, grabWobble, idleTremor } from "@core/motor/path-generator";
 import type { MotorProfile, Rect } from "@core/motor/types";
 import { createRng } from "@core/rng";
 import { dist, inside, smooth, speeds, totalMs } from "./fixtures";
@@ -102,16 +102,44 @@ describe("generatePath", () => {
 });
 
 describe("grabWobble", () => {
-	it("produces 2–4 integer points within a few px of the press point", () => {
-		for (let seed = 0; seed < 20; seed++) {
+	it("settles in one bounded direction, suppressing repeated coordinates and reversals", () => {
+		for (let seed = 0; seed < 200; seed++) {
 			const pts = grabWobble({ x: 200, y: 200 }, MOTOR_DEFAULTS, createRng(seed));
-			expect(pts.length).toBeGreaterThanOrEqual(2);
 			expect(pts.length).toBeLessThanOrEqual(4);
+			let previous = { x: 200, y: 200 };
+			const last = pts.at(-1) ?? previous;
 			for (const p of pts) {
 				expect(Number.isInteger(p.x)).toBe(true);
-				expect(dist(p, { x: 200, y: 200 })).toBeLessThan(6);
+				expect(Number.isInteger(p.y)).toBe(true);
+				expect(dist(p, { x: 200, y: 200 })).toBeLessThanOrEqual(3);
+				expect(dist(previous, p)).toBeGreaterThan(0);
+				expect((p.x - previous.x) * (last.x - 200)).toBeGreaterThanOrEqual(0);
+				expect((p.y - previous.y) * (last.y - 200)).toBeGreaterThanOrEqual(0);
 				expect(p.dtMs).toBeGreaterThanOrEqual(8);
+				previous = p;
 			}
 		}
+	});
+});
+
+// Resting on a piece must not generate a constant stream of tiny movements.
+describe("idleTremor", () => {
+	it("keeps short rests still and makes at most one bounded adjustment during a long rest", () => {
+		let still = 0;
+		let adjusted = 0;
+		for (let seed = 0; seed < 500; seed++) {
+			expect(idleTremor(FROM, 800, MOTOR_DEFAULTS, createRng(seed))).toEqual([]);
+			const path = idleTremor(FROM, 5000, MOTOR_DEFAULTS, createRng(seed));
+			expect(path.length).toBeLessThanOrEqual(1);
+			if (!path.length) still += 1;
+			else adjusted += 1;
+			for (const point of path) {
+				expect(point.dtMs).toBeGreaterThanOrEqual(650);
+				expect(point.dtMs).toBeLessThanOrEqual(5000);
+				expect(dist(point, FROM)).toBeLessThanOrEqual(Math.SQRT2 * 3);
+			}
+		}
+		expect(still).toBeGreaterThan(400);
+		expect(adjusted).toBeGreaterThan(0);
 	});
 });

@@ -338,6 +338,27 @@ function queued(): boolean {
 }
 
 describe("game session: a queued premove (Fix F)", () => {
+	it("resumes free exploration after a queued drag without touching the queued piece again", async () => {
+		let entered = false;
+		for (let seed = 0; seed < SEEDS && !entered; seed++) {
+			await h?.dispose();
+			const { mark } = await armPremove({ seed, premoves: true });
+			if (!queued()) continue;
+			entered = true;
+			expect(h.executor()?.isRunning()).toBe(false);
+			const held = h.site.premoveQueued();
+			const before = dispatched().length;
+			const presses = pressCount(mark);
+			expect(await h.until(() => dispatched().length > before + 20, 3000)).toBe(true);
+			await h.advance(10_000);
+			expect(pressCount(mark)).toBe(presses);
+			expect(h.site.premoveQueued()).toEqual(held);
+			expect(h.executor()?.isExploring()).toBe(true);
+			expect(h.session().currentState()).toBe("live:opponent-turn");
+		}
+		expect(entered).toBe(true);
+	});
+
 	it("enters the armed premove on the site during the opponent's turn", async () => {
 		let entered = false;
 		for (let seed = 0; seed < SEEDS && !entered; seed++) {

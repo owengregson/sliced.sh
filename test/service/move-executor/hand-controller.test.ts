@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { debuggerAttach, debuggerSend } from "@core/chrome/debugger";
 import { type BoardGeometryReply, CDP, EXECUTOR } from "@core/constants";
-import { MOTOR_DEFAULTS, PATH, PROMOTION_LOOK_DELAY_MS } from "@core/motor/constants";
+import { MOTOR_DEFAULTS, PROMOTION_LOOK_DELAY_MS } from "@core/motor/constants";
 import type {
 	ExecutionPlan,
 	HandState,
@@ -222,6 +222,96 @@ async function run(
 	return done;
 }
 
+describe("HandController opponent exploration", () => {
+	it("honors still dwell time and emits only free movement, retaining the endpoint", async () => {
+		const { controller, backend } = makeController();
+		const path = [
+			{ x: 695, y: 685, dtMs: 20 },
+			{ x: 690, y: 680, dtMs: 20 },
+		];
+		const started = sim.now() - START;
+		const result = controller.explore(
+			tabId,
+			[
+				{ kind: "rest", dwellMs: 300 },
+				{ kind: "hover", path, dwellMs: 600 },
+			],
+			new AbortController().signal,
+			BOARD
+		);
+		await sim.time.advance(299);
+		expect(commands()).toEqual([]);
+		await sim.time.advance(642);
+		expect(await result).toEqual({ x: 690, y: 680 });
+		expect(commands()).toHaveLength(2);
+		expect(
+			commands().every((command) => command.type === "mouseMoved" && command.buttons === 0)
+		).toBe(true);
+		expect(commands()[0]!.at - started).toBeGreaterThanOrEqual(300);
+		expect(ownership.position(tabId)).toEqual(backend.position());
+	});
+
+	it("cancels a pending path point without release or a late movement", async () => {
+		const { controller, backend } = makeController();
+		const ac = new AbortController();
+		const result = controller
+			.explore(
+				tabId,
+				[
+					{
+						kind: "hover",
+						path: [
+							{ x: 695, y: 685, dtMs: 20 },
+							{ x: 690, y: 680, dtMs: 500 },
+						],
+						dwellMs: 500,
+					},
+				],
+				ac.signal,
+				BOARD
+			)
+			.catch((error: unknown) => error);
+		await sim.time.advance(21);
+		expect(commands()).toHaveLength(1);
+		ac.abort();
+		await sim.time.advance(1000);
+		expect(await result).toBeInstanceOf(Error);
+		expect(commands()).toHaveLength(1);
+		expect(backend.pressed()).toBe(false);
+		expect(ownership.position(tabId)).toEqual({ x: 695, y: 685 });
+	});
+
+	it("ends on reflow before a subsequent point can target old geometry", async () => {
+		let rect = BOARD;
+		const { controller } = makeController(1, MOTOR_DEFAULTS, {
+			rect: () => rect,
+			changedAt: () => sim.now(),
+		});
+		const result = controller
+			.explore(
+				tabId,
+				[
+					{
+						kind: "hover",
+						path: [
+							{ x: 695, y: 685, dtMs: 20 },
+							{ x: 690, y: 680, dtMs: 500 },
+						],
+						dwellMs: 0,
+					},
+				],
+				new AbortController().signal,
+				BOARD
+			)
+			.catch((error: unknown) => error);
+		await sim.time.advance(21);
+		rect = { ...BOARD, top: BOARD.top + 50 };
+		await sim.time.advance(1000);
+		expect(await result).toBeInstanceOf(Error);
+		expect(commands()).toHaveLength(1);
+	});
+});
+
 describe("HandController drag execution", () => {
 	it("records exploration → approach → press inside from → drag moves → release inside to, on time", async () => {
 		const ctrl = makeController(7);
@@ -270,16 +360,15 @@ describe("HandController drag execution", () => {
 			const b = cmds[i] as Cmd;
 			if (a.type === "mouseMoved" && b.type === "mouseMoved") expect(b.at - a.at).toBeGreaterThan(0);
 		}
-		// post-drop rest: slow idle drift on the dropped piece, free moves only, inside the rest band
+		// Short post-drop rests stay stationary and still consume their sampled time interval.
 		const after = cmds.slice(releaseIdx + 1);
-		expect(after.length).toBeGreaterThan(0);
-		for (const c of after) expect(c).toMatchObject({ type: "mouseMoved", buttons: 0 });
-		const last = cmds.at(-1) as Cmd;
-		expect(last.at - release.at).toBeLessThanOrEqual(EXECUTOR.postDropRestMs[1]);
-		expect(Math.hypot(last.x - release.x, last.y - release.y)).toBeLessThanOrEqual(
-			PATH.idle.maxOffsetPx
-		);
-		expect(result.endPoint).toEqual({ x: last.x, y: last.y });
+		expect(after).toEqual([]);
+		const rest = [...result.timeline].reverse().find((entry) => entry.phase === "rest");
+		expect(rest).toBeDefined();
+		const restMs = (rest?.endMs ?? 0) - (rest?.startMs ?? 0);
+		expect(restMs).toBeGreaterThanOrEqual(EXECUTOR.postDropRestMs[0]);
+		expect(restMs).toBeLessThanOrEqual(EXECUTOR.postDropRestMs[1]);
+		expect(result.endPoint).toEqual({ x: release.x, y: release.y });
 		expect(result.pressed).toBe(true);
 		expect(ownership.position(tabId)).toEqual(result.endPoint);
 		expect(ctrl.backend.position()).toEqual(result.endPoint);

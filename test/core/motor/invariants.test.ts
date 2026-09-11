@@ -204,7 +204,8 @@ describe("motor invariants (500 random moves)", () => {
 			// There is no click-click form to simulate — it was removed end to end.
 			const wobble = grabWobble(cursor, m, rng);
 			checkPath(cursor, wobble, m);
-			cursor = { x: wobble[wobble.length - 1]!.x, y: wobble[wobble.length - 1]!.y };
+			const settled = wobble.at(-1) ?? cursor;
+			cursor = { x: settled.x, y: settled.y };
 			const drop = samplePointInRect(
 				toRect,
 				SAMPLING.release.sigmaFrac,

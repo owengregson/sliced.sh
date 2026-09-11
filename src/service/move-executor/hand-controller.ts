@@ -41,6 +41,7 @@ import { CLICK, EXPLORATION, PATH, PROMOTION_LOOK_DELAY_MS, SAMPLING } from "@co
 import { type ExplorationOptions, ExplorationPlanner } from "@core/motor/exploration";
 import { inRect, lastPoint, pathMs, rectShiftPx, sampleRange } from "@core/motor/geometry";
 import type { InputBackend } from "@core/motor/input-backend";
+import type { OpponentExplorationAction } from "@core/motor/opponent-exploration";
 import { generatePath, grabWobble, idleTremor } from "@core/motor/path-generator";
 import { clickReleasePoint, samplePointInRect } from "@core/motor/sampling";
 import type {
@@ -296,6 +297,34 @@ export class HandController {
 
 	state(): HandState {
 		return this.current;
+	}
+
+	/** Run one cancellable opponent-turn bout. This path never presses or releases a button. */
+	async explore(
+		tabId: number,
+		actions: readonly OpponentExplorationAction[],
+		signal: AbortSignal,
+		boardRect: Rect
+	): Promise<Pt> {
+		if (this.signal !== null || this.backend.pressed()) throw new SkipError(EXECUTOR.reasons.dropped);
+		this.tabId = tabId;
+		this.signal = signal;
+		const guard = () => this.guardBoard(boardRect);
+		try {
+			throwIfAborted(signal);
+			this.gate();
+			guard();
+			for (const action of actions) {
+				this.setState(action.kind === "rest" ? "rest" : "exploring");
+				if (action.path) await this.travel(action.path, guard);
+				await this.pause(action.dwellMs, guard);
+			}
+			return this.backend.position();
+		} finally {
+			this.ownership.setPosition(tabId, this.backend.position());
+			this.signal = null;
+			this.setState("rest");
+		}
 	}
 
 	async execute(
@@ -871,13 +900,11 @@ export class HandController {
 		tl.begin("rest");
 		this.setState("rest");
 		try {
-			const drift = idleTremor(
-				this.backend.position(),
-				sampleRange(EXECUTOR.postDropRestMs, this.rng),
-				m,
-				this.rng
-			);
+			const restMs = sampleRange(EXECUTOR.postDropRestMs, this.rng);
+			const untilAt = this.now() + restMs;
+			const drift = idleTremor(this.backend.position(), restMs, m, this.rng);
 			await this.travel(drift);
+			await this.sleepUntil(untilAt);
 		} catch (error) {
 			// Whatever was dispatched before the cut is where the hand is now.
 			this.ownership.setPosition(this.tabId, this.backend.position());

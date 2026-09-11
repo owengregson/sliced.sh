@@ -38,6 +38,8 @@ export const MIN_JERK = { c3: 10, c4: -15, c5: 6, peakSpeedFactor: 1.875 } as co
 export const PATH = {
 	/** AR(1) tremor correlation. */
 	tremorRho: 0.6,
+	/** Suppress sample noise on small corrections; full macro-path noise above the upper bound. */
+	noiseRampPx: [12, 48] as MsRange,
 	/** ghost-cursor clamps the anchor spread to 2..200 px, then × U(0.05, 0.25). */
 	bezierSpreadPx: [2, 200] as MsRange,
 	bezierSpreadFrac: [0.05, 0.25] as MsRange,
@@ -69,16 +71,28 @@ export const PATH = {
 	},
 	microCorrection: {
 		sigmaPx: 2.5,
+		minShiftPx: 3,
 		padPx: 4,
 		pauseMs: [20, 60] as MsRange,
 		durMs: [60, 120] as MsRange,
 	},
 	/** Final landing must be this far inside the target rect. */
 	targetPadPx: 2,
-	grabWobble: { points: [2, 4] as MsRange, sigmaPx: 0.8, dtMs: [8, 22] as MsRange },
+	grabWobble: {
+		points: [2, 4] as MsRange,
+		sigmaPx: 0.8,
+		dtMs: [8, 22] as MsRange,
+		maxOffsetPx: 3,
+	},
 	hesitationWobbleDtMs: [40, 90] as MsRange,
-	/** Idle tremor while resting: slow 1–2 px drift. */
-	idle: { sigmaPx: 0.7, dtMs: [40, 120] as MsRange, maxOffsetPx: 3 },
+	/** A resting hand is usually still; at most one small adjustment in a long pause. */
+	idle: {
+		adjustmentProb: 0.18,
+		minRestMs: 900,
+		delayMs: [650, 1800] as MsRange,
+		sigmaPx: 0.7,
+		maxOffsetPx: 3,
+	},
 } as const;
 
 /** Appendix G §2.3 WindMouse (Ben Land: G 9, W 3, M 15, D 12; maxStep ≤ 11 keeps the first rounded step ≤ 12 px). */
@@ -282,3 +296,20 @@ export const STYLE_MIX_PER_GAME: Readonly<Record<MotorStyle, { bezier: number; w
 	bezier: { bezier: 0.85, wind: 0.15 },
 	wind: { bezier: 0.3, wind: 0.7 },
 };
+
+/** Opponent-turn free movement: short activity bouts interleaved with quiet observation. */
+export const OPPONENT_EXPLORATION = {
+	maxCandidates: 10,
+	replyBranches: 4,
+	boutMs: [3200, 7800] as MsRange,
+	activeFrac: [0.68, 0.88] as MsRange,
+	orientationMs: [100, 420] as MsRange,
+	visits: [2, 5] as MsRange,
+	ownBias: [0.38, 0.62] as MsRange,
+	switchSideProb: 0.7,
+	traceProb: 0.65,
+	hoverDwellMs: [180, 650] as MsRange,
+	traceDwellMs: [140, 500] as MsRange,
+	betweenVisitsMs: [90, 360] as MsRange,
+	minDwellMs: 100,
+} as const;
