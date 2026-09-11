@@ -13,10 +13,12 @@ import { DEFAULT_KEYBINDS } from "@core/constants/defaults";
 import { LOCAL_KEYS } from "@core/constants/storage-keys";
 import { TOAST_KEYS } from "@core/constants/toasts";
 import type { SessionStats, Square } from "@typedefs/game";
+import type { AcBlob } from "@typedefs/telemetry";
 import type { TimingLogEntry } from "@typedefs/timing";
 import {
 	type AcMoveMeta,
 	assertHumanShapedAc,
+	assertWellFormedAc,
 } from "../../../tools/telemetry-conformance/ac-model";
 import { createGameHarness, type GameHarness } from "./harness";
 import { positionKey } from "./scripted-engine";
@@ -148,25 +150,40 @@ function playedRowsWithoutTelemetry(): TimingLogEntry[] {
  * 100 % preview rate, which the model's sample-size-free `hardMax` rejects. Both are asserted
  * field by field in their own cases instead.
  */
-function assertRowsHumanShaped(): void {
-	const rows = h.timingLog.entries().filter((e) => e.telemetry !== undefined);
-	expect(rows.length).toBeGreaterThan(0);
-	const acs = rows.map((e) => {
+function rowsWithBlobs(only?: (e: TimingLogEntry) => boolean): {
+	acs: AcBlob[];
+	moves: AcMoveMeta[];
+} {
+	const acs: AcBlob[] = [];
+	const moves: AcMoveMeta[] = [];
+	for (const e of h.timingLog.entries()) {
 		const t = e.telemetry;
-		if (!t) throw new Error("unreachable: filtered above");
-		return t.ac;
-	});
-	const moves: AcMoveMeta[] = rows.map((e) => {
-		const meta: AcMoveMeta = {
-			mode: e.mode,
-			thinkMs: e.actualMs ?? e.plannedMs,
-			clockMs: e.clockMs,
-		};
-		const n = e.telemetry?.nReasonable;
-		if (n !== undefined) meta.nReasonable = n;
-		return meta;
-	});
+		if (!t || (only !== undefined && !only(e))) continue;
+		acs.push(t.ac);
+		const meta: AcMoveMeta = { mode: e.mode, thinkMs: e.actualMs ?? e.plannedMs, clockMs: e.clockMs };
+		if (t.nReasonable !== undefined) meta.nReasonable = t.nReasonable;
+		moves.push(meta);
+	}
+	return { acs, moves };
+}
+
+function assertRowsHumanShaped(): void {
+	const { acs, moves } = rowsWithBlobs();
+	expect(acs.length).toBeGreaterThan(0);
 	assertHumanShapedAc(acs, { moves });
+}
+
+/**
+ * Every **premove** row against the per-move half of the §13.2 model — well-formedness and conduct,
+ * with **no statistical band** (owner's ruling, Fix round 2). A premove press is a committed move
+ * attempt, not a §9.3a preview touch, so pooling it into the preview-rate band would corrupt the one
+ * population another lane has just measured. What a premove row can be held to — and what Critical 1
+ * needed and did not have — is that it describes a real window.
+ */
+function assertPremoveRowsWellFormed(): void {
+	const { acs, moves } = rowsWithBlobs((e) => e.mode === "premove" && e.actualMs !== null);
+	expect(acs.length).toBeGreaterThan(0);
+	assertWellFormedAc(acs, { moves });
 }
 
 interface Armed {
@@ -379,6 +396,7 @@ describe("game session: a queued premove (Fix F)", () => {
 			// Every played move kept the record of the window it was played in, and the whole export
 			// satisfies the project's own §13.2 model.
 			expect(playedRowsWithoutTelemetry()).toHaveLength(0);
+			assertPremoveRowsWellFormed();
 			assertRowsHumanShaped();
 			// And every row's realised think is its *own*. `TimingModel.observe` writes `actualMs`
 			// under the model's last-planned ply, so calling it for a hand-built premove plan lands
@@ -450,6 +468,7 @@ describe("game session: a queued premove (Fix F)", () => {
 			expect(stats?.moves).toBe(2);
 			expect(stats?.scoredMoves).toBe(1);
 			expect(playedRowsWithoutTelemetry()).toHaveLength(0);
+			assertPremoveRowsWellFormed();
 			assertRowsHumanShaped();
 		}
 		expect(fired).toBe(true);
@@ -551,6 +570,9 @@ describe("game session: the opponent replies while the premove drag is still in 
 			expect(ac?.MoveHoldTime).toBeGreaterThan(0);
 			expect(ac?.TotalFocusTime).toBeGreaterThanOrEqual(ac?.MoveHoldTime ?? 0);
 			expect(playedRowsWithoutTelemetry()).toHaveLength(0);
+			// The per-move half of the model, over the premove row itself: this is the guard Critical 1
+			// needed, and it costs no band (Fix round 2).
+			assertPremoveRowsWellFormed();
 			assertRowsHumanShaped();
 		}
 		expect(fired).toBe(true);
@@ -845,13 +867,21 @@ describe("game session: what a premove may and may not claim (Fix F)", () => {
 			);
 			expect(stats?.moves).toBe(2);
 			// §13.2, honestly: the owner's own blur fell inside the window the input was in, so the
-			// exported row says so. This is the one row shape the premove path can produce that
-			// `assertHumanShapedAc` rejects — and it rejects it correctly, because the blur happened.
+			// exported row says so — and it says so on the *opponent's* turn, because that is the
+			// period our premove put a window around. It is his behaviour, not our misconduct: the
+			// model's per-move rules accept the row, and the window still accounts for the hold even
+			// though part of it was spent blurred.
 			expect(row?.telemetry?.ac.BlurCount).toBe(1);
 			expect(row?.telemetry?.ac.DidBlurOnOpponentTurn).toBe(true);
-			expect(row?.telemetry?.ac.TotalFocusTime).toBeGreaterThanOrEqual(
-				row?.telemetry?.ac.MoveHoldTime ?? 0
+			expect(row?.telemetry?.ac.DidBlurOnOwnTurn).toBe(false);
+			// `TotalBlurTime` can legitimately be 0 here: on the virtual clock the drop follows the
+			// blur in the same instant, so the blurred stretch has no duration.
+			expect(row?.telemetry?.ac.TotalBlurTime).toBeGreaterThanOrEqual(0);
+			const ac = row?.telemetry?.ac;
+			expect((ac?.TotalFocusTime ?? 0) + (ac?.TotalBlurTime ?? 0)).toBeGreaterThanOrEqual(
+				ac?.MoveHoldTime ?? 0
 			);
+			assertPremoveRowsWellFormed();
 		}
 		expect(reached).toBe(true);
 	}, 180_000);
