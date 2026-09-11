@@ -31,6 +31,7 @@
 import { matchingHistory, type PositionHistory } from "@core/chess/history";
 import { phase as phaseOf } from "@core/chess/phase";
 import { legalMoves } from "@core/chess/san";
+import { LIMITS } from "@core/constants/limits";
 import { SEARCH_BUDGET } from "@core/constants/search";
 import type { AnalysisHandle, AnalysisRequest, AnalysisResult } from "@core/engine/types";
 import { log } from "@core/logger";
@@ -357,7 +358,8 @@ export class RecommendationPipeline {
 	/** §7.3: the book move for this position, or `null` (disabled, out of book, or it threw). */
 	private async bookMove(input: RecommendationInput): Promise<ChosenMove | null> {
 		const policy = this.book;
-		if (!policy || !input.settings.strength.useOpeningBook) return null;
+		if (!policy || !input.settings.strength.useOpeningBook || input.targetElo >= LIMITS.eloMax)
+			return null;
 		const ctx: BookContext = {
 			fen: input.snapshot.fen,
 			ply: input.snapshot.ply,

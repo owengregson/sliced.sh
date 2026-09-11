@@ -64,7 +64,7 @@ export const STRENGTH_UI = {
 		[1400, "expert"],
 		[800, "club"],
 	] as const,
-	/** Slider step for the 400–3200 target rating. */
+	/** Slider step for the target rating range in LIMITS. */
 	sliderStep: 50,
 } as const;
 

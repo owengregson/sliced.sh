@@ -28,6 +28,7 @@ interface OffscreenSide {
 	current: () => FakeStockfishWeb;
 	aborted: string[];
 	hangBoot: boolean;
+	failBoot: boolean;
 	stop: () => void;
 }
 
@@ -41,10 +42,12 @@ async function bootOffscreen(): Promise<OffscreenSide> {
 		},
 		aborted: [],
 		hangBoot: false,
+		failBoot: false,
 		stop: () => {},
 	};
 	const boot = async (_variant: EngineVariant, hooks: BootHooks): Promise<BootedEngine> => {
 		if (side.hangBoot) return new Promise<BootedEngine>(() => {});
+		if (side.failBoot) throw new Error("network checksum mismatch");
 		const sf = new FakeStockfishWeb();
 		sf.listen = hooks.listen;
 		sf.onError = hooks.onError;
@@ -91,6 +94,66 @@ afterEach(async () => {
 });
 
 describe("RemoteEngine over the simulator", () => {
+	it("a failed full-network download rejects configuration with the host error", async () => {
+		const side = await bootOffscreen();
+		const engine = await (sw as SwContext).run(async () => {
+			const e = new RemoteEngine({ variant: "smallnet", threads: 1 });
+			await e.ready;
+			await settle();
+			return e;
+		});
+		side.failBoot = true;
+		await (sw as SwContext).run(async () => {
+			await expect(engine.configureAndWait("full", 1)).rejects.toThrow("network checksum mismatch");
+		});
+		expect(engine.status().state).toBe("crashed");
+		engine.dispose();
+	});
+
+	it("waits for the requested full variant before completing configuration", async () => {
+		await bootOffscreen();
+		const engine = await (sw as SwContext).run(async () => {
+			const e = new RemoteEngine({ variant: "smallnet", threads: 1 });
+			await e.ready;
+			await settle();
+			await e.configureAndWait("full", 2);
+			return e;
+		});
+		expect(engine.status().variant).toBe("full");
+		expect(engine.status().state).toBe("ready");
+		engine.dispose();
+	});
+
+	it("does not apply the short UCI timeout to a network download and cancels cleanly", async () => {
+		const side = await bootOffscreen();
+		const engine = await (sw as SwContext).run(async () => {
+			const e = new RemoteEngine({ variant: "smallnet", threads: 1 });
+			await e.ready;
+			await settle();
+			return e;
+		});
+		side.hangBoot = true;
+		const ac = new AbortController();
+		let pending: Promise<void> = Promise.resolve();
+		let settled = false;
+		await (sw as SwContext).run(async () => {
+			pending = engine.configureAndWait("full", 1, ac.signal);
+			void pending.then(
+				() => {
+					settled = true;
+				},
+				() => {
+					settled = true;
+				}
+			);
+			await settle();
+		});
+		await sim.time.advance(TIMINGS.engineReadyTimeoutMs + 1000);
+		expect(settled).toBe(false);
+		ac.abort();
+		await expect(pending).rejects.toThrow("cancelled");
+		engine.dispose();
+	});
 	it("an ensureHost rejection on the first connect does not leave the transport dead (Task 30)", async () => {
 		const side = await bootOffscreen();
 		let calls = 0;

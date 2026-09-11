@@ -317,6 +317,24 @@ describe("EngineHost crash recovery", () => {
 		expect(h.bootCalls).toHaveLength(boots + 2);
 	});
 
+	it("after giving up, configuring the same variant starts a fresh download attempt", async () => {
+		const h = setup();
+		let sf = await booted(h);
+		const steps = TIMINGS.engineRestartBackoffMs;
+		for (let i = 0; i <= steps.length; i++) {
+			sf.fail(`crash ${i}`);
+			h.sched.advance(steps[Math.min(i, steps.length - 1)] as number);
+			await flush();
+			sf = h.boots[h.boots.length - 1] as FakeStockfishWeb;
+		}
+		expect(h.host.status().state).toBe("crashed");
+		const boots = h.bootCalls.length;
+		h.host.handle({ kind: "configure", variant: "smallnet", threads: 1 });
+		await flush();
+		expect(h.bootCalls).toHaveLength(boots + 1);
+		expect(h.host.status().state).toBe("ready");
+	});
+
 	it("a BAD_NNUE error evicts the loaded nets from the store before rebooting", async () => {
 		const h = setup();
 		const sf = await booted(h);

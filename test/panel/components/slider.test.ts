@@ -64,8 +64,8 @@ describe("createSlider", () => {
 		expect(handle.value).toBe(LIMITS.eloMin);
 		key(thumb, "keydown", { key: "End" });
 		expect(handle.value).toBe(LIMITS.eloMax);
-		expect(thumb.getAttribute("aria-valuetext")).toBe("Elite 3200");
-		expect(handle.el.querySelector(".sl-slider__bubble")?.textContent).toBe("Elite 3200");
+		expect(thumb.getAttribute("aria-valuetext")).toBe(`Elite ${LIMITS.eloMax}`);
+		expect(handle.el.querySelector(".sl-slider__bubble")?.textContent).toBe(`Elite ${LIMITS.eloMax}`);
 		// Every keyboard step commits (there is no separate release).
 		expect(seen.every(([, commit]) => commit)).toBe(true);
 		expect(seen.map(([v]) => v)).toEqual([

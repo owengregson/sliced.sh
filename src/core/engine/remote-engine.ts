@@ -82,6 +82,7 @@ export class RemoteEngine implements EngineTransport {
 	private readonly statusCbs = new Set<(s: EngineStatus) => void>();
 	private readonly messageCbs = new Set<(m: EnginePortMessage) => void>();
 	private restartWaiters: RestartWaiter[] = [];
+	private readonly configurationCancels = new Set<() => void>();
 
 	constructor(opts: RemoteEngineOptions = {}) {
 		this.ensureHost = opts.ensureHost ?? (() => Promise.resolve());
@@ -156,6 +157,44 @@ export class RemoteEngine implements EngineTransport {
 		if (this.port) this.post(this.configureCommand(variant, threads)); // else sent on connect
 	}
 
+	/** Wait through an on-demand network download before the UCI handshake timeout starts. */
+	configureAndWait(variant: EngineVariant, threads: number, signal?: AbortSignal): Promise<void> {
+		if (this.disposed || signal?.aborted)
+			return Promise.reject(new Error("engine configuration cancelled"));
+		if (this.variant === variant && this.last?.variant === variant && this.last.state === "ready") {
+			this.configure(variant, threads);
+			return Promise.resolve();
+		}
+		return new Promise<void>((resolve, reject) => {
+			let transitioned = false;
+			let off = (): void => {};
+			const finish = (error?: Error): void => {
+				off();
+				this.configurationCancels.delete(cancel);
+				this.scheduler.clearTimeout(timer);
+				signal?.removeEventListener("abort", cancel);
+				if (error) reject(error);
+				else resolve();
+			};
+			const cancel = (): void => finish(new Error("engine configuration cancelled"));
+			this.configurationCancels.add(cancel);
+			const timer = this.scheduler.setTimeout(
+				() => finish(new Error("network download did not finish")),
+				TIMINGS.assetDownloadTotalMs
+			);
+			off = this.onMessage((message) => {
+				if (message.kind !== "status" || message.status.variant !== variant) return;
+				const { state, error } = message.status;
+				if (state === "booting" || state === "loading-nnue") transitioned = true;
+				if (state === "ready") finish();
+				else if (state === "crashed" && transitioned)
+					finish(new Error(error ?? "engine network failed to load"));
+			});
+			signal?.addEventListener("abort", cancel, { once: true });
+			this.configure(variant, threads);
+		});
+	}
+
 	/** Task 34: opt the offscreen document into (or out of) pre-warming the timing head. */
 	setWarmTiming(on: boolean): void {
 		this.warmTiming = on;
@@ -179,6 +218,7 @@ export class RemoteEngine implements EngineTransport {
 	dispose(): void {
 		if (this.disposed) return;
 		this.disposed = true;
+		for (const cancel of [...this.configurationCancels]) cancel();
 		const waiters = this.restartWaiters;
 		this.restartWaiters = [];
 		for (const w of waiters) {

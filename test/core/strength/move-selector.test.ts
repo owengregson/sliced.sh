@@ -108,6 +108,16 @@ describe("selectMove — base policy (a)", () => {
 });
 
 describe("selectMove — selection modes", () => {
+	it("3650 selects the strongest searched continuation even with a weaker engine-elo suggestion", () => {
+		for (const selectionMode of ["engine-elo", "hybrid", "persona-sampling"] as const) {
+			const chosen = selectMove(
+				TWO,
+				ctx({ targetElo: 3650, form: -1, selectionMode, engineBestmove: "d2d4", blunderScale: 2 })
+			);
+			expect(chosen.uci).toBe("e2e4");
+			expect(chosen.rationale.join(" ")).toContain("maximum strength");
+		}
+	});
 	it("engine-elo plays the engine's bestmove verbatim", () => {
 		const c = ctx({ selectionMode: "engine-elo", engineBestmove: "d2d4" });
 		const m = selectMove(TWO, c, flatPrior(TWO));

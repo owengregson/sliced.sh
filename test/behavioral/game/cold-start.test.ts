@@ -122,6 +122,8 @@ async function bootOffscreen(): Promise<void> {
 /** Boot the worker with `enabled` stored and its settings read held back. */
 async function boot(enabled: boolean): Promise<void> {
 	heldReads = [];
+	// Controller startup waits for settings now; there may be no new engine instance yet.
+	engineCommands = [];
 	sim = createSimulator({
 		startAt: START,
 		storageLocal: { [LOCAL_KEYS.settings]: stored(enabled) },

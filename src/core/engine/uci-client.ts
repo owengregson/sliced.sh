@@ -401,6 +401,29 @@ export class UciEngine {
 		return this.handshake(false);
 	}
 
+	/** Replace a stopped engine, then replay all options before admitting queued searches. */
+	reconfigure(replace: () => Promise<void>, options: EngineOptions): Promise<EngineInfo> {
+		return this.serial(async () => {
+			if (this.disposed || (this.st !== "idle" && this.st !== "crashed"))
+				throw new Error(`UciEngine.reconfigure: refused while ${this.st}`);
+			this.initialised = false;
+			this.busy = true;
+			this.st = "initialising";
+			try {
+				await replace();
+				if (this.disposed) throw new Error("UciEngine.reconfigure: disposed");
+				for (const [name, value] of Object.entries(options)) this.applied.set(name, value);
+				return await this.handshake(true);
+			} catch (error) {
+				this.st = "crashed";
+				this.failQueued();
+				throw error;
+			} finally {
+				this.busy = false;
+			}
+		});
+	}
+
 	/** Diffed against the applied options; only changes are sent, then `isready`. */
 	setOptions(opts: Partial<EngineOptions>): Promise<void> {
 		return this.serial(async () => {

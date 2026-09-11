@@ -16,6 +16,7 @@ import { bootOffscreenContext, type OffscreenContext } from "@test/sim/contexts/
 import { bootSwContext, type SwContext } from "@test/sim/contexts/sw-context";
 import { createSimulatedSite, type SimulatedSite } from "@test/sim/telemetry/sim-site";
 import type { EngineVariant } from "@typedefs/engine";
+import { FAKE_ID_LINES } from "../../fakes/engine-transport";
 import { FakeStockfishWeb } from "../../fakes/stockfish";
 
 const START = 1_700_000_000_000;
@@ -28,11 +29,23 @@ let stack: GameStack | undefined;
 let broadcaster: PanelBroadcaster | undefined;
 let router: MessageRouter | undefined;
 let tabId = 0;
+let hostedEngines: FakeStockfishWeb[] = [];
+
+/** This integration fixture must complete actual UCI handshakes, not only report host ready. */
+class RespondingStockfish extends FakeStockfishWeb {
+	override uci(command: string): void {
+		super.uci(command);
+		if (command === "uci") queueMicrotask(() => this.emit(...FAKE_ID_LINES));
+		else if (command === "isready") queueMicrotask(() => this.emit("readyok"));
+		else if (command === "stop") queueMicrotask(() => this.emit("bestmove e2e4"));
+	}
+}
 
 /** The offscreen document the real `RemoteEngine` connects to (`ensureOffscreen` is a no-op here). */
 async function bootOffscreen(): Promise<void> {
 	const boot = async (_variant: EngineVariant, hooks: BootHooks): Promise<BootedEngine> => {
-		const sf = new FakeStockfishWeb();
+		const sf = new RespondingStockfish();
+		hostedEngines.push(sf);
 		sf.listen = hooks.listen;
 		sf.onError = hooks.onError;
 		hooks.onLoadingNnue([...sf.recommended]);
@@ -54,6 +67,7 @@ const settle = async (): Promise<void> => {
 };
 
 beforeEach(async () => {
+	hostedEngines = [];
 	// §4.4: the session gates every acting path (and the content-side `highlightMoves` gate) on the
 	// switch, so the stored fixture says what it means — a user with the assistant on — instead of
 	// inheriting `DEFAULT_SETTINGS` and changing meaning when that moves. Same seed as
@@ -141,6 +155,9 @@ describe("createGameStack: the real service-worker stack", () => {
 			await settle();
 		});
 		expect(built.transport.status().state).not.toBe("crashed");
+		expect(built.engine.state()).toBe("idle");
+		const sf = hostedEngines.at(-1) as FakeStockfishWeb;
+		const resetsBeforeGame = sf.commands.filter((command) => command === "ucinewgame").length;
 
 		await (sw as SwContext).run(async () => {
 			(site as SimulatedSite).hello();
@@ -149,6 +166,9 @@ describe("createGameStack: the real service-worker stack", () => {
 		});
 		expect(built.registry.sessionFor(tabId)?.currentState()).toBe("live:opponent-turn");
 		expect(built.controller.status().gameId).toBe((site as SimulatedSite).gameId);
+		expect(sf.commands.filter((command) => command === "ucinewgame")).toHaveLength(
+			resetsBeforeGame + 1
+		);
 	});
 
 	it("a settings write reaches the sessions (the content re-push wiring exists)", async () => {
@@ -166,6 +186,48 @@ describe("createGameStack: the real service-worker stack", () => {
 		const after = (site as SimulatedSite).commands().filter((c) => c.kind === "settings");
 		expect(after.length).toBeGreaterThan(before);
 		expect(after.at(-1)).toEqual({ kind: "settings", highlightMoves: true });
+	});
+
+	it("a first-position ponder follows the game reset through the actual offscreen port", async () => {
+		const built = stack as GameStack;
+		const sf = hostedEngines.at(-1) as FakeStockfishWeb;
+		sf.commands.length = 0;
+		await (sw as SwContext).run(async () => {
+			(site as SimulatedSite).hello();
+			(site as SimulatedSite).startGame();
+			(site as SimulatedSite).arrive("e2e4", { w: 60_000, b: 60_000 });
+			await settle();
+		});
+		expect(built.controller.status().gameId).toBe((site as SimulatedSite).gameId);
+		const reset = sf.commands.indexOf("ucinewgame");
+		const search = sf.commands.findIndex((command) => command.startsWith("go infinite"));
+		expect(reset).toBeGreaterThanOrEqual(0);
+		expect(search).toBeGreaterThan(reset);
+		expect(sf.commands.slice(reset, search)).toContain("isready");
+	});
+
+	it("a high target selects the full host and applies unlimited strength before its next search", async () => {
+		const built = stack as GameStack;
+		await (sw as SwContext).run(async () => {
+			await setSettings({ strength: { targetElo: 3650 } });
+			await settle();
+		});
+		expect(built.transport.status().variant).toBe("full");
+		expect(built.engine.state()).toBe("idle");
+		const sf = hostedEngines.at(-1) as FakeStockfishWeb;
+		expect(sf.commands).toContain("setoption name UCI_LimitStrength value false");
+		expect(sf.commands).not.toContain("setoption name UCI_Elo value 3650");
+		await (sw as SwContext).run(async () => {
+			(site as SimulatedSite).hello();
+			(site as SimulatedSite).startGame();
+			(site as SimulatedSite).arrive("e2e4", { w: 60_000, b: 60_000 });
+			await settle();
+		});
+		expect(built.controller.status().gameId).toBe((site as SimulatedSite).gameId);
+		const search = sf.commands.findIndex((command) => command.startsWith("go infinite"));
+		expect(search).toBeGreaterThan(
+			sf.commands.indexOf("setoption name UCI_LimitStrength value false")
+		);
 	});
 
 	it("dispose() releases the stack: the game port registry is empty and the timing log is flushed", async () => {

@@ -13,6 +13,7 @@ import { describe, expect, it } from "bun:test";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { ENGINE_DIR } from "@core/constants/engine-files";
+import { LIMITS } from "@core/constants/limits";
 import { bootEngine, type StockfishFactory } from "@offscreen/stockfish-loader";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
@@ -92,6 +93,9 @@ describe("Stockfish 18 smallnet (real wasm)", () => {
 			const b = booted as Booted;
 			b.sf.uci("uci");
 			await b.waitFor((l) => l === "uciok", 5_000);
+			expect(b.lines).toContain(
+				`option name UCI_Elo type spin default ${LIMITS.engineEloMin} min ${LIMITS.engineEloMin} max ${LIMITS.engineEloMax}`
+			);
 			expect(b.lines.some((l) => l.startsWith("id name Stockfish"))).toBe(true);
 			b.sf.uci("isready");
 			await b.waitFor((l) => l === "readyok", 5_000);

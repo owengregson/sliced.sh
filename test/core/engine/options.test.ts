@@ -6,6 +6,7 @@ import {
 	ENGINE_OPTION_DEFAULTS,
 	formatSetOption,
 	optionsForSettings,
+	variantForSettings,
 } from "@core/engine/options";
 import { DEFAULT_SETTINGS, type Settings } from "@typedefs/settings";
 
@@ -18,6 +19,20 @@ function settings(patch: Partial<Settings["engine"]>, targetElo = 1500): Setting
 }
 
 describe("optionsForSettings", () => {
+	it("automatically upgrades above the product cutoff, including an old Small preference", () => {
+		expect(variantForSettings(settings({ nnue: "auto" }, LIMITS.nnueSmallEloMax))).toBe("smallnet");
+		expect(variantForSettings(settings({ nnue: "auto" }, LIMITS.nnueSmallEloMax + 1))).toBe("full");
+		expect(variantForSettings(settings({ nnue: "small" }, 3650))).toBe("full");
+		expect(variantForSettings(settings({ nnue: "big" }, 1500))).toBe("full");
+	});
+	it("3650 requests unlimited strength without sending an unsupported native UCI_Elo", () => {
+		const options = optionsForSettings(settings({}, 3650), { hardwareConcurrency: 8, sab: true });
+		expect(options.UCI_LimitStrength).toBe(false);
+		expect(options.UCI_Elo).toBe(3190);
+		expect(
+			optionsForSettings(settings({}, 3190), { hardwareConcurrency: 8, sab: true }).UCI_LimitStrength
+		).toBe(true);
+	});
 	it("maps the Task 13 reference settings", () => {
 		expect(
 			optionsForSettings(settings({ threads: "auto", hashMb: 32, multiPv: 6 }, 1500), {

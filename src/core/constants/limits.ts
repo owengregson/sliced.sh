@@ -1,6 +1,9 @@
 export const LIMITS = {
 	eloMin: 400,
-	eloMax: 3200,
+	/** Product strength scale; the top endpoint requests maximum available engine strength. */
+	eloMax: 3650,
+	/** Product policy boundary, not a calibrated capability limit of the small engine. */
+	nnueSmallEloMax: 3200,
 	engineEloMin: 1320,
 	engineEloMax: 3190,
 	multiPvMin: 1,

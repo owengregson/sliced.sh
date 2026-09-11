@@ -106,6 +106,159 @@ function finish(t: FakeEngineTransport, multiPv: number, depth: number, pv = "e2
 const setoptions = (lines: string[]): string[] => lines.filter((l) => l.startsWith("setoption"));
 
 describe("EngineController options", () => {
+	it("waits for a large network, replays options, and only then searches at unlimited strength", async () => {
+		let release = (): void => {};
+		const loading = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const variants: string[] = [];
+		const { ctrl, t, eng } = await setup({
+			settings: settings({ targetElo: 3650 }),
+			deps: {
+				configureVariant: async (variant) => {
+					variants.push(variant);
+					await loading;
+				},
+			},
+		});
+		expect(variants).toEqual(["full"]);
+		expect(eng.state()).toBe("initialising");
+		const move = ctrl.analyse(req({ id: "high", fen: START, elo: 1500 }));
+		expect(t.sent.some((line) => line.startsWith("go "))).toBe(false);
+		release();
+		await flush();
+		expect(t.sent).toContain("setoption name UCI_LimitStrength value false");
+		expect(t.sent).not.toContain("setoption name UCI_Elo value 3650");
+		expect(ctrl.engineElo()).toBeUndefined();
+		expect(t.sent.indexOf("isready")).toBeLessThan(t.sent.indexOf("go infinite"));
+		finish(t, 2, 12);
+		expect((await move.result).request.elo).toBeUndefined();
+		ctrl.dispose();
+	});
+
+	it("cancels a queued move immediately while the network is downloading", async () => {
+		let release = (): void => {};
+		const { ctrl, t } = await setup({
+			settings: settings({ targetElo: 3650 }),
+			deps: {
+				configureVariant: () =>
+					new Promise<void>((resolve) => {
+						release = resolve;
+					}),
+			},
+		});
+		const move = ctrl.analyse(req({ id: "cancel", fen: START }));
+		await move.stop();
+		expect((await move.result).status).toBe("superseded");
+		release();
+		await flush();
+		expect(t.sent.some((line) => line.startsWith("go "))).toBe(false);
+		ctrl.dispose();
+	});
+
+	it("newGame cancels queued old-game moves and waits for the network before resetting the engine", async () => {
+		let release = (): void => {};
+		const { ctrl, t } = await setup({
+			init: false,
+			settings: settings({ targetElo: 3650 }),
+			deps: {
+				configureVariant: () =>
+					new Promise<void>((resolve) => {
+						release = resolve;
+					}),
+			},
+		});
+		const move = ctrl.analyse(req({ id: "old-game", fen: START }));
+		expect(ctrl.status().inFlight).toBe(1);
+		const reset = ctrl.newGame("next-game");
+		expect((await move.result).status).toBe("superseded");
+		expect(t.sent).not.toContain("ucinewgame");
+		release();
+		await reset;
+		expect(ctrl.status().gameId).toBe("next-game");
+		expect(t.sent).toContain("ucinewgame");
+		expect(t.sent.some((line) => line.startsWith("go "))).toBe(false);
+		ctrl.dispose();
+	});
+
+	it("crossing the network cutoff stops the current search and invalidates its cached evaluation", async () => {
+		const variants: string[] = [];
+		const { ctrl, src, t, cache } = await setup({
+			deps: {
+				configureVariant: async (variant) => {
+					variants.push(variant);
+				},
+			},
+		});
+		await ctrl.init();
+		const cached = ctrl.analyse(req({ id: "cached", fen: START, limit: { movetimeMs: 500 } }));
+		finish(t, 2, FEATURE_DEPTH + 2);
+		await cached.result;
+		expect(cache.size).toBe(1);
+		const active = ctrl.analyse(req({ id: "active", fen: AFTER_E4 }));
+		src.emit(settings({ targetElo: 3650 }));
+		expect(t.sent).toContain("stop");
+		t.feed("bestmove e7e5");
+		await active.result;
+		await flush();
+		expect(t.sent).toContain("stop");
+		expect(variants).toEqual(["smallnet", "full"]);
+		expect(cache.size).toBe(0);
+		ctrl.dispose();
+	});
+
+	it("a ponder arriving immediately after game start waits for ucinewgame and readyok", async () => {
+		const { ctrl, t } = await setup();
+		t.sent.length = 0;
+		const reset = ctrl.newGame("first-game");
+		const ponder = ctrl.ponder(START, [], 2);
+		await reset;
+		await flush();
+		expect(t.sent.indexOf("ucinewgame")).toBeGreaterThanOrEqual(0);
+		expect(t.sent.indexOf("isready")).toBeLessThan(t.sent.indexOf("go infinite"));
+		expect(ctrl.status().gameId).toBe("first-game");
+		finish(t, 2, 2);
+		await ponder.result;
+		ctrl.dispose();
+	});
+
+	it("a failed full-network load fails the waiting move rather than using the small cache", async () => {
+		const { ctrl, t } = await setup({
+			settings: settings({ targetElo: 3650 }),
+			deps: {
+				configureVariant: async () => {
+					throw new Error("checksum mismatch");
+				},
+			},
+		});
+		const move = ctrl.analyse(req({ id: "failed", fen: START }));
+		expect((await move.result).status).toBe("failed");
+		expect(t.sent.some((line) => line.startsWith("go "))).toBe(false);
+		expect(ctrl.status().pendingOptions).toBe(true);
+		ctrl.dispose();
+	});
+
+	it("a lower target cancels an in-flight upgrade and restores the requested small configuration", async () => {
+		const variants: string[] = [];
+		const { ctrl, src } = await setup({
+			settings: settings({ targetElo: 3650 }),
+			deps: {
+				configureVariant: (variant, _threads, signal) => {
+					variants.push(variant);
+					if (variant === "smallnet") return Promise.resolve();
+					return new Promise<void>((_resolve, reject) =>
+						signal.addEventListener("abort", () => reject(new Error("cancelled")), { once: true })
+					);
+				},
+			},
+		});
+		src.emit(settings({ targetElo: 1600 }));
+		await flush();
+		expect(variants).toEqual(["full", "smallnet"]);
+		expect(ctrl.engineElo()).toBe(1600);
+		expect(ctrl.status().pendingOptions).toBe(false);
+		ctrl.dispose();
+	});
 	it("applies optionsForSettings on construction (Task 13 reference settings)", async () => {
 		const { t, ctrl } = await setup();
 		expect(setoptions(t.sent)).toEqual(REFERENCE_OPTION_LINES);

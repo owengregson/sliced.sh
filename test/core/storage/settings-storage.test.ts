@@ -21,7 +21,7 @@ describe("settings storage", () => {
 	it("merges a nested partial and clamps elo", async () => {
 		await setSettings({ strength: { targetElo: 9999 } });
 		const s = await getSettings();
-		expect(s.strength.targetElo).toBe(3200);
+		expect(s.strength.targetElo).toBe(3650);
 		expect(s.strength.persona).toBe("balanced");
 	});
 });

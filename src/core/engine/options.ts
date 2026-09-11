@@ -6,6 +6,7 @@
 
 import { LIMITS } from "@core/constants/limits";
 import { clampInt } from "@core/util/clamp";
+import type { EngineVariant } from "@typedefs/engine";
 import type { Settings } from "@typedefs/settings";
 import type { EngineOptions, EngineOptionValue } from "./types";
 
@@ -73,6 +74,13 @@ export interface OptionsEnv {
 	sab: boolean;
 }
 
+/** Higher targets require the full network, including an old persisted Small preference. */
+export function variantForSettings(settings: Settings): EngineVariant {
+	return settings.strength.targetElo > LIMITS.nnueSmallEloMax || settings.engine.nnue === "big"
+		? "full"
+		: "smallnet";
+}
+
 /**
  * Settings → options: full-strength search with the engine's Elo limiter on
  * (§7.1 hybrid), WDL on for the panel, no UCI ponder mode (Appendix E §4.2).
@@ -96,7 +104,9 @@ export function optionsForSettings(settings: Settings, env: OptionsEnv): EngineO
 		Threads: clamped.Threads ?? ENGINE_OPTION_DEFAULTS.Threads,
 		Hash: clamped.Hash ?? ENGINE_OPTION_DEFAULTS.Hash,
 		MultiPV: clamped.MultiPV ?? ENGINE_OPTION_DEFAULTS.MultiPV,
-		UCI_LimitStrength: true,
+		// The native engine only calibrates 1320–3190. Above that range use full search,
+		// with the product's selection policy below its maximum endpoint.
+		UCI_LimitStrength: strength.targetElo <= LIMITS.engineEloMax,
 		UCI_Elo: clamped.UCI_Elo ?? ENGINE_OPTION_DEFAULTS.UCI_Elo,
 		UCI_ShowWDL: true,
 		Ponder: false,

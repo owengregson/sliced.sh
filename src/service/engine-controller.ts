@@ -13,7 +13,12 @@
 
 import { SEARCH_BUDGET } from "@core/constants/search";
 import type { AnalysisCache } from "@core/engine/analysis-cache";
-import { type EngineOptions, type OptionsEnv, optionsForSettings } from "@core/engine/options";
+import {
+	type EngineOptions,
+	type OptionsEnv,
+	optionsForSettings,
+	variantForSettings,
+} from "@core/engine/options";
 import type {
 	AnalysisHandle,
 	AnalysisRequest,
@@ -25,6 +30,7 @@ import type {
 import { FEATURE_DEPTH, type UciEngine } from "@core/engine/uci-client";
 import { log } from "@core/logger";
 import { newId } from "@core/util/ids";
+import type { EngineVariant } from "@typedefs/engine";
 import type { Settings } from "@typedefs/settings";
 
 export interface EngineControllerDeps {
@@ -41,6 +47,8 @@ export interface EngineControllerDeps {
 	 * `settings.engine.depthCap`; `limit.depth` requests need that depth.
 	 */
 	cacheMinDepth?: number;
+	/** Resolves only when the requested variant and its verified networks are loaded. */
+	configureVariant?: (variant: EngineVariant, threads: number, signal: AbortSignal) => Promise<void>;
 }
 
 export interface EngineControllerStatus {
@@ -102,6 +110,14 @@ export class EngineController {
 	private readonly now: () => number;
 	private readonly cacheMinDepth: number;
 	private readonly unsubscribe: () => void;
+	private readonly configureVariant: EngineControllerDeps["configureVariant"];
+	private configuredVariant: EngineVariant | null = null;
+	private loadingVariant: EngineVariant | null = null;
+	private variantChange: Promise<void> | null = null;
+	private variantAbort: AbortController | null = null;
+	private configuredInfo: EngineInfo | null = null;
+	private gameChange: Promise<void> | null = null;
+	private resettingGameId: string | undefined;
 
 	constructor(
 		private readonly engine: UciEngine,
@@ -111,6 +127,7 @@ export class EngineController {
 		this.env = deps.env;
 		this.now = deps.now ?? (() => Date.now());
 		this.cacheMinDepth = deps.cacheMinDepth ?? FEATURE_DEPTH;
+		this.configureVariant = deps.configureVariant;
 		this.unsubscribe = deps.onSettingsChanged((s) => this.onSettings(s));
 		this.ready = deps.getSettings().then(
 			(s) => {
@@ -125,14 +142,25 @@ export class EngineController {
 
 	/** `engine.init()`, then the options from settings (waits for the initial read). */
 	async init(): Promise<EngineInfo> {
-		const info = await this.engine.init();
 		await this.ready;
+		if (this.configureVariant) {
+			if (this.needsVariantChange()) this.startVariantChange();
+			await this.variantChange;
+			if (this.configuredInfo && this.engine.state() === "idle") return this.configuredInfo;
+		}
+		const info = await this.engine.init();
 		await this.applyOptions();
 		return info;
 	}
 
 	/** Cache hit → a settled handle; otherwise queued on the engine at `req.priority`. */
 	analyse(req: AnalysisRequest): AnalysisHandle {
+		if (this.needsVariantChange()) this.startVariantChange();
+		if (this.gameChange) {
+			const ready = Promise.all([this.gameChange, this.variantChange]).then(() => {});
+			return this.afterVariantChange(req, ready);
+		}
+		if (this.variantChange) return this.afterVariantChange(req, this.variantChange);
 		const hit = this.lookup(req);
 		if (hit) {
 			log.debug("engine-controller: cache hit", req.id, req.priority ?? "move");
@@ -160,22 +188,40 @@ export class EngineController {
 	 * in flight is stopped first (the client refuses `ucinewgame` mid-search);
 	 * a deferred settings change is applied afterwards.
 	 */
-	async newGame(gameId?: string): Promise<void> {
-		if (gameId !== undefined && gameId === this.gameId) return;
-		this.gameId = gameId ?? null;
-		this.suspendApply = true;
-		try {
-			await Promise.all([...this.inFlight].map((h) => h.stop()));
-			await this.engine.newGame();
-		} finally {
-			this.suspendApply = false;
-		}
-		await this.applyOptions();
+	newGame(gameId?: string): Promise<void> {
+		if (this.gameChange && gameId !== undefined && gameId === this.resettingGameId)
+			return this.gameChange;
+		if (!this.gameChange && gameId !== undefined && gameId === this.gameId) return Promise.resolve();
+		const previous = this.gameChange;
+		const run = async (): Promise<void> => {
+			this.suspendApply = true;
+			try {
+				await Promise.all([...this.inFlight].map((h) => h.stop()));
+				if (previous) await previous.catch(() => {});
+				await this.variantChange;
+				await this.engine.newGame();
+				this.gameId = gameId ?? null;
+			} finally {
+				this.suspendApply = false;
+			}
+			await this.applyOptions();
+		};
+		const operation = run();
+		this.gameChange = operation;
+		this.resettingGameId = gameId;
+		const clear = (): void => {
+			if (this.gameChange !== operation) return;
+			this.gameChange = null;
+			this.resettingGameId = undefined;
+		};
+		void operation.then(clear, clear);
+		return operation;
 	}
 
 	/** `UCI_Elo` the engine runs with (from the applied options, else the wanted ones). */
 	engineElo(): number | undefined {
-		return (this.applied ?? this.wanted)?.UCI_Elo;
+		const options = this.applied ?? this.wanted;
+		return options?.UCI_LimitStrength ? options.UCI_Elo : undefined;
 	}
 
 	/** The last settings seen (initial read or change event). */
@@ -199,6 +245,7 @@ export class EngineController {
 	dispose(): void {
 		if (this.disposed) return;
 		this.disposed = true;
+		this.variantAbort?.abort();
 		this.unsubscribe();
 		this.inFlight.clear();
 	}
@@ -208,7 +255,119 @@ export class EngineController {
 		this.settings = settings;
 		this.wanted = optionsForSettings(settings, this.env);
 		this.pending = true;
+		if (this.needsVariantChange() || this.variantChange) {
+			if (this.loadingVariant !== variantForSettings(settings)) this.variantAbort?.abort();
+			this.startVariantChange();
+			return;
+		}
 		void this.applyOptions();
+	}
+
+	private needsVariantChange(): boolean {
+		return (
+			!this.disposed &&
+			this.configureVariant !== undefined &&
+			this.settings !== undefined &&
+			variantForSettings(this.settings) !== this.configuredVariant
+		);
+	}
+
+	private startVariantChange(): void {
+		if (this.variantChange || !this.configureVariant) return;
+		const configure = this.configureVariant;
+		const run = async (): Promise<void> => {
+			while (this.settings && this.wanted && !this.disposed) {
+				const variant = variantForSettings(this.settings);
+				const wanted = this.wanted;
+				const ac = new AbortController();
+				this.variantAbort = ac;
+				this.loadingVariant = variant;
+				await Promise.all([...this.inFlight].map((handle) => handle.stop()));
+				if (ac.signal.aborted) continue;
+				this.cache?.clear();
+				try {
+					this.configuredInfo = await this.engine.reconfigure(
+						() => configure(variant, wanted.Threads, ac.signal),
+						wanted
+					);
+				} catch (error) {
+					if (ac.signal.aborted && !this.disposed) continue;
+					this.pending = true;
+					throw error;
+				}
+				this.configuredVariant = variant;
+				this.applied = wanted;
+				this.appliedAt = this.now();
+				if (this.wanted === wanted) {
+					this.pending = false;
+					return;
+				}
+			}
+		};
+		const operation = run();
+		this.variantChange = operation;
+		void operation
+			.then(
+				() => {},
+				(error: unknown) => {
+					log.warn("engine-controller: network configuration failed", String(error));
+				}
+			)
+			.finally(() => {
+				if (this.variantChange === operation) this.variantChange = null;
+				this.variantAbort = null;
+				this.loadingVariant = null;
+			});
+	}
+
+	/** Searches wait through downloads and game resets without using stale cache or options. */
+	private afterVariantChange(req: AnalysisRequest, change: Promise<void>): AnalysisHandle {
+		let cancelled = false;
+		let inner: AnalysisHandle | null = null;
+		let settle: (result: AnalysisResult) => void = () => {};
+		const result = new Promise<AnalysisResult>((resolve) => {
+			settle = resolve;
+		});
+		const failed = (status: AnalysisResult["status"]): AnalysisResult => ({
+			id: req.id,
+			bestmove: null,
+			request: req,
+			status,
+			final: { id: req.id, depth: 0, lines: [], nodes: 0, nps: 0, timeMs: 0, complete: false },
+		});
+		const started = change.then(
+			() => {
+				if (cancelled || this.disposed) return null;
+				const corrected = { ...req };
+				const elo = this.engineElo();
+				if (elo === undefined) delete corrected.elo;
+				else corrected.elo = elo;
+				inner = this.engine.analyse(corrected);
+				return inner;
+			},
+			() => null
+		);
+		void started
+			.then(async (handle) => {
+				settle(handle ? await handle.result : failed(cancelled ? "superseded" : "failed"));
+			})
+			.catch(() => settle(failed("failed")));
+		async function* updates(): AsyncGenerator<AnalysisUpdate> {
+			const handle = await started;
+			if (handle) yield* handle.updates;
+		}
+		const handle: AnalysisHandle = {
+			id: req.id,
+			updates: updates(),
+			result,
+			stop: async () => {
+				cancelled = true;
+				if (inner) await inner.stop();
+				else settle(failed("superseded"));
+			},
+		};
+		this.track(handle);
+		return handle;
 	}
 
 	/**
@@ -218,7 +377,7 @@ export class EngineController {
 	 * picked up by the loop.
 	 */
 	private async applyOptions(): Promise<void> {
-		if (this.applying) return;
+		if (this.applying || this.variantChange) return;
 		this.applying = true;
 		try {
 			while (this.pending && !this.disposed && !this.suspendApply) {

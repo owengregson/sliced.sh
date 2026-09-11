@@ -151,7 +151,12 @@ export class EngineHost {
 			this.restart();
 			return;
 		}
-		if (threadsChanged) this.postStatus();
+		if (this.gaveUp()) {
+			this.restart();
+			return;
+		}
+		// Also acknowledges an idempotent configure after a service-worker reconnect.
+		if (threadsChanged || this.st.state !== "searching") this.postStatus();
 	}
 
 	private uci(line: string): void {

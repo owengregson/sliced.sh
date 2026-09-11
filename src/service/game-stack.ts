@@ -103,6 +103,8 @@ export function createGameStack(options: GameStackOptions): GameStack {
 		onSettingsChanged,
 		env: options.env ?? defaultEnv(),
 		cache,
+		configureVariant: (variant, threads, signal) =>
+			transport.configureAndWait(variant, threads, signal),
 	});
 
 	const link = new ContentLink();
@@ -181,7 +183,7 @@ export function createGameStack(options: GameStackOptions): GameStack {
 	void timingLog
 		.load()
 		.catch((error: unknown) => log.warn("game-stack: timing log not loaded", error));
-	void engine
+	void controller
 		.init()
 		.catch((error: unknown) => log.warn("game-stack: engine init deferred", errorMessage(error)));
 

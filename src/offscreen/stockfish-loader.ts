@@ -185,9 +185,19 @@ export async function bootEngineDetailed(
 
 	const nnue = recommendedNnue(sf);
 	deps.onLoadingNnue?.(nnue);
-	for (let i = 0; i < nnue.length; i++) {
-		const name = nnue[i] as string;
-		sf.setNnueBuffer(await deps.nnueStore.get(name), i);
+	try {
+		for (let i = 0; i < nnue.length; i++) {
+			const name = nnue[i] as string;
+			sf.setNnueBuffer(await deps.nnueStore.get(name), i);
+		}
+	} catch (error) {
+		// A failed download must not leak the newly allocated WASM instance and its workers.
+		try {
+			sf.uci("quit");
+		} catch {
+			/* The original download failure is more useful. */
+		}
+		throw error;
 	}
 	log.info("stockfish-loader: engine booted", { module, nnue });
 	return { sf, module, nnue };

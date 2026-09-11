@@ -7,6 +7,7 @@
 import { classifyMove } from "@core/chess/move-classify";
 import type { Phase } from "@core/chess/phase";
 import { applyMoves, parseUci, uciToSan } from "@core/chess/san";
+import { LIMITS } from "@core/constants/limits";
 import { opponentClockPressure } from "@core/timing/opponent-pressure";
 import { clamp } from "@core/util/clamp";
 import type { EvalLine } from "@typedefs/engine";
@@ -292,6 +293,13 @@ export function selectMove(
 			rationale
 		);
 	};
+	// The top product setting requests the strongest searched move, without injected mistakes.
+	if (ctx.targetElo >= LIMITS.eloMax) {
+		const best = ranked[0];
+		if (!best) throw new RangeError("selectMove: no lines");
+		rationale.push("maximum strength: strongest searched continuation");
+		return finish(toCandidate(best, 1), "engine-elo", topCpRaw, ctx, rationale);
+	}
 
 	// §7.1 `engine-elo`: play the engine's Elo-limited bestmove verbatim.
 	if (ctx.selectionMode === "engine-elo") {

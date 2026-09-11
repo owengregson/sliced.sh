@@ -208,12 +208,13 @@ polls `URLS.websiteManifest` on the licence alarm and raises `LOCAL_KEYS.updateA
 
 ## 7. Known gaps
 
-Two settings are written, stored and rendered, but nothing acts on them. Both controls persist
-their value, so they look functional and are not. Recorded here (and in `docs/qa-checklist.md`)
-so a QA pass reports them as known rather than new. The first is a bug against the product's own
-copy and is being fixed separately; the second is unbuilt wiring.
+The master toggle gap below is recorded here (and in `docs/qa-checklist.md`) so QA can track it.
+NNUE selection is now wired: `EngineController` selects the full engine above the product's
+3200 small-network cutoff, downloads both verified full-build nets through the service-worker
+relay, and holds searches until the new engine has replayed its options. Explicit Big selects
+the full engine at any target. At or below the cutoff, Auto and Small use the bundled smallnet.
+The 3650 endpoint selects maximum available search strength; it is not a calibrated human rating.
 
 | Setting | What actually happens | Where the wiring belongs |
 |---|---|---|
 | `Settings.enabled` — the master toggle (**a known bug, not a design gap**: the row's copy promises "Off stops analysis and recommendations until you turn it back on") | `set-enabled.ts` writes it and the snapshot carries it, but the only consumer is `moveCardState()` in `src/panel/views/live/move-section.ts`, which greys the move card. Nothing in `src/service/**` reads it: analysis, recommendation, highlighting and auto-play all continue while it is off. Being fixed separately. | The SW session (`src/service/game-session/**`): refuse to analyse, recommend, highlight or execute while it is false, and let the panel route to a disabled state rather than a greyed card. |
-| `Settings.engine.nnue` — `small` \| `big` \| `auto` (default `auto`) | Read only by the Settings view's row (`views/settings/rows.ts`) to render the control. `EngineController` never passes it on, so the running variant is always the bundled smallnet and the on-demand full-build nets are never requested. | `src/service/engine-controller.ts`'s configure path: choose the `ENGINE_FILES` target from the setting, and trigger the `nnue-request` download of `LIMITS.nnueBigNames` when the choice is not `small`. |

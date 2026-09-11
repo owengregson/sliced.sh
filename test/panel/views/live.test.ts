@@ -8,6 +8,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { chromeLocalGet } from "@core/chrome/storage";
 import { LOCAL_KEYS, MSG, TOAST_KEYS, UI_TIMINGS } from "@core/constants";
+import { LIMITS } from "@core/constants/limits";
 import { TOKENS } from "@design/tokens.generated";
 import { currentBannerKind } from "@panel/components/banner";
 import { COPY, COPY_LIVE } from "@panel/copy";
@@ -573,7 +574,7 @@ describe("strength card (§4.4 item 7, §5.12)", () => {
 		expect(document.activeElement).toBe(document.body);
 		const thumb = pop?.querySelector<HTMLElement>('[role="slider"]');
 		expect(thumb?.getAttribute("aria-valuemin")).toBe("400");
-		expect(thumb?.getAttribute("aria-valuemax")).toBe("3200");
+		expect(thumb?.getAttribute("aria-valuemax")).toBe(String(LIMITS.eloMax));
 		expect(thumb?.getAttribute("aria-valuenow")).toBe("1500");
 		if (thumb) key(thumb, "keydown", { key: "ArrowRight", code: "ArrowRight" });
 		await dom.tick(0);

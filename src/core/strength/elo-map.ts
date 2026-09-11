@@ -27,7 +27,7 @@ export function sigmaFor(E: number): number {
 /** §7.2 step 7: softmax temperature τ(E) in win-fraction units (streak term excluded). */
 export function tauFor(E: number): number {
 	const { base, range, pivotElo, span, min, max } = C.tau;
-	return clamp(base + range * ((pivotElo - E) / span) ** 2, min, max);
+	return clamp(base + range * Math.max(0, (pivotElo - E) / span) ** 2, min, max);
 }
 
 /** §7.2 step 7: gap cutoff G(E) in cp. */
