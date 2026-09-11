@@ -70,7 +70,15 @@ export type GameSessionState =
 /** Result of one virtual-hand execution (Task 18 shape). */
 export interface ExecutionResult {
 	ok: boolean;
-	outcome: "executed" | "skipped" | "paused" | "aborted" | "failed";
+	/**
+	 * `dispatched` (Fix F) is a **premove gesture the hand completed during the opponent's turn**.
+	 * That is *all* it claims: the drag went out. Whether chess.com kept it as a premove, snapped
+	 * the piece back or read it as a selection is not observable from here — nothing in the
+	 * executor can see it — so the word is `dispatched` rather than `queued` or `executed`, and the
+	 * next position is the only thing that decides which it was. `ok` is true because the hand did
+	 * its work; a premove must never be reported as a move that landed.
+	 */
+	outcome: "executed" | "dispatched" | "skipped" | "paused" | "aborted" | "failed";
 	reason?: string;
 	/**
 	 * How the move was committed. Every committed move is a drag — click-to-move was removed

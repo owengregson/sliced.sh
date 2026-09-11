@@ -44,6 +44,7 @@ export type LichessBlurBit = 0 | 1;
  * | `orientationMs` | `TimingPlan.orientationMs` (§8.4b item 2). |
  * | `multiSelectEligible` | the move is "non-trivial" for the §13.2 preview band: `plan.mode` is `normal`/`long`, `plan.thinkMs ≥ PREVIEW.gZeroMs` and the clock is at least `PREVIEW.clockFloorMs` (`isNonTrivial` in `tools/telemetry-conformance/ac-model.ts`). |
  * | `nReasonable` | `n_reasonable` of the position (`TimingContext` / `MoveContext`): the offline report's complexity axis, which the timing columns alone do not carry. |
+ * | `ownerOwnsWindow` | **Omitted except for a premove sent during the opponent's turn** (Fix F). The window this record describes then spans a period the *owner* owns, in which he is free to click anything — so a focus edge in it is his behaviour and not the assistant's misconduct, and the per-move conduct rules in `ac-model.ts` say so. It is stated by the writer, not inferred from the mode (a searched move can legitimately plan in `premove` mode), and `MoveWindow.close` refuses to set it for a window opened on our own turn. The game-level "zero blur" verdict in `report.py` ignores it on purpose: chess.com cannot attribute a blur either. |
  * | `top1` | the played move was the engine's first line. `ChosenMove.rankInLines` is **1-based** (`selectMove` sets `1` for the best line; `0` means the move was not among the lines at all, which is what the book and a premove report), so this is `rankInLines === 1`. **Omitted** when the move carries no engine evaluation. |
  * | `cpLoss` | `Recommendation.chosen.cpLoss` — the §13.6 ACPL input. **Omitted** with `top1`. |
  *
@@ -61,6 +62,8 @@ export interface MoveTelemetryRecord {
 	orientationMs: number;
 	multiSelectEligible: boolean;
 	nReasonable: number;
+	/** The window spans a period the owner owns, not one of ours (see the table above). */
+	ownerOwnsWindow?: boolean;
 	/** Absent when the move carries no engine evaluation (a premove, an unranked book move). */
 	top1?: boolean;
 	/** Absent with `top1`. */

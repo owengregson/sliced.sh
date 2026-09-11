@@ -295,6 +295,7 @@ export const COPY = {
 		inputMode: (style: string, profile: string): string => `${style} · ${profile}`,
 		outcomes: {
 			executed: "executed",
+			dispatched: "premove sent",
 			skipped: "skipped",
 			paused: "paused",
 			aborted: "aborted",

@@ -36,6 +36,12 @@
  * played or queued, and the hand is neither armed nor left armed (the
  * debugger is released with it: §13.4 forbids a mid-game attach, so keeping it
  * attached while the switch is off buys nothing and only leaves the infobar).
+ *
+ * **One exception, and it is not ours to fix** (Fix F): a premove already sent to the site during
+ * the opponent's turn is the *site's* state. Switching off stops everything above and sends nothing
+ * more, but it cannot retract a gesture the page has already had — chess.com fires or drops it when
+ * the opponent moves, whenever that is. `forgetPremove` says so in the log; the lane report says
+ * what it would take to do better.
  */
 
 import { turnFieldOf } from "@core/chess/fen";
@@ -43,6 +49,7 @@ import { applyMoves, legalMoves, uciToSan } from "@core/chess/san";
 import { sanToSpeech } from "@core/chess/san-speech";
 import { isSquare } from "@core/chess/squares";
 import { chromeLocalGet, chromeLocalSet } from "@core/chrome/storage";
+import { PREMOVE } from "@core/constants/books";
 import { EXECUTOR } from "@core/constants/cdp";
 import { LIMITS } from "@core/constants/limits";
 import type { GamePortCommand, GamePortMessage } from "@core/constants/messages";
@@ -56,7 +63,8 @@ import { createRng, type Rng } from "@core/rng";
 import type { BookPolicy } from "@core/strength/book/book-policy";
 import { createSelectionState } from "@core/strength/move-selector";
 import { createFormLatent, type FormLatent } from "@core/strength/persona";
-import { isPremoveSpeed, premoveCandidate } from "@core/strength/premove";
+import type { PremoveReason } from "@core/strength/premove";
+import { isPremoveSpeed, isQueueableReason, premoveCandidate } from "@core/strength/premove";
 import type { SelectionState } from "@core/strength/types";
 import { TIMING_CONSTANTS } from "@core/timing/constants";
 import { tcClass } from "@core/timing/features";
@@ -78,6 +86,7 @@ import { candidatesFromLines } from "@service/move-executor";
 import type { OpponentView, SessionGameView, SessionSource } from "@service/panel-broadcaster";
 import type {
 	ChosenMove,
+	ExecutionResult,
 	GameMeta,
 	GameResult,
 	GameSessionState,
@@ -90,13 +99,15 @@ import type {
 	TimeControl,
 } from "@typedefs/game";
 import type { PersonaId, Settings } from "@typedefs/settings";
+import type { MoveTelemetryRecord } from "@typedefs/telemetry";
+import type { TimingPlan } from "@typedefs/timing";
 import { PonderController } from "./ponder";
 import { autoPlayAllowed, effectiveTimingProfile, timingSettingsFor } from "./presets";
 import type { RecommendationInput, RecommendationOutcome } from "./recommendation";
 import { ownMoveBudget, RecommendationPipeline } from "./recommendation";
 import { EMPTY_STATS, foldGame, foldMove } from "./stats";
 import { MoveWindow, selectedMultiplePieces } from "./telemetry";
-import { type GameSessionEvent, isLiveState, nextState } from "./transitions";
+import { type GameSessionEvent, isLiveState, isMyTurnState, nextState } from "./transitions";
 
 const MS_PER_S = 1000;
 
@@ -223,6 +234,15 @@ const KEYBIND_MAP: Readonly<Record<string, SessionCommand>> = {
 	speakMove: "speakMove",
 };
 
+/**
+ * Placement plus side to move — the part of a FEN that says which position is on the board. The
+ * halfmove and fullmove counters (and an en-passant square the adapter had to approximate) are not
+ * identity, so comparing whole FENs would reject a position that *is* the one we expect.
+ */
+function boardKeyOf(fen: string): string {
+	return fen.split(" ").slice(0, 2).join(" ");
+}
+
 /** The motor's four-way class (it has no untimed profile; an untimed game moves like classical). */
 function motorTcClass(tc: TcClass): TimeControlClass {
 	return tc === "untimed" ? "classical" : tc;
@@ -234,6 +254,48 @@ interface PremoveArm {
 	chosen: ChosenMove;
 	/** Position the premove is played from (after our move and the expected reply). */
 	fen: string;
+	/** Why the policy accepted it — `PREMOVE.queueReasons` decides which may be *queued* (Fix F). */
+	reason: PremoveReason;
+}
+
+/**
+ * Fix F: a premove **entered on the site** during the opponent's turn, waiting for their move to
+ * resolve it. It is not a played move and is never accounted as one until the next position proves
+ * it: `reconcilePremove` compares that position with `fromFen + reply + uci` and only then writes
+ * the §8.6 row, the §13.2 record and the §13.6 fold.
+ */
+interface PremoveEntry {
+	/** The reply the premove is conditioned on. */
+	reply: string;
+	chosen: ChosenMove;
+	/** The position the drag was dispatched in — the opponent is to move in it. */
+	fromFen: string;
+	/** Ply of the position the premove belongs to: the one after `reply`. */
+	ply: number;
+	/** Our clock in `fromFen` (the §8.6 row's `clockMs`). */
+	clockMs: number;
+	plan: TimingPlan;
+	/** The recommendation handed to the executor; its identity is how its report is recognised. */
+	rec: Recommendation;
+	/** The drag's own result, once it finished; `null` while it is still pending or running. */
+	result: ExecutionResult | null;
+	/**
+	 * The §13.2 window the drag happens in — a *fork* of the opponent-turn window, never the
+	 * session's own. `onPosition` opens a fresh window for every position, and a premove report can
+	 * arrive after that has happened (the deferred settle below), so a premove that closed the
+	 * session's window would both mis-describe itself and steal the next move's record.
+	 */
+	window: MoveWindow;
+	/** The §13.2 record of that window (built when the drag finished). */
+	record: MoveTelemetryRecord | null;
+	/** Set when a cancel path gave the premove up while it was already out of our hands. */
+	abandoned: string | null;
+	/**
+	 * The position waiting to settle this premove because the drag had not reported yet when it
+	 * arrived. At bullet the opponent can easily reply inside the drag's own wind-down, so the
+	 * report and the position race; whichever is second does the reconciliation.
+	 */
+	settleWith: PositionSnapshot | null;
 }
 
 export class GameSession implements SessionSource {
@@ -280,6 +342,28 @@ export class GameSession implements SessionSource {
 	private lastOppMoveAt: number | null = null;
 	private lastMyMoveAt: number | null = null;
 	private premove: PremoveArm | null = null;
+	/** Fix F: the premove this session has entered on the site, until the next position settles it. */
+	private premoveEntry: PremoveEntry | null = null;
+	/**
+	 * Fix F: whether the *site* keeps the premoves we send. chess.com's own premove setting is not
+	 * readable, so this is learned from the one observation that answers it: a **completed** gesture,
+	 * the predicted reply, and our move not on the board. `null` = not known yet (try), `false` =
+	 * fall back to §7.4's fast reply, `true` = a premove of ours has fired.
+	 *
+	 * Deliberately **per tab, not per game**: every attempt on a board that refuses them costs a
+	 * visible snap-back and a real press outside any move window, so the lesson is worth keeping for
+	 * as long as the page is. A reload re-tests it, which is also what a player who changed the
+	 * setting would do.
+	 */
+	private premoveQueueing: boolean | null = null;
+	/**
+	 * Fix F / §13.2: the from-square of a premove the site **dropped**, after the page had already
+	 * seen the press. The site's move window does not end when our drag does — it ends at the next
+	 * submission — so that press is one of the pieces it counts as selected for the *next* move, and
+	 * our own record of that move has to say so or the export understates the preview rate by
+	 * exactly the premoves that were dropped. Consumed by the next move recorded.
+	 */
+	private droppedPremoveFrom: Square | null = null;
 	private startClockMs = 0;
 	/** A `playNow` issued while the pipeline was still running. */
 	private playWhenReady = false;
@@ -501,7 +585,7 @@ export class GameSession implements SessionSource {
 		this.cancelInFlight();
 		this.deps.autoQueue.cancel(this.deps.tabId);
 		this.rec = null;
-		this.premove = null;
+		this.forgetPremove("the assistant was turned off");
 		const executor = this.executorHandle;
 		executor?.disarm();
 		void this.releaseDebugger(executor);
@@ -571,7 +655,10 @@ export class GameSession implements SessionSource {
 		if (this.disposed) return;
 		this.disposed = true;
 		for (const off of this.offs.splice(0)) off();
+		// The executor goes first: `dispose()` → `cancel()` is what actually stops a premove that
+		// has not been sent, and `forgetPremove` only gives up the arm and says so.
 		this.detachExecutor();
+		this.forgetPremove("the session was disposed");
 		this.pipelineAc?.abort();
 		// Consistent with `cancelInFlight()` / `stopSearch()`: a disposed session leaves no search running.
 		const inFlight = this.preAnalysis;
@@ -654,6 +741,7 @@ export class GameSession implements SessionSource {
 		this.deps.autoQueue.cancel(this.deps.tabId);
 		this.rec = null;
 		this.hideVirtualCursor();
+		this.forgetPremove(event === "navigated" ? "the tab navigated away" : "the tab was closed");
 		this.clearBoardMarks();
 		if (event === "navigated") this.game = null;
 		this.apply(event);
@@ -678,7 +766,7 @@ export class GameSession implements SessionSource {
 		if (!this.apply("gameEnded")) return;
 		this.cancelInFlight();
 		this.rec = null;
-		this.premove = null;
+		this.forgetPremove("the game ended");
 		this.clearBoardMarks();
 		void this.finishGame(result);
 		this.deps.notify();
@@ -750,6 +838,9 @@ export class GameSession implements SessionSource {
 		const previous = this.snapshot;
 		this.priorFen = previous?.fen ?? null;
 		this.snapshot = snapshot;
+		// Fix F: a premove we entered on the site is settled by *this* position — before the move
+		// history, the profile or anything that plans reads either of them.
+		this.reconcilePremove(snapshot);
 		this.reprofile(snapshot);
 		// Whatever was marked belonged to the position that has just been superseded: erase it
 		// before anything new is drawn, so the board never carries two recommendations at once.
@@ -880,6 +971,9 @@ export class GameSession implements SessionSource {
 			return;
 		}
 		await this.armPremove(snapshot);
+		// Fix F: a premove is a *premove* — entered on the site now, while the opponent is still to
+		// move, so their move fires it. Scheduling only; the engine work below is not held up.
+		this.enterPremove(snapshot);
 		await this.preAnalysePredicted(snapshot, ponderer);
 	}
 
@@ -1095,6 +1189,9 @@ export class GameSession implements SessionSource {
 			legalDestinations: (sq: Square) => this.legalDestinations(sq),
 		};
 		if (snapshot?.myColor) ctx.myClockMs = snapshot.clocks[snapshot.myColor].ms;
+		// Fix F: the flag travels with the *recommendation*, not with the call, so every route to
+		// the executor carries it — `schedule` here and `playNow`'s re-built context alike.
+		if (this.premoveEntry !== null && rec === this.premoveEntry.rec) ctx.queuedPremove = true;
 		return ctx;
 	}
 
@@ -1172,11 +1269,17 @@ export class GameSession implements SessionSource {
 				rationale: [`premove: ${candidate.reason} (p(reply)=${candidate.replyProbability.toFixed(2)})`],
 			};
 			if (candidate.promotion) chosen.promotion = candidate.promotion;
-			this.premove = { reply: candidate.reply, chosen, fen: snapshot.fen };
+			this.premove = {
+				reply: candidate.reply,
+				chosen,
+				fen: snapshot.fen,
+				reason: candidate.reason,
+			};
 			log.info("game-session: premove armed", {
 				tabId: this.deps.tabId,
 				reply: candidate.reply,
 				premove: candidate.premove,
+				reason: candidate.reason,
 			});
 		} catch (error) {
 			log.debug("game-session: premove unavailable", { error: errorMessage(error) });
@@ -1184,8 +1287,16 @@ export class GameSession implements SessionSource {
 	}
 
 	/**
-	 * The opponent played the reply the premove was conditioned on: play it at
-	 * once (`t_premove ~ U(0, PREMOVE.maxS)`, §7.4) without a fresh search.
+	 * The **fallback** path (Fix F): the opponent played the reply the premove was conditioned on
+	 * and the premove is not already on the board, so the site was holding nothing — premoves are
+	 * off in the player's own chess.com settings, the queue was never entered (their think was
+	 * shorter than the entry delay), or `reconcilePremove` has just learned the site drops them.
+	 * Play it at once instead (`t_premove ~ U(0, PREMOVE.maxS)`, §7.4) without a fresh search.
+	 *
+	 * This is reached only on *our* turn, which a fired premove never produces (the site plays it
+	 * in the same position the reply arrives in, so the next position we see is the opponent's
+	 * again). The two paths therefore cannot both play: the queued premove and this one are the
+	 * same move, and the executor's own position guard vetoes the second of them.
 	 */
 	private async tryPremove(snapshot: PositionSnapshot): Promise<boolean> {
 		const armed = this.premove;
@@ -1255,6 +1366,408 @@ export class GameSession implements SessionSource {
 		return true;
 	}
 
+	// ── a queued premove (Fix F) ───────────────────────────────────────────
+
+	/**
+	 * Enter the armed premove on the site, during the opponent's turn, the way the site's own
+	 * premove works: you make the move while it is their turn and the site fires it the instant
+	 * they move. Everything about it is deliberately narrow.
+	 *
+	 *   - **Only a self-invalidating reason** (`isQueueableReason`). A queued move fires whether or
+	 *     not the prediction held, so the gate cannot be "the prediction is likely" — it has to be
+	 *     "an unexpected reply makes this illegal", which a recapture and the only legal move are
+	 *     and a clear-best quiet move is not.
+	 *   - **Only once per opponent turn**, and never while one is already outstanding.
+	 *   - **Only while the site is still holding them** (`premoveQueueing`).
+	 *   - **The human moment**, not the instant the position appeared and not the end of their
+	 *     think: `U(PREMOVE.queueDelayMinMs, queueDelayMaxMs)` after it, with the drag itself given
+	 *     the §7.4 window. A think shorter than the delay simply never reaches the drag, and the
+	 *     arm is still there for the fast reply instead.
+	 *
+	 * The §3.2 recommendation is *not* published for it: the live position is the opponent's, and a
+	 * premove is not a recommendation for it. Nothing is logged as planned or played here either —
+	 * the next position is what decides that (`reconcilePremove`).
+	 */
+	private enterPremove(snapshot: PositionSnapshot): void {
+		const armed = this.premove;
+		const executor = this.executorHandle;
+		if (!armed || !executor || this.disposed) return;
+		if (this.premoveEntry !== null) return;
+		if (this.premoveQueueing === false || !isQueueableReason(armed.reason)) return;
+		if (!this.mayAct() || !executor.isArmed()) return;
+		if (!this.autoMoveAllowed(this.deps.getSettings())) return;
+		const myColor = snapshot.myColor;
+		if (myColor === null || snapshot.sideToMove === myColor) return;
+		if (this.snapshot !== snapshot) return;
+		// The SAN only exists in the position the premove is played in — it is not a legal move in
+		// the one we are entering it from, which is the whole point of a premove.
+		const afterReply = applyMoves(snapshot.fen, [armed.reply]);
+		const san = afterReply === null ? null : uciToSan(afterReply, armed.chosen.uci);
+		if (afterReply === null || san === null) {
+			log.debug("game-session: premove not enterable (the predicted position does not hold it)", {
+				tabId: this.deps.tabId,
+				reply: armed.reply,
+				uci: armed.chosen.uci,
+			});
+			return;
+		}
+		const chosen: ChosenMove = { ...armed.chosen, san };
+		const now = this.now();
+		const delayMs =
+			PREMOVE.queueDelayMinMs + this.rng.next() * (PREMOVE.queueDelayMaxMs - PREMOVE.queueDelayMinMs);
+		const windowMs = this.rng.next() * PREMOVE_WINDOW_MS;
+		const plan: TimingPlan = {
+			thinkMs: windowMs,
+			mode: "premove",
+			preMoveHoverMs: 0,
+			dragDurationMs: 0,
+			deadlineMs: now + delayMs + windowMs,
+			rationale: [...chosen.rationale],
+			features: {},
+			orientationMs: 0,
+			window: {
+				orientationMs: 0,
+				scanMs: 0,
+				previewMs: 0,
+				decisionMs: 0,
+				approachMs: windowMs,
+			},
+		};
+		const rec: Recommendation = {
+			chosen,
+			lines: [],
+			eval: { cp: 0 },
+			depth: 0,
+			nps: 0,
+			plan,
+			computedAt: now,
+			// The position it will be played in, which is what seeds the hand and what the §8.6 row
+			// belongs to — not the one it is entered from.
+			fen: afterReply,
+		};
+		this.premoveEntry = {
+			reply: armed.reply,
+			chosen,
+			fromFen: snapshot.fen,
+			ply: snapshot.ply + 1,
+			clockMs: snapshot.clocks[myColor].ms,
+			plan,
+			rec,
+			// The fork is the window the drag happens in; `now` is what it opens at if the session's
+			// own window has already been closed by a late report for the previous move.
+			window: this.window.fork(now),
+			result: null,
+			record: null,
+			abandoned: null,
+			settleWith: null,
+		};
+		executor.schedule(rec, plan, this.moveContext(rec));
+		log.info("game-session: entering a premove on the site during the opponent's turn", {
+			tabId: this.deps.tabId,
+			uci: chosen.uci,
+			reply: armed.reply,
+			reason: armed.reason,
+			inMs: Math.round(delayMs),
+		});
+	}
+
+	/**
+	 * A terminal executor report that belongs to the premove drag rather than to a move of our own
+	 * (`true` when it was handled here). A `dispatched` report means the gesture went out and
+	 * nothing was played — acceptance by the site is unknown — so none of `onExecuted`'s accounting
+	 * may run; the §13.2 record of the window the drag happened in (a fork of the *opponent's*
+	 * window, which is where the input really was) is built now and attached only if the next
+	 * position shows the move.
+	 *
+	 * An outcome that is not `dispatched` is a drag the hand did not finish. The entry is kept when a
+	 * press had already gone out, because the page may have seen a press on one square and a
+	 * release on another and be holding something; it is forgotten when nothing was pressed.
+	 */
+	private settlePremoveDrag(report: ExecutionReport): boolean {
+		const entry = this.premoveEntry;
+		if (!entry || report.rec !== entry.rec) return false;
+		const result = report.result;
+		const pressed = result.pressed === true || result.pressedAny === true;
+		if (result.outcome === "dispatched" || pressed) {
+			entry.result = result;
+			// `??=`, not `=`: one terminal report per execution is the rule, but closing the fork a
+			// second time would replace a good record with `null` (a closed window produces none), so
+			// the footgun is removed rather than relied on.
+			entry.record ??= entry.window.close({
+				elapsedMs: result.elapsedMs,
+				pointerOffsetPx: result.pointerOffsetPx ?? 0,
+				multiplePieces: selectedMultiplePieces(result, entry.chosen.from),
+				orientationMs: entry.plan.orientationMs,
+				// §13.2: a premove is never "non-trivial" — a premove press is a committed move
+				// attempt, not a §9.3a preview touch, so it must never enter the preview-rate band
+				// (`report.py` takes that denominator from this very field).
+				multiSelectEligible: false,
+				nReasonable: 1,
+				// §13.6: a premove is decided before its position exists and carries no evaluation.
+				quality: undefined,
+				// The window is the opponent's turn, a period the owner owns: a focus edge in it is his
+				// behaviour, and the §13.2 conduct rules are told so explicitly rather than inferring
+				// it from the mode.
+				ownerOwnsWindow: true,
+				at: result.at ?? this.now(),
+			});
+		}
+		if (result.outcome === "dispatched") {
+			// Deliberately not "the site is holding our premove": all that is known here is that the
+			// drag went out. chess.com exposes no premove state the extension can read, so acceptance
+			// is unconfirmed until the next position either contains the move or does not.
+			log.info("game-session: premove dispatched, acceptance unconfirmed", {
+				tabId: this.deps.tabId,
+				uci: entry.chosen.uci,
+				ply: entry.ply,
+				abandoned: entry.abandoned,
+			});
+		} else if (pressed) {
+			log.warn("game-session: the premove drag was interrupted after a press; the site may have it", {
+				tabId: this.deps.tabId,
+				uci: entry.chosen.uci,
+				outcome: result.outcome,
+				reason: result.reason ?? null,
+			});
+		} else {
+			this.premoveEntry = null;
+			log.info("game-session: no premove was entered", {
+				tabId: this.deps.tabId,
+				uci: entry.chosen.uci,
+				outcome: result.outcome,
+				reason: result.reason ?? null,
+			});
+		}
+		// The position that was waiting for this report (the race above) settles the premove now.
+		const waiting = entry.settleWith;
+		if (waiting !== null && this.premoveEntry === entry) this.reconcilePremove(waiting);
+		this.deps.notify();
+		return true;
+	}
+
+	/**
+	 * Settle the premove against the position that has just arrived — the only signal there is.
+	 * Nothing observable says whether the site *accepted* the gesture; what proves it was **played**
+	 * is the position itself containing the move, read from `board.game`'s own FEN (or the move
+	 * list's replay), never from a marking or an animation. Three outcomes, and the fourth
+	 * that tells us the site is not holding them at all:
+	 *
+	 *   1. the predicted reply, our premove on the board — the happy path;
+	 *   2. another reply, our premove gone — the site dropped it as illegal: a normal turn, planned
+	 *      normally by the caller;
+	 *   3. another reply, our premove on the board anyway — it is still our move and is recorded as
+	 *      one, even though no search ever chose it for that position (§13.6 scores it as a premove,
+	 *      i.e. not at all, and `buildTimingLogEntry` writes its `mode: "premove"` row);
+	 *   4. the predicted reply, our premove gone — the prediction was right and the site played
+	 *      nothing, so it is not holding our premoves: fall back to §7.4's fast reply from here on.
+	 */
+	private reconcilePremove(snapshot: PositionSnapshot): void {
+		const entry = this.premoveEntry;
+		if (!entry) return;
+		if (entry.result === null && this.premoveDragInFlight(entry)) {
+			// The drag is still winding down. Settling now would report "never entered" for a premove
+			// the site may already be holding, so the drag's own report finishes this instead.
+			entry.settleWith = snapshot;
+			log.debug("game-session: the premove drag has not reported yet; settling on its report", {
+				tabId: this.deps.tabId,
+				uci: entry.chosen.uci,
+			});
+			return;
+		}
+		this.premoveEntry = null;
+		const result = entry.result;
+		if (result === null) {
+			log.info("game-session: the premove was never entered", {
+				tabId: this.deps.tabId,
+				uci: entry.chosen.uci,
+				reason: entry.abandoned ?? "the opponent moved first",
+			});
+			return;
+		}
+		const played = this.premoveLanded(entry, snapshot);
+		if (played !== null) {
+			this.premoveQueueing = true;
+			this.premove = null;
+			this.notePremovePlies(entry, played, snapshot);
+			this.recordQueuedPremove(entry, result);
+			if (played === entry.reply)
+				log.info("game-session: the premove fired — the opponent played the predicted reply", {
+					tabId: this.deps.tabId,
+					uci: entry.chosen.uci,
+					reply: played,
+					ply: entry.ply,
+					abandoned: entry.abandoned,
+				});
+			else
+				log.warn("game-session: the premove fired after an unexpected reply — recorded as ours", {
+					tabId: this.deps.tabId,
+					uci: entry.chosen.uci,
+					expected: entry.reply,
+					played,
+					ply: entry.ply,
+				});
+			return;
+		}
+		// The page saw the press even though the site kept nothing: §13.2 charges it to the *next*
+		// move's window, so the next move's record has to carry it (see `droppedPremoveFrom`).
+		if (result.pressed === true || result.pressedAny === true)
+			this.droppedPremoveFrom = entry.chosen.from;
+		const afterReply = applyMoves(entry.fromFen, [entry.reply]);
+		const predicted = afterReply !== null && boardKeyOf(afterReply) === boardKeyOf(snapshot.fen);
+		if (predicted) {
+			// Only a *completed* gesture is evidence about the site. A drag the arriving position
+			// aborted mid-flight still carries `pressed`, and treating that as "the site does not
+			// hold premoves" switched the feature off for the rest of the game on the commonest
+			// path at bullet — one attempt per game, blamed on chess.com (found in review).
+			if (result.outcome === "dispatched") {
+				this.premoveQueueing = false;
+				log.warn(
+					"game-session: the predicted reply arrived and the premove was not played — the site is not holding our premoves; the fast reply takes over",
+					{ tabId: this.deps.tabId, uci: entry.chosen.uci, reply: entry.reply }
+				);
+				return;
+			}
+			log.info("game-session: the premove drag never finished; nothing was learned about the site", {
+				tabId: this.deps.tabId,
+				uci: entry.chosen.uci,
+				outcome: result.outcome,
+				reason: result.reason ?? null,
+			});
+			return;
+		}
+		// "Dropped" is what the site does with an illegal premove, but we cannot see whether it ever
+		// held this one, so the line says only what the board shows.
+		log.info("game-session: the premove is not on the board after an unexpected reply", {
+			tabId: this.deps.tabId,
+			uci: entry.chosen.uci,
+			expected: entry.reply,
+			dispatched: result.outcome === "dispatched",
+		});
+	}
+
+	/**
+	 * Is the premove's drag still going to report? `cancel()` (which every path that reaches here
+	 * has already run) clears a drag that was merely *scheduled* and nothing more will be heard of
+	 * it, but a drag already running winds down through the hand's release and reports afterwards.
+	 */
+	private premoveDragInFlight(entry: PremoveEntry): boolean {
+		const executor = this.executorHandle;
+		if (!executor) return false;
+		return executor.isRunning() || executor.pendingMove()?.rec === entry.rec;
+	}
+
+	/**
+	 * The opponent reply after which our premove is on `snapshot`'s board, or `null` when it is not
+	 * there. Placement plus side to move is the comparison (`boardKeyOf`), so a reading the adapter
+	 * had to approximate still answers, and the predicted reply is tried first because it is both
+	 * the common case and the cheap one.
+	 */
+	private premoveLanded(entry: PremoveEntry, snapshot: PositionSnapshot): string | null {
+		const want = boardKeyOf(snapshot.fen);
+		const others = legalMoves(entry.fromFen).filter((m) => m !== entry.reply);
+		for (const reply of [entry.reply, ...others]) {
+			const after = applyMoves(entry.fromFen, [reply]);
+			if (after === null) continue;
+			const both = applyMoves(after, [entry.chosen.uci]);
+			if (both !== null && boardKeyOf(both) === want) return reply;
+		}
+		return null;
+	}
+
+	/**
+	 * Two plies landed in one position, so `trackMove` — which reads `lastMove` alone — can only see
+	 * the second. Record both in order, and point `priorFen` at the position our premove was
+	 * actually played from, which is what the *next* premove replays our move from.
+	 */
+	private notePremovePlies(entry: PremoveEntry, reply: string, snapshot: PositionSnapshot): void {
+		if (this.moves[this.moves.length - 1] !== reply) this.moves.push(reply);
+		if (this.moves[this.moves.length - 1] !== entry.chosen.uci) this.moves.push(entry.chosen.uci);
+		const afterReply = applyMoves(entry.fromFen, [reply]);
+		if (afterReply !== null) this.priorFen = afterReply;
+		const at = snapshot.capturedAt;
+		// `> 0` because `trackMove` may already have run for this position (the deferred settle
+		// above), which moves `lastMyMoveAt` to the premove itself and leaves nothing to measure.
+		const think = this.lastMyMoveAt === null ? 0 : at - this.lastMyMoveAt;
+		if (think > 0) this.oppThinkMs.push(think);
+		this.lastOppMoveAt = at;
+	}
+
+	/**
+	 * §8.6 + §13.2 + §13.6 for a premove the next position confirmed. The row is written *here*,
+	 * not when the drag went out: a row written at entry time would say a premove was played in a
+	 * position the site may have dropped it in. `markActual` and `attachTelemetry` then find it
+	 * under the ply the premove belongs to — the position after the reply, which this session never
+	 * saw, because the site played our move in it.
+	 */
+	private recordQueuedPremove(entry: PremoveEntry, result: ExecutionResult): void {
+		// `TimingModel.observe` is deliberately *not* called. It writes `actualMs` onto the entry it
+		// keyed under its own `state.ply` — the ply of the last `planMove` — and a premove's plan is
+		// hand-built and never went through `planMove`, so the ply is still our previous *searched*
+		// move's and the write lands on that row. Measured by the review: a scored row's `actualMs`
+		// overwritten with the premove drag's elapsed. The session's own `myThinkMs` (below) is what
+		// the features read, so nothing is lost. (`recordMove` has the same shape on the reactive
+		// premove path — pre-existing, and fixing it properly needs `src/core/timing/**`.)
+		this.myThinkMs.push(result.elapsedMs);
+		const gameId = this.game?.gameId ?? "";
+		this.deps.timingLog.append(
+			buildTimingLogEntry({
+				gameId,
+				ply: entry.ply,
+				mode: "premove",
+				plannedMs: entry.plan.thinkMs,
+				alloc: 0,
+				clockMs: entry.clockMs,
+				comp: 1,
+				eps: 0,
+				terms: [],
+				persona: this.deps.getSettings().strength.persona,
+			})
+		);
+		this.deps.timingLog.markActual(gameId, entry.ply, result.elapsedMs);
+		if (entry.record) this.deps.timingLog.attachTelemetry(gameId, entry.ply, entry.record);
+		void this.updateStats((stats) =>
+			foldMove(stats, {
+				thinkMs: result.elapsedMs,
+				scored: isScoredMove(entry.chosen),
+				top1: entry.chosen.rankInLines === TOP_LINE_RANK,
+				cpLoss: entry.chosen.cpLoss,
+			})
+		);
+	}
+
+	/**
+	 * Give up the premove: `Shift+X`, the master switch, a disarm, a game end, a tab navigation, a
+	 * disposed session. Every one of those paths cancels the hand first, so a premove still waiting
+	 * for its moment is simply never entered — which is the only cancellation that is wholly ours.
+	 *
+	 * One already entered is the **site's** state, and we cannot take it back: retracting a premove
+	 * on chess.com is another press on the board, and §13.7 item 3 allows the hand only the presses
+	 * the §9.3a model generates (and the gesture itself is one we have never verified on a real
+	 * board — dispatching the wrong one could leave a piece selected, which that rule forbids
+	 * outright). So the entry is *kept*, not dropped: it is never reported as played unless the
+	 * board shows it, and if the site does fire it the move was still ours and is accounted as ours.
+	 * What bounds the exposure is the policy, not us: a queued premove is a recapture or the only
+	 * legal move, so an opponent who plays anything else makes it illegal and the site drops it.
+	 */
+	private forgetPremove(reason: string): void {
+		this.premove = null;
+		const entry = this.premoveEntry;
+		if (entry === null || entry.abandoned !== null) return;
+		entry.abandoned = reason;
+		if (entry.result === null) {
+			log.info("game-session: a premove was given up before it was entered", {
+				tabId: this.deps.tabId,
+				reason,
+				uci: entry.chosen.uci,
+			});
+			return;
+		}
+		log.warn(
+			"game-session: a premove had already been entered on the site and cannot be taken back",
+			{ tabId: this.deps.tabId, reason, uci: entry.chosen.uci, reply: entry.reply }
+		);
+	}
+
 	// ── user commands ──────────────────────────────────────────────────────
 
 	private async arm(): Promise<void> {
@@ -1283,9 +1796,13 @@ export class GameSession implements SessionSource {
 	}
 
 	private disarm(): void {
+		// `disarm()` cancels whatever the hand had pending first, so a premove that has not been
+		// entered yet never is; `forgetPremove` then gives up the arm as well (an unarmed hand must
+		// not fire a premove on the next position either).
 		this.executorHandle?.disarm();
 		// The hand no longer owns a pointer on this tab, so nothing of ours belongs on the page.
 		this.hideVirtualCursor();
+		this.forgetPremove("the hand was disarmed");
 		this.apply("disarm");
 		this.deps.notify();
 	}
@@ -1300,7 +1817,7 @@ export class GameSession implements SessionSource {
 		this.hideVirtualCursor();
 		this.clearBoardMarks();
 		this.rec = null;
-		this.premove = null;
+		this.forgetPremove("Shift+X — the assistant was stopped on this tab");
 		this.apply("disable");
 		this.deps.notify();
 	}
@@ -1320,6 +1837,16 @@ export class GameSession implements SessionSource {
 			return;
 		}
 		const pending = executor.pendingMove();
+		// Fix F: the only thing pending during the opponent's turn is a premove waiting for its
+		// human moment. "Play the best move" is about *our* move, so it neither commits that premove
+		// early nor falls through to a recommendation for the opponent's position.
+		if (pending && this.premoveEntry !== null && pending.rec === this.premoveEntry.rec) {
+			log.info("game-session: playNow ignored — the pending move is a premove", {
+				tabId: this.deps.tabId,
+				uci: pending.rec.chosen.uci,
+			});
+			return;
+		}
 		if (pending) {
 			this.apply("playNow");
 			this.deps.notify();
@@ -1361,6 +1888,9 @@ export class GameSession implements SessionSource {
 		this.snapshot = null;
 		this.rec = null;
 		this.premove = null;
+		this.premoveEntry = null;
+		// `premoveQueueing` is *not* reset here: it is a fact about the page, not about the game.
+		this.droppedPremoveFrom = null;
 		this.moves = [];
 		this.oppThinkMs = [];
 		this.myThinkMs = [];
@@ -1452,11 +1982,19 @@ export class GameSession implements SessionSource {
 		this.executorHandle = executor;
 		this.executorOffs = [
 			executor.on("executed", (report) => this.onExecuted(report)),
+			// Fix F: the premove gesture went out. Nothing has been played — and nothing can tell
+			// whether the site kept it — so it is not `executed` and none of `onExecuted`'s
+			// accounting runs on it.
+			executor.on("dispatched", (report) => void this.settlePremoveDrag(report)),
 			executor.on("failed", (report) => this.onFailed(report)),
 			executor.on("aborted", (report) => this.onNotExecuted(report, "aborted")),
 			executor.on("skipped", (report) => this.onNotExecuted(report, "skipped")),
 			executor.on("hand", (hand) => {
-				if (hand !== "rest") this.apply("handStarted");
+				// Fix F: the hand now also leaves rest during the *opponent's* turn, to send a
+				// premove, and §3.3 has no `handStarted` edge there on purpose — the move is not ours
+				// to make yet. The table already rejects that edge, so this gate changes no state;
+				// what it removes is one `log.warn("no transition")` per hand phase per premove.
+				if (hand !== "rest" && isMyTurnState(this.state)) this.apply("handStarted");
 			}),
 			executor.on("pointer", (p) => this.onHandPointer(p)),
 		];
@@ -1476,6 +2014,7 @@ export class GameSession implements SessionSource {
 	}
 
 	private onExecuted(report: ExecutionReport): void {
+		if (this.settlePremoveDrag(report)) return;
 		this.apply("executed");
 		// The move is on the board: the prediction has been spent, and the site's own last-move
 		// marking is what belongs there now.
@@ -1485,6 +2024,7 @@ export class GameSession implements SessionSource {
 	}
 
 	private onFailed(report: ExecutionReport): void {
+		if (this.settlePremoveDrag(report)) return;
 		log.warn("game-session: execution failed", {
 			tabId: this.deps.tabId,
 			uci: report.rec.chosen.uci,
@@ -1500,6 +2040,7 @@ export class GameSession implements SessionSource {
 	 * (`aborted`), as well as the position guard (`skipped`) and a genuine failure.
 	 */
 	private onNotExecuted(report: ExecutionReport, outcome: "aborted" | "skipped" | "failed"): void {
+		if (this.settlePremoveDrag(report)) return;
 		this.apply("failed");
 		this.window.discard();
 		log.debug("game-session: move did not land", {
@@ -1517,6 +2058,10 @@ export class GameSession implements SessionSource {
 		const { rec, result } = report;
 		const snapshot = this.snapshot;
 		const timing = this.timing;
+		// §13.2: a premove the site dropped leaves its press inside the window the *site* closes with
+		// this move, so it is one of the pieces it saw selected (Fix F).
+		const alsoPressed = this.droppedPremoveFrom;
+		this.droppedPremoveFrom = null;
 		if (timing) timing.observe(result.elapsedMs, rec.plan);
 		this.myThinkMs.push(result.elapsedMs);
 		if (snapshot && this.game) {
@@ -1524,7 +2069,9 @@ export class GameSession implements SessionSource {
 			const record = this.window.close({
 				elapsedMs: result.elapsedMs,
 				pointerOffsetPx: result.pointerOffsetPx ?? 0,
-				multiplePieces: selectedMultiplePieces(result, rec.chosen.from),
+				multiplePieces:
+					selectedMultiplePieces(result, rec.chosen.from) ||
+					(alsoPressed !== null && alsoPressed !== rec.chosen.from),
 				orientationMs: rec.plan.orientationMs,
 				multiSelectEligible: this.multiSelectEligible(rec, snapshot),
 				nReasonable: this.recNReasonable,
@@ -1567,6 +2114,9 @@ export class GameSession implements SessionSource {
 	 */
 	private onFocusEdge(hasFocus: boolean, at: number): void {
 		this.window.edge(hasFocus, at);
+		// Fix F: a premove's drag runs in a fork of the opponent-turn window, and §13.2 wants the
+		// edges of the window the input was actually in.
+		this.premoveEntry?.window.edge(hasFocus, at);
 		if (hasFocus) return;
 		const executor = this.executorHandle;
 		const pending = executor?.pendingMove() ?? null;

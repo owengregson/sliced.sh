@@ -82,6 +82,16 @@ export function replyProbability(reply: string, lines: readonly EvalLine[]): num
 	return total > 0 ? own / total : 0;
 }
 
+/**
+ * Fix F: may this premove be *entered on the site* during the opponent's turn, rather than only
+ * played fast once the predicted reply has landed? Only the self-invalidating reasons
+ * (`PREMOVE.queueReasons`): a queued move fires whether or not the prediction held, so the gate
+ * has to be "an unexpected reply makes this illegal", which `loss2nd` is not.
+ */
+export function isQueueableReason(reason: PremoveReason): boolean {
+	return (PREMOVE.queueReasons as readonly PremoveReason[]).includes(reason);
+}
+
 /** §7.4 runs only in these classes (`PREMOVE.speeds`); also the gate on the §4.5 pre-analysis. */
 export function isPremoveSpeed(timeControl: TimeControl | undefined): boolean {
 	if (!timeControl) return false;

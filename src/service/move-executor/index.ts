@@ -101,6 +101,16 @@ export interface MoveContext {
 	candidates?: readonly MoveCandidate[];
 	legalDestinations?: (sq: Square) => Square[];
 	moveKind?: MotorMoveKind;
+	/**
+	 * Fix F: this move is being **sent as a premove**, during the opponent's turn. Three things
+	 * change. The position guard stops asking whether the destination is free of our own pieces —
+	 * a recapture premove is aimed at the very piece the opponent is about to take. Verification is
+	 * not attempted at all: a premove does not land until the opponent moves, so `observeMove` would
+	 * time out and the retry policy would send the move a second time. And the outcome is
+	 * `dispatched`, never `executed`: nothing has been played, and nothing here can even tell
+	 * whether the site kept the gesture.
+	 */
+	queuedPremove?: boolean;
 }
 
 export interface ExecutionReport {
@@ -110,6 +120,8 @@ export interface ExecutionReport {
 
 export interface ExecutorEvents {
 	executed: ExecutionReport;
+	/** Fix F: a premove gesture the hand completed during the opponent's turn (`MoveContext`). */
+	dispatched: ExecutionReport;
 	failed: ExecutionReport;
 	aborted: ExecutionReport;
 	skipped: ExecutionReport;
@@ -608,11 +620,13 @@ export class MoveExecutor {
 		this.emit(
 			result.outcome === "executed"
 				? "executed"
-				: result.outcome === "aborted"
-					? "aborted"
-					: result.outcome === "skipped"
-						? "skipped"
-						: "failed",
+				: result.outcome === "dispatched"
+					? "dispatched"
+					: result.outcome === "aborted"
+						? "aborted"
+						: result.outcome === "skipped"
+							? "skipped"
+							: "failed",
 			{ rec, result }
 		);
 		return result;
@@ -629,9 +643,11 @@ export class MoveExecutor {
 		const readAt = this.now();
 		const expected: ExpectedMove = { from: rec.chosen.from, to: rec.chosen.to };
 		if (rec.chosen.promotion) expected.promotion = rec.chosen.promotion;
+		// Fix F: a premove sent during the opponent's turn (`MoveContext.queuedPremove`).
+		const queued = ctx.queuedPremove === true;
 		// Position guard: never dispatch on a position that already changed (a replacement after a
 		// cancelled run, or any reply whose occupancy says the piece left the from-square).
-		const guard = await this.positionChanged(rec, reply, replacement);
+		const guard = await this.positionChanged(rec, reply, replacement, queued);
 		if (guard !== null) {
 			log.info("executor: position guard vetoed the committed press; not dispatching", {
 				tabId: this.tabId,
@@ -644,6 +660,13 @@ export class MoveExecutor {
 		const fromRect = geo.squareRect(rec.chosen.from);
 		const toRect = geo.squareRect(rec.chosen.to);
 		const moveRng = createRng(`${this.config.gameSeed}:${rec.fen}:${rec.chosen.uci}`);
+		// A premove MUST be a drag, and since click-to-move was removed every committed move is
+		// one, so there is nothing to choose here any more. Keeping the reason on the record: a
+		// click-click premove would press the destination square as a second selection, and a
+		// premove's destination is routinely one of our own pieces (a recapture), so the site
+		// would read that press as "select that piece instead" and leave a selection standing,
+		// which §13.7 item 3 forbids outright. The drag is also the gesture the site's premove UI
+		// is built around.
 		const moveKind = ctx.moveKind ?? this.moveKindOf(rec);
 		const motor = perMoveProfile(
 			perGameProfile(
@@ -687,7 +710,10 @@ export class MoveExecutor {
 				square: rec.chosen.to,
 			},
 			motor,
-			expected: { san: rec.chosen.san, uci: rec.chosen.uci, premove: rec.chosen.source === "premove" },
+			// `premove` here means "entered as a premove", which is what relaxes the hand's own
+			// destination guard — not merely "the §7.4 policy chose it" (a premove played after the
+			// predicted reply landed is an ordinary move and is guarded like one).
+			expected: { san: rec.chosen.san, uci: rec.chosen.uci, premove: queued },
 			geometry: { reply, readAt },
 			exploration: {
 				candidates: ctx.candidates ?? candidatesFromLines(rec),
@@ -704,6 +730,7 @@ export class MoveExecutor {
 				? verifyMove(this.link, this.tabId, expected, timeoutMs, checkSignal)
 				: Promise.resolve({ outcome: "ok" });
 		try {
+			if (queued) return await this.enterPremove(controller, plan, timing, signal);
 			return await runWithRetry({
 				attempt: (index) =>
 					controller.execute(plan, index === 0 ? timing : instantTiming(timing), signal),
@@ -718,6 +745,35 @@ export class MoveExecutor {
 			this.checkAc = null;
 			backend.dispose();
 		}
+	}
+
+	/**
+	 * Fix F: enter a premove and stop. One attempt, because a retry would hand the site the move a
+	 * second time, and **no verification**, because a premove is not on the board yet —
+	 * `observeMove` would watch the destination until its budget ran out and the retry policy would
+	 * read that timeout as "not submitted".
+	 *
+	 * The report is therefore `dispatched`, and that is the strongest thing that can honestly be
+	 * said here: the drag went out. Whether chess.com kept it, snapped the piece back, or read the
+	 * drop as a selection is **not observable** — the site exposes no premove state this extension
+	 * can read (see the lane report) — so nothing in this file may claim acceptance. The next
+	 * position decides (`GameSession.reconcilePremove`), which is what keeps a silently dropped
+	 * premove from ever being reported as played. Anything but a completed drag passes through as
+	 * its own outcome: a drag the hand did not finish is not a gesture the site saw.
+	 */
+	private async enterPremove(
+		controller: HandController,
+		plan: ExecutionPlan,
+		timing: TimingPlan,
+		signal: AbortSignal
+	): Promise<ExecutionResult> {
+		const result = await controller.execute(plan, timing, signal);
+		if (!result.ok) return result;
+		log.info("executor: premove gesture dispatched; acceptance by the site is unconfirmed", {
+			tabId: this.tabId,
+			uci: plan.expected.uci,
+		});
+		return { ...result, outcome: "dispatched" };
 	}
 
 	/**
@@ -785,19 +841,26 @@ export class MoveExecutor {
 	private async positionChanged(
 		rec: Recommendation,
 		reply: BoardGeometryReply,
-		replacement: boolean
+		replacement: boolean,
+		queued = false
 	): Promise<{ outcome: "skipped" | "aborted"; reason: string } | null> {
 		const changed = { outcome: "skipped", reason: EXECUTOR.reasons.positionChanged } as const;
+		// Fix F: a premove is entered in the position *before* the opponent's reply, where its
+		// destination is routinely still ours — a recapture is aimed at the piece they are about to
+		// take. Only "our piece is still on the from-square" is asked of it; "the destination is not
+		// ours" is a rule about a move being legal now, which a premove is not.
+		const to = queued ? undefined : rec.chosen.to;
 		if (reply.occupancy) {
-			return positionIntact(reply, rec.chosen.from, rec.chosen.to) ? null : changed;
+			return positionIntact(reply, rec.chosen.from, to) ? null : changed;
 		}
 		if (!replacement || !this.config.verifyMoves) return null;
-		const { from, to } = rec.chosen;
+		const from = rec.chosen.from;
+		const squares: Square[] = to === undefined ? [from] : [from, to];
 		const signal = this.freshCheckSignal();
 		const seen = await checkSquares(
 			this.link,
 			this.tabId,
-			[from, to],
+			squares,
 			EXECUTOR.recheckTimeoutMs,
 			signal
 		);
@@ -808,11 +871,11 @@ export class MoveExecutor {
 				: { outcome: "skipped", reason: EXECUTOR.reasons.verificationUnavailable };
 		}
 		const occ = seen.occupancy;
-		if (occ[from] === undefined || occ[to] === undefined) {
+		if (squares.some((sq) => occ[sq] === undefined)) {
 			// A square the adapter could not classify: nothing is dispatched on a guess.
 			return { outcome: "skipped", reason: EXECUTOR.reasons.verificationUnavailable };
 		}
-		return occ[from] === "own" && occ[to] !== "own" ? null : changed;
+		return occ[from] === "own" && (to === undefined || occ[to] !== "own") ? null : changed;
 	}
 
 	private moveKindOf(rec: Recommendation): MotorMoveKind {

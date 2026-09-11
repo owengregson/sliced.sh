@@ -47,6 +47,13 @@ export interface SiteModel {
 	legalDestinations(sq: Square): Square[];
 	/** The site applies the move; `false` when it refuses (not our turn, illegal). */
 	submit(from: Square, to: Square): boolean;
+	/**
+	 * A drag that ended on a square the piece cannot legally reach *now*: chess.com holds it as a
+	 * premove when it is the opponent's turn. `false` (or absent) means the site holds nothing and
+	 * the piece snaps back. Nothing is submitted either way — a held premove is submitted by the
+	 * site itself when the opponent moves, which reaches the shadow as `siteSubmitted`.
+	 */
+	queuePremove?(from: Square, to: Square): boolean;
 }
 
 export type PressAction = "select" | "switch" | "deselect" | "move" | "none";
@@ -99,6 +106,13 @@ export interface AcShadow {
 	readonly observations: AcObservation[];
 	/** The client's move window opens: the position we are to move in has arrived. */
 	positionArrived(at?: number): void;
+	/**
+	 * The site submitted one of our moves without a gesture of its own: a premove it was holding,
+	 * fired the instant the opponent moved. The period closes exactly as a pointer submission
+	 * closes it, so the blob for that ply carries the site's own `MoveHoldTime` — the few ms from
+	 * the opponent's move landing to the premove going out, not the drag that entered it.
+	 */
+	siteSubmitted(from: Square, to: Square, at?: number): void;
 	onMove(cb: (obs: AcObservation) => void): () => void;
 	pendingSelection(): Square | null;
 	/** Last pointer position the page saw. */
@@ -294,7 +308,12 @@ export function createAcShadow(dom: TabDom, model: SiteModel, options: AcShadowO
 		if (model.legalDestinations(from).includes(sq)) {
 			if (press) press.action = "move";
 			submit(from, sq, at);
-		} else selected = null;
+		} else {
+			// Not legal now: the site either holds it as a premove or the piece snaps back. Either
+			// way the gesture is finished and the selection resolved — never a stuck half-drag.
+			model.queuePremove?.(from, sq);
+			selected = null;
+		}
 		press = null;
 	}
 
@@ -378,6 +397,11 @@ export function createAcShadow(dom: TabDom, model: SiteModel, options: AcShadowO
 		observations,
 		positionArrived(at) {
 			period.positionAt = at ?? now();
+		},
+		siteSubmitted(from, to, at) {
+			selected = null;
+			dragFrom = null;
+			close(from, to, at ?? now());
 		},
 		onMove(cb) {
 			listeners.add(cb);
