@@ -27,6 +27,21 @@ export const SELECTION_CONSTANTS = deepFreeze({
 		recaptureWeight: 2,
 		captureWeight: 1,
 	},
+	/** Preserve searched wins and prefer small, concrete progress over repeated manoeuvring. */
+	conversion: {
+		aheadCp: 300,
+		materialPawns: 2,
+		keepCp: 150,
+		maxLossCp: 75,
+		progressLossCp: 25,
+		pvPlies: 12,
+		promotionWeight: 8,
+		pawnWeight: 2,
+		kingApproachWeight: 1,
+		kingRestrictionWeight: 0.5,
+	},
+	/** A clock race tolerates a small searched inaccuracy, never an injected large blunder. */
+	clockRace: { maxLossCp: 60, temperatureCp: 25 },
 	/** §7.2 inputs: `form_t = ar·form_{t−1} + N(0, noiseSigma)`, clamped ±clampAbs; `E = target + eloPerUnit·form`. */
 	form: { ar: 0.85, noiseSigma: 0.25, clampAbs: 1, eloPerUnit: 150 },
 	/** §7.2 steps 2 and 4: mate → ±(mateCpBase + (mateHorizon − |mate|)); `win(cp) = 1/(1 + e^(−winProbK·cp))`. */

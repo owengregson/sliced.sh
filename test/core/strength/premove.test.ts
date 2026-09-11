@@ -5,6 +5,7 @@ import { createRng, type Rng } from "@core/rng";
 import {
 	isQueueableCandidate,
 	isQueueableReason,
+	isUniversalKingPremove,
 	type PremoveContext,
 	type PremoveDeps,
 	type PremoveReason,
@@ -60,9 +61,9 @@ function ctx(overrides: Partial<PremoveContext> = {}): PremoveContext {
 
 describe("premoveProbability", () => {
 	it("recognised trades are attempted often without squaring the persona's generic premove rate", () => {
-		expect(tradePremoveProbability(1800, 0.1)).toBeGreaterThan(0.6);
-		expect(tradePremoveProbability(2400, 0.5)).toBeGreaterThan(0.8);
-		expect(tradePremoveProbability(1100)).toBe(0);
+		expect(tradePremoveProbability(1800, 0.1)).toBeGreaterThan(0.97);
+		expect(tradePremoveProbability(2400, 0.5)).toBeGreaterThan(0.97);
+		expect(tradePremoveProbability(1100)).toBeGreaterThan(0.97);
 		expect(tradePremoveProbability(2000, 0)).toBe(0);
 	});
 	it("is 0.35 + 0.5·clamp((E − 1200)/1200, 0, 1), times the optional π_p", () => {
@@ -177,7 +178,7 @@ describe("premoveCandidate", () => {
 		expect(await premoveCandidate(ctx(), a.deps)).toBeNull();
 	});
 
-	it("is gated by bullet/blitz, E ≥ 1200 and the probability roll (× π_p)", async () => {
+	it("keeps generic premoves gated by speed, Elo and propensity while inspecting safe trades", async () => {
 		const a = analysis(OPPONENT_LINES, [line("d2d4", 0, 1), line("d2d3", -400, 2)]);
 		const rapid = { baseMs: 600_000, incMs: 0 };
 		expect(await premoveCandidate(ctx({ timeControl: rapid }), a.deps)).toBeNull();
@@ -185,7 +186,7 @@ describe("premoveCandidate", () => {
 		expect(await premoveCandidate(ctx({ targetElo: 1100 }), a.deps)).toBeNull();
 		expect(await premoveCandidate(ctx({ rng: neverRng }), a.deps)).toBeNull();
 		expect(await premoveCandidate(ctx({ piP: 0 }), a.deps)).toBeNull();
-		expect(a.calls.length).toBe(0);
+		expect(a.calls.length).toBeGreaterThan(0);
 		const bullet = { baseMs: 60_000, incMs: 0 };
 		expect(await premoveCandidate(ctx({ timeControl: bullet }), a.deps)).not.toBeNull();
 	});
@@ -238,7 +239,75 @@ describe("isQueueableReason (Fix F)", () => {
 	});
 
 	it("is exactly `PREMOVE.queueReasons` — every reason the policy can produce is classified", () => {
-		const all: PremoveReason[] = ["recapture", "only-move", "loss2nd"];
+		const all: PremoveReason[] = ["recapture", "only-move", "loss2nd", "king-escape"];
 		expect(all.filter(isQueueableReason)).toEqual([...PREMOVE.queueReasons]);
+	});
+});
+
+describe("safe offers and clock-race queues", () => {
+	it("attempts a rank-two safe trade in rapid and at low Elo even when the reply is unlikely", async () => {
+		const fen = "4k3/8/8/8/1b2n3/2N5/1P6/4K3 w - - 0 1";
+		const a = analysis([line("e8f8", 0, 1), line("b4c3", -200, 2)], [line("b2c3", 200, 1)]);
+		const res = await premoveCandidate(
+			ctx({
+				fen,
+				move: "e1f1",
+				ponder: "e8f8",
+				targetElo: 800,
+				piP: 0.01,
+				timeControl: { baseMs: 600000, incMs: 0 },
+			}),
+			a.deps
+		);
+		expect(res?.premove).toBe("b2c3");
+		expect(res?.replyProbability).toBeLessThan(0.35);
+		expect(res?.reason).toBe("recapture");
+	});
+
+	it("refuses a predicted queen recapture when another capturer makes that queen hang", () => {
+		// The bishop's capture can be recaptured, but d4xc3 leaves ...b4xc3 taking the queen.
+		const fen = "4k3/8/8/8/1b1p4/2N5/1Q6/5K2 b - - 0 1";
+		expect(isQueueableCandidate(fen, { reply: "b4c3", premove: "b2c3", reason: "recapture" })).toBe(
+			false
+		);
+	});
+
+	it("queues a lone king with no search only when every reply permits the same escape", async () => {
+		const fen = "7k/8/8/8/8/p7/8/6K1 w - - 0 1";
+		const a = analysis([], []);
+		const res = await premoveCandidate(
+			ctx({
+				fen,
+				move: "g1h1",
+				ponder: undefined,
+				targetElo: 800,
+				ownClockMs: 1500,
+				opponentClockMs: 3000,
+			}),
+			a.deps
+		);
+		expect(res?.reason).toBe("king-escape");
+		expect(isUniversalKingPremove("7k/8/8/8/8/p7/8/7K b - - 1 1", res?.premove ?? "")).toBe(true);
+		expect(a.calls).toHaveLength(0);
+		expect(
+			await premoveCandidate(
+				ctx({ fen, move: "g1h1", ponder: undefined, ownClockMs: 1500, opponentClockMs: 3000, piP: 0 }),
+				a.deps
+			)
+		).toBeNull();
+		for (const q of ["h1g1", "h1g2", "h1h2"]) {
+			expect(isUniversalKingPremove("r6k/8/8/8/8/8/8/7K b - - 0 1", q)).toBe(false);
+		}
+	});
+
+	it("allows ordinary late-clock rapid premoves but caps each prediction search below 100ms", async () => {
+		const a = analysis(OPPONENT_LINES, [line("d2d4", 0, 1), line("d2d3", -400, 2)]);
+		const res = await premoveCandidate(
+			ctx({ timeControl: { baseMs: 600000, incMs: 0 }, ownClockMs: 2000, opponentClockMs: 1000 }),
+			a.deps
+		);
+		expect(res?.premove).toBe("d2d4");
+		expect(a.calls).toHaveLength(2);
+		expect(a.calls.every((c) => c.movetimeMs <= 100)).toBe(true);
 	});
 });

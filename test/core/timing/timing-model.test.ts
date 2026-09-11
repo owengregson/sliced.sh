@@ -181,11 +181,16 @@ describe("TimingModel.planMove", () => {
 		it(`probe: 3+0 with ${clockMs / 1000} s left — every plan ≤ the hard cap ${capMs} ms, no mass point (N = ${n})`, () => {
 			const r = probe(`p-${clockMs}`, clockMs, n);
 			expect(r.modes.premove ?? 0).toBe(0);
-			expect(r.minOrientation).toBeGreaterThanOrEqual(150);
+			if (clockMs >= 5000) expect(r.minOrientation).toBeGreaterThanOrEqual(150);
+			else expect(r.minOrientation).toBe(0);
 			expect(r.sorted[r.sorted.length - 1] ?? 0).toBeLessThanOrEqual(capMs + 1e-6);
 			expect(r.q(0.9)).toBeLessThanOrEqual(capMs + 1e-6);
 			expect(largestCluster(r.sorted, 1)).toBeLessThan(0.1);
-			expect(r.sorted[0] ?? 0).toBeGreaterThanOrEqual(250);
+			if (clockMs >= 5000) expect(r.sorted[0] ?? 0).toBeGreaterThanOrEqual(250);
+			else {
+				expect(r.q(0.9)).toBeLessThan(180);
+				expect(r.plans.every((p) => p.emergency && p.approachMs === p.thinkMs)).toBe(true);
+			}
 		});
 	}
 	it("emergency regime under §8.5's 1.5 s: no 250 ms floor, capped, motor ≥ 60 ms (N = 500 at 1.4 s)", () => {
@@ -205,7 +210,7 @@ describe("TimingModel.planMove", () => {
 		[1_800, 270],
 		[1_600, 240],
 	] as const) {
-		it(`probe: 3+0 with ${clockMs / 1000} s left — floors folded into the cap jitter, no cluster > 10 % (N = 3 000)`, () => {
+		it(`probe: 3+0 with ${clockMs / 1000} s left — fast execution below old floors, no cluster > 10 % (N = 3 000)`, () => {
 			const r = probe(`floor-${clockMs}`, clockMs, 3000);
 			expect(r.sorted[r.sorted.length - 1] ?? 0).toBeLessThanOrEqual(capMs + 1e-6);
 			expect(largestCluster(r.sorted, 1)).toBeLessThan(0.1);
@@ -215,15 +220,10 @@ describe("TimingModel.planMove", () => {
 			);
 			for (const p of r.plans) {
 				expect(p.approachMs).toBeGreaterThanOrEqual(60);
-				if (p.emergency) continue;
-				expect(p.orientationMs).toBeGreaterThanOrEqual(150);
-				if (p.mode === "normal" || p.mode === "long") expect(p.thinkMs).toBeGreaterThanOrEqual(250);
-			}
-			if (clockMs >= 1_800) expect(r.plans.every((p) => !p.emergency)).toBe(true);
-			if (clockMs === 1_600) {
-				// Normal/long plans cannot fit the 250 ms floor under the 240 ms cap; instant ones can.
-				expect(r.plans.filter((p) => p.mode === "normal").every((p) => p.emergency)).toBe(true);
-				expect(r.plans.filter((p) => p.mode === "instant").every((p) => !p.emergency)).toBe(true);
+				expect(p.emergency).toBe(true);
+				expect(p.orientationMs).toBe(0);
+				expect(p.approachMs).toBe(p.thinkMs);
+				expect(p.thinkMs).toBeLessThan(180);
 			}
 		});
 	}

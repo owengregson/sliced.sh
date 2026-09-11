@@ -249,23 +249,19 @@ describe("selectMove — never-play filters (b)(c)", () => {
 		expect(m.uci).toBe("d2d4");
 		expect(m.source).toBe("mate");
 	});
-	it("below 1400 the mate is found with p = 0.5 + 0.5·(E−800)/600 and the win is never thrown", () => {
-		const MATE = [
-			line(START, "d2d4", { mate: 1 }, 1),
-			line(START, "e2e4", { cp: 700 }, 2),
-			line(START, "f2f3", { cp: -300 }, 3),
-		];
-		const rng = createRng("weak-mate");
-		let found = 0;
-		const n = 8000;
-		for (let i = 0; i < n; i++) {
-			const c = ctx({ targetElo: 800, rng, state: createSelectionState() });
-			const m = selectMove(MATE, c, flatPrior(MATE));
-			if (m.source === "mate") found++;
-			// f2f3 loses ≥ 0.4 win fraction against mate: excluded when the mate is declined.
-			expect(m.uci).not.toBe("f2f3");
+	it("preserves searched mates at low Elo and in the engine-elo path, including longer mates", () => {
+		const MATE = [line(START, "d2d4", { mate: 8 }, 1), line(START, "e2e4", { cp: 700 }, 2)];
+		for (const selectionMode of ["persona-sampling", "engine-elo", "hybrid"] as const) {
+			for (const targetElo of [800, 1500, 3650]) {
+				const m = selectMove(
+					MATE,
+					ctx({ targetElo, selectionMode, engineBestmove: "e2e4", blunderScale: 100 }),
+					flatPrior(MATE)
+				);
+				expect(m.uci).toBe("d2d4");
+				expect(m.source).toBe("mate");
+			}
 		}
-		expect(Math.abs(found / n - 0.5)).toBeLessThan(0.03);
 	});
 	it("never hangs a piece outside the blunder channel (PV shows a capture, loss ≥ 0.25)", () => {
 		const hang = { ...line(START, "g1f3", { cp: -250 }, 2), pvSan: ["Nf3", "Nxf3"] };
@@ -344,7 +340,7 @@ describe("selectMove — endgame technique by Elo (Appendix E §3.5)", () => {
 		const streak = { ...createSelectionState(), top1Streak: 12 };
 		expect(selectionParams(1000, streak, "endgame").tau).toBeCloseTo(1.5 * 1.3 * tauFor(1000), 12);
 	});
-	it("shows the τ term and the won-endgame prior in the rationale", () => {
+	it("protects conversion at both high and low Elo while retaining the won-endgame prior", () => {
 		const ROOK_ENDGAME = "8/8/4k3/8/8/8/4P3/R3K3 w - - 0 40";
 		const WON = [
 			line(ROOK_ENDGAME, "e2e4", { cp: 600 }, 1),
@@ -355,13 +351,15 @@ describe("selectMove — endgame technique by Elo (Appendix E §3.5)", () => {
 			ctx({ fen: ROOK_ENDGAME, targetElo: 2000, ply: 70, phase: "endgame", rng: createRng("won") })
 		);
 		const text = m.rationale.join(" ");
-		expect(text).toContain("endgame technique: τ×0.7");
+		expect(text).toContain("conversion: preserving the win");
+		expect(m.uci).toBe("e2e4");
 		expect(text).toContain("won-endgame-technique ×1.5");
 		const weak = selectMove(
 			WON,
 			ctx({ fen: ROOK_ENDGAME, targetElo: 1000, ply: 70, phase: "endgame", rng: createRng("won") })
 		);
-		expect(weak.rationale.join(" ")).toContain("endgame technique: τ×1.5");
+		expect(weak.rationale.join(" ")).toContain("conversion: preserving the win");
+		expect(weak.uci).toBe("e2e4");
 	});
 });
 

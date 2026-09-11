@@ -346,20 +346,22 @@ describe("telemetry: the §13.2 gate at bullet and blitz, pooled", () => {
 			// so the band *fires* at bullet on a ratio that is not a measurement of anything. That is
 			// the finding: the reference is defined in absolute seconds, and a 1+0 game has no
 			// "comfortable" phase to compare against. Recorded, with the band untouched.
-			expect(bullet.compression.comfortable.n).toBeLessThan(bullet.compression.pressure.n / 20);
+			const comfortable = (await poolOf("bullet")).meta.filter(
+				(move) => move.clockMs >= TELEMETRY_BANDS.compression.comfortableClockMs
+			);
+			expect(comfortable.length).toBeLessThanOrEqual(PREFIXES * GAMES);
+			expect(
+				comfortable.every((move) => move.clockMs === SIM_TELEMETRY.speeds.bullet.baseSec * 1000)
+			).toBe(true);
 		},
 		RUN_TIMEOUT_MS
 	);
 
 	it(
-		"the §8.5 emergency regime is reachable now, and its realised holds still clear the §13.2 floor",
+		"clock races remove deliberate hand floors while retaining valid move telemetry",
 		async () => {
-			// Gated on `tc !== "untimed"`, so before the time control was wired through this whole
-			// branch was dead code in production. With a real bullet clock it is entered within a few
-			// moves of running low. The interesting question is what the *page* then sees: the plan
-			// collapses to tens of ms, while the hand's own motor time is hundreds — and §13.2's
-			// 250 ms floor applies to every non-premove/instant move. Run as a matrix over starting
-			// clocks and seeds so the answer does not rest on one draw.
+			// Urgent instant moves must complete quickly on the page, not merely receive a short plan.
+			// Ordinary moves still retain the normal timing invariants checked above.
 			const s = SIM_TELEMETRY.speeds.bullet;
 			const rows: Array<{ clockMs: number; mode: string; plannedMs: number; holdMs: number }> = [];
 			let live = 0;
@@ -381,14 +383,13 @@ describe("telemetry: the §13.2 gate at bullet and blitz, pooled", () => {
 								holdMs: hold,
 							});
 							if (m.myClockMs > 0) live += 1;
-							// the regime is only entered under the §8.5 threshold …
-							expect(m.myClockMs).toBeLessThan(TIMING_CONSTANTS.replan.emergencyClockMs);
+							expect(m.myClockMs).toBeLessThan(TIMING_CONSTANTS.clockRace.ownThresholdMs);
 							// … the plan really is collapsed below the normal floor …
 							expect(m.plan.thinkMs).toBeLessThan(TELEMETRY_BANDS.holdTime.minMs);
-							// … and yet the page never sees a sub-250 ms non-premove/instant move, because
-							// the hand's own motor time is the floor in practice: §8.5's "no floors" and
-							// §13.2's 250 ms floor do not actually collide.
-							if (m.plan.mode !== "premove" && m.plan.mode !== "instant")
+							if ((m.plan.features.clockRace ?? 0) > 0) {
+								expect(hold).toBeGreaterThan(0);
+								expect(hold).toBeLessThan(300);
+							} else if (m.plan.mode !== "premove" && m.plan.mode !== "instant")
 								expect(hold).toBeGreaterThanOrEqual(TELEMETRY_BANDS.holdTime.minMs);
 						}
 						expect(game.moves.every((m) => m.result.outcome === "executed")).toBe(true);

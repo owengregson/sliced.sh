@@ -23,6 +23,15 @@ async function opponentTurn(autoMove = true): Promise<void> {
 }
 
 describe("opponent-turn free pointer exploration", () => {
+	it("rests before its first exploration and cancels that rest as soon as our turn arrives", async () => {
+		await opponentTurn();
+		await h.advance(900);
+		expect(moves()).toHaveLength(0);
+		expect(h.executor()?.isExploring()).toBe(true);
+		await h.arrive("e2e4");
+		expect(h.executor()?.isExploring()).toBe(false);
+		expect(presses()).toHaveLength(0);
+	});
 	it("keeps exploring both sides over multiple bouts without a selection or execution transition", async () => {
 		await opponentTurn();
 		expect(await h.until(() => moves().length > 20, 3000)).toBe(true);

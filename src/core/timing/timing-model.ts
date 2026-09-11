@@ -7,6 +7,7 @@
  * through `prepare()`.
  */
 
+import { isLoneKing } from "@core/chess/material";
 import { parseUci } from "@core/chess/san";
 import type { Rng } from "@core/rng";
 import { clamp } from "@core/util/clamp";
@@ -17,7 +18,7 @@ import { TIMING_CONSTANTS } from "./constants";
 import { uniform } from "./distributions";
 import { computeFeatures, featuresToRecord, isBotPace } from "./features";
 import { allocateWindow, type MotorTimes, motorModel } from "./move-window";
-import { opponentClockPressure } from "./opponent-pressure";
+import { clockRacePolicy, opponentClockPressure } from "./opponent-pressure";
 import { sampleOrientationMs } from "./orientation";
 import { samplePersona } from "./persona-latents";
 import { boundByCap, hardCapSec, paceFactor } from "./pressure";
@@ -192,6 +193,16 @@ export class TimingModel {
 
 	/** Kick off head-side inference for the position (no-op for the v1 head). */
 	prepare(ctx: TimingContext): Promise<void> {
+		if (
+			clockRacePolicy({
+				ownClockMs: ctx.myClockMs,
+				opponentClockMs: ctx.oppClockMs,
+				baseMs: ctx.baseSec * 1000,
+				incrementMs: ctx.incSec * 1000,
+				loneKing: isLoneKing(ctx.fen, ctx.myColor),
+			})
+		)
+			return Promise.resolve();
 		return this.head.prepare?.(ctx) ?? Promise.resolve();
 	}
 
@@ -306,8 +317,17 @@ export class TimingModel {
 		if (f.opp_is_bot && mode !== "premove") why.push("bot opponent: mirror coefficient floored");
 		if (mode === "premove") tSec += C.premove.penaltyS;
 
+		const loneKing = isLoneKing(ctx.fen, ctx.myColor);
+		const race = clockRacePolicy({
+			ownClockMs: ctx.myClockMs,
+			opponentClockMs: ctx.oppClockMs,
+			baseMs: ctx.baseSec * 1000,
+			incrementMs: ctx.incSec * 1000,
+			loneKing,
+		});
+		if (race) mode = "instant";
 		const motor = this.motorFor(f, ctx, mode);
-		const orientationMs = mode === "premove" ? 0 : sampleOrientationMs(f, this.rng);
+		const orientationMs = race || mode === "premove" ? 0 : sampleOrientationMs(f, this.rng);
 		const physicalS = orientationMs / 1000 + motor.totalS;
 		const clockEmergency = f.tc !== "untimed" && ctx.myClockMs < C.replan.emergencyClockMs;
 		const capSec = this.capFor(f, mode);
@@ -354,9 +374,14 @@ export class TimingModel {
 			totalS = Math.min(totalS, Math.max(floor, totalS * factor));
 			why.push(`opponent clock pressure: think ×${factor.toFixed(2)}`);
 		}
+		if (race) {
+			totalS = Math.min(totalS, uniform(this.rng, race.minMoveMs, race.maxMoveMs) / 1000);
+			emergency = true;
+			why.push(loneKing ? "lone king: fast execution" : "clock race: fast execution");
+		}
 		if (emergency) why.push("emergency regime: no floors, minimal motor");
 		const thinkMs = totalS * 1000;
-		const motorMs = mode === "premove" ? thinkMs : Math.min(motor.totalS * 1000, thinkMs);
+		const motorMs = race || mode === "premove" ? thinkMs : Math.min(motor.totalS * 1000, thinkMs);
 		const window = allocateWindow(
 			{ thinkMs, mode, orientationMs, motorMs, previewCount: mode === "long" ? 1 : 0, emergency },
 			this.rng
@@ -369,6 +394,8 @@ export class TimingModel {
 			comp,
 			capSec,
 			opponentPressure,
+			clockRace: race?.urgency ?? 0,
+			loneKing: race && loneKing ? 1 : 0,
 			emergency: emergency ? 1 : 0,
 			eps: st.eps,
 			bodyMedianMs: median * 1000,
@@ -384,8 +411,8 @@ export class TimingModel {
 			orientationMs: window.orientationMs,
 			window,
 		};
-		if (motor.fakeout) plan.fakeout = motor.fakeout;
-		if (motor.promoS > 0) plan.promotionDelayMs = motor.promoS * 1000;
+		if (!race && motor.fakeout) plan.fakeout = motor.fakeout;
+		if (!race && motor.promoS > 0) plan.promotionDelayMs = motor.promoS * 1000;
 
 		st.plannedMs.push(thinkMs);
 		// Counted here and not in the head: `sampleGuarded` discards re-sampled candidates, and a

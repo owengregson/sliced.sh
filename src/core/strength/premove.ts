@@ -4,23 +4,27 @@
  * search), normally require `p(r) ≥ 0.6` under softmax(τ = 0.06), then analyse
  * `m r` and premove our reply `q` only when it is
  * forced-looking: a recapture on the just-captured square, the only legal move
- * or a clear-only move (`loss_2nd ≥ 0.25`) — never a king move. The engine
+ * or a clear-only move (`loss_2nd ≥ 0.25`). A timed lone-king escape is allowed
+ * only when every legal opponent reply preserves its legality. The engine
  * searches are injected (`analyseAfter`). Safe queued trades have a separate, higher attempt
  * propensity and may accept a lower prediction confidence after validating every legal reply.
  */
 
 import { loadPosition } from "@core/chess/fen";
 import type { PositionHistory } from "@core/chess/history";
-import { PIECE_VALUES } from "@core/chess/material";
+import { isLoneKing, PIECE_VALUES } from "@core/chess/material";
 import { classifyMove } from "@core/chess/move-classify";
+import { phase } from "@core/chess/phase";
 import { applyMoves, legalMoves, parseUci } from "@core/chess/san";
 import { PREMOVE } from "@core/constants/books";
 import type { Rng } from "@core/rng";
 import { tcClass } from "@core/timing/features";
+import { clockRacePolicy } from "@core/timing/opponent-pressure";
 import type { TcClass } from "@core/timing/types";
 import { clamp } from "@core/util/clamp";
 import type { EvalLine } from "@typedefs/engine";
 import type { Square, TimeControl } from "@typedefs/game";
+import { conversionPool } from "./conversion";
 import { cpEffective, winProb } from "./elo-map";
 import { avoidRepetition } from "./repetition";
 
@@ -39,6 +43,8 @@ export interface PremoveContext {
 	piP?: number | undefined;
 	/** Validated game history through our move, for the projected reply search. */
 	historyAfterMove?: PositionHistory;
+	ownClockMs?: number;
+	opponentClockMs?: number;
 }
 
 export interface AnalyseOptions {
@@ -51,7 +57,7 @@ export interface PremoveDeps {
 	analyseAfter(fen: string, moves: readonly string[], opts: AnalyseOptions): Promise<EvalLine[]>;
 }
 
-export type PremoveReason = "recapture" | "only-move" | "loss2nd";
+export type PremoveReason = "recapture" | "only-move" | "loss2nd" | "king-escape";
 
 export interface PremoveCandidate {
 	/** The opponent reply `r` the premove is conditioned on. */
@@ -74,7 +80,7 @@ export function premoveProbability(E: number, piP = 1): number {
 }
 
 export function tradePremoveProbability(E: number, piP = 1): number {
-	if (E < PREMOVE.minElo || piP <= 0) return 0;
+	if (piP <= 0) return 0;
 	const base =
 		PREMOVE.tradeProbBase +
 		PREMOVE.tradeProbRange * clamp((E - PREMOVE.minElo) / PREMOVE.probSpan, 0, 1);
@@ -90,6 +96,8 @@ export function isQueueableCandidate(
 	candidate: Pick<PremoveCandidate, "reply" | "premove" | "reason">
 ): boolean {
 	if (!isQueueableReason(candidate.reason)) return false;
+	if (candidate.reason === "king-escape")
+		return isUniversalKingPremove(afterMove, candidate.premove);
 	const board = loadPosition(afterMove);
 	const parts = parseUci(candidate.premove);
 	if (!board || !parts) return false;
@@ -104,17 +112,85 @@ export function isQueueableCandidate(
 	)
 		return false;
 	for (const reply of legalMoves(afterMove)) {
-		if (reply === candidate.reply) continue;
 		const next = applyMoves(afterMove, [reply]);
 		if (!next) continue;
 		const recapture = classifyMove(next, candidate.premove, reply);
 		if (!recapture) continue; // The site drops an illegal premove.
 		const capture = classifyMove(afterMove, reply);
 		if (!capture?.isCapture || !recapture.isRecapture) return false;
-		if (recapture.capturedType && PIECE_VALUES[recapture.capturedType] < PIECE_VALUES[ours.type])
-			return false;
+		const afterRecapture = applyMoves(next, [candidate.premove]);
+		if (!afterRecapture) return false;
+		// A recapture which allows mate in one is not a safe trade, even on the predicted branch.
+		const responses = legalMoves(afterRecapture);
+		if (responses.some((response) => classifyMove(afterRecapture, response)?.givesMate)) return false;
+		if (recapture.capturedType && PIECE_VALUES[recapture.capturedType] < PIECE_VALUES[ours.type]) {
+			// A queen taking back a pawn is safe only when no legal reply can take the queen.
+			for (const response of responses) {
+				if (parseUci(response)?.to === parts.to && classifyMove(afterRecapture, response)?.isCapture)
+					return false;
+			}
+		}
 	}
 	return true;
+}
+
+/** A lone king may queue an escape only when every legal opponent reply leaves it legal. */
+export function isUniversalKingPremove(afterMove: string, premove: string): boolean {
+	const board = loadPosition(afterMove);
+	const parts = parseUci(premove);
+	if (!board || !parts || parts.promotion) return false;
+	const us = board.turn() === "w" ? "b" : "w";
+	if (
+		!isLoneKing(afterMove, us) ||
+		board.get(parts.from)?.color !== us ||
+		board.get(parts.from)?.type !== "k"
+	)
+		return false;
+	const replies = legalMoves(afterMove);
+	return (
+		replies.length > 0 &&
+		replies.every((reply) => {
+			const next = applyMoves(afterMove, [reply]);
+			return next !== null && classifyMove(next, premove)?.pieceType === "k";
+		})
+	);
+}
+
+function loneKingCandidate(afterMove: string): PremoveCandidate | null {
+	const reply = legalMoves(afterMove)[0];
+	const next = reply ? applyMoves(afterMove, [reply]) : null;
+	if (!reply || !next) return null;
+	for (const premove of legalMoves(next)) {
+		if (!isUniversalKingPremove(afterMove, premove)) continue;
+		const parts = parseUci(premove);
+		if (parts)
+			return {
+				reply,
+				premove,
+				from: parts.from,
+				to: parts.to,
+				reason: "king-escape",
+				replyProbability: 0,
+			};
+	}
+	return null;
+}
+
+/** Cheap eligibility before interrupting continuous pondering in a slower time control. */
+export function hasTradeOffer(afterMove: string): boolean {
+	const board = loadPosition(afterMove);
+	if (!board) return false;
+	for (const reply of board.moves({ verbose: true })) {
+		if (!reply.isCapture()) continue;
+		const next = loadPosition(reply.after);
+		if (
+			next
+				?.moves({ verbose: true })
+				.some((move) => move.to === reply.to && move.isCapture() && move.piece !== "k")
+		)
+			return true;
+	}
+	return false;
 }
 
 /** Softmax(τ = 0.06) over the opponent lines' win fractions; 0 when `reply` is not among them. */
@@ -140,7 +216,7 @@ export function isQueueableReason(reason: PremoveReason): boolean {
 	return (PREMOVE.queueReasons as readonly PremoveReason[]).includes(reason);
 }
 
-/** §7.4 runs only in these classes (`PREMOVE.speeds`); also the gate on the §4.5 pre-analysis. */
+/** Ordinary premoves use these speed classes; safe trades and clock races also work in slower controls. */
 export function isPremoveSpeed(timeControl: TimeControl | undefined): boolean {
 	if (!timeControl) return false;
 	const cls = tcClass(timeControl.baseMs / 1000, timeControl.incMs / 1000);
@@ -155,76 +231,107 @@ export async function premoveCandidate(
 	ctx: PremoveContext,
 	deps: PremoveDeps
 ): Promise<PremoveCandidate | null> {
-	if (!isPremoveSpeed(ctx.timeControl) || ctx.targetElo < PREMOVE.minElo) return null;
+	const afterMove = applyMoves(ctx.fen, [ctx.move]);
+	if (afterMove === null) return null;
+	const us = loadPosition(ctx.fen)?.turn();
+	const race = clockRacePolicy({
+		ownClockMs: ctx.ownClockMs ?? 0,
+		opponentClockMs: ctx.opponentClockMs ?? 0,
+		baseMs: ctx.timeControl?.baseMs ?? 0,
+		incrementMs: ctx.timeControl?.incMs ?? 0,
+		loneKing: us !== undefined && isLoneKing(ctx.fen, us),
+	});
+	if (race && us !== undefined && isLoneKing(afterMove, us) && ctx.piP !== 0) {
+		const kingEscape = loneKingCandidate(afterMove);
+		if (kingEscape) return kingEscape;
+	}
+	const ordinaryAllowed = isPremoveSpeed(ctx.timeControl) || race !== null;
+	if (!ordinaryAllowed && !(ctx.timeControl && ctx.timeControl.baseMs > 0)) return null;
+	if (!ordinaryAllowed && !hasTradeOffer(afterMove)) return null;
 	const ordinaryP = premoveProbability(ctx.targetElo, ctx.piP);
 	const p = Math.max(ordinaryP, tradePremoveProbability(ctx.targetElo, ctx.piP));
 	if (p <= 0 || !ctx.rng.chance(p)) return null;
-
-	const afterMove = applyMoves(ctx.fen, [ctx.move]);
-	if (afterMove === null) return null;
-
 	const legalReplies = legalMoves(afterMove);
 	if (ctx.ponder !== undefined && !legalReplies.includes(ctx.ponder)) return null;
-	// The opponent's MultiPV after `m` gives p(r); `r` itself is the ponder move when we have one.
 	const opponentLines = await deps.analyseAfter(ctx.fen, [ctx.move], {
-		movetimeMs: PREMOVE.ponderMovetimeMs,
+		movetimeMs: Math.min(PREMOVE.ponderMovetimeMs, race?.maxSearchMs ?? Number.POSITIVE_INFINITY),
 		multiPv: PREMOVE.ponderMultiPv,
 	});
-	const reply = ctx.ponder ?? opponentLines[0]?.pvUci[0];
-	if (reply === undefined || !legalReplies.includes(reply)) return null;
-	const pReply = replyProbability(reply, opponentLines);
-	const predictedCapture = classifyMove(afterMove, reply)?.isCapture ?? false;
-	if (pReply < (predictedCapture ? PREMOVE.tradeReplyMinProb : PREMOVE.replyMinProb)) return null;
-
-	const afterReply = applyMoves(afterMove, [reply]);
-	if (afterReply === null) return null;
-	if (
-		pReply < PREMOVE.replyMinProb &&
-		!legalMoves(afterReply).some((q) => classifyMove(afterReply, q, reply)?.isRecapture)
-	)
-		return null;
-	const analysed = await deps.analyseAfter(ctx.fen, [ctx.move, reply], {
-		movetimeMs: PREMOVE.replyMovetimeMs,
-		multiPv: PREMOVE.replyMultiPv,
-	});
-	const projectedHistory = ctx.historyAfterMove && {
-		fen: ctx.historyAfterMove.fen,
-		moves: [...ctx.historyAfterMove.moves, reply],
-	};
-	const lines = avoidRepetition(analysed, afterReply, projectedHistory).lines;
-	const best = lines[0];
-	const q = best?.pvUci[0];
-	if (best === undefined || q === undefined) return null;
-	const facts = classifyMove(afterReply, q, reply);
-	if (!facts || facts.pieceType === "k" || facts.isCastle) return null;
-	// A recapture needs the opponent's reply to have captured on the square we now take back.
-	const replyCaptured = classifyMove(afterMove, reply)?.isCapture ?? false;
-
-	let reason: PremoveReason | null = null;
-	if (facts.isRecapture && replyCaptured) reason = "recapture";
-	else if (facts.isOnlyMove) reason = "only-move";
-	else {
-		const second = lines[1];
-		if (second !== undefined) {
-			const loss2nd = winProb(cpEffective(best.score)) - winProb(cpEffective(second.score));
-			if (loss2nd >= PREMOVE.loss2ndMin) reason = "loss2nd";
-		}
+	const primaryReply = ctx.ponder ?? opponentLines[0]?.pvUci[0];
+	const replies = [
+		...new Set([
+			primaryReply,
+			...opponentLines.map((line) => line.pvUci[0]),
+			...legalReplies.filter((reply) => classifyMove(afterMove, reply)?.isCapture),
+		]),
+	].filter((reply): reply is string => reply !== undefined && legalReplies.includes(reply));
+	// A safe offer need not be the engine's likeliest reply. A missed offer simply drops the
+	// occupied-square queue; only a board-validated recapture gets the higher probability.
+	replies.sort(
+		(a, b) =>
+			Number(classifyMove(afterMove, b)?.isCapture) - Number(classifyMove(afterMove, a)?.isCapture)
+	);
+	for (const reply of replies.slice(0, PREMOVE.tradeReplyCandidates)) {
+		const pReply = replyProbability(reply, opponentLines);
+		const replyCaptured = classifyMove(afterMove, reply)?.isCapture ?? false;
+		if (pReply < PREMOVE.replyMinProb && !replyCaptured) continue;
+		const afterReply = applyMoves(afterMove, [reply]);
+		if (afterReply === null) continue;
+		if (
+			pReply < PREMOVE.replyMinProb &&
+			!legalMoves(afterReply).some((q) => classifyMove(afterReply, q, reply)?.isRecapture)
+		)
+			continue;
+		const analysed = await deps.analyseAfter(ctx.fen, [ctx.move, reply], {
+			movetimeMs: Math.min(PREMOVE.replyMovetimeMs, race?.maxSearchMs ?? Number.POSITIVE_INFINITY),
+			multiPv: PREMOVE.replyMultiPv,
+		});
+		const projectedHistory = ctx.historyAfterMove && {
+			fen: ctx.historyAfterMove.fen,
+			moves: [...ctx.historyAfterMove.moves, reply],
+		};
+		const repetitionSafe = avoidRepetition(analysed, afterReply, projectedHistory).lines;
+		const lines = conversionPool(repetitionSafe, {
+			fen: afterReply,
+			phase: phase(afterReply) ?? "middlegame",
+			...(projectedHistory ? { history: projectedHistory } : {}),
+		}).lines;
+		const best = lines[0];
+		const q = best?.pvUci[0];
+		if (!best || !q) continue;
+		const facts = classifyMove(afterReply, q, reply);
+		if (!facts || facts.pieceType === "k" || facts.isCastle) continue;
+		let reason: PremoveReason | null = null;
+		if (facts.isRecapture && replyCaptured) reason = "recapture";
+		else if (facts.isOnlyMove) reason = "only-move";
+		else if (
+			lines[1] &&
+			winProb(cpEffective(best.score)) - winProb(cpEffective(lines[1].score)) >= PREMOVE.loss2ndMin
+		)
+			reason = "loss2nd";
+		if (!reason) continue;
+		const parts = parseUci(q);
+		if (!parts) continue;
+		const candidate: PremoveCandidate = {
+			reply,
+			premove: q,
+			from: parts.from,
+			to: parts.to,
+			reason,
+			replyProbability: pReply,
+		};
+		if (parts.promotion !== undefined) candidate.promotion = parts.promotion;
+		const safeTrade = reason === "recapture" && isQueueableCandidate(afterMove, candidate);
+		if (
+			!safeTrade &&
+			(!ordinaryAllowed ||
+				ordinaryP <= 0 ||
+				reply !== primaryReply ||
+				pReply < PREMOVE.replyMinProb ||
+				!ctx.rng.chance(ordinaryP / p))
+		)
+			continue;
+		return candidate;
 	}
-	if (reason === null) return null;
-	if (reason !== "recapture" && (pReply < PREMOVE.replyMinProb || !ctx.rng.chance(ordinaryP / p)))
-		return null;
-
-	const parts = parseUci(q);
-	if (!parts) return null;
-	const candidate: PremoveCandidate = {
-		reply,
-		premove: q,
-		from: parts.from,
-		to: parts.to,
-		reason,
-		replyProbability: pReply,
-	};
-	if (parts.promotion !== undefined) candidate.promotion = parts.promotion;
-	if (pReply < PREMOVE.replyMinProb && !isQueueableCandidate(afterMove, candidate)) return null;
-	return candidate;
+	return null;
 }

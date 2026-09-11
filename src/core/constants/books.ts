@@ -45,10 +45,16 @@ export const PREMOVE = {
 	probRange: 0.5,
 	probSpan: 1200,
 	/** A recognised trade is a deliberate premove opportunity, independent of the generic reflex rate. */
-	tradeProbBase: 0.65,
-	tradeProbRange: 0.3,
-	tradePersonaFloor: 0.8,
+	tradeProbBase: 0.98,
+	tradeProbRange: 0.01,
+	tradePersonaFloor: 0.99,
 	tradeReplyMinProb: 0.35,
+	/** A safe offer may be below the engine's first predicted reply. Bound extra reply searches. */
+	tradeReplyCandidates: 3,
+	fastQueueDelayMinMs: 0,
+	fastQueueDelayMaxMs: 60,
+	tradeQueueDelayMinMs: 80,
+	tradeQueueDelayMaxMs: 220,
 	/** Opponent prediction when no `ponder` move is available: `go movetime 150` MultiPV 3. */
 	ponderMovetimeMs: 150,
 	ponderMultiPv: 3,
@@ -66,7 +72,7 @@ export const PREMOVE = {
 	 * remain legal after a different reply, so it must not be assumed safe from its reason alone.
 	 * Clear-best quiet moves remain fast replies after the expected position actually arrives.
 	 */
-	queueReasons: ["recapture", "only-move"] as const,
+	queueReasons: ["recapture", "only-move", "king-escape"] as const,
 	/**
 	 * When the premove is entered, measured from the position it is premoved from appearing:
 	 * `U(queueDelayMinMs, queueDelayMaxMs)`. Not instant (a reflex on the opponent's move landing)

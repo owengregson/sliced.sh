@@ -301,6 +301,11 @@ export const STYLE_MIX_PER_GAME: Readonly<Record<MotorStyle, { bezier: number; w
 export const OPPONENT_EXPLORATION = {
 	maxCandidates: 10,
 	replyBranches: 4,
+	initialRestMs: [1000, 2200] as MsRange,
+	lowTimeInitialRestMs: [600, 1000] as MsRange,
+	lowTimeBoutMs: [1800, 3200] as MsRange,
+	lowTimeActiveFrac: [0.3, 0.5] as MsRange,
+	lowTimeVisits: [1, 2] as MsRange,
 	boutMs: [3200, 7800] as MsRange,
 	activeFrac: [0.68, 0.88] as MsRange,
 	orientationMs: [100, 420] as MsRange,
@@ -312,4 +317,14 @@ export const OPPONENT_EXPLORATION = {
 	traceDwellMs: [140, 500] as MsRange,
 	betweenVisitsMs: [90, 360] as MsRange,
 	minDwellMs: 100,
+} as const;
+
+/** A clock-race gesture spends its budget on the two useful legs, with no decorative delays. */
+export const FAST_TOUCH = {
+	minBudgetMs: 20,
+	maxBudgetMs: 300,
+	sampleMs: 16,
+	minLegFrac: 0.2,
+	maxLegFrac: 0.8,
+	promotionTravelMs: [24, 60] as MsRange,
 } as const;

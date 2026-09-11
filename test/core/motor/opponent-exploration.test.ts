@@ -59,6 +59,29 @@ describe("opponent exploration candidates", () => {
 });
 
 describe("opponent exploration bouts", () => {
+	it("keeps tactical bouts on our candidates and reduces activity further under low time", () => {
+		let normalMovement = 0;
+		let lowMovement = 0;
+		for (let seed = 0; seed < 100; seed++) {
+			const normal = planOpponentExploration(options, createRng(seed));
+			normalMovement += normal.actions.reduce((sum, a) => sum + totalMs(a.path ?? []), 0);
+			for (const policy of [{ ownOnly: true }, { lowTime: true }]) {
+				const plan = planOpponentExploration({ ...options, policy }, createRng(seed));
+				expect(plan.actions.every((a) => a.kind === "rest" || a.side === "own")).toBe(true);
+				if ("lowTime" in policy) {
+					expect(plan.durationMs).toBeGreaterThanOrEqual(O.lowTimeBoutMs[0]);
+					expect(plan.durationMs).toBeLessThanOrEqual(O.lowTimeBoutMs[1]);
+					lowMovement += plan.actions.reduce((sum, a) => sum + totalMs(a.path ?? []), 0);
+				}
+			}
+		}
+		expect(lowMovement).toBeLessThan(normalMovement / 2);
+		const emptyOwn = planOpponentExploration(
+			{ ...options, ownCandidates: [], policy: { ownOnly: true } },
+			createRng(1)
+		);
+		expect(emptyOwn.actions.every((a) => a.kind === "rest")).toBe(true);
+	});
 	it("varies sustained candidate visits on both sides with real stationary pauses", () => {
 		let active = 0;
 		let movement = 0;

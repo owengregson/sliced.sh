@@ -16,7 +16,7 @@
  * finishes before the hand acts, bounded again by a fraction of the clock we
  * have left, and collapsed to the floor in a position with one legal move.
  * `depthCap` follows the speed class, `K` the budget, and the shallow-device
- * guard retries once at `+300 ms` and then falls back to the top two lines with
+ * guard retries only within the original wall-clock budget and then falls back to the top two lines with
  * τ halved.
  *
  * The old budget was `0.6 · plannedThinkMs` alone, which tied the search to the
@@ -28,9 +28,11 @@
  * tail (premove / instant) could not be produced at all.
  */
 
+import { loadPosition } from "@core/chess/fen";
 import { matchingHistory, type PositionHistory } from "@core/chess/history";
+import { isLoneKing } from "@core/chess/material";
 import { phase as phaseOf } from "@core/chess/phase";
-import { legalMoves } from "@core/chess/san";
+import { legalMoves, parseUci, uciToSan } from "@core/chess/san";
 import { LIMITS } from "@core/constants/limits";
 import { SEARCH_BUDGET } from "@core/constants/search";
 import type { AnalysisHandle, AnalysisRequest, AnalysisResult } from "@core/engine/types";
@@ -38,6 +40,7 @@ import { log } from "@core/logger";
 import type { Rng } from "@core/rng";
 import type { BookContext, BookPolicy } from "@core/strength/book/book-policy";
 import { isTrap, lineFacts } from "@core/strength/book/book-policy";
+import { conversionPool, isImmediateMate } from "@core/strength/conversion";
 import { effectiveElo } from "@core/strength/elo-map";
 import { selectMove } from "@core/strength/move-selector";
 import { avoidRepetition, repetitionRisk } from "@core/strength/repetition";
@@ -45,6 +48,7 @@ import type { SelectionContext, SelectionState } from "@core/strength/types";
 import { budgetController, scheduleAlloc } from "@core/timing/budget";
 import { TIMING_CONSTANTS } from "@core/timing/constants";
 import { pieceCounts, tcClass } from "@core/timing/features";
+import { clockRacePolicy } from "@core/timing/opponent-pressure";
 import type { TimingModel } from "@core/timing/timing-model";
 import type { TcClass, TimingContext } from "@core/timing/types";
 import { clamp } from "@core/util/clamp";
@@ -169,6 +173,7 @@ export interface OwnMoveBudgetInput {
 	fen: string;
 	ply: number;
 	myClockMs: number;
+	oppClockMs?: number;
 	timeControl: TimeControl | undefined;
 	/** `Persona.tau` — the reserve scales with it. */
 	tau: number;
@@ -196,10 +201,19 @@ export function ownMoveBudget(input: OwnMoveBudgetInput, settings: Settings): Se
 		},
 		settings
 	);
-	return searchBudget(
+	const budget = searchBudget(
 		{ tc, myClockMs: input.myClockMs, legalMoves: legalMoves(input.fen).length, plannedThinkMs },
 		settings
 	);
+	const us = loadPosition(input.fen)?.turn();
+	const race = clockRacePolicy({
+		ownClockMs: input.myClockMs,
+		opponentClockMs: input.oppClockMs ?? 0,
+		baseMs: baseSec * MS_PER_S,
+		incrementMs: incSec * MS_PER_S,
+		loneKing: us !== undefined && isLoneKing(input.fen, us),
+	});
+	return race ? { ...budget, movetimeMs: Math.min(budget.movetimeMs, race.maxSearchMs) } : budget;
 }
 
 export interface RecommendationInput {
@@ -289,6 +303,7 @@ export class RecommendationPipeline {
 				fen: snapshot.fen,
 				ply: snapshot.ply,
 				myClockMs,
+				oppClockMs,
 				timeControl: snapshot.timeControl,
 				tau: input.tau,
 				budgetUsedRatio: input.budgetUsedRatio,
@@ -457,6 +472,15 @@ export class RecommendationPipeline {
 	): ChosenMove | null {
 		const E = effectiveElo(input.targetElo, input.form);
 		let book = bookMove;
+		const converting = conversionPool(lines, {
+			fen: input.snapshot.fen,
+			phase: phaseOf(input.snapshot.fen) ?? "middlegame",
+			...(input.history ? { history: input.history } : {}),
+		}).active;
+		const mateAvailable = lines.some(
+			(line) => (line.score.mate ?? 0) > 0 || isImmediateMate(input.snapshot.fen, line.pvUci[0] ?? "")
+		);
+		if (converting || mateAvailable) book = null;
 		// Include an unsearched book candidate in the draw check. Its optimistic score is only
 		// for this veto; an actual alternative must still come from a legal evaluated engine line.
 		const guardLines =
@@ -485,8 +509,42 @@ export class RecommendationPipeline {
 			});
 		}
 		// A viable escape found at rank three or later must survive the shallow-device truncation.
-		const pool = shallow && !guarded?.avoided ? lines.slice(0, SEARCH_BUDGET.shallowLines) : lines;
-		if (pool.length === 0) return book;
+		const pool =
+			shallow && !guarded?.avoided && !converting && !mateAvailable
+				? lines.slice(0, SEARCH_BUDGET.shallowLines)
+				: lines;
+		if (pool.length === 0) {
+			const fen = input.snapshot.fen;
+			const color = input.snapshot.myColor;
+			const legal = legalMoves(fen);
+			const engineMove = analysis?.bestmove;
+			let uci = engineMove && legal.includes(engineMove) ? engineMove : undefined;
+			const race =
+				color &&
+				clockRacePolicy({
+					ownClockMs: input.snapshot.clocks[color].ms,
+					opponentClockMs: input.snapshot.clocks[color === "w" ? "b" : "w"].ms,
+					baseMs: input.snapshot.timeControl?.baseMs ?? 0,
+					incrementMs: input.snapshot.timeControl?.incMs ?? 0,
+					loneKing: isLoneKing(fen, color),
+				});
+			if (!uci && color && race && isLoneKing(fen, color)) uci = legal[0];
+			const parts = uci && parseUci(uci);
+			if (!uci || !parts) return book;
+			return {
+				uci,
+				san: uciToSan(fen, uci) ?? uci,
+				...parts,
+				source: "sampled",
+				rankInLines: 0,
+				cpLoss: 0,
+				rationale: [
+					engineMove === uci
+						? "search: legal bestmove before a complete PV"
+						: "clock race: legal lone-king fallback while analysis is unavailable",
+				],
+			};
+		}
 		// `run()` has already refused a position whose colour is unknown; reading it again here keeps
 		// that the only place the question is answered, rather than defaulting to white's clock.
 		const myColor = input.snapshot.myColor;

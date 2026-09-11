@@ -37,12 +37,19 @@ import { fileOf, rankOf } from "@core/chess/squares";
 import { EXECUTOR } from "@core/constants/cdp";
 import type { BoardGeometryReply } from "@core/constants/messages";
 import { log } from "@core/logger";
-import { CLICK, EXPLORATION, PATH, PROMOTION_LOOK_DELAY_MS, SAMPLING } from "@core/motor/constants";
+import {
+	CLICK,
+	EXPLORATION,
+	FAST_TOUCH,
+	PATH,
+	PROMOTION_LOOK_DELAY_MS,
+	SAMPLING,
+} from "@core/motor/constants";
 import { type ExplorationOptions, ExplorationPlanner } from "@core/motor/exploration";
 import { inRect, lastPoint, pathMs, rectShiftPx, sampleRange } from "@core/motor/geometry";
 import type { InputBackend } from "@core/motor/input-backend";
 import type { OpponentExplorationAction } from "@core/motor/opponent-exploration";
-import { generatePath, grabWobble, idleTremor } from "@core/motor/path-generator";
+import { fastPath, generatePath, grabWobble, idleTremor } from "@core/motor/path-generator";
 import { clickReleasePoint, samplePointInRect } from "@core/motor/sampling";
 import type {
 	BoardGeometry,
@@ -59,6 +66,7 @@ import type {
 import type { Rng } from "@core/rng";
 import { errorMessage } from "@core/util/errors";
 import {
+	AbortedError,
 	defaultNow,
 	defaultScheduler,
 	isAbortedError,
@@ -128,6 +136,14 @@ export type TimingWindow = MoveWindowBudget;
 export function preTouchMsOf(timing: TimingPlan): number {
 	const w = timing.window;
 	return Math.max(0, w.orientationMs + w.scanMs + w.previewMs + w.decisionMs);
+}
+
+export function fastTouch(timing: TimingPlan): boolean {
+	return (
+		timing.mode === "premove" ||
+		(timing.features.clockRace ?? 0) > 0 ||
+		(timing.features.loneKing ?? 0) > 0
+	);
 }
 
 /** Square rects from the adapter's reply, derived from the board rect when it sent none. */
@@ -304,12 +320,16 @@ export class HandController {
 		tabId: number,
 		actions: readonly OpponentExplorationAction[],
 		signal: AbortSignal,
-		boardRect: Rect
+		boardRect: Rect,
+		keepGoing?: () => boolean
 	): Promise<Pt> {
 		if (this.signal !== null || this.backend.pressed()) throw new SkipError(EXECUTOR.reasons.dropped);
 		this.tabId = tabId;
 		this.signal = signal;
-		const guard = () => this.guardBoard(boardRect);
+		const guard = () => {
+			if (keepGoing && !keepGoing()) throw new AbortedError();
+			this.guardBoard(boardRect);
+		};
 		try {
 			throwIfAborted(signal);
 			this.gate();
@@ -442,7 +462,7 @@ export class HandController {
 
 		// Exploration inside the pre-touch window (§9.3 / §9.3a); the trailing decision
 		// pause is executed by the controller itself so it can absorb the touch budget.
-		const actions = this.planExploration(plan, timing, preTouchMs, reply);
+		const actions = fastTouch(timing) ? [] : this.planExploration(plan, timing, preTouchMs, reply);
 		const tail = actions[actions.length - 1]?.kind === "rest" ? actions.pop() : undefined;
 		// The coordinate space the exploration was planned in: a preview **presses** a real square,
 		// so its legs need the same reflow guard the committed touch has (below).
@@ -518,7 +538,7 @@ export class HandController {
 		await this.drag(touch, rects, m, tl, plan, planned);
 
 		if (plan.promotion) await this.promote(plan, timing, plan.promotion, m, tl);
-		await this.postDropRest(m, tl);
+		if (!fastTouch(timing)) await this.postDropRest(m, tl);
 	}
 
 	private planExploration(
@@ -683,6 +703,40 @@ export class HandController {
 			SAMPLING.press.innerFrac,
 			rng
 		);
+		if (fastTouch(timing)) {
+			const drop = samplePointInRect(
+				rects.to,
+				SAMPLING.release.sigmaFrac,
+				SAMPLING.release.innerFrac,
+				rng
+			);
+			const budget = Math.min(
+				FAST_TOUCH.maxBudgetMs,
+				timing.window.approachMs > 0 ? timing.window.approachMs : FAST_TOUCH.minBudgetMs
+			);
+			const approachDistance = Math.hypot(press.x - cursor.x, press.y - cursor.y);
+			const dragDistance = Math.hypot(drop.x - press.x, drop.y - press.y);
+			const fraction = Math.max(
+				FAST_TOUCH.minLegFrac,
+				Math.min(FAST_TOUCH.maxLegFrac, approachDistance / (approachDistance + dragDistance || 1))
+			);
+			const approach = fastPath(cursor, press, budget * fraction);
+			const pressAt = lastPoint(approach, press);
+			const travel = fastPath(pressAt, drop, budget * (1 - fraction));
+			return {
+				approach,
+				pressAt,
+				preGrabMs: 0,
+				grabDelayMs: 0,
+				wobble: [],
+				travel,
+				drop,
+				hesitate: [],
+				settleMs: 0,
+				approachMs: pathMs(approach),
+				touchMs: pathMs(travel),
+			};
+		}
 		const approachRaw = generatePath(cursor, press, rects.from, m, rng);
 		const pressAt = lastPoint(approachRaw, press);
 		const preGrabMs = sampleRange(CLICK.preGrabPauseMs, rng);
@@ -860,8 +914,9 @@ export class HandController {
 	): Promise<void> {
 		tl.begin("promote");
 		this.setState("promoting");
-		const lookMs =
-			timing.promotionDelayMs !== undefined
+		const lookMs = fastTouch(timing)
+			? 0
+			: timing.promotionDelayMs !== undefined
 				? timing.promotionDelayMs
 				: sampleRange(m.lookDelayMs[1] > 0 ? m.lookDelayMs : PROMOTION_LOOK_DELAY_MS, this.rng);
 		await this.pause(lookMs);
@@ -883,12 +938,17 @@ export class HandController {
 			SAMPLING.promotion.innerFrac,
 			this.rng
 		);
-		const path = generatePath(this.backend.position(), target, rect, m, this.rng);
-		await this.travel(path);
-		await this.pause(sampleRange(CLICK.prePressPauseMs, this.rng));
+		const urgent = fastTouch(timing);
+		const path = urgent
+			? fastPath(this.backend.position(), target, sampleRange(FAST_TOUCH.promotionTravelMs, this.rng))
+			: generatePath(this.backend.position(), target, rect, m, this.rng);
+		const planned = reply ? { board: reply.boardRect, flipped: reply.flipped } : null;
+		const guard = guardOf(planned, (r) => this.guardBoard(r));
+		await this.travel(path, guard);
+		if (!urgent) await this.pause(sampleRange(CLICK.prePressPauseMs, this.rng), guard);
 		const pressAt = lastPoint(path, target);
-		await this.press(pressAt);
-		await this.pause(sampleRange(m.pressHoldMs, this.rng));
+		await this.press(pressAt, false, guard);
+		if (!urgent) await this.pause(sampleRange(m.pressHoldMs, this.rng), guard);
 		await this.release(clickReleasePoint(pressAt, this.rng));
 	}
 

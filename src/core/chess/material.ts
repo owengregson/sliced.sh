@@ -46,6 +46,14 @@ export function material(fen: string): Material | null {
 	return parts ? count(parts.placement, true) : null;
 }
 
+/** No remaining piece or pawn besides this side's king. */
+export function isLoneKing(fen: string, color: "w" | "b"): boolean {
+	const parts = parseFen(fen);
+	if (!parts) return false;
+	const king = color === "w" ? "K" : "k";
+	return parts.placement.includes(king) && count(parts.placement, true)[color] === 0;
+}
+
 /** Non-pawn material summed over both sides (62 at the start); `null` on an invalid FEN. */
 export function nonPawnMaterial(fen: string): number | null {
 	const parts = parseFen(fen);

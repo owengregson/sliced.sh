@@ -92,6 +92,20 @@ export const TIMING_CONSTANTS = {
 		ownClockRatioMin: 0.35,
 		maxThinkReduction: 0.45,
 	},
+	/** A fast execution policy after the timing head; searches and the hand share its budget. */
+	clockRace: {
+		opponentThresholdMs: 10_000,
+		ownThresholdMs: 5_000,
+		explorationLowClockMs: 10_000,
+		opponentBaseUrgency: 0.55,
+		ownBaseUrgency: 0.65,
+		incrementHorizon: 3,
+		moveMinMs: [160, 60],
+		moveMaxMs: [420, 130],
+		searchMaxMs: [100, 30],
+		remainingClockFraction: 0.25,
+		minimumWindowMs: 20,
+	},
 	/** Appendix D §3a.3 body coefficients (log scale). */
 	beta: {
 		book: [-1.2, -0.4],

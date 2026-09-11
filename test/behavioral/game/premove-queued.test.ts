@@ -84,13 +84,11 @@ const OPPONENT_THINK_MS = 4_000;
 /** Long enough to cover the whole `PREMOVE.queueDelay…` range and the drag after it (ms). */
 const PAST_THE_DELAY_MS = 10_000;
 /**
- * The `playNow` row needs a seed whose scheduled moment is at least this far off, so that "no press
- * yet" is a statement about the guard and not about the hand's motor path (measured in review: an
- * ungated `playNow` presses ~300 ms later).
+ * Leave a measurable gap before the short trade queue delay expires.
  */
-const MEASURABLE_SLACK_MS = 700;
+const MEASURABLE_SLACK_MS = 10;
 /** How far short of the scheduled moment that row stops and checks (ms). */
-const EARLY_PRESS_MARGIN_MS = 150;
+const EARLY_PRESS_MARGIN_MS = 1;
 
 interface Dispatched {
 	type: string;
@@ -283,6 +281,16 @@ async function armPremove(o: ArmOptions): Promise<Armed> {
 	);
 	expect(h.site.board.lastMove()?.uci).toBe(scenario.move);
 	await o.afterOurMove?.();
+	if (o.stopAtRelease) {
+		// Hold the release acknowledgement to exercise the real in-flight ordering. Fast premoves
+		// deliberately have no post-drop rest, so a natural idle delay cannot stage this race.
+		const confirm = h.link.confirmPointer.bind(h.link);
+		h.link.confirmPointer = async (tabId, pointer) => {
+			const delivered = await confirm(tabId, pointer);
+			if (pointer.type === "mouseReleased") await new Promise((resolve) => setTimeout(resolve, 50));
+			return delivered;
+		};
+	}
 	// The opponent is to move: this is the window a premove is entered in.
 	await h.arrive();
 	const mark = h.sim.debugger.commandsFor("Input.dispatchMouseEvent").length;
@@ -318,8 +326,7 @@ async function armPremove(o: ArmOptions): Promise<Armed> {
 		return { mark, toastMark, scenario, pending: pressed };
 	}
 	if (o.stopAtRelease === true) {
-		// The release has gone out (the site has the gesture) but the hand is still in its post-drop
-		// rest, so the executor has not reported yet.
+		// The release has gone out, but its delayed acknowledgement has not reached the hand.
 		const released = await h.until(() => h.site.premoveQueued() !== null, OPPONENT_THINK_MS, 1);
 		return { mark, toastMark, scenario, pending: released };
 	}
@@ -976,15 +983,13 @@ describe("game session: a queued premove is cancelled by every stop (Fix F)", ()
 			await h?.dispose();
 			const { mark, pending } = await armPremove({ seed, premoves: true, stopAtPending: true });
 			if (!pending) continue;
-			// The guard is only observable in the gap between "now" and the moment the premove was
-			// scheduled for, so the test needs a seed whose gap is wider than the hand's own motor
-			// path. Without the guard, `playNow` collapses the plan to `instantTiming` and the press
-			// lands ~300 ms later; with it, nothing happens until the scheduled moment.
+			// Space must leave the opponent-turn queue's scheduled moment intact.
 			const fireAt = h.executor()?.pendingMove()?.fireAt ?? 0;
 			const slack = fireAt - h.sim.now();
 			if (slack < MEASURABLE_SLACK_MS) continue;
 			reached = true;
 			await h.drive(() => void h.session().command("playNow"));
+			expect(h.executor()?.pendingMove()?.fireAt).toBe(fireAt);
 			await h.advance(slack - EARLY_PRESS_MARGIN_MS);
 			expect(pressCount(mark)).toBe(0);
 			expect(h.site.premoveQueued()).toBeNull();

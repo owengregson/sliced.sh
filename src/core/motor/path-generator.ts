@@ -9,7 +9,7 @@
  */
 
 import type { Rng } from "@core/rng";
-import { MIN_JERK, MOTOR_DEFAULTS, PATH } from "./constants";
+import { FAST_TOUCH, MIN_JERK, MOTOR_DEFAULTS, PATH } from "./constants";
 import { clampIntoRect, inRect, sampleRange } from "./geometry";
 import { chooseStyle } from "./motor-profile";
 import type { MotorProfile, PathPoint, Pt, Rect } from "./types";
@@ -23,6 +23,27 @@ interface ArcEntry {
 /** `s(τ) = 10τ³ − 15τ⁴ + 6τ⁵`. */
 export function minJerk(t: number): number {
 	return t * t * t * (MIN_JERK.c3 + t * (MIN_JERK.c4 + MIN_JERK.c5 * t));
+}
+
+/** Direct continuous emergency leg, fitting the supplied clock budget without Fitts/settling floors. */
+export function fastPath(from: Pt, to: Pt, durationMs: number): PathPoint[] {
+	const steps = Math.max(1, Math.ceil(durationMs / FAST_TOUCH.sampleMs));
+	const path: PathPoint[] = [];
+	let previous = { x: Math.round(from.x), y: Math.round(from.y) };
+	let pending = 0;
+	for (let i = 1; i <= steps; i++) {
+		const progress = minJerk(i / steps);
+		const point = {
+			x: Math.round(from.x + (to.x - from.x) * progress),
+			y: Math.round(from.y + (to.y - from.y) * progress),
+		};
+		pending += durationMs / steps;
+		if (point.x === previous.x && point.y === previous.y && i !== steps) continue;
+		path.push({ ...point, dtMs: pending });
+		previous = point;
+		pending = 0;
+	}
+	return path;
 }
 
 function cubicBezier(p0: Pt, p1: Pt, p2: Pt, p3: Pt, t: number): Pt {

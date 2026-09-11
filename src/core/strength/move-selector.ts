@@ -4,16 +4,17 @@
  * seeded `ctx.rng` and the per-game `ctx.state` counters it advances.
  */
 
+import { loadPosition } from "@core/chess/fen";
 import { classifyMove } from "@core/chess/move-classify";
 import type { Phase } from "@core/chess/phase";
 import { applyMoves, parseUci, uciToSan } from "@core/chess/san";
 import { LIMITS } from "@core/constants/limits";
-import { opponentClockPressure } from "@core/timing/opponent-pressure";
-import { clamp } from "@core/util/clamp";
+import { clockRacePolicy, opponentClockPressure } from "@core/timing/opponent-pressure";
 import type { EvalLine } from "@typedefs/engine";
 import type { ChosenMove } from "@typedefs/game";
 import { blunderTerms, drawTargetLoss, pickBlunder } from "./blunder-model";
 import { SELECTION_CONSTANTS as C } from "./constants";
+import { conversionPool, isImmediateMate, searchedCp } from "./conversion";
 import { betaFor, cpEffective, effectiveElo, gapFor, sigmaFor, tauFor, winProb } from "./elo-map";
 import { heuristicPriorDetailed, type PriorTerm } from "./prior";
 import { avoidRepetition } from "./repetition";
@@ -206,7 +207,8 @@ export function selectMove(
 	prior?: ReadonlyMap<string, number>
 ): ChosenMove {
 	const repetition = avoidRepetition(lines, ctx.fen, ctx.history);
-	const usable = repetition.lines.filter((l) => l.pvUci[0] !== undefined);
+	const conversion = conversionPool(repetition.lines, ctx);
+	const usable = conversion.lines.filter((l) => l.pvUci[0] !== undefined);
 	if (usable.length === 0) throw new RangeError("selectMove: no lines with a move");
 	const { rng, state } = ctx;
 	const NP = C.neverPlay;
@@ -215,6 +217,8 @@ export function selectMove(
 	const E = effectiveElo(ctx.targetElo, ctx.form);
 	const rationale: string[] = [`E=${fmt(E, 1)} (target ${ctx.targetElo}, form ${fmt(ctx.form)})`];
 	if (repetition.avoided) rationale.push("repetition: preserving the advantage with a new position");
+	if (conversion.avoidedDraw)
+		rationale.push("conversion: avoiding a searched stalemate or dead position");
 
 	// Rank by raw cpEff (1 = best); stable, so engine order breaks ties.
 	const ranked = usable
@@ -242,6 +246,21 @@ export function selectMove(
 			mate: r.line.score.mate,
 		};
 	};
+	// The Elo-limited bestmove path used to return before the mate guard. Protect every searched
+	// forced mate, not just mate-in-three, and never randomly decline an immediate board mate.
+	const immediateMate = ranked.find((r) => isImmediateMate(ctx.fen, r.line.pvUci[0] ?? ""));
+	const forcedMate = ranked
+		.filter((r) => (r.line.score.mate ?? 0) > 0)
+		.sort((a, b) => (a.line.score.mate ?? 0) - (b.line.score.mate ?? 0))[0];
+	const mate = immediateMate ?? forcedMate;
+	if (mate) {
+		rationale.push(
+			immediateMate
+				? "mate: immediate legal checkmate"
+				: `mate: preserving forced mate-in-${mate.line.score.mate}`
+		);
+		return finish(toCandidate(mate, 1), "mate", topCpRaw, ctx, rationale);
+	}
 	const pressure = opponentClockPressure({
 		ownClockMs: ctx.myClockMs,
 		opponentClockMs: ctx.oppClockMs,
@@ -267,7 +286,7 @@ export function selectMove(
 				.filter(
 					(c) =>
 						c.mate === undefined &&
-						topCpRaw - c.cpRaw <= C.opponentPressure.maxLossCp &&
+						Math.max(...usable.map(searchedCp)) - searchedCp(c.line) <= C.opponentPressure.maxLossCp &&
 						forcing(c.uci) > 0
 				)
 				.sort((a, b) => forcing(b.uci) - forcing(a.uci) || b.cpRaw - a.cpRaw);
@@ -293,6 +312,46 @@ export function selectMove(
 			rationale
 		);
 	};
+
+	if (conversion.active) {
+		const bestCp = Math.max(...usable.map(searchedCp));
+		const progress = ranked
+			.filter((r) => searchedCp(r.line) >= bestCp - C.conversion.progressLossCp)
+			.sort(
+				(a, b) =>
+					(conversion.progress.get(b.line) ?? 0) - (conversion.progress.get(a.line) ?? 0) ||
+					searchedCp(b.line) - searchedCp(a.line)
+			)[0];
+		if (progress) {
+			rationale.push("conversion: preserving the win and making safe progress");
+			return finish(toCandidate(progress, 1), "sampled", topCpRaw, ctx, rationale);
+		}
+	}
+
+	const race = clockRacePolicy({
+		ownClockMs: ctx.myClockMs,
+		opponentClockMs: ctx.oppClockMs,
+		baseMs: ctx.baseMs ?? 0,
+		incrementMs: ctx.incrementMs ?? 0,
+	});
+	if (race && race.opponentUrgency >= C.opponentPressure.min) {
+		const bestCp = Math.max(...usable.map(searchedCp));
+		const maxLoss = C.clockRace.maxLossCp * race.opponentUrgency;
+		const safe = ranked.filter((r) => {
+			if (r.line.score.mate !== undefined || bestCp - searchedCp(r.line) > maxLoss) return false;
+			const next = applyMoves(ctx.fen, [r.line.pvUci[0] ?? ""]);
+			const board = next ? loadPosition(next) : null;
+			return board !== null && !(bestCp > 0 && board.isDraw());
+		});
+		if (safe.length) {
+			const weights = safe.map((r) =>
+				Math.exp((searchedCp(r.line) - bestCp) / C.clockRace.temperatureCp)
+			);
+			const pick = rng.weighted(safe, weights);
+			rationale.push(`clock race: bounded quick choice (≤${fmt(maxLoss, 0)} cp loss)`);
+			return finishPick(toCandidate(pick, 1), "sampled");
+		}
+	}
 	// The top product setting requests the strongest searched move, without injected mistakes.
 	if (ctx.targetElo >= LIMITS.eloMax) {
 		const best = ranked[0];
@@ -300,7 +359,6 @@ export function selectMove(
 		rationale.push("maximum strength: strongest searched continuation");
 		return finish(toCandidate(best, 1), "engine-elo", topCpRaw, ctx, rationale);
 	}
-
 	// §7.1 `engine-elo`: play the engine's Elo-limited bestmove verbatim.
 	if (ctx.selectionMode === "engine-elo") {
 		const idx = ranked.findIndex((r) => r.line.pvUci[0] === ctx.engineBestmove);
@@ -351,31 +409,6 @@ export function selectMove(
 	const matedExcluded = cands.filter(getsMated).length;
 	if (matedExcluded > 0) rationale.push(`never-play: ${matedExcluded} mated line(s) excluded`);
 
-	let throwsWin: (c: Candidate) => boolean = () => false;
-	const mates = cands.filter((c) => c.mate !== undefined && c.mate > 0 && c.mate <= NP.mateInMax);
-	if (mates.length > 0) {
-		const p =
-			E >= NP.mateAlwaysElo
-				? 1
-				: clamp(
-						NP.mateProbBase + (NP.mateProbBase * (E - NP.mateProbEloFloor)) / NP.mateProbEloSpan,
-						0,
-						1
-					);
-		if (rng.chance(p)) {
-			mates.sort((a, b) => (a.mate ?? 0) - (b.mate ?? 0) || a.rank - b.rank);
-			const pick = mates[0];
-			if (pick !== undefined) {
-				rationale.push(`mate: mate-in-${pick.mate} played (p=${fmt(p)})`);
-				return finishPick(pick, "mate");
-			}
-		}
-		rationale.push(
-			`mate: mate-in-≤${NP.mateInMax} missed (p=${fmt(p)}); loss ≥ ${NP.throwWinLoss} excluded`
-		);
-		throwsWin = (c) => c.lossRaw >= NP.throwWinLoss;
-	}
-
 	// Step 6: blunder channel.
 	const cpStd = populationStd(cands.map((c) => c.cpEff));
 	const terms = blunderTerms(E, {
@@ -390,7 +423,7 @@ export function selectMove(
 	);
 	if (terms.b > 0 && rng.chance(terms.b)) {
 		const { kind, target } = drawTargetLoss(rng);
-		const pool = cands.filter((c) => !getsMated(c) && !throwsWin(c) && c.loss >= C.blunder.minLoss);
+		const pool = cands.filter((c) => !getsMated(c) && c.loss >= C.blunder.minLoss);
 		const pick = pickBlunder(pool, target);
 		if (pick) {
 			rationale.push(`blunder: ${kind} target ${fmt(target)} → loss ${fmt(pick.loss)}`);
@@ -401,11 +434,7 @@ export function selectMove(
 
 	// Step 7: base policy within G(E) of the best.
 	let pool = cands.filter(
-		(c) =>
-			!getsMated(c) &&
-			!throwsWin(c) &&
-			best - c.cpEff <= params.gap &&
-			!hangsPiece(c.line, c.lossRaw, ctx.fen)
+		(c) => !getsMated(c) && best - c.cpEff <= params.gap && !hangsPiece(c.line, c.lossRaw, ctx.fen)
 	);
 	if (pool.length === 0) pool = cands.filter((c) => !getsMated(c));
 	if (pool.length === 0) pool = cands;

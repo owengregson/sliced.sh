@@ -44,8 +44,9 @@
  * what it would take to do better.
  */
 
-import { type FenParts, parseFen, plyOf, turnFieldOf } from "@core/chess/fen";
+import { type FenParts, loadPosition, parseFen, plyOf, turnFieldOf } from "@core/chess/fen";
 import { historyFromSan, matchingHistory, type PositionHistory } from "@core/chess/history";
+import { isLoneKing } from "@core/chess/material";
 import { applyMoves, legalMoves, uciToSan } from "@core/chess/san";
 import { sanToSpeech } from "@core/chess/san-speech";
 import { isSquare } from "@core/chess/squares";
@@ -71,6 +72,7 @@ import { isPremoveSpeed, isQueueableCandidate, premoveCandidate } from "@core/st
 import type { SelectionState } from "@core/strength/types";
 import { TIMING_CONSTANTS } from "@core/timing/constants";
 import { tcClass } from "@core/timing/features";
+import { clockRacePolicy } from "@core/timing/opponent-pressure";
 import type { TimingLogWriter } from "@core/timing/timing-log";
 import { buildTimingLogEntry } from "@core/timing/timing-log";
 import { TimingModel } from "@core/timing/timing-model";
@@ -1138,6 +1140,9 @@ export class GameSession implements SessionSource {
 			this.selfConsistent(snapshot) &&
 			executor.isArmed();
 		if (!eligible()) return;
+		const loneKing = snapshot.myColor !== null && isLoneKing(snapshot.fen, snapshot.myColor);
+		const position = loadPosition(snapshot.fen);
+		const forcedReply = position?.isCheck() === true || position?.moves().length === 1;
 		let lastLines: ReturnType<PonderController["latestLines"]> | undefined;
 		let cached: ReturnType<typeof opponentExplorationCandidates> | undefined;
 		executor.exploreOpponent(() => {
@@ -1147,7 +1152,24 @@ export class GameSession implements SessionSource {
 				cached = opponentExplorationCandidates(snapshot.fen, snapshot.myColor, lines);
 				lastLines = lines;
 			}
-			return cached;
+			const myClock = this.remainingClockMs(snapshot, snapshot.myColor);
+			const opponentClock = this.remainingClockMs(snapshot, snapshot.myColor === "w" ? "b" : "w");
+			const lowTime = [myClock, opponentClock].some(
+				(clock) => clock > 0 && clock < TIMING_CONSTANTS.clockRace.explorationLowClockMs
+			);
+			return {
+				...cached,
+				policy: {
+					lowTime,
+					ownOnly:
+						lowTime ||
+						loneKing ||
+						forcedReply ||
+						this.premove !== null ||
+						this.premoveEntry !== null ||
+						(lines?.some((line) => line.score.mate !== undefined) ?? false),
+				},
+			};
 		});
 	}
 
@@ -1219,7 +1241,7 @@ export class GameSession implements SessionSource {
 			// (1000–1500 ms) already fits inside a 4–16 s planned think, so there is no latency to
 			// win. Measured on the wire before this gate: `go infinite → go depth 22 movetime 1000 →
 			// go infinite` on every rapid opponent turn.
-			if (!isPremoveSpeed(this.currentTimeControl())) return;
+			if (!isPremoveSpeed(this.currentTimeControl()) && !this.racePolicyFor(snapshot)) return;
 			await ponderer.stop();
 			if (this.disposed || this.snapshot !== snapshot) return;
 			reply = ponderer.expectedReply(snapshot.fen);
@@ -1237,7 +1259,8 @@ export class GameSession implements SessionSource {
 			{
 				fen: predicted,
 				ply: snapshot.ply + 1,
-				myClockMs: snapshot.clocks[myColor].ms,
+				myClockMs: this.remainingClockMs(snapshot, myColor),
+				oppClockMs: this.remainingClockMs(snapshot, myColor === "w" ? "b" : "w"),
 				timeControl: this.currentTimeControl(),
 				tau: timing.persona.tau,
 				budgetUsedRatio: this.budgetUsedRatio(snapshot),
@@ -1645,6 +1668,10 @@ export class GameSession implements SessionSource {
 					historyAfterMove: this.historyFor(snapshot.fen),
 					targetElo: this.targetElo(),
 					timeControl: snapshot.timeControl,
+					ownClockMs: snapshot.myColor ? this.remainingClockMs(snapshot, snapshot.myColor) : 0,
+					opponentClockMs: snapshot.myColor
+						? this.remainingClockMs(snapshot, snapshot.myColor === "w" ? "b" : "w")
+						: 0,
 					ponder: this.ponderer?.expectedReply(snapshot.fen) ?? undefined,
 					rng: this.rng,
 					// `Persona.pi_p` is in logit units; the policy takes a probability in [0, 1].
@@ -1728,7 +1755,9 @@ export class GameSession implements SessionSource {
 		const san = uciToSan(snapshot.fen, armed.chosen.uci);
 		if (san === null) return false;
 		const chosen: ChosenMove = { ...armed.chosen, san };
-		const fireInMs = this.rng.next() * PREMOVE_WINDOW_MS;
+		const race = this.racePolicyFor(snapshot);
+		const fireInMs =
+			this.rng.next() * Math.min(PREMOVE_WINDOW_MS, race?.maxMoveMs ?? PREMOVE_WINDOW_MS);
 		const now = this.now();
 		const rec: Recommendation = {
 			chosen,
@@ -1743,7 +1772,7 @@ export class GameSession implements SessionSource {
 				dragDurationMs: 0,
 				deadlineMs: now + fireInMs,
 				rationale: [...chosen.rationale],
-				features: {},
+				features: { clockRace: race?.urgency ?? 0 },
 				orientationMs: 0,
 				window: {
 					orientationMs: 0,
@@ -1838,9 +1867,15 @@ export class GameSession implements SessionSource {
 		}
 		const chosen: ChosenMove = { ...armed.chosen, san };
 		const now = this.now();
-		const delayMs =
-			PREMOVE.queueDelayMinMs + this.rng.next() * (PREMOVE.queueDelayMaxMs - PREMOVE.queueDelayMinMs);
-		const windowMs = this.rng.next() * PREMOVE_WINDOW_MS;
+		const race = this.racePolicyFor(snapshot);
+		const [delayMin, delayMax] = race
+			? [PREMOVE.fastQueueDelayMinMs, PREMOVE.fastQueueDelayMaxMs]
+			: armed.reason === "recapture"
+				? [PREMOVE.tradeQueueDelayMinMs, PREMOVE.tradeQueueDelayMaxMs]
+				: [PREMOVE.queueDelayMinMs, PREMOVE.queueDelayMaxMs];
+		const delayMs = delayMin + this.rng.next() * (delayMax - delayMin);
+		const windowMs =
+			this.rng.next() * Math.min(PREMOVE_WINDOW_MS, race?.maxMoveMs ?? PREMOVE_WINDOW_MS);
 		const plan: TimingPlan = {
 			thinkMs: windowMs,
 			mode: "premove",
@@ -1848,7 +1883,7 @@ export class GameSession implements SessionSource {
 			dragDurationMs: 0,
 			deadlineMs: now + delayMs + windowMs,
 			rationale: [...chosen.rationale],
-			features: {},
+			features: { clockRace: race?.urgency ?? 0 },
 			orientationMs: 0,
 			window: {
 				orientationMs: 0,
@@ -2945,6 +2980,28 @@ export class GameSession implements SessionSource {
 	 */
 	private currentTimeControl(): TimeControl | undefined {
 		return this.game?.timeControl ?? this.snapshot?.timeControl;
+	}
+
+	/** Clock snapshots may precede a long opponent think; use the running clock at this instant. */
+	private remainingClockMs(snapshot: PositionSnapshot, color: "w" | "b"): number {
+		const clock = snapshot.clocks[color];
+		return Math.max(
+			0,
+			clock.ms - (clock.running ? Math.max(0, this.now() - snapshot.capturedAt) : 0)
+		);
+	}
+
+	private racePolicyFor(snapshot: PositionSnapshot): ReturnType<typeof clockRacePolicy> {
+		const color = snapshot.myColor;
+		if (color === null) return null;
+		const tc = this.currentTimeControl();
+		return clockRacePolicy({
+			ownClockMs: this.remainingClockMs(snapshot, color),
+			opponentClockMs: this.remainingClockMs(snapshot, color === "w" ? "b" : "w"),
+			baseMs: tc?.baseMs ?? 0,
+			incrementMs: tc?.incMs ?? 0,
+			loneKing: isLoneKing(snapshot.fen, color),
+		});
 	}
 
 	/**

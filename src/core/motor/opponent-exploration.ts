@@ -3,6 +3,7 @@ import type { Rng } from "@core/rng";
 import type { Square } from "@typedefs/game";
 import { OPPONENT_EXPLORATION as O, SAMPLING } from "./constants";
 import { inRect, lastPoint, pathMs, sampleRange } from "./geometry";
+import type { OpponentExplorationPolicy } from "./opponent-candidates";
 import { generatePath } from "./path-generator";
 import { samplePointInRect } from "./sampling";
 import type { BoardGeometry, MotorProfile, MoveCandidate, PathPoint, Pt, Rect } from "./types";
@@ -24,6 +25,7 @@ export interface OpponentExplorationOptions {
 	cursor: Pt;
 	ownCandidates: readonly MoveCandidate[];
 	opponentCandidates: readonly MoveCandidate[];
+	policy?: OpponentExplorationPolicy;
 	/** The last inspected square of the previous bout; avoids restarting on the same piece. */
 	previousTarget?: Square;
 }
@@ -39,12 +41,14 @@ export function planOpponentExploration(
 	opts: OpponentExplorationOptions,
 	rng: Rng
 ): OpponentExplorationPlan {
-	const durationMs = sampleRange(O.boutMs, rng);
-	const activeUntil = durationMs * sampleRange(O.activeFrac, rng);
+	const lowTime = opts.policy?.lowTime === true;
+	const ownOnly = lowTime || opts.policy?.ownOnly === true;
+	const durationMs = sampleRange(lowTime ? O.lowTimeBoutMs : O.boutMs, rng);
+	const activeUntil = durationMs * sampleRange(lowTime ? O.lowTimeActiveFrac : O.activeFrac, rng);
 	const actions: OpponentExplorationAction[] = [];
 	const pools = {
 		own: candidates(opts.ownCandidates),
-		opponent: candidates(opts.opponentCandidates),
+		opponent: ownOnly ? [] : candidates(opts.opponentCandidates),
 	};
 	let cursor = { ...opts.cursor };
 	let lastTarget = opts.previousTarget ?? null;
@@ -88,7 +92,8 @@ export function planOpponentExploration(
 		return { actions, durationMs, lastTarget };
 	}
 	rest(sampleRange(O.orientationMs, rng));
-	const visits = rng.int(O.visits[0], O.visits[1]);
+	const visitRange = lowTime ? O.lowTimeVisits : O.visits;
+	const visits = rng.int(visitRange[0], visitRange[1]);
 	for (let i = 0; i < visits; i++) {
 		let side: ExplorationSide = rng.chance(ownBias) ? "own" : "opponent";
 		if (lastSide && rng.chance(O.switchSideProb)) side = lastSide === "own" ? "opponent" : "own";

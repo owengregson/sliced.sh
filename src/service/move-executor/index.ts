@@ -18,6 +18,8 @@ import { EXECUTOR } from "@core/constants/cdp";
 import type { BoardGeometryReply, ExpectedMove } from "@core/constants/messages";
 import { TIMINGS } from "@core/constants/timings";
 import { log } from "@core/logger";
+import { FAST_TOUCH, OPPONENT_EXPLORATION } from "@core/motor/constants";
+import { sampleRange } from "@core/motor/geometry";
 import { perGameProfile, perMoveProfile, profileFor } from "@core/motor/motor-profile";
 import type { OpponentExplorationCandidates } from "@core/motor/opponent-candidates";
 import { planOpponentExploration } from "@core/motor/opponent-exploration";
@@ -51,6 +53,7 @@ import { CdpInputBackend } from "./cdp-input-backend";
 import {
 	boardGeometryOf,
 	type FocusSource,
+	fastTouch,
 	type GeometryProvider,
 	HandController,
 	positionIntact,
@@ -193,10 +196,13 @@ function withPreTouch(plan: TimingPlan, preTouchMs: number): TimingPlan {
 
 /** An instant plan for `playNow` and retries: no exploration, touch only. */
 export function instantTiming(plan: TimingPlan): TimingPlan {
-	const thinkMs = Math.max(EXECUTOR.minExecutionMs, plan.window.approachMs);
+	const urgent = fastTouch(plan);
+	const floor = urgent ? fastFloor(plan) : EXECUTOR.minExecutionMs;
+	const natural = Math.max(floor, plan.window.approachMs);
+	const thinkMs = urgent && plan.thinkMs > 0 ? Math.min(plan.thinkMs, natural) : natural;
 	return {
 		...withPreTouch(plan, 0),
-		mode: "instant",
+		mode: plan.mode === "premove" ? "premove" : "instant",
 		thinkMs,
 		window: {
 			orientationMs: 0,
@@ -214,7 +220,7 @@ export function instantTiming(plan: TimingPlan): TimingPlan {
  */
 export function fitTiming(plan: TimingPlan, availableMs: number): TimingPlan {
 	if (availableMs >= plan.thinkMs) return plan;
-	const thinkMs = Math.max(EXECUTOR.minExecutionMs, availableMs);
+	const thinkMs = Math.max(fastTouch(plan) ? fastFloor(plan) : EXECUTOR.minExecutionMs, availableMs);
 	const touchBudget = Math.min(plan.window.approachMs, thinkMs);
 	const preTouch = Math.max(0, Math.min(preTouchMsOf(plan), thinkMs - touchBudget));
 	const fitted = withPreTouch(plan, preTouch);
@@ -224,6 +230,11 @@ export function fitTiming(plan: TimingPlan, availableMs: number): TimingPlan {
 		dragDurationMs: Math.min(plan.dragDurationMs, touchBudget),
 		window: { ...fitted.window, approachMs: thinkMs - preTouch },
 	};
+}
+
+/** Transport delay may shorten an urgent plan, never inflate it to a repeated execution floor. */
+function fastFloor(plan: TimingPlan): number {
+	return Math.min(FAST_TOUCH.minBudgetMs, plan.thinkMs > 0 ? plan.thinkMs : FAST_TOUCH.minBudgetMs);
 }
 
 /** Exploration candidates from the MultiPV lines, weighted by rank when the session gives no probabilities. */
@@ -486,12 +497,24 @@ export class MoveExecutor {
 					return;
 				await this.settleAfterAttach(ac.signal);
 				const rng = createRng(`${this.config.gameSeed}:opponent:${this.explorationSeed++}`);
+				const initial = source();
+				if (!initial) return;
+				await sleep(
+					sampleRange(
+						initial.policy?.lowTime
+							? OPPONENT_EXPLORATION.lowTimeInitialRestMs
+							: OPPONENT_EXPLORATION.initialRestMs,
+						rng
+					),
+					this.scheduler,
+					ac.signal
+				);
 				let previousTarget: Square | undefined;
 				while (!ac.signal.aborted && !this.disposed && this.isArmed() && !this.pending) {
-					const candidates = source();
-					if (!candidates) return;
+					if (!source()) return;
 					const reply = await this.readGeometry(this.tabId, undefined, ac.signal);
-					if (!reply || ac.signal.aborted || !source()) return;
+					const candidates = source();
+					if (!reply || ac.signal.aborted || !candidates) return;
 					const geometry = boardGeometryOf(reply);
 					const cursor = this.ownership.position(this.tabId) ?? plausibleStart(geometry.boardRect, rng);
 					const profile = perMoveProfile(
@@ -522,7 +545,21 @@ export class MoveExecutor {
 						scheduler: this.scheduler,
 						// No execution hand event: a position transition can arrive during any await.
 					});
-					await controller.explore(this.tabId, plan.actions, ac.signal, geometry.boardRect);
+					const lowTime = candidates.policy?.lowTime === true;
+					const ownOnly = lowTime || candidates.policy?.ownOnly === true;
+					try {
+						await controller.explore(this.tabId, plan.actions, ac.signal, geometry.boardRect, () => {
+							const live = source();
+							return (
+								live !== null && (!live.policy?.lowTime || lowTime) && (!live.policy?.ownOnly || ownOnly)
+							);
+						});
+					} catch (error) {
+						// Tightening clock/tactical policy ends the old bout before its next point.
+						// Parent cancellation still exits the outer loop and retains the current endpoint.
+						if (isAbortedError(error) && !ac.signal.aborted) continue;
+						throw error;
+					}
 					previousTarget = plan.lastTarget ?? undefined;
 				}
 			})

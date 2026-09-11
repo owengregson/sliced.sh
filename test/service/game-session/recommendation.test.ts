@@ -439,3 +439,59 @@ describe("recommendation pipeline (§3.2)", () => {
 		expect(await pipeline.run(input({ signal: ac.signal }))).toBeNull();
 	});
 });
+
+describe("clock-race search and conversion", () => {
+	it("caps a shallow race search below150ms and never retries beyond that small budget", async () => {
+		const engine = fakeEngine((req) => analysisOf(req, ["e2e4", "d2d4"], 3));
+		const pipeline = new RecommendationPipeline({ engine, timing: model(), book: null });
+		const out = await pipeline.run(
+			input({
+				snapshot: snapshot({
+					timeControl: { baseMs: 600000, incMs: 0 },
+					clocks: { w: { ms: 20000, running: true }, b: { ms: 1000, running: false } },
+				}),
+			})
+		);
+		expect(out?.rec.chosen.uci).toBeDefined();
+		expect(engine.requests).toHaveLength(1);
+		expect(engine.requests[0]?.limit.movetimeMs).toBeLessThanOrEqual(100);
+		expect(out?.budget.movetimeMs).toBeLessThanOrEqual(100);
+	});
+
+	it("returns a legal lone-king fallback when a tiny search has no PV or bestmove", async () => {
+		const fen = "7k/8/8/8/8/p7/8/7K w - - 0 1";
+		const engine = fakeEngine(() => null);
+		const pipeline = new RecommendationPipeline({ engine, timing: model(), book: null });
+		const out = await pipeline.run(
+			input({ snapshot: snapshot({ fen, timeControl: { baseMs: 600000, incMs: 0 } }) })
+		);
+		expect(out?.rec.chosen.uci).toBeDefined();
+		expect(applyMoves(fen, [out?.rec.chosen.uci ?? ""])).not.toBeNull();
+		expect(out?.rec.chosen.rationale.join(" ")).toContain("legal lone-king fallback");
+		expect(engine.requests).toHaveLength(1);
+		expect(out?.budget.movetimeMs).toBe(30);
+	});
+
+	it("a shallow third-ranked mate overrides an opening book choice even at low Elo", async () => {
+		const fen = "7k/5K2/6Q1/8/8/8/8/8 w - - 0 1";
+		const engine = fakeEngine((req) => analysisOf(req, ["g6g5", "g6g4", "g6g7"], 3, [1500, 1400, 0]));
+		const book: BookPolicy = {
+			dispose: () => {},
+			bookMove: async () =>
+				({
+					uci: "g6g5",
+					from: "g6",
+					to: "g5",
+					san: "Qg5",
+					source: "book",
+					rankInLines: 0,
+					cpLoss: 0,
+					rationale: [],
+				}) satisfies ChosenMove,
+		};
+		const pipeline = new RecommendationPipeline({ engine, timing: model(), book });
+		const out = await pipeline.run(input({ targetElo: 800, snapshot: snapshot({ fen }) }));
+		expect(out?.rec.chosen.uci).toBe("g6g7");
+		expect(out?.rec.chosen.source).toBe("mate");
+	});
+});

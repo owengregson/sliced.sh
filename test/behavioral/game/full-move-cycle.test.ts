@@ -87,7 +87,11 @@ describe("game session: the full move cycle (Step 2a)", () => {
 			true
 		);
 		expect(h.session().currentState()).toBe("live:opponent-turn");
-		const multiPvSets = h.transport.sent.filter((l) => l.startsWith("setoption name MultiPV"));
+		// Preparing a trade reply may already have started another search after this ponder.
+		const ponderAt = h.transport.sent.indexOf("go infinite");
+		const multiPvSets = h.transport.sent
+			.slice(0, ponderAt)
+			.filter((l) => l.startsWith("setoption name MultiPV"));
 		expect(multiPvSets.at(-1)).toBe(`setoption name MultiPV value ${SEARCH_BUDGET.ponderMultiPv}`);
 	});
 

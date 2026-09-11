@@ -6,9 +6,17 @@ import type { Color } from "@typedefs/game";
 import { OPPONENT_EXPLORATION as O } from "./constants";
 import type { MoveCandidate } from "./types";
 
+export interface OpponentExplorationPolicy {
+	/** Tactical/queued contexts keep attention on our plausible replies. */
+	ownOnly?: boolean;
+	/** Shorter, quieter bouts when the clock calls for readiness. Also implies ownOnly. */
+	lowTime?: boolean;
+}
+
 export interface OpponentExplorationCandidates {
 	ownCandidates: MoveCandidate[];
 	opponentCandidates: MoveCandidate[];
+	policy?: OpponentExplorationPolicy;
 }
 
 export function opponentExplorationCandidates(

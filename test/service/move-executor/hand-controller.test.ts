@@ -222,7 +222,101 @@ async function run(
 	return done;
 }
 
+describe("HandController urgent gestures", () => {
+	it("waits for promotion geometry without adding a look delay or slow picker gesture", async () => {
+		const ctrl = makeController(7);
+		promotionRect = { left: 400, top: 100, width: 80, height: 80 };
+		const plan = makePlan({ promotion: "q" });
+		const timing = makeTiming({
+			thinkMs: 90,
+			dragDurationMs: 90,
+			preMoveHoverMs: 0,
+			features: { clockRace: 1 },
+			promotionDelayMs: 1000,
+			window: { orientationMs: 0, scanMs: 0, previewMs: 0, decisionMs: 0, approachMs: 90 },
+		});
+		const start = sim.now();
+		const result = await run(ctrl, plan, timing);
+		expect(result.ok).toBe(true);
+		expect(promotionTargets).toContain(plan.to.square);
+		const presses = commands().filter((c) => c.type === "mousePressed");
+		expect(presses).toHaveLength(2);
+		expect(inside(presses[1]!, promotionRect)).toBe(true);
+		expect(sim.now() - start).toBeLessThanOrEqual(150);
+	});
+	it.each([
+		{ budget: 20, mode: "normal" as const, features: { clockRace: 1 } },
+		{ budget: 70, mode: "normal" as const, features: { clockRace: 1 } },
+		{ budget: 120, mode: "normal" as const, features: { clockRace: 0.5 } },
+		{ budget: 240, mode: "normal" as const, features: { clockRace: 1 } },
+		{ budget: 300, mode: "normal" as const, features: { loneKing: 1 } },
+		{ budget: 90, mode: "premove" as const, features: {} },
+	])(
+		"executes a guarded drag inside its $budget ms budget ($mode)",
+		async ({ budget, mode, features }) => {
+			const ctrl = makeController(9);
+			const plan = makePlan({
+				motor: {
+					...MOTOR_DEFAULTS,
+					hesitationProb: 1,
+					grabDelayMs: [200, 200],
+					releaseSettleMs: [200, 200],
+				},
+			});
+			const timing = makeTiming({
+				thinkMs: budget,
+				dragDurationMs: budget,
+				preMoveHoverMs: 5000,
+				mode,
+				features,
+				window: { orientationMs: 0, scanMs: 0, previewMs: 0, decisionMs: 0, approachMs: budget },
+			});
+			const start = sim.now();
+			const result = await run(ctrl, plan, timing);
+			const cmds = commands();
+			const press = cmds.find((c) => c.type === "mousePressed");
+			const release = cmds.find((c) => c.type === "mouseReleased");
+			expect(result.outcome).toBe("executed");
+			expect(cmds.filter((c) => c.type === "mousePressed")).toHaveLength(1);
+			expect(cmds.filter((c) => c.type === "mouseReleased")).toHaveLength(1);
+			expect(inside(press!, plan.from.rect)).toBe(true);
+			expect(inside(release!, plan.to.rect)).toBe(true);
+			expect(release!.at).toBeGreaterThanOrEqual(budget - 1);
+			expect(sim.now() - start).toBeLessThanOrEqual(budget + 1);
+			expect(cmds.at(-1)?.type).toBe("mouseReleased");
+		}
+	);
+});
+
 describe("HandController opponent exploration", () => {
+	it("stops an old exploration path before another point when live policy tightens", async () => {
+		const { controller, backend } = makeController();
+		let current = true;
+		const done = controller.explore(
+			tabId,
+			[
+				{
+					kind: "hover",
+					side: "opponent",
+					path: [
+						{ x: 695, y: 685, dtMs: 20 },
+						{ x: 690, y: 680, dtMs: 100 },
+					],
+					dwellMs: 50,
+				},
+			],
+			new AbortController().signal,
+			BOARD,
+			() => current
+		);
+		const observed = done.catch((error: unknown) => error);
+		await sim.time.advance(30);
+		current = false;
+		await sim.time.advanceUntilIdle();
+		expect(await observed).toMatchObject({ name: "AbortError" });
+		expect(backend.position()).toEqual({ x: 695, y: 685 });
+		expect(commands()).toHaveLength(1);
+	});
 	it("honors still dwell time and emits only free movement, retaining the endpoint", async () => {
 		const { controller, backend } = makeController();
 		const path = [
