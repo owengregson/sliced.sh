@@ -42,9 +42,12 @@
 
 import { BRIDGE_WIRE as W } from "@core/constants/bridge";
 import { POINTER_CONTROL } from "@core/constants/cdp";
+import { CURSOR_EFFECTS } from "@core/constants/cursor";
+import { HIGHLIGHT_MOTION } from "@core/constants/timings";
 import { defineProgram, type Expression, js, type Statement } from "@pagescript";
 import cursorCss from "../../css/page-cursor.css?raw";
 import { defineHandle, KINDS, listen } from "./bridge-common";
+import { CURSOR_FEEDBACK, cursorEffectStatements } from "./cursor-effects";
 import markup from "./templates/virtual-cursor.html?raw";
 
 const doc = js.id("document");
@@ -67,8 +70,8 @@ export const CURSOR_ART = {
 	/** Arrow-tip hotspot inside that canvas; also the scale pivot. */
 	hotX: 5,
 	hotY: 5,
-	/** Press feedback: a slight dip pivoting on the tip. */
-	pressScale: 0.88,
+	/** Artwork compression; the input position stays fixed. */
+	pressScale: CURSOR_EFFECTS.pressedScale,
 	/** Above the site's own layers; the element has no layout effect of its own. */
 	zIndex: 2_147_483_000,
 	/** A CSS-pixel aperture, not a board-sized passthrough. */
@@ -104,6 +107,8 @@ export interface CursorParams {
 	cls: Expression;
 	/** Fade-in duration in ms (`TIMINGS.virtualCursorFadeMs`). */
 	fadeMs: Expression;
+	/** Resolved theme accent from the design tokens (page CSS cannot read panel variables). */
+	accent: Expression;
 }
 
 /**
@@ -163,7 +168,7 @@ export function cursorStatements(p: CursorParams): Statement[] {
 							js.member(shield, "setAttribute"),
 							js.str("style"),
 							js.str(
-								`position:fixed;inset:0;width:auto;height:auto;margin:0;padding:0;border:0;pointer-events:auto;cursor:none;z-index:${A.zIndex - 1};background:transparent;`
+								`position:fixed;inset:0;width:auto;height:auto;margin:0;padding:0;border:0;pointer-events:auto;cursor:not-allowed;z-index:${A.zIndex - 1};background:transparent;`
 							)
 						)
 					),
@@ -233,6 +238,19 @@ export function cursorStatements(p: CursorParams): Statement[] {
 				js.assign(el, js.call(js.member(doc, "createElement"), js.str("div"))),
 				js.expr(js.call(js.member(el, "setAttribute"), js.str("class"), p.cls)),
 				js.expr(js.call(js.member(el, "setAttribute"), js.str("style"), js.id("curBase"))),
+				js.if_(
+					js.and(
+						js.member(js.id("window"), "matchMedia"),
+						js.member(
+							js.call(
+								js.member(js.id("window"), "matchMedia"),
+								js.str(HIGHLIGHT_MOTION.reducedMotionQuery)
+							),
+							"matches"
+						)
+					),
+					[js.assign(js.member(el, "style", "transition"), js.str("none"))]
+				),
 				js.assign(js.member(el, "innerHTML"), js.str(markup.trim())),
 				js.const_("sheet", js.call(js.member(doc, "createElement"), js.str("style"))),
 				js.assign(js.member(js.id("sheet"), "textContent"), js.str(cursorCss.trim())),
@@ -256,6 +274,15 @@ export function cursorStatements(p: CursorParams): Statement[] {
 			["q"],
 			[
 				js.if_(js.not(q), [js.ret()]),
+				js.if_(
+					js.not(
+						js.and(
+							js.call(js.member(js.id("Number"), "isFinite"), js.member(q, W.x)),
+							js.call(js.member(js.id("Number"), "isFinite"), js.member(q, W.y))
+						)
+					),
+					[js.ret()]
+				),
 				js.const_("el", js.call(js.id("curEnsure"))),
 				js.if_(js.not(el), [js.ret()]),
 				js.assign(
@@ -266,10 +293,10 @@ export function cursorStatements(p: CursorParams): Statement[] {
 						js.str("px,"),
 						text(js.op(js.member(q, W.y), "-", js.num(A.hotY))),
 						js.str("px,0)"),
-						js.cond(js.member(q, W.down), js.str(` scale(${A.pressScale})`), js.str("")),
 					])
 				),
 				js.assign(js.member(el, "style", "opacity"), js.str("1")),
+				js.expr(js.call(js.id(CURSOR_FEEDBACK.update), q, el)),
 				js.expr(js.call(js.id(CURSOR.prepare), q)),
 				js.expr(js.call(js.id(CURSOR.seal))),
 			]
@@ -281,6 +308,7 @@ export function cursorStatements(p: CursorParams): Statement[] {
 			[],
 			[
 				js.const_("el", js.call(js.id("curFind"))),
+				js.expr(js.call(js.id(CURSOR_FEEDBACK.clear))),
 				js.expr(js.call(js.id(CURSOR.seal))),
 				js.if_(el, [js.expr(js.call(js.member(el, "remove")))]),
 				js.if_(shield, [js.expr(js.call(js.member(shield, "remove")))]),
@@ -289,6 +317,13 @@ export function cursorStatements(p: CursorParams): Statement[] {
 		)
 	);
 	return [
+		...cursorEffectStatements({
+			cls: p.cls,
+			accent: p.accent,
+			zIndex: A.zIndex - 1,
+			hotX: A.hotX,
+			hotY: A.hotY,
+		}),
 		shieldState,
 		shieldTimer,
 		shieldFind,
@@ -322,10 +357,11 @@ export const virtualCursor = defineProgram({
 		peer: "string",
 		cls: "string",
 		fadeMs: "number",
+		accent: "string",
 	},
 	build: (p) =>
 		js.program([
-			...cursorStatements({ cls: p.cls, fadeMs: p.fadeMs }),
+			...cursorStatements({ cls: p.cls, fadeMs: p.fadeMs, accent: p.accent }),
 			defineHandle([
 				{ kind: KINDS.cursorTo, body: [cursor.to(js.id("q"))] },
 				{ kind: KINDS.cursorHide, body: [cursor.hide()] },

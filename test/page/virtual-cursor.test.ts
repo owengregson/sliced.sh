@@ -7,7 +7,9 @@
 // stable identifier, `pointer-events: none` — plus the two things that make it readable as a
 // pointer: the hotspot offset and the press feedback.
 import { afterEach, describe, expect, it } from "bun:test";
+import { CURSOR_EFFECTS } from "@core/constants/cursor";
 import { TIMINGS } from "@core/constants/timings";
+import { TOKENS } from "@design/tokens.generated";
 import { bindCode, emit } from "@pagescript";
 import { CURSOR_ART, virtualCursor } from "../../src/page/virtual-cursor";
 import {
@@ -28,6 +30,7 @@ const bound = bindCode(emitted.code, emitted.params, {
 	peer: TOKENS_FOR_SEED.content,
 	cls: cursorClass,
 	fadeMs: TIMINGS.virtualCursorFadeMs,
+	accent: TOKENS.color.dark.brand,
 });
 
 const cleanups: Array<() => void> = [];
@@ -53,6 +56,68 @@ const to = (x: number, y: number, down = false): Record<string, unknown> => {
 	delete env.i;
 	return env;
 };
+
+function animateHarness(win: ReturnType<typeof makeWindow>) {
+	const records: Array<{
+		node: unknown;
+		frames: Keyframe[];
+		options: KeyframeAnimationOptions;
+		cancelled: boolean;
+		done: boolean;
+		cancel(): void;
+		finish(): void;
+	}> = [];
+	const prototype = win.Element.prototype;
+	const previousAnimate = Object.getOwnPropertyDescriptor(prototype, "animate");
+	const previousGet = Object.getOwnPropertyDescriptor(prototype, "getAnimations");
+	const preference = { reduced: false };
+	Object.defineProperty(win, "matchMedia", {
+		configurable: true,
+		value: () => ({ matches: preference.reduced }),
+	});
+	Object.defineProperty(prototype, "animate", {
+		configurable: true,
+		value: function (this: unknown, frames: Keyframe[], options: KeyframeAnimationOptions) {
+			let resolve = () => {};
+			let reject = (_error: Error) => {};
+			const finished = new Promise<void>((yes, no) => {
+				resolve = yes;
+				reject = no;
+			});
+			void finished.catch(() => {});
+			const record = {
+				node: this,
+				frames,
+				options,
+				cancelled: false,
+				done: false,
+				cancel() {
+					this.cancelled = true;
+					reject(new Error("cancelled"));
+				},
+				finish() {
+					this.done = true;
+					resolve();
+				},
+			};
+			records.push(record);
+			return { finished, cancel: () => record.cancel() };
+		},
+	});
+	Object.defineProperty(prototype, "getAnimations", {
+		configurable: true,
+		value: function (this: unknown) {
+			return records.filter((r) => r.node === this && !r.cancelled && !r.done);
+		},
+	});
+	cleanups.push(() => {
+		if (previousAnimate) Object.defineProperty(prototype, "animate", previousAnimate);
+		else Reflect.deleteProperty(prototype, "animate");
+		if (previousGet) Object.defineProperty(prototype, "getAnimations", previousGet);
+		else Reflect.deleteProperty(prototype, "getAnimations");
+	});
+	return { records, preference, layer: () => win.document.querySelector(`.${cursorClass}e`) };
+}
 
 describe("virtual-cursor (the page-realm pointer mirror)", () => {
 	it("emits no forbidden substring, no literal class and installs no window property", () => {
@@ -127,10 +192,15 @@ describe("virtual-cursor (the page-realm pointer mirror)", () => {
 
 		sendToPage(win, to(100, 200, true));
 		expect(style?.transform).toBe(
-			`translate3d(${100 - CURSOR_ART.hotX}px,${200 - CURSOR_ART.hotY}px,0) scale(${CURSOR_ART.pressScale})`
+			`translate3d(${100 - CURSOR_ART.hotX}px,${200 - CURSOR_ART.hotY}px,0)`
+		);
+		expect((el(win)?.querySelector("svg") as unknown as SVGElement)?.style.transform).toBe(
+			`scale(${CURSOR_ART.pressScale})`
 		);
 		sendToPage(win, to(100, 200, false));
-		expect(style?.transform).not.toContain("scale(");
+		expect((el(win)?.querySelector("svg") as unknown as SVGElement)?.style.transform).toBe(
+			"scale(1)"
+		);
 	});
 
 	it("removes the element on hide, and a later position draws it again", () => {
@@ -146,12 +216,12 @@ describe("virtual-cursor (the page-realm pointer mirror)", () => {
 		expect(win.document.querySelectorAll(`.${cursorClass}`)).toHaveLength(1);
 	});
 
-	it("hides the native cursor only while the mirror exists and removes the override on hide", () => {
+	it("shows the blocked native cursor while the mirror exists and removes the override on hide", () => {
 		const { win } = boot();
 		expect(win.document.querySelector("style")).toBeNull();
 		sendToPage(win, to(10, 10));
 		const sheet = el(win)?.querySelector("style");
-		expect(sheet?.textContent).toContain("cursor: none !important");
+		expect(sheet?.textContent).toContain("cursor: not-allowed !important");
 		const hide = command("cursorHide", "0");
 		delete hide.i;
 		sendToPage(win, hide);
@@ -171,6 +241,7 @@ describe("virtual-cursor (the page-realm pointer mirror)", () => {
 		sendToPage(win, to(100, 200));
 		const shield = () => win.document.querySelector(`.${cursorClass}h`) as HTMLElement | null;
 		expect(shield()?.style.pointerEvents).toBe("auto");
+		expect(shield()?.style.cursor).toBe("not-allowed");
 		expect(shield()?.style.clipPath).toBe("none");
 		runProgram(bound, win);
 		sendToPage(win, to(200, 300));
@@ -193,5 +264,95 @@ describe("virtual-cursor (the page-realm pointer mirror)", () => {
 		expect(shield?.style.clipPath).toContain("149px 249px");
 		await new Promise((resolve) => setTimeout(resolve, 280));
 		expect(shield?.style.clipPath).toBe("none");
+	});
+
+	it("reuses one short smooth tapered ribbon behind the cursor body", async () => {
+		const { win } = boot();
+		const h = animateHarness(win);
+		sendToPage(win, to(100, 200));
+		expect(h.layer()).toBeNull();
+		for (let step = 1; step <= 25; step++) sendToPage(win, to(100 + step * 4, 200));
+		expect(h.layer()?.children.length).toBe(CURSOR_EFFECTS.bands.length);
+		expect(h.layer()?.tagName.toLowerCase()).toBe("svg");
+		const paths = [...(h.layer()?.children ?? [])];
+		for (const path of paths) {
+			const d = path.getAttribute("d") ?? "";
+			expect(d).toContain(" Q");
+			expect(d).toEndWith(" Z");
+			expect(d).not.toMatch(/NaN|Infinity/);
+			expect(path.getAttribute("fill")).toBe(TOKENS.color.dark.brand);
+			const values = d.match(/-?\d+(?:\.\d+)?/g)?.map(Number) ?? [];
+			const xs = values.filter((_, i) => i % 2 === 0);
+			expect(Math.max(...xs)).toBe(200 + CURSOR_EFFECTS.rearOffsetX);
+			expect(Math.max(...xs) - Math.min(...xs)).toBeLessThanOrEqual(CURSOR_EFFECTS.trailLengthPx);
+		}
+		const count = h.records.length;
+		for (let i = 0; i < 10; i++) sendToPage(win, to(200, 200));
+		expect(h.records).toHaveLength(count);
+		expect([...(h.layer()?.children ?? [])]).toEqual(paths);
+		for (const r of h.records) if (!r.cancelled) r.finish();
+		await Promise.resolve();
+		expect(h.layer()).toBeNull();
+		expect(el(win)).not.toBeNull();
+	});
+
+	it("presses and releases the artwork itself with a matching contour, never a detached ring", () => {
+		const { win } = boot();
+		const h = animateHarness(win);
+		sendToPage(win, to(100, 200));
+		sendToPage(win, to(100, 200, true));
+		sendToPage(win, to(100, 200, true));
+		expect(h.records).toHaveLength(2);
+		const art = el(win)?.querySelector("svg");
+		const outline = art?.lastElementChild;
+		expect(h.records[0]?.node).toBe(art);
+		expect(h.records[1]?.node).toBe(outline);
+		expect(outline?.getAttribute("d")).toBe(art?.children[1]?.getAttribute("d"));
+		expect(outline?.getAttribute("stroke")).toBe(TOKENS.color.dark.brand);
+		expect(h.layer()).toBeNull();
+		expect(win.document.querySelector("circle")).toBeNull();
+		expect((el(win) as HTMLElement | null)?.style.transform).toBe("translate3d(95px,195px,0)");
+		sendToPage(win, to(100, 200, false));
+		sendToPage(win, to(100, 200, false));
+		expect(h.records).toHaveLength(4);
+		expect(h.records[2]?.options.duration).toBe(CURSOR_EFFECTS.releaseMs);
+		expect(h.records[2]?.frames.at(-1)).toEqual({ transform: "scale(1)" });
+		expect(h.records[3]?.frames.at(-1)).toEqual({ opacity: 0 });
+	});
+
+	it("skips teleports, cancels effects on reduced motion and hide, and never trails across ownership sessions", async () => {
+		const { win } = boot();
+		const h = animateHarness(win);
+		sendToPage(win, to(10, 10));
+		sendToPage(win, to(20, 10));
+		sendToPage(win, to(500, 500));
+		expect(h.layer()).toBeNull();
+		expect(h.records.every((r) => r.cancelled)).toBe(true);
+		sendToPage(win, to(510, 500));
+		h.preference.reduced = true;
+		sendToPage(win, to(520, 500, true));
+		expect(h.layer()).toBeNull();
+		expect(h.records.every((r) => r.cancelled)).toBe(true);
+		expect((el(win) as HTMLElement | null)?.style.transform).toContain("515px,495px");
+		h.preference.reduced = false;
+		sendToPage(win, to(530, 500, false));
+		sendToPage(win, command("cursorHide", "hide"));
+		expect(h.records.every((r) => r.cancelled)).toBe(true);
+		expect(win.document.body.children).toHaveLength(0);
+		await Promise.resolve();
+		sendToPage(win, to(600, 600));
+		expect(h.layer()).toBeNull();
+	});
+
+	it("shows the pointer immediately without effects when reduced motion is already enabled", () => {
+		const { win } = boot();
+		const h = animateHarness(win);
+		h.preference.reduced = true;
+		sendToPage(win, to(100, 200));
+		sendToPage(win, to(110, 200, true));
+		sendToPage(win, to(110, 200, false));
+		expect(h.records).toEqual([]);
+		expect(h.layer()).toBeNull();
+		expect((el(win) as HTMLElement | null)?.style.transition).toBe("none");
 	});
 });

@@ -67,6 +67,7 @@ export const chesscomEntryArgs = (env: EntryEnv) => ({
 	retryMs: TIMINGS.bridgeRetryMs,
 	retryMaxMs: TIMINGS.bridgeRetryMaxMs,
 	cursorFadeMs: TIMINGS.virtualCursorFadeMs,
+	cursorAccent: TOKENS.color.dark.brand,
 });
 
 export const programs: readonly AnyPageProgram[] = [

@@ -288,7 +288,14 @@ describe("PageBridgeClient — the pointer mirror's fire-and-forget channel (Fix
 		client.notify(BRIDGE_KINDS.cursorTo, { x: 500, y: 360, down: true });
 		await waitFor(() => (node?.style.transform ?? "") !== first);
 		expect(win.document.querySelectorAll(`.${cls}`)).toHaveLength(1);
-		expect(node?.style.transform).toContain("scale(");
+		const position = node?.style.transform;
+		expect(position).not.toContain("scale(");
+		const artwork = node?.querySelector("svg");
+		expect(artwork?.style.transform).toContain("scale(");
+		expect(artwork?.style.transform).not.toBe("scale(1)");
+		client.notify(BRIDGE_KINDS.cursorTo, { x: 500, y: 360, down: false });
+		await waitFor(() => artwork?.style.transform === "scale(1)");
+		expect(node?.style.transform).toBe(position);
 		client.notify(BRIDGE_KINDS.cursorHide);
 		await waitFor(() => win.document.querySelector(`.${cls}`) === null);
 	});

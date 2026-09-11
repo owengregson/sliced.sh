@@ -61,6 +61,7 @@ export const chesscomBridge = defineProgram({
 		retryMaxMs: "number",
 		cursorClass: "string",
 		cursorFadeMs: "number",
+		cursorAccent: "string",
 	},
 	entry: true,
 	build: (p) =>
@@ -73,7 +74,7 @@ export const chesscomBridge = defineProgram({
 			js.let_("keys", js.arr()),
 			js.let_("wait", p.retryMs),
 			...overlayStatements({ hosts: p.boardSelectors, cls: p.overlayClass, colors: p.colors }),
-			...cursorStatements({ cls: p.cursorClass, fadeMs: p.cursorFadeMs }),
+			...cursorStatements({ cls: p.cursorClass, fadeMs: p.cursorFadeMs, accent: p.cursorAccent }),
 			// first board element (in ladder order) that carries the `game` API
 			js.const_(
 				"find",

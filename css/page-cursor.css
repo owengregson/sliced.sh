@@ -1,7 +1,7 @@
-/* The native pointer is hidden for the lifetime of the virtual pointer element. */
+/* Physical input is blocked for the lifetime of the virtual pointer element. */
 html,
 html *,
 html *::before,
 html *::after {
-	cursor: none !important;
+	cursor: not-allowed !important;
 }
