@@ -118,16 +118,16 @@ describe("premoveCandidate", () => {
 	});
 
 	it("premoves a recapture on the square just captured on", async () => {
-		// 1. e4 e5 2. Nc3 d5, white to move: m = exd5, r = Qxd5, q = Nxd5 recaptures on d5.
-		const fen = "rnbqkbnr/ppp2ppp/8/3pp3/4P3/2N5/PPPP1PPP/R1BQKBNR w KQkq - 0 3";
-		const opp = [line("d8d5", -30, 1), line("g8f6", -200, 2), line("c7c6", -300, 3)];
-		const a = analysis(opp, [line("c3d5", 200, 1), line("d2d4", 150, 2)]);
-		const res = await premoveCandidate(ctx({ fen, move: "e4d5", ponder: undefined }), a.deps);
-		expect(res?.reply).toBe("d8d5");
-		expect(res?.premove).toBe("c3d5");
+		// Bxc3 trades a bishop for a knight; bxc3 takes back the bishop.
+		const fen = "4k3/8/8/8/1b6/2N5/1P6/4K3 w - - 0 1";
+		const opp = [line("b4c3", 0, 1), line("b4a5", -200, 2), line("e8f8", -300, 3)];
+		const a = analysis(opp, [line("b2c3", 200, 1)]);
+		const res = await premoveCandidate(ctx({ fen, move: "e1f1", ponder: undefined }), a.deps);
+		expect(res?.reply).toBe("b4c3");
+		expect(res?.premove).toBe("b2c3");
 		expect(res?.reason).toBe("recapture");
 		// Without a ponder move the opponent search (150 ms, MultiPV 3) runs first.
-		expect(a.calls.map((c) => c.moves)).toEqual([["e4d5"], ["e4d5", "d8d5"]]);
+		expect(a.calls.map((c) => c.moves)).toEqual([["e1f1"], ["e1f1", "b4c3"]]);
 		expect(a.calls[0]?.movetimeMs).toBe(PREMOVE.ponderMovetimeMs);
 		expect(a.calls[0]?.multiPv).toBe(PREMOVE.ponderMultiPv);
 	});
@@ -197,7 +197,7 @@ describe("premoveCandidate", () => {
 		expect(await premoveCandidate(ctx({ move: "e2e4" }), a.deps)).toBeNull();
 		expect(a.calls.length).toBe(0);
 		expect(await premoveCandidate(ctx(), a.deps)).toBeNull();
-		// The ponder move is used as `r` even when the search's top line differs.
+		// A stale ponder is not evidence of confidence in the fresh, close-scoring search.
 		const b = analysis([line("d7d6", 0, 1), line("c6e5", -2, 2)], []);
 		expect(await premoveCandidate(ctx({ ponder: "c6e5" }), b.deps)).toBeNull();
 		expect(b.calls.length).toBe(1);
@@ -245,7 +245,7 @@ describe("isQueueableReason (Fix F)", () => {
 });
 
 describe("safe offers and clock-race queues", () => {
-	it("attempts a rank-two safe trade in rapid and at low Elo even when the reply is unlikely", async () => {
+	it("rejects an unlikely rank-two trade even when the occupied-square queue would be safe", async () => {
 		const fen = "4k3/8/8/8/1b2n3/2N5/1P6/4K3 w - - 0 1";
 		const a = analysis([line("e8f8", 0, 1), line("b4c3", -200, 2)], [line("b2c3", 200, 1)]);
 		const res = await premoveCandidate(
@@ -259,10 +259,107 @@ describe("safe offers and clock-race queues", () => {
 			}),
 			a.deps
 		);
-		expect(res?.premove).toBe("b2c3");
-		expect(res?.replyProbability).toBeLessThan(0.35);
-		expect(res?.reason).toBe("recapture");
+		expect(res).toBeNull();
+		expect(a.calls.map((call) => call.moves)).not.toContainEqual(["e1f1", "b4c3"]);
 	});
+
+	it("retains near-certain attempts for a plausible equal-piece trade in rapid and at low Elo", async () => {
+		const fen = "4k3/8/8/8/1b2n3/2N5/1P6/4K3 w - - 0 1";
+		const a = analysis([line("b4c3", 0, 1), line("e8f8", -200, 2)], [line("b2c3", 200, 1)]);
+		const chances: number[] = [];
+		const res = await premoveCandidate(
+			ctx({
+				fen,
+				move: "e1f1",
+				ponder: "e8f8", // The fresh searched reply takes precedence over this old prediction.
+				targetElo: 800,
+				piP: 0.01,
+				timeControl: { baseMs: 600000, incMs: 0 },
+				rng: {
+					...alwaysRng,
+					chance: (p) => {
+						chances.push(p);
+						return true;
+					},
+				},
+			}),
+			a.deps
+		);
+		expect(res?.premove).toBe("b2c3");
+		expect(res?.replyProbability).toBeGreaterThanOrEqual(PREMOVE.replyMinProb);
+		expect(chances).toHaveLength(1);
+		expect(chances[0]).toBeGreaterThan(0.97);
+	});
+
+	it.each(["unsearched", "low-score", "optimistic-score"] as const)(
+		"rejects a %s queen donation instead of anticipating a queen-for-pawn sacrifice",
+		async (kind) => {
+			const fen = "rnbqkbnr/ppp2ppp/8/3pp3/4P3/2N5/PPPP1PPP/R1BQKBNR w KQkq - 0 3";
+			const opp =
+				kind === "optimistic-score"
+					? [line("d8d5", -30, 1), line("g8f6", -200, 2), line("c7c6", -300, 3)]
+					: [
+							line("g8f6", 0, 1),
+							line("c7c6", -200, 2),
+							...(kind === "low-score" ? [line("d8d5", -800, 3)] : []),
+						];
+			const a = analysis(opp, [line("c3d5", 200, 1)]);
+			expect(await premoveCandidate(ctx({ fen, move: "e4d5", ponder: "d8d5" }), a.deps)).toBeNull();
+			if (kind !== "optimistic-score")
+				expect(a.calls.map((call) => call.moves)).not.toContainEqual(["e4d5", "d8d5"]);
+		}
+	);
+
+	it("allows an apparently expensive capture when the opponent has an immediate balanced takeback", async () => {
+		// ...Qxd5 Qxd5 Rxd5 exchanges queens and wins the initial pawn.
+		const fen = "3r2k1/8/8/8/3P4/8/3Q4/6K1 w - - 0 1";
+		// Place the opponent queen on e5; d4-d5 offers the pawn to it and the rook behind d8.
+		const withQueen = fen.replace("8/3P4", "4q3/3P4");
+		const a = analysis([line("e5d5", 0, 1), line("g8h8", -300, 2)], [line("d2d5", 0, 1)]);
+		const res = await premoveCandidate(
+			ctx({ fen: withQueen, move: "d4d5", ponder: undefined }),
+			a.deps
+		);
+		expect(res?.premove).toBe("d2d5");
+	});
+
+	it("still anticipates the only legal opponent reply when it necessarily loses material", async () => {
+		// Rg8+ forces ...Qxg8; every king escape is covered. Qxg8# is the forced recapture.
+		const fen = "3Q1q1k/5BR1/6K1/8/8/8/8/8 w - - 0 1";
+		const a = analysis([line("f8g8", -900, 1)], [line("d8g8", 900, 1)]);
+		const res = await premoveCandidate(ctx({ fen, move: "g7g8", ponder: undefined }), a.deps);
+		expect(res?.reply).toBe("f8g8");
+		expect(res?.premove).toBe("d8g8");
+		expect(res?.replyProbability).toBe(1);
+	});
+
+	it.each(["single", "duplicate", "bound", "shallow", "missing-score"] as const)(
+		"does not turn %s search evidence into confident trade prediction",
+		async (kind) => {
+			const fen = "4k3/8/8/8/1b6/2N5/1P6/4K3 w - - 0 1";
+			const first = line("b4c3", 0, 1);
+			const alternative = line("e8f8", -200, 2);
+			const opp =
+				kind === "single"
+					? [first]
+					: kind === "duplicate"
+						? [first, { ...first, multipv: 2 }]
+						: [
+								first,
+								{
+									...alternative,
+									...(kind === "bound"
+										? { bound: "upper" as const }
+										: kind === "shallow"
+											? { depth: 1 }
+											: { score: {} }),
+								},
+							];
+			const a = analysis(opp, [line("b2c3", 200, 1)]);
+			expect(await premoveCandidate(ctx({ fen, move: "e1f1", ponder: undefined }), a.deps)).toBeNull();
+			expect(a.calls).toHaveLength(1);
+		}
+	);
 
 	it("refuses a predicted queen recapture when another capturer makes that queen hang", () => {
 		// The bishop's capture can be recaptured, but d4xc3 leaves ...b4xc3 taking the queen.

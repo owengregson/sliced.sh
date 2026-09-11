@@ -48,9 +48,6 @@ export const PREMOVE = {
 	tradeProbBase: 0.98,
 	tradeProbRange: 0.01,
 	tradePersonaFloor: 0.99,
-	tradeReplyMinProb: 0.35,
-	/** A safe offer may be below the engine's first predicted reply. Bound extra reply searches. */
-	tradeReplyCandidates: 3,
 	fastQueueDelayMinMs: 0,
 	fastQueueDelayMaxMs: 60,
 	tradeQueueDelayMinMs: 80,
@@ -63,6 +60,13 @@ export const PREMOVE = {
 	/** Reply-predictability gate: softmax temperature (win-fraction units) and threshold. */
 	replyTau: 0.06,
 	replyMinProb: 0.6,
+	/** Require distinct, sufficiently searched alternatives before interpreting confidence. */
+	replyMinAlternatives: 2,
+	replyMinDepth: 4,
+	/** Raw scores still gate quality when win fractions saturate in won/lost positions. */
+	replyMaxCpLoss: 45,
+	/** An unforced predicted exchange may not donate more than one pawn without a takeback. */
+	tradeMaxMaterialLoss: 1,
 	/** Analysis after `m r`: `go movetime 120` MultiPV 2. */
 	replyMovetimeMs: 120,
 	replyMultiPv: 2,

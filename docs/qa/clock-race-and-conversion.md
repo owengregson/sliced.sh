@@ -13,7 +13,8 @@ rest. Timing inference is skipped when this policy already determines execution 
 scheduling, engine startup, geometry changes, and delivery recovery can still add latency.
 
 Safe offered trades use a separate near-certain premove probability and an 80–220 ms entry delay;
-clock races use 0–60 ms. Capture offers beyond the first predicted engine reply are considered.
+clock races use 0–60 ms. Each predicted capture must pass the same confidence gate as other replies;
+legal captures absent from the fresh search are not speculative premove candidates.
 The queue gate validates every legal opponent reply: an unexpected reply must invalidate the
 recapture or leave a safe exchange. A lone king can queue a move only when it remains legal after
 every legal opponent reply. Otherwise the own-turn path chooses a legal move and executes quickly.
@@ -65,10 +66,15 @@ does not establish a forced win.
 
 Safe trade propensity is about 97–99% once the candidate is eligible, including low-Elo and slow
 time controls; an explicit zero premove propensity is still respected. This is an attempt rate,
-not a prediction that the opponent accepts the trade. The extra search covers at most three
-capture replies. Neutral rapid positions use a cheap legal-offer gate before starting those
-searches. Tests cover a safe second-ranked offer below 35% reply probability, an alternate reply
-that makes a queen recapture hang, and king escapes invalidated by a rook check. The representative
+not a prediction that the opponent accepts the trade. Fresh distinct root lines at depth 4 or above
+must provide at least two alternatives (or every legal reply when forced), at least 60% heuristic
+reply confidence, and no more than 45 cp loss against the best root score. Bound, duplicate, shallow,
+and missing-score lines cannot manufacture prediction confidence. An unforced recapture also rejects
+an exchange losing the opponent more than one pawn after crediting its best immediate takeback on
+that square. This is a conservative material filter, not a proof that deeper compensation is absent.
+Neutral rapid positions use a cheap legal-offer gate before prediction searches. Tests now reject
+unlikely second-ranked trades and unsearched or optimistically scored queen donations, while retaining
+frequent equal-piece trades, balanced takeback exchanges, and universally legal king escapes. The representative
 full-board trade validation plus fake search took about 21 ms locally. Tactical safety remains
 bounded: the queue checks legal branches, immediate mating replies, and recapturing a lower-value
 piece with a more valuable piece that could immediately be taken; it is not a complete tactical

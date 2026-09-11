@@ -7,12 +7,12 @@
  * or a clear-only move (`loss_2nd ≥ 0.25`). A timed lone-king escape is allowed
  * only when every legal opponent reply preserves its legality. The engine
  * searches are injected (`analyseAfter`). Safe queued trades have a separate, higher attempt
- * propensity and may accept a lower prediction confidence after validating every legal reply.
+ * propensity, but require the same prediction confidence and a plausible material exchange.
  */
 
 import { loadPosition } from "@core/chess/fen";
 import type { PositionHistory } from "@core/chess/history";
-import { isLoneKing, PIECE_VALUES } from "@core/chess/material";
+import { isLoneKing, material, PIECE_VALUES } from "@core/chess/material";
 import { classifyMove } from "@core/chess/move-classify";
 import { phase } from "@core/chess/phase";
 import { applyMoves, legalMoves, parseUci } from "@core/chess/san";
@@ -208,6 +208,62 @@ export function replyProbability(reply: string, lines: readonly EvalLine[]): num
 	return total > 0 ? own / total : 0;
 }
 
+/** Only fresh, distinct, comparable root scores are evidence about the next opponent move. */
+function predictionLines(lines: readonly EvalLine[], legalReplies: readonly string[]): EvalLine[] {
+	const roots = new Set<string>();
+	return [...lines]
+		.sort((a, b) => a.multipv - b.multipv)
+		.filter((line) => {
+			const reply = line.pvUci[0];
+			if (
+				!reply ||
+				!legalReplies.includes(reply) ||
+				roots.has(reply) ||
+				line.bound !== undefined ||
+				!Number.isFinite(line.depth) ||
+				line.depth < PREMOVE.replyMinDepth ||
+				!(Number.isFinite(line.score.cp) || Number.isFinite(line.score.mate))
+			)
+				return false;
+			roots.add(reply);
+			return true;
+		});
+}
+
+function plausibleScore(candidate: EvalLine, best: EvalLine): boolean {
+	if (best.score.mate !== undefined) {
+		if (candidate.score.mate === undefined) return best.score.mate < 0;
+		if (best.score.mate > 0)
+			return candidate.score.mate > 0 && candidate.score.mate <= best.score.mate;
+		return candidate.score.mate < 0 && candidate.score.mate <= best.score.mate;
+	}
+	if (candidate.score.mate !== undefined) return candidate.score.mate > 0;
+	return (best.score.cp ?? 0) - (candidate.score.cp ?? 0) <= PREMOVE.replyMaxCpLoss;
+}
+
+/**
+ * Legality does not make a queen donation believable. Check the material exchange from the
+ * opponent's side, giving them credit for their best immediate legal takeback on this square.
+ * This deliberately leaves compensated sacrifices to normal play after the move appears.
+ */
+function plausibleExchange(afterMove: string, reply: string, premove: string): boolean {
+	const before = material(afterMove);
+	const next = applyMoves(afterMove, [reply, premove]);
+	const board = next && loadPosition(next);
+	const square = parseUci(premove)?.to;
+	if (!before || !board || !square) return false;
+	const after = material(board.fen());
+	if (!after) return false;
+	const direction = board.turn() === "w" ? 1 : -1;
+	let gain = direction * (after.diff - before.diff);
+	for (const takeback of board.moves({ verbose: true })) {
+		if (takeback.to !== square || !takeback.isCapture()) continue;
+		const final = material(takeback.after);
+		if (final) gain = Math.max(gain, direction * (final.diff - before.diff));
+	}
+	return gain >= -PREMOVE.tradeMaxMaterialLoss;
+}
+
 /**
  * Category eligibility for a site queue. isQueueableCandidate provides the actual board proof;
  * a reason cannot establish that an unexpected reply makes a move illegal.
@@ -253,35 +309,24 @@ export async function premoveCandidate(
 	if (p <= 0 || !ctx.rng.chance(p)) return null;
 	const legalReplies = legalMoves(afterMove);
 	if (ctx.ponder !== undefined && !legalReplies.includes(ctx.ponder)) return null;
-	const opponentLines = await deps.analyseAfter(ctx.fen, [ctx.move], {
+	const analysedOpponent = await deps.analyseAfter(ctx.fen, [ctx.move], {
 		movetimeMs: Math.min(PREMOVE.ponderMovetimeMs, race?.maxSearchMs ?? Number.POSITIVE_INFINITY),
 		multiPv: PREMOVE.ponderMultiPv,
 	});
-	const primaryReply = ctx.ponder ?? opponentLines[0]?.pvUci[0];
-	const replies = [
-		...new Set([
-			primaryReply,
-			...opponentLines.map((line) => line.pvUci[0]),
-			...legalReplies.filter((reply) => classifyMove(afterMove, reply)?.isCapture),
-		]),
-	].filter((reply): reply is string => reply !== undefined && legalReplies.includes(reply));
-	// A safe offer need not be the engine's likeliest reply. A missed offer simply drops the
-	// occupied-square queue; only a board-validated recapture gets the higher probability.
-	replies.sort(
-		(a, b) =>
-			Number(classifyMove(afterMove, b)?.isCapture) - Number(classifyMove(afterMove, a)?.isCapture)
-	);
-	for (const reply of replies.slice(0, PREMOVE.tradeReplyCandidates)) {
+	const opponentLines = predictionLines(analysedOpponent, legalReplies);
+	if (opponentLines.length < Math.min(PREMOVE.replyMinAlternatives, legalReplies.length))
+		return null;
+	const bestPrediction = opponentLines[0];
+	const primaryReply = bestPrediction?.pvUci[0];
+	if (bestPrediction?.multipv !== 1 || !primaryReply) return null;
+	for (const prediction of opponentLines) {
+		const reply = prediction.pvUci[0];
+		if (!reply || !plausibleScore(prediction, bestPrediction)) continue;
 		const pReply = replyProbability(reply, opponentLines);
+		if (pReply < PREMOVE.replyMinProb) continue;
 		const replyCaptured = classifyMove(afterMove, reply)?.isCapture ?? false;
-		if (pReply < PREMOVE.replyMinProb && !replyCaptured) continue;
 		const afterReply = applyMoves(afterMove, [reply]);
 		if (afterReply === null) continue;
-		if (
-			pReply < PREMOVE.replyMinProb &&
-			!legalMoves(afterReply).some((q) => classifyMove(afterReply, q, reply)?.isRecapture)
-		)
-			continue;
 		const analysed = await deps.analyseAfter(ctx.fen, [ctx.move, reply], {
 			movetimeMs: Math.min(PREMOVE.replyMovetimeMs, race?.maxSearchMs ?? Number.POSITIVE_INFINITY),
 			multiPv: PREMOVE.replyMultiPv,
@@ -310,6 +355,8 @@ export async function premoveCandidate(
 		)
 			reason = "loss2nd";
 		if (!reason) continue;
+		if (reason === "recapture" && legalReplies.length > 1 && !plausibleExchange(afterMove, reply, q))
+			continue;
 		const parts = parseUci(q);
 		if (!parts) continue;
 		const candidate: PremoveCandidate = {

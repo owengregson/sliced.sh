@@ -350,6 +350,22 @@ function queued(): boolean {
 }
 
 describe("game session: a queued premove (Fix F)", () => {
+	it("never enters a recapture that depends on an unforced queen donation, even with optimistic prediction scores", async () => {
+		const scenario: Scenario = {
+			fen: "rnbqkbnr/ppp2ppp/8/3pp3/4P3/2N5/PPPP1PPP/R1BQKBNR w KQkq - 0 3",
+			move: "e4d5",
+			reply: "d8d5",
+			premove: "c3d5",
+			san: "Nxd5",
+			from: "c3",
+			to: "d5",
+		};
+		const { mark } = await armPremove({ seed: 0, premoves: true, scenario });
+		expect(queued()).toBe(false);
+		expect(pressCount(mark)).toBe(0);
+		expect(h.site.board.lastMove()?.uci).toBe("e4d5");
+	});
+
 	it.each(["completed", "interrupted"] as const)(
 		"limits repeated avoided queue entries only after completed drags (second: %s)",
 		async (secondAttempt) => {
