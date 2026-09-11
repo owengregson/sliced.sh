@@ -44,7 +44,7 @@ import {
 } from "./live/collapse";
 import { createEvalSection } from "./live/eval-section";
 import { createLinesSection } from "./live/lines-section";
-import { createMoveSection } from "./live/move-section";
+import { createMoveSection, moveProgressPhase } from "./live/move-section";
 import { createSessionStrip } from "./live/session-strip";
 import { createStrengthCard } from "./live/strength-card";
 import { createTogglesRow } from "./live/toggles-row";
@@ -96,6 +96,7 @@ function mountLive(ctx: ViewContext): () => void {
 	const app = container.closest<HTMLElement>(".sl-app");
 	part(root, ".sl-live__eyebrow").textContent = COPY.workspace.live;
 	part(root, ".sl-shortcuts__title").textContent = COPY.workspace.shortcuts;
+	part(root, ".sl-live__secondary-title").textContent = COPY_LIVE.secondary;
 	for (const [action, label] of Object.entries({
 		playMove: COPY.workspace.playNow,
 		toggleAutoMove: COPY.workspace.autoPlay,
@@ -346,10 +347,17 @@ function mountLive(ctx: ViewContext): () => void {
 			} else unlockControls();
 		}
 		root.classList.toggle("sl-live--hands-off", handsOff);
-		part(root, ".sl-live__title").textContent =
-			snap.session.myColor && snap.session.sideToMove === snap.session.myColor
-				? COPY.workspace.yourTurn
-				: COPY.workspace.theirTurn;
+		const phase = moveProgressPhase(snap);
+		const phaseTitle = part(root, ".sl-live__title");
+		if (phaseTitle.textContent !== COPY.move.progress[phase].title)
+			phaseTitle.textContent = COPY.move.progress[phase].title;
+		root.dataset.phase = phase;
+		const configuration = part(root, ".sl-live__configuration");
+		configuration.textContent = COPY_LIVE.configuration(
+			snap.settings.automation.highlightMoves,
+			snap.settings.automation.autoQueue
+		);
+		configuration.hidden = !handsOff;
 		const automationStatus = part(root, ".sl-live__automation");
 		automationStatus.textContent = snap.autoMove.armed ? COPY.toggle.armed : COPY.toggle.off;
 		automationStatus.dataset.armed = String(snap.autoMove.armed);
@@ -378,10 +386,10 @@ function mountLive(ctx: ViewContext): () => void {
 			handsOff,
 		});
 		strength.update({ snapshot: snap, handsOff });
-		strengthHost.hidden = collapse.strengthChip;
-		toggles.update({ snapshot: snap, handsOff, strengthChip: collapse.strengthChip });
+		strengthHost.hidden = !handsOff && collapse.strengthChip;
+		toggles.update({ snapshot: snap, handsOff, strengthChip: !handsOff && collapse.strengthChip });
 		strip.update({ snapshot: snap, autoPlayUsed, wasAttached });
-		stripHost.hidden = collapse.stripHidden;
+		stripHost.hidden = !handsOff && collapse.stripHidden;
 		applyDetachedBanner(snap);
 		if (handsOff) lockControls();
 	}

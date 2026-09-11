@@ -254,9 +254,7 @@ describe("move card states (§5.6)", () => {
 		h = await mountLive(dom.sim, liveSnapshot());
 		const card = h.q(".sl-move");
 		expect(card.dataset.state).toBe("your-move");
-		expect(card.querySelector(".sl-move__header")?.textContent).toBe(
-			COPY.move.headerYours(COPY.move.white)
-		);
+		expect(card.querySelector(".sl-move__header")?.textContent).toBe(COPY.move.nextMove);
 		expect(card.querySelector(".sl-move__san")?.textContent).toBe("Nf3");
 		expect(card.querySelector(".sl-move__uci")?.textContent).toBe("g1 → f3");
 		expect(card.classList.contains("sl-move--armed")).toBe(false);
@@ -266,12 +264,12 @@ describe("move card states (§5.6)", () => {
 		await dom.tick(0); // the SAN exits up, then the reply enters (§6.3)
 		expect(card.dataset.state).toBe("opponent");
 		expect(card.classList.contains("sl-move--opponent")).toBe(true);
-		expect(card.querySelector(".sl-move__header")?.textContent).toBe(COPY.move.headerTheirs);
+		expect(card.querySelector(".sl-move__header")?.textContent).toBe(COPY.move.expectedReply);
 		expect(card.querySelector(".sl-move__san")?.textContent).toBe("Nc6"); // expected reply
 
 		h.store.emit(liveSnapshot({ state: "live:my-turn:analysing", recommendation: null }));
 		expect(card.dataset.state).toBe("thinking");
-		expect(card.querySelector(".sl-move__header")?.textContent).toBe(COPY.move.thinking);
+		expect(card.querySelector(".sl-move__header")?.textContent).toBe(COPY.move.nextMove);
 
 		// The colour's third value: the page has not said which side we are, or the adapter withdrew the
 		// answer it gave after the site contradicted it. The card must not name a side — `headerYours`
@@ -279,8 +277,8 @@ describe("move card states (§5.6)", () => {
 		// colour the session plans nothing at all (review R2-1).
 		h.store.emit(liveSnapshot({ myColor: null, recommendation: null }));
 		expect(card.dataset.state).toBe("colour-unknown");
-		expect(card.querySelector(".sl-move__header")?.textContent).toBe(COPY.waiting.reading);
-		expect(card.querySelector(".sl-move__san")?.textContent).toBe("");
+		expect(card.querySelector(".sl-move__header")?.textContent).toBe(COPY.move.nextMove);
+		expect(card.querySelector(".sl-move__san")?.textContent).toBe(COPY.move.placeholder);
 		// no inert control offered either: the play button stays disabled, as it is for every state
 		// that is not our move
 		expect(playButton().getAttribute("aria-disabled")).toBe("true");
@@ -299,7 +297,7 @@ describe("move card states (§5.6)", () => {
 
 		h.store.emit(liveSnapshot({ settings: { enabled: false } }));
 		expect(card.dataset.state).toBe("disabled");
-		expect(card.querySelector(".sl-move__header")?.textContent).toBe(COPY.move.disabled);
+		expect(card.querySelector(".sl-move__header")?.textContent).toBe(COPY.move.nextMove);
 
 		h.store.emit(liveSnapshot({ engine: { state: "crashed" } }));
 		expect(card.dataset.state).toBe("engine-stopped");
@@ -877,8 +875,10 @@ it("keeps one evaluation chip anchored through recommendation gaps, turn changes
 	h = await mountLive(dom.sim, first);
 	const chip = h.q(".sl-live__eval-chip");
 	const slot = h.q(".sl-live__eval");
-	expect(slot.parentElement).toBe(h.root);
-	expect(slot.previousElementSibling?.classList.contains("sl-live__heading")).toBe(true);
+	expect(slot.parentElement?.classList.contains("sl-live__board")).toBe(true);
+	expect(slot.parentElement?.previousElementSibling?.classList.contains("sl-live__heading")).toBe(
+		true
+	);
 	expect(chip.dataset.evaluation).toBe("current");
 	for (const state of ["live:opponent-turn", "live:my-turn:analysing"] as const) {
 		h.store.emit(
@@ -894,7 +894,9 @@ it("keeps one evaluation chip anchored through recommendation gaps, turn changes
 		expect(chip.dataset.evaluation).toBe("cached");
 		expect(chip.getAttribute("aria-label")).toContain("Last evaluation");
 		expect(h.q(".sl-live__eval-label").textContent).toBe(COPY.eval.cachedLabel);
-		expect(slot.previousElementSibling?.classList.contains("sl-live__heading")).toBe(true);
+		expect(slot.parentElement?.previousElementSibling?.classList.contains("sl-live__heading")).toBe(
+			true
+		);
 	}
 	const nextGame = liveSnapshot({ recommendation: null });
 	nextGame.session.gameId = "g2";

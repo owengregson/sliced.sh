@@ -9,7 +9,6 @@
 import { UI_TIMINGS } from "@core/constants/ui";
 import { TOKENS } from "@design/tokens.generated";
 import { sanToSpeech } from "../a11y";
-import { ANIM } from "../animation-manager";
 import { COPY } from "../copy";
 import { registerEscape } from "../keys";
 import { instantiate, part } from "../template";
@@ -32,6 +31,8 @@ export type MoveCardState =
 	| "disabled"
 	| "engine-stopped";
 
+export type MoveProgressPhase = keyof typeof COPY.move.progress;
+
 export interface MoveCardData {
 	state: MoveCardState;
 	/** "white" / "black" for the header. */
@@ -48,6 +49,8 @@ export interface MoveCardData {
 	kbd?: string | null;
 	/** Hands-off (§13.4): the play button shows its keybind only. */
 	handsOff?: boolean;
+	phase?: MoveProgressPhase;
+	executing?: boolean;
 }
 
 export interface MoveCardOptions {
@@ -91,12 +94,16 @@ export function createMoveCard(
 	const planRingHost = part(el, ".sl-move__plan-ring");
 	const live = part(el, ".sl-move__live");
 	const actionHost = part(el, ".sl-move__action");
+	const progressLabel = part(el, ".sl-move__progress-label");
+	const progressValue = part(el, ".sl-move__progress-value");
+	const progressTrack = part(el, ".sl-move__progress-track");
+	const progressFill = part(el, ".sl-move__progress-fill");
 	const ring = createCountdownRing(planRingHost, { size: "sm" });
 	let data: MoveCardData = { state: "thinking" };
 	let counting = false;
 	let hovering = false;
 	let lastSpokenSecond = -1;
-	let lastSan: string | null = null;
+	let remainingForProgress: number | null = null;
 	let flashTimer: ReturnType<typeof setTimeout> | null = null;
 	let unregisterEscape: (() => void) | null = null;
 
@@ -135,20 +142,46 @@ export function createMoveCard(
 		counting = false;
 		el.classList.remove("sl-move--counting");
 		lastSpokenSecond = -1;
+		remainingForProgress = null;
 		unregisterEscape?.();
 		unregisterEscape = null;
 		button.ring.resume();
 		ring.resume();
 	}
 
+	function renderProgress(): void {
+		const phase = data.executing
+			? "executing"
+			: (data.phase ?? (data.state === "thinking" ? "analysing" : "ready"));
+		const copy = COPY.move.progress[phase];
+		el.dataset.phase = phase;
+		progressLabel.textContent = copy.label;
+		progressValue.textContent =
+			counting && remainingForProgress !== null
+				? COPY.move.remaining(formatCountdown(remainingForProgress))
+				: copy.value;
+		progressTrack.hidden = !counting;
+		progressTrack.setAttribute("aria-label", COPY.move.progress.thinking.label);
+		if (!counting) {
+			progressTrack.removeAttribute("aria-valuenow");
+			progressTrack.removeAttribute("aria-valuetext");
+			progressFill.style.transform = "scaleX(0)";
+		}
+	}
+
 	function renderButton(): void {
-		const armed = data.armed === true && data.state === "your-move";
-		if (!armed) stopCounting();
+		const armed = data.armed === true && data.state === "your-move" && !data.executing;
+		if (!armed || (data.phase !== undefined && data.phase !== "thinking")) stopCounting();
 		button.update({
+			loading: data.executing ? COPY.move.executing : null,
 			armed,
 			kbd: data.kbd ?? null,
 			// §13.4: the hand plays only once armed (the debugger attaches at arm time, never mid-game).
-			disabled: data.handsOff === true || data.state !== "your-move" || data.armed !== true,
+			disabled:
+				data.handsOff === true ||
+				data.state !== "your-move" ||
+				data.armed !== true ||
+				data.executing === true,
 			icon: counting && hovering ? "action.cancel" : "action.play",
 			// A running countdown owns the label and the spoken aria-label (§6.2).
 			...(counting
@@ -158,7 +191,6 @@ export function createMoveCard(
 	}
 
 	function update(next: MoveCardData): void {
-		const prev = data;
 		data = next;
 		el.dataset.state = next.state;
 		el.classList.toggle("sl-move--compact", next.compact === true);
@@ -171,47 +203,33 @@ export function createMoveCard(
 			"sl-move--thinking",
 			next.state === "thinking" || next.state === "colour-unknown"
 		);
-		header.textContent =
-			next.state === "disabled"
-				? COPY.move.disabled
-				: next.state === "engine-stopped"
-					? COPY.move.engineStopped
-					: next.state === "thinking"
-						? COPY.move.thinking
-						: next.state === "colour-unknown"
-							? COPY.waiting.reading
-							: next.state === "opponent"
-								? COPY.move.headerTheirs
-								: COPY.move.headerYours(next.color === "b" ? COPY.move.black : COPY.move.white);
+		header.textContent = next.state === "opponent" ? COPY.move.expectedReply : COPY.move.nextMove;
 		const showSan =
 			next.state !== "thinking" &&
 			next.state !== "colour-unknown" &&
 			next.state !== "engine-stopped" &&
 			next.san;
-		const sanText = showSan ? (next.san ?? "") : "";
-		if (sanText !== (san.textContent ?? "")) {
-			if (lastSan && sanText && prev.state !== "thinking" && prev.state !== "colour-unknown") {
-				void ANIM.exitUp(san).then(() => {
-					san.textContent = sanText;
-					void ANIM.spring(san);
-				});
-			} else san.textContent = sanText;
-		}
-		lastSan = sanText || null;
+		const sanText = showSan ? (next.san ?? "") : COPY.move.placeholder;
+		// Position updates are authoritative. Queued SAN animations can repaint an obsolete move.
+		san.textContent = sanText;
 		uci.textContent = showSan ? (next.uci ?? "") : "";
 		note.textContent = next.note ?? "";
 		note.hidden = !next.note;
 		const planVisible = next.armed === true && next.state === "your-move" && Boolean(next.plan);
 		plan.hidden = !planVisible;
 		planText.textContent = next.plan?.text ?? "";
-		if (showSan && next.san && next.state === "your-move")
-			live.textContent = COPY.move.ariaRecommended(sanToSpeech(next.san), next.uci ?? "");
-		else live.textContent = "";
+		const announcement =
+			showSan && next.san && next.state === "your-move"
+				? COPY.move.ariaRecommended(sanToSpeech(next.san), next.uci ?? "")
+				: "";
+		if (live.textContent !== announcement) live.textContent = announcement;
 		renderButton();
+		renderProgress();
 	}
 
 	function countdown(remainingMs: number, totalMs: number): void {
-		if (!(data.armed && data.state === "your-move")) return;
+		if (!(data.armed && data.state === "your-move") || data.executing) return;
+		remainingForProgress = Math.max(0, remainingMs);
 		if (!counting) {
 			counting = true;
 			el.classList.add("sl-move--counting");
@@ -219,6 +237,16 @@ export function createMoveCard(
 		}
 		ring.update(remainingMs, totalMs);
 		button.ring.update(remainingMs, totalMs);
+		renderProgress();
+		const fraction = totalMs > 0 ? Math.max(0, Math.min(1, 1 - remainingMs / totalMs)) : 0;
+		progressFill.style.transform = `scaleX(${fraction})`;
+		progressTrack.setAttribute("aria-valuemin", "0");
+		progressTrack.setAttribute("aria-valuemax", "100");
+		progressTrack.setAttribute("aria-valuenow", String(Math.round(fraction * 100)));
+		progressTrack.setAttribute(
+			"aria-valuetext",
+			COPY.move.remainingLabel(formatCountdown(remainingMs))
+		);
 		const seconds = Math.ceil(Math.max(0, remainingMs) / MS);
 		if (!hovering) button.update({ label: COPY.move.armed(formatCountdown(remainingMs)) });
 		if (seconds !== lastSpokenSecond) {
@@ -237,8 +265,10 @@ export function createMoveCard(
 		update,
 		countdown,
 		executing() {
+			data = { ...data, executing: true };
 			stopCounting();
-			button.update({ loading: COPY.move.executing, icon: null, ariaLabel: null });
+			renderButton();
+			renderProgress();
 		},
 		played() {
 			stopCounting();

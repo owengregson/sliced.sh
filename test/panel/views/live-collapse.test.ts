@@ -1,7 +1,7 @@
 // test/panel/views/live-collapse.test.ts — Appendix F §8.2 height strategy: six discrete collapse
 // states in a fixed order, selected by the available height (viewport − top bar − banner, never
-// the content box) against the §8.2 thresholds, with "below 480 px the view scrolls and the move
-// card is pinned" taken literally; and the §4.5 compact breakpoint at 320 px.
+// the content box) against the §8.2 thresholds. Live primary status remains stable, while
+// secondary session data stays available below it; compact breakpoint is 320 px.
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -18,7 +18,9 @@ import {
 import { bootPanelDom, type PanelDom } from "../dom";
 import { idleSnapshot, type LiveHarness, liveSnapshot, mountLive } from "./live-harness";
 
-const LIVE_CSS = readFileSync(path.resolve(import.meta.dir, "../../../css/views/live.css"), "utf8");
+const LIVE_CSS = ["live.css", "workspace.css", "live-progress.css"]
+	.map((file) => readFileSync(path.resolve(import.meta.dir, "../../../css/views", file), "utf8"))
+	.join("\n");
 
 let dom: PanelDom;
 let h: LiveHarness | null = null;
@@ -111,7 +113,7 @@ describe("mounted view", () => {
 
 		resize(360, 640); // available 596: the strip goes (560 fits)
 		expect(h.root.dataset.collapse).toBe("strip");
-		expect(h.q(".sl-live__strip").hidden).toBe(true);
+		expect(h.q(".sl-live__strip").hidden).toBe(false);
 		expect(h.qa(".sl-pv")).toHaveLength(3);
 
 		resize(360, 560); // available 516: 3 → 2 → 1 lines (504 fits)
@@ -125,7 +127,7 @@ describe("mounted view", () => {
 		expect(h.q(".sl-live__eval-inline").hidden).toBe(true);
 		expect(h.q(".sl-live__eval-score").textContent).toBe("+1.34");
 		expect(h.q(".sl-live__eval-chip").getAttribute("title")).toContain("71");
-		expect(h.q(".sl-live__strength").hidden).toBe(true);
+		expect(h.q(".sl-live__strength").hidden).toBe(false);
 		// A banner appearing without a resize is picked up on the next snapshot render.
 		const bannerSlot = h.app.querySelector<HTMLElement>(".sl-app__banner");
 		if (!bannerSlot) throw new Error("no banner slot");
@@ -139,24 +141,23 @@ describe("mounted view", () => {
 		resize(360, 480); // available 436 < 480: the view scrolls, everything folded, card pinned
 		expect(h.root.dataset.collapse).toBe("scroll");
 		expect(h.root.classList.contains("sl-live--scroll")).toBe(true);
-		expect(h.q(".sl-live__strip").hidden).toBe(true);
+		expect(h.q(".sl-live__strip").hidden).toBe(false);
 		expect(h.qa(".sl-pv")).toHaveLength(1);
 		expect(h.q(".sl-live__eval").hidden).toBe(false);
-		expect(h.q(".sl-live__strength").hidden).toBe(true);
-		expect(h.q(".sl-live__strength-chip").hidden).toBe(false);
+		expect(h.q(".sl-live__strength").hidden).toBe(false);
+		expect(h.q(".sl-live__strength-chip").hidden).toBe(true);
 		expect(h.q(".sl-live__strength-chip").textContent).toBe(`1500 · ${COPY.personaName.balanced}`);
 		expect(h.q(".sl-move").classList.contains("sl-move--compact")).toBe(true);
-		// The rail is hidden in this state: the inline numeral carries the meter's value.
-		expect(LIVE_CSS).toMatch(/\.sl-live--scroll \.sl-live__rail[^{]*\{[^}]*display:\s*none/);
+		// The meter stays beside the persistent numeral, including compact scrolling layouts.
+		expect(h.q(".sl-live__eval-chip").contains(h.q(".sl-live__rail"))).toBe(true);
 		expect(h.q(".sl-live__eval-chip").getAttribute("aria-label")).toBe(
 			h.q(".sl-evalbar").getAttribute("aria-valuetext")
 		);
 		expect(h.q(".sl-live__eval-chip").getAttribute("aria-label")).toContain("71% win");
-		// The card is pinned to the viewport under the sticky top bar for the whole scroll.
-		expect(LIVE_CSS).toMatch(
-			/\.sl-live--scroll \.sl-live__move[^{]*\{[^}]*position:\s*sticky;[^}]*top:\s*var\(--sl-size-control-lg\)/
-		);
-		expect(LIVE_CSS).toMatch(/\.sl-live--scroll \.sl-live__column[^{]*\{[^}]*display:\s*contents/);
+		// Both clocks remain together above the card; the main stack scrolls as one unit.
+		expect(LIVE_CSS).toMatch(/\.sl-live--scroll \.sl-live__move[^{]*\{[^}]*position:\s*static/);
+		expect(LIVE_CSS).toMatch(/\.sl-live \.sl-live__column[^{]*\{[^}]*display:\s*grid/);
+		expect(h.q(".sl-live__column").contains(h.q(".sl-live__move"))).toBe(false);
 
 		resize(360, 720); // back up: every block returns
 		expect(h.root.dataset.collapse).toBe("full");

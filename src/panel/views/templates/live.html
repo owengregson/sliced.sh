@@ -2,21 +2,29 @@
 	<header class="sl-page-heading sl-live__heading">
 		<div><p class="sl-eyebrow sl-live__eyebrow"></p>
 			<!-- biome-ignore lint/a11y/useHeadingContent: filled from copy.ts at mount -->
-			<h1 class="sl-live__title"></h1>
+			<h1 class="sl-live__title" aria-live="polite" aria-atomic="true"></h1>
 		</div>
 		<span class="sl-live__automation"></span>
 	</header>
-	<div class="sl-live__eval">
-				<span class="sl-live__eval-chip">
+	<div class="sl-live__board">
+		<div class="sl-live__column">
+			<div class="sl-live__row-slot" data-slot="opponent"></div>
+			<div class="sl-live__row-slot" data-slot="me"></div>
+		</div>
+		<div class="sl-live__eval">
+			<span class="sl-live__eval-chip">
+				<span class="sl-live__rail"></span>
 				<span class="sl-live__eval-label"></span>
 				<span class="sl-live__eval-score sl-type-numeral-lg sl-text-numerals"></span>
 			</span>
-				<span class="sl-live__wdl sl-type-label sl-text-secondary sl-text-numerals">
-					<span data-wdl="w"></span>
-					<span data-wdl="d"></span>
-					<span data-wdl="l"></span>
-				</span>
-			</div>
+			<span class="sl-live__wdl sl-type-label sl-text-secondary sl-text-numerals">
+				<span data-wdl="w"></span>
+				<span data-wdl="d"></span>
+				<span data-wdl="l"></span>
+			</span>
+		</div>
+	</div>
+	<div class="sl-live__move"></div>
 	<aside class="sl-shortcuts">
 		<p class="sl-shortcuts__title"></p>
 		<div class="sl-shortcuts__keys">
@@ -25,15 +33,6 @@
 			<div data-shortcut="disable"><kbd></kbd><span></span></div>
 		</div>
 	</aside>
-	<div class="sl-live__board">
-		<div class="sl-live__rail"></div>
-		<div class="sl-live__column">
-			<div class="sl-live__row-slot" data-slot="opponent"></div>
-
-			<div class="sl-live__move"></div>
-			<div class="sl-live__row-slot" data-slot="me"></div>
-		</div>
-	</div>
 	<div class="sl-live__lines">
 		<header class="sl-live__lines-header">
 			<!-- biome-ignore lint/a11y/useHeadingContent: filled from copy.ts at mount -->
@@ -42,8 +41,12 @@
 		</header>
 		<div class="sl-live__pv"></div>
 	</div>
-	<div class="sl-live__strength"></div>
-	<div class="sl-live__toggles"></div>
-	<div class="sl-live__strip"></div>
-
+	<section class="sl-live__secondary">
+		<!-- biome-ignore lint/a11y/useHeadingContent: filled from copy.ts at mount -->
+		<h2 class="sl-live__secondary-title"></h2>
+		<div class="sl-live__strength"></div>
+		<p class="sl-live__configuration"></p>
+		<div class="sl-live__toggles"></div>
+		<div class="sl-live__strip"></div>
+	</section>
 </section>

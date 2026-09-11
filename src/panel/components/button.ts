@@ -103,6 +103,7 @@ export function createButton(host: HTMLElement | null, options: ButtonOptions): 
 			else el.removeAttribute("aria-label");
 		}
 		if (state.loading !== undefined) {
+			const wasLoading = loading;
 			const next = Boolean(state.loading);
 			if (next && !loading) {
 				lockedWidth = el.style.width;
@@ -114,7 +115,7 @@ export function createButton(host: HTMLElement | null, options: ButtonOptions): 
 			el.classList.toggle("sl-button--loading", loading);
 			el.setAttribute("aria-busy", loading ? "true" : "false");
 			if (loading) label.textContent = state.loading ?? "";
-			else {
+			else if (wasLoading) {
 				el.style.width = lockedWidth ?? "";
 				lockedWidth = null;
 				label.textContent = state.label ?? el.dataset.idleLabel ?? "";

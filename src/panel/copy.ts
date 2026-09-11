@@ -77,19 +77,35 @@ export const COPY = {
 		autoplayOff: "Assistant disabled in Settings",
 	},
 	move: {
+		nextMove: "Next move",
+		expectedReply: "Expected reply",
+		placeholder: "—",
+		remaining: (seconds: string): string => `${seconds}s`,
+		remainingLabel: (seconds: string): string => `${seconds} seconds until execution`,
+		progress: {
+			waiting: { title: "Waiting…", label: "Next action", value: "Opponent move" },
+			analysing: { title: "Analysing…", label: "Position search", value: "In progress" },
+			thinking: { title: "Waiting…", label: "Execution in", value: "Scheduled" },
+			ready: { title: "Ready", label: "Execution", value: "Awaiting command" },
+			executing: { title: "Executing…", label: "Board input", value: "In progress" },
+			paused: { title: "Paused", label: "Assistant", value: "Disabled" },
+			error: { title: "Engine error", label: "Analysis", value: "Unavailable" },
+			reading: { title: "Reading…", label: "Board position", value: "Pending" },
+		},
 		headerYours: (color: string): string => `Your move · ${color}`,
 		headerTheirs: "Opponent to move",
 		thinking: "Thinking…",
 		engineStopped: "Engine stopped",
 		engineStoppedHint: (stop: string): string =>
-			`Analysis unavailable. ${stop}: release pointer. Engine diagnostics available after the game.`,
+			`${stop}: release pointer. Restart engine after the game.`,
 		noteBook: "Book move",
+		noteSearch: (depth: number): string => `Search depth ${depth}`,
+		notePrediction: "Main line prediction",
 		noteOnly: "Only move",
 		noteMate: (n: number): string => `Mate in ${n}`,
 		noteForced: "Forced",
 		/** Your move, a recommendation shown, but the hand is not armed: say how to arm it. */
-		noteUnarmed: (key: string): string =>
-			`Auto-play unarmed. Arm before the game. ${key}: pause / resume.`,
+		noteUnarmed: (key: string): string => `Arm before the game; ${key} toggles auto-play.`,
 		// There is no "D" shortcut: the only control is the Settings view's Assistant toggle.
 		disabled: "Assistant disabled",
 		plan: (seconds: string, method: string, premove: boolean): string =>
@@ -98,7 +114,7 @@ export const COPY = {
 		playShort: "Play",
 		armed: (seconds: string): string => `Auto-playing in ${seconds}s`,
 		cancel: "Cancel this move",
-		executing: "Playing…",
+		executing: "Executing…",
 		ariaRecommended: (spoken: string, uci: string): string => `Recommended: ${spoken}, ${uci}`,
 		ariaArmed: (spoken: string, seconds: number): string =>
 			`Auto-playing ${spoken} in ${seconds} ${seconds === 1 ? "second" : "seconds"}. Activate to cancel.`,
@@ -602,6 +618,9 @@ export const SETTINGS_COPY = {
 // ── Task 24: Live view ─────────────────────────────────────────────────────────────────────
 /** Strings the Live view adds to Appendix F §7.2 (§4.4 anatomy, §9.7 hand state, §13.6 band). */
 export const COPY_LIVE = {
+	secondary: "Session",
+	configuration: (highlight: boolean, autoqueue: boolean): string =>
+		`Highlight ${highlight ? COPY.common.on : COPY.common.off} · Auto-queue ${autoqueue ? COPY.common.on : COPY.common.off}`,
 	/** Your row when the site gives no display name. */
 	you: "You",
 	cancel: "Cancel",

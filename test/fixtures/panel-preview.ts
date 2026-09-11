@@ -59,6 +59,10 @@ let snapshot: PanelSnapshot = makeSnapshot({
 	state: [
 		"live",
 		"thinking",
+		"analysing",
+		"executing",
+		"lowtime",
+		"error",
 		"opponent",
 		"crashed",
 		"disabled",
@@ -73,7 +77,11 @@ let snapshot: PanelSnapshot = makeSnapshot({
 });
 snapshot.settings = normalizeSettings({
 	...DEFAULT_SETTINGS,
-	display: { ...DEFAULT_SETTINGS.display, theme: query.get("theme") ?? "dark" },
+	display: {
+		...DEFAULT_SETTINGS.display,
+		theme: query.get("theme") ?? "dark",
+		reducedMotion: query.get("motion") === "reduced" ? "on" : "system",
+	},
 });
 snapshot.session.clocks = { w: { ms: 192000, running: false }, b: { ms: 178000, running: false } };
 snapshot.session.myColor = "w";
@@ -138,9 +146,9 @@ snapshot.recommendation = {
 	computedAt: Date.now(),
 	fen: "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2",
 };
-if (state === "thinking" || state === "no-rec") {
+if (state === "analysing" || state === "no-rec") {
 	snapshot.session.state = "live:my-turn:analysing";
-	if (state === "thinking")
+	if (state === "analysing")
 		snapshot.session.evaluation = {
 			fen: snapshot.recommendation.fen,
 			eval: { cp: 155 },
@@ -158,7 +166,19 @@ if (state === "opponent") {
 		wdl: [60, 190, 750],
 	};
 }
-if (state === "crashed") snapshot.engine.state = "crashed";
+if (state === "thinking" || state === "lowtime")
+	snapshot.autoMove = {
+		armed: true,
+		scheduledAt: Date.now() + plan.thinkMs,
+		plan: { ...plan, rationale: [] },
+	};
+if (state === "executing") {
+	snapshot.session.state = "live:my-turn:executing";
+	snapshot.session.hand = "moving";
+}
+if (state === "lowtime")
+	snapshot.session.clocks = { w: { ms: 8700, running: true }, b: { ms: 19300, running: false } };
+if (state === "crashed" || state === "error") snapshot.engine.state = "crashed";
 if (state === "disabled") snapshot.settings.enabled = false;
 if (state === "unsupported") {
 	snapshot.site = null;
@@ -168,6 +188,7 @@ if (state === "login") snapshot.license.status = "unknown";
 if (state === "expired") snapshot.license.status = "expired";
 if (query.has("elo")) snapshot.settings.strength.targetElo = Number(query.get("elo"));
 if (query.get("eval") === "off") snapshot.settings.display.evalBar = false;
+if (query.has("opponent")) snapshot.opponent.name = query.get("opponent") ?? "";
 const listeners = new Set<SnapshotListener>();
 const store: PanelStore = {
 	get snapshot() {

@@ -136,6 +136,7 @@ export function createEvalSection(options: EvalSectionOptions): EvalSectionHandl
 		bar.el.classList.toggle("sl-evalbar--flipped", myColor === "b");
 		opponent.name.textContent =
 			snap.opponent?.name ?? COPY.eval[theirs === "w" ? "whiteName" : "blackName"];
+		opponent.name.title = opponent.name.textContent;
 		const rating = snap.opponent?.ratingEstimate;
 		opponent.rating.textContent = rating === null || rating === undefined ? "" : String(rating);
 		opponent.rating.hidden = rating === null || rating === undefined || state.compact;
@@ -155,7 +156,9 @@ export function createEvalSection(options: EvalSectionOptions): EvalSectionHandl
 		if (current.score) lastEvaluation = current;
 		const view = current.score ? current : lastEvaluation;
 		const stale =
-			!current.score || (snap.engine.state !== "searching" && snap.engine.state !== "ready");
+			!snap.settings.enabled ||
+			!current.score ||
+			(snap.engine.state !== "searching" && snap.engine.state !== "ready");
 		const evalBarOn = snap.settings.display.evalBar;
 		bar.el.hidden = !evalBarOn;
 		options.rail.hidden = !evalBarOn;

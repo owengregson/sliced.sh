@@ -17,7 +17,12 @@ import type { PanelSnapshot } from "@core/constants/messages";
 import { TOKENS } from "@design/tokens.generated";
 import type { Color } from "@typedefs/game";
 import { formatKeybind } from "../../components/keybind";
-import { createMoveCard, type MoveCardData, type MoveCardHandle } from "../../components/move-card";
+import {
+	createMoveCard,
+	type MoveCardData,
+	type MoveCardHandle,
+	type MoveProgressPhase,
+} from "../../components/move-card";
 import { COPY } from "../../copy";
 
 const MS = 1000;
@@ -59,6 +64,22 @@ export function moveCardState(snapshot: PanelSnapshot): MoveCardData["state"] {
 	return "your-move";
 }
 
+/** One operational phase drives the live heading and the progress card. */
+export function moveProgressPhase(snapshot: PanelSnapshot): MoveProgressPhase {
+	if (!snapshot.settings.enabled) return "paused";
+	if (snapshot.engine.state === "crashed") return "error";
+	if (snapshot.session.myColor === null) return "reading";
+	if (snapshot.session.state === "live:my-turn:executing") return "executing";
+	const state = moveCardState(snapshot);
+	if (state === "opponent") return "waiting";
+	if (state === "thinking") return "analysing";
+	return snapshot.autoMove.armed &&
+		snapshot.autoMove.scheduledAt !== undefined &&
+		snapshot.autoMove.plan !== undefined
+		? "thinking"
+		: "ready";
+}
+
 /** Opponent to move: the reply the top line expects (§5.6 opponent-to-move). */
 export function expectedReply(snapshot: PanelSnapshot): string | null {
 	const rec = snapshot.recommendation;
@@ -93,7 +114,6 @@ export function createMoveSection(options: MoveSectionOptions): MoveSectionHandl
 	let lastExecutionKey: string | null = null;
 	let lastPly: number | null = null;
 	let seenSnapshot = false;
-	let executing = false;
 
 	function stopTimer(): void {
 		if (timer !== null) {
@@ -110,7 +130,12 @@ export function createMoveSection(options: MoveSectionOptions): MoveSectionHandl
 
 	function syncCountdown(snapshot: PanelSnapshot, state: MoveCardData["state"]): void {
 		const { armed, scheduledAt, plan } = snapshot.autoMove;
-		const running = armed && state === "your-move" && scheduledAt !== undefined && plan !== undefined;
+		const running =
+			armed &&
+			state === "your-move" &&
+			scheduledAt !== undefined &&
+			plan !== undefined &&
+			snapshot.session.state !== "live:my-turn:executing";
 		if (!running) {
 			stopTimer();
 			return;
@@ -131,6 +156,8 @@ export function createMoveSection(options: MoveSectionOptions): MoveSectionHandl
 		const reply = cardState === "opponent" ? expectedReply(snap) : null;
 		const plan = planText(snap);
 		const data: MoveCardData = {
+			phase: moveProgressPhase(snap),
+			executing: snap.session.state === "live:my-turn:executing",
 			state: cardState,
 			color: snap.session.myColor,
 			san: cardState === "opponent" ? reply : (rec?.chosen.san ?? null),
@@ -145,10 +172,6 @@ export function createMoveSection(options: MoveSectionOptions): MoveSectionHandl
 		card.update(data);
 		card.el.classList.toggle("sl-move--hands-off", state.handsOff);
 		syncCountdown(snap, cardState);
-
-		const nowExecuting = snap.session.state === "live:my-turn:executing";
-		if (nowExecuting && !executing) card.executing();
-		executing = nowExecuting;
 
 		// A new execution result (not the one the view mounted with) → §6.3 "played". Snapshots
 		// are fresh objects every push, so results are keyed. An `at` stamp is a unique identity
@@ -194,6 +217,7 @@ export function executionKey(exec: NonNullable<PanelSnapshot["session"]["lastExe
 function noteFor(snapshot: PanelSnapshot, state: MoveCardData["state"]): string | null {
 	if (state === "engine-stopped")
 		return COPY.move.engineStoppedHint(formatKeybind(snapshot.settings.keybinds.disable));
+	if (state === "opponent" && expectedReply(snapshot)) return COPY.move.notePrediction;
 	if (state !== "your-move" || !snapshot.recommendation) return null;
 	// The play button is disabled until the hand is armed (§13.4, and auto-play ships off), so the
 	// card would otherwise sit there with a move on it and nothing happening. Say what to press.
@@ -203,5 +227,5 @@ function noteFor(snapshot: PanelSnapshot, state: MoveCardData["state"]): string 
 	if (chosen.source === "book") return COPY.move.noteBook;
 	if (score.mate !== undefined && score.mate > 0) return COPY.move.noteMate(score.mate);
 	if (snapshot.recommendation.lines.length === 1) return COPY.move.noteOnly;
-	return null;
+	return COPY.move.noteSearch(snapshot.recommendation.depth);
 }
