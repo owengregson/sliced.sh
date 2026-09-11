@@ -494,23 +494,33 @@ export class GameSession implements SessionSource {
 	 * - `timeControl` — **the one thing that can be new**, because §4.3's one-shot republish
 	 *   (`AdapterBase.apply`'s `timeControlLearned`) is timed to land in exactly this window: the
 	 *   re-ask runs every `TIMINGS.adapterTimeControlRetryMs` and the hand's action is seconds
-	 *   long. It is therefore applied here, by the same `reprofile` `onPosition` would have
-	 *   called — idempotent (`profiledTimeControl`), and safe in flight for the same reason
-	 *   `MoveExecutor.setTimeControlClass` is: the running move keeps the plan it was given and the
-	 *   new profile is read by the next one.
+	 *   long. `salvageFromOwnHand` takes it before the rest of the reading is dropped.
 	 *
 	 * `lastPositionKey` is left alone as well, so a republish of this very reading after the hand
 	 * stops is still considered rather than deduped away.
+	 *
+	 * This is a question and nothing else: the salvage is a separate call at the one call site, so
+	 * that short-circuiting or reordering the `if` cannot silently lose it.
 	 */
 	private ownHandsDoing(snapshot: PositionSnapshot): boolean {
 		const current = this.snapshot;
 		const rec = this.rec;
 		if (!current || !rec || this.game?.gameId !== snapshot.gameId) return false;
 		if (snapshot.ply !== current.ply || snapshot.sideToMove !== current.sideToMove) return false;
-		if (this.executorHandle?.runningMove()?.rec !== rec) return false;
-		// §4.3's one-shot: take the time control out of the reading before dropping the rest of it.
+		return this.executorHandle?.runningMove()?.rec === rec;
+	}
+
+	/**
+	 * What a reading `ownHandsDoing` is about to drop still has to deliver: §4.3's time control.
+	 * The site answers `timeControl.get()` only once the game has actually started, the adapter
+	 * republishes the unmoved position to deliver it exactly once, and the re-ask runs on a 1 s
+	 * timer — so its arrival lands inside the seconds the hand's action takes. `reprofile` is the
+	 * same call `onPosition` would have made: idempotent (`profiledTimeControl`), and safe while a
+	 * move is in flight for the same documented reason `MoveExecutor.setTimeControlClass` is — the
+	 * running move keeps the plan it was given and the new profile is read by the next one.
+	 */
+	private salvageFromOwnHand(snapshot: PositionSnapshot): void {
 		this.reprofile(snapshot);
-		return true;
 	}
 
 	/**
@@ -734,6 +744,7 @@ export class GameSession implements SessionSource {
 			return;
 		}
 		if (this.ownHandsDoing(snapshot)) {
+			this.salvageFromOwnHand(snapshot);
 			log.debug("game-session: position ignored — our own hand is mid-move on this ply", {
 				tabId: this.deps.tabId,
 				ply: snapshot.ply,
@@ -1479,18 +1490,29 @@ export class GameSession implements SessionSource {
 	 * than sit in a state whose hand is at rest. This is the path a §13.4 blur cancel takes
 	 * (`aborted`), as well as the position guard (`skipped`) and a genuine failure.
 	 *
-	 * **The mark goes too.** An attempt that finally failed is the action being complete, so it is
-	 * a clear point exactly as `executed` is. There is no retry left that could want the mark:
-	 * `MoveExecutor.runOne` emits `failed` / `aborted` / `skipped` only after `dispatch()` has
-	 * returned, and `dispatch()` is where `runWithRetry` exhausts every tier. Leaving it drawn
-	 * stranded an overlay `<svg>` for a move that will never be played — and the overlay is ours,
-	 * so unlike the native marking it used to be, nothing on the page ever wipes it (the known
-	 * promotion gap, QA B0.7, reaches this path on every live game).
+	 * **The mark goes too — but only if it is still this attempt's mark.** An attempt that finally
+	 * failed is the action being complete, so it is a clear point exactly as `executed` is. There is
+	 * no retry left that could want it: `MoveExecutor.runOne` emits `failed` / `aborted` / `skipped`
+	 * only after `dispatch()` has returned, and `dispatch()` is where `runWithRetry` exhausts every
+	 * tier. Leaving it drawn stranded an overlay `<svg>` for a move that will never be played — and
+	 * the overlay is ours, so unlike the native marking it used to be, nothing on the page ever
+	 * wipes it (the known promotion gap, QA B0.7, reaches this path on every live game).
+	 *
+	 * The `report.rec === this.rec` test is not belt-and-braces, it is the correctness condition.
+	 * `cancelInFlight()` does not await `MoveExecutor.cancel()`, and the hand's wind-down (the
+	 * release, `recover()`, the hops back) is slower than producing the next recommendation — so
+	 * when a position arrives on our turn mid-action the **default** ordering is: the run is
+	 * cancelled, the new position is analysed, the new recommendation's mark is drawn, and only
+	 * *then* does the cancelled run emit `aborted`. An unconditional clear there erased the mark of
+	 * a recommendation that is live, leaving the panel recommending a move and the board blank —
+	 * this lane's own bug, reintroduced from the other end. Three more emit sites reach here for a
+	 * recommendation that may no longer be current: `droppedReplacement` and `landedReplacement`
+	 * (`move-executor/index.ts`) both fire for a parked move the session has already moved past.
 	 */
 	private onNotExecuted(report: ExecutionReport, outcome: "aborted" | "skipped" | "failed"): void {
 		this.apply("failed");
 		this.window.discard();
-		this.clearBoardMarks();
+		if (report.rec === this.rec) this.clearBoardMarks();
 		log.debug("game-session: move did not land", {
 			tabId: this.deps.tabId,
 			outcome,
@@ -1647,9 +1669,16 @@ export class GameSession implements SessionSource {
 	 *   retry tier only because nothing clears the mark between tiers; when something does clear
 	 *   it — `clearBoardMarks` — that field is reset, so the next hand start redraws.
 	 * - `runningMove()?.rec !== rec` keeps the redraw to the recommendation actually being
-	 *   executed. A hand that goes non-rest for anything else (a *different* recommendation the
-	 *   session has already replaced, a cancelled run winding down) must not put a draw on the
-	 *   page for a mark that is not the one on the board.
+	 *   executed. `this.rec` and the running move **do** diverge in practice — `cancelInFlight()`
+	 *   does not await `MoveExecutor.cancel()`, so while a cancelled run winds down the session has
+	 *   already analysed the next position and replaced `this.rec` (measured: hundreds of
+	 *   milliseconds). What keeps this branch unreachable today is a `HandController` invariant
+	 *   instead: after an abort the only state it emits is `rest` (`hand-controller.ts`'s catch path
+	 *   and `recover()`, which calls no `setState`), and `rest` is filtered out by the session's
+	 *   `hand` listener before this function is reached. So the guard does no work today and is
+	 *   deliberately untested — but it is load-bearing on that invariant, not on the two
+	 *   recommendations never differing. A change that made the abort path emit, say, `dropping`
+	 *   would put it straight to work.
 	 */
 	private markForExecution(): void {
 		const rec = this.rec;

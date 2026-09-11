@@ -23,6 +23,7 @@
 //       behaviour; only `docs/qa-checklist.md` B0.8-B0.9 can answer it. It is asserted here
 //       because it is the owner's symptom, not because it is the proof.
 import { afterEach, describe, expect, it } from "bun:test";
+import { applyMoves } from "@core/chess/san";
 import { CDP } from "@core/constants/cdp";
 import type { GamePortCommand } from "@core/constants/messages";
 import { createGameHarness, type GameHarness } from "./harness";
@@ -228,6 +229,104 @@ describe("game session: the mark survives the hand's whole action", () => {
 			true
 		);
 		expect(h.site.board.lastMove()?.uci).toBe(rec.chosen.uci);
+		expect(marks.current()).toBeNull();
+	});
+
+	/**
+	 * The other end of the same bug, which round 1 introduced and round 2 removes: a terminal event
+	 * for a recommendation the session has already moved past must not erase the mark of the one
+	 * that replaced it.
+	 *
+	 * `cancelInFlight()` does not await `MoveExecutor.cancel()`, and winding the hand down is slower
+	 * than analysing the new position — so when a position arrives on our turn mid-action the
+	 * default ordering is: cancel, clear, analyse, draw the *new* mark, and only then does the
+	 * cancelled run emit `aborted`. An unconditional clear in `onNotExecuted` erased that new mark
+	 * and nothing redrew it: a live recommendation in the panel and a blank board.
+	 */
+	it("a cancelled run's terminal event does not erase the mark of the recommendation that replaced it", async () => {
+		const marks = boardMarks();
+		h = await createGameHarness({
+			settings: {
+				automation: { autoMove: true, highlightMoves: true },
+				execution: { style: "drag" },
+			},
+			onCommand: (cmd) => marks.onCommand(cmd),
+		});
+		await h.sw.run(() => h.session().command("armAutoMove"));
+		await h.arrive();
+		expect(await h.until(() => h.executor()?.runningMove() !== null, 20_000)).toBe(true);
+		// Wait until the hand is actually holding the piece. `HandController.recover()` then has a
+		// button to release, which is what makes the wind-down slower than analysing the next
+		// position — and that ordering is the whole point: the new mark must already be drawn when
+		// the cancelled run finally reports.
+		expect(await h.until(() => presses() > 0, 30_000)).toBe(true);
+		const cancelled = h.executor()?.runningMove()?.rec;
+		if (!cancelled) throw new Error("nothing running");
+
+		// Which recommendation was current when each terminal event was handled. Read off the
+		// session synchronously — a port command takes a microtask to reach the page, so sampling
+		// the page's marks inside the handler would always show the state one step behind.
+		const atTerminal: Array<{ uci: string; recThen: string | null }> = [];
+		const executor = h.executor();
+		if (!executor) throw new Error("no executor");
+		for (const event of ["executed", "failed", "aborted", "skipped"] as const) {
+			executor.on(event, (report) =>
+				atTerminal.push({
+					uci: report.rec.chosen.uci,
+					recThen: h.session().recommendation()?.chosen.uci ?? null,
+				})
+			);
+		}
+
+		// Our turn again on a *new* ply while the hand is still acting on the old one: our move
+		// landed and the opponent replied before verification finished.
+		const moved = applyMoves(h.site.board.fen(), [cancelled.chosen.uci, "e7e5"]);
+		expect(moved).not.toBeNull();
+		await h.drive(() =>
+			h.site.post({
+				kind: "position",
+				snapshot: {
+					site: "chesscom",
+					gameId: h.site.gameId,
+					fen: moved as string,
+					ply: 2,
+					sideToMove: "w",
+					myColor: "w",
+					clocks: { w: { ms: 280_000, running: true }, b: { ms: 290_000, running: false } },
+					timeControl: { baseMs: 300_000, incMs: 2_000 },
+					capturedAt: h.sim.now(),
+				},
+			})
+		);
+
+		// The new position is analysed and its mark drawn…
+		expect(await h.until(() => h.session().recommendation()?.fen === moved, 20_000)).toBe(true);
+		const fresh = h.session().recommendation();
+		expect(fresh).not.toBe(cancelled);
+		expect(await h.until(() => marks.current() !== null, 10_000)).toBe(true);
+
+		// …and the cancelled run reports only afterwards, with the new recommendation already
+		// current. That divergence is the condition the fix turns on, so the test states it rather
+		// than assuming the ordering.
+		expect(await h.until(() => atTerminal.some((t) => t.uci === cancelled.chosen.uci), 20_000)).toBe(
+			true
+		);
+		expect(atTerminal.find((t) => t.uci === cancelled.chosen.uci)?.recThen).toBe(fresh?.chosen.uci);
+
+		// The new mark survives to the end of the new move. In round 1 the cancelled run's event
+		// cleared it unconditionally: a live recommendation in the panel and a blank board.
+		expect(await h.until(() => h.session().currentState() === "live:opponent-turn", 60_000)).toBe(
+			true
+		);
+		expect(h.site.board.lastMove()?.uci).toBe(fresh?.chosen.uci);
+		const all = highlights();
+		const firstFresh = all.findIndex(
+			(c) => c.kind === "highlight" && c.from === fresh?.chosen.from && c.to === fresh?.chosen.to
+		);
+		expect(firstFresh).toBeGreaterThanOrEqual(0);
+		// Between the new mark being drawn and its own move landing, nothing clears the board.
+		expect(all.slice(firstFresh, -1).filter((c) => c.kind === "clearHighlight")).toEqual([]);
+		expect(all.at(-1)).toEqual({ kind: "clearHighlight" });
 		expect(marks.current()).toBeNull();
 	});
 

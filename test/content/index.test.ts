@@ -374,6 +374,41 @@ describe("content entry — commands", () => {
 		expect(bridge.calls.at(-1)?.kind).toBe("draw");
 		expect(bridge.callsOf("clear")).toHaveLength(0);
 	});
+	// The page dropped its own record of the native keys inside that `draw` (it answers `{keys: []}`),
+	// so this side has to drop it too. Otherwise the next `clear` names keys the page no longer
+	// holds, and a keyless clear — which means "everything of ours" and is what actually heals a
+	// draw that never arrived — never gets sent.
+	it("a forced-overlay draw makes this side forget the native keys it replaced", async () => {
+		const { feed, bridge } = boot("chesscom-live");
+		// What the real page answers (`boot` installs a flat `{keys:["k1"]}`, so this replaces it):
+		// keys for a native draw, none for a forced-overlay one — the page has just dropped them.
+		bridge.responses.set("draw", (payload) =>
+			(payload as { forceOverlay?: boolean })?.forceOverlay === true
+				? { keys: [] }
+				: { keys: ["highlight|d2", "highlight|d4"] }
+		);
+		await waitFor(() => bridge.callsOf("getState").length > 0);
+		feed.command({ kind: "settings", highlightMoves: true });
+
+		// A native draw: the page reports its keys and this side records them, so a clear names them.
+		feed.command({ kind: "highlight", from: "d2", to: "d4", style: "squares" });
+		await sleep(10);
+		feed.command({ kind: "clearHighlight" });
+		await sleep(10);
+		expect(bridge.callsOf("clear").at(-1)?.payload).toEqual({
+			keys: ["highlight|d2", "highlight|d4"],
+		});
+
+		// Draw natively again, then replace it with a forced-overlay draw: the keys are gone from
+		// the page, so the next clear must be the keyless "everything of ours" form.
+		feed.command({ kind: "highlight", from: "d2", to: "d4", style: "squares" });
+		await sleep(10);
+		feed.command({ kind: "highlight", from: "d2", to: "d4", style: "squares", overlay: true });
+		await sleep(10);
+		feed.command({ kind: "clearHighlight" });
+		await sleep(10);
+		expect(bridge.callsOf("clear").at(-1)?.payload).toEqual({});
+	});
 	it("the forced-overlay draw reports the orientation the board is actually in", async () => {
 		const bridge = new FakeBridge();
 		bridge.responses.set("getState", () => ({ flipped: true, playingAs: "b", turn: "w" }));
