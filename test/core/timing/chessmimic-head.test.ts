@@ -6,6 +6,7 @@ import {
 	buildInputs,
 	CHESSMIMIC_BANDS,
 	ChessMimicHead,
+	fastShareCap,
 	type InferResult,
 	selectBand,
 } from "@core/timing/chessmimic-head";
@@ -126,19 +127,52 @@ describe("ChessMimicHead", () => {
 		expect(s.mode).toBe("instant");
 		expect(s.tSec).toBeLessThan(1);
 	});
-	it("re-samples from buckets ≥ 1 when bucket 0 is not eligible and others are available", async () => {
+	it("bucket 0 is a fast move, not a premove-only move: it answers instant with no premove available", async () => {
+		// Until 2026-09-10 this case asserted the opposite — that a bucket-0 draw was discarded and
+		// re-drawn from buckets ≥ 1 whenever `premove_eligible` was 0. The measured consequence on the
+		// real ONNX bands: the model puts ≈ 21 % of its mass on bucket 0 (≈ 0.5 s) at a full 3+0 clock,
+		// and every one of those draws was redistributed into the *slower* buckets, so the shipped head
+		// produced 0 instant-mode plans in 2000 against 222 for the v1 fallback. The owner asked about
+		// exactly this on 2026-09-09 — "the bot never is able to come up with the move nearly instantly
+		// (when in many situations a player would have the move instantly ready), is it that we
+		// actually dont have the move or we're artificially causing this problem?" — and the answer was
+		// that we were causing it. Premove eligibility is about whether a move can be entered *before*
+		// the opponent replies (§7.4); it says nothing about whether a human can play it quickly.
 		const h = head(result(probsAt([0, 3], [0.9, 0.1])));
 		const c = ctx();
 		await h.prepare(c);
 		const f = computeFeatures(c);
+		expect(f.premove_eligible).toBe(0);
 		const st = freshState("g");
 		st.fen = c.fen;
 		const rng = createRng("b0b");
-		for (let i = 0; i < 200; i++) {
+		const N = 400;
+		let instant = 0;
+		for (let i = 0; i < N; i++) {
 			const s = h.sample(f, persona, st, rng, 1);
-			expect(s.mode === "normal" || s.mode === "long").toBe(true);
-			expect(s.why.join(" ")).toContain("bucket 3");
+			if (s.mode === "instant") {
+				instant++;
+				// a fast move is fast: under the bucket's own 1 s upper edge, before the hand is added
+				expect(s.tSec).toBeLessThan(1);
+				expect(s.why.join(" ")).toContain("bucket 0");
+			} else {
+				expect(s.mode === "normal" || s.mode === "long").toBe(true);
+				expect(s.why.join(" ")).toContain("bucket 3");
+			}
 		}
+		// The model's bucket-0 mass reaches the plan instead of being redistributed wholesale, and how
+		// much of it gets through is `fastShareCap` — `min(share, cap)`, via the feed-forward thinning
+		// that holds the rate at the budget from the first move rather than only asymptotically
+		// (round 6; the budget's own behaviour is pinned in chessmimic-instant-cap.test.ts).
+		//
+		// The load-bearing assertion is that it is the budget and **not zero**. Zero is what the branch
+		// this case replaced produced, at every speed and every clock.
+		const cap = fastShareCap(f, "1500_1600");
+		expect(cap).toBeGreaterThan(0);
+		expect(cap).toBeLessThan(0.9); // the fixture's own mass, so the budget is what binds here
+		expect(instant / N).toBeGreaterThan(cap * 0.7);
+		expect(instant / N).toBeLessThanOrEqual(cap * 1.2);
+		expect(instant).toBeLessThan(N);
 	});
 	it("labels the top buckets long and adds s_game + AR(1) on top", async () => {
 		const h = head(result(probsAt([29])));

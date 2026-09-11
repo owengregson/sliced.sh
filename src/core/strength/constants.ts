@@ -51,9 +51,39 @@ export const SELECTION_CONSTANTS = deepFreeze({
 			[2200, 0.009],
 			[2500, 0.005],
 		] as const,
-		/** `f_clock = 1 + clockGain·clamp((clockPressureMs − clock)/clockPressureMs, 0, 1)`. */
+		/**
+		 * `f_clock = 1 + clockGain·clamp((clockPressureMs − clock)/clockPressureMs, 0, 1)` — an
+		 * **absolute** 20 s, so on its own the injected-error rate is flat from 3:00 down to 0:20 of a
+		 * 3+0 game and only moves in the last seconds. 20 s is a third of a 1+0 game and 3 % of a 10+0,
+		 * which is why `clockPressureFraction` below exists.
+		 *
+		 * NOT dead, and worth saying because `clockPressureFraction` dominates it in the common case.
+		 * `clockFactor` takes the larger of the two, and the absolute term is the binding one in exactly
+		 * two regimes (measured):
+		 *
+		 *   1. **no base clock is known** — an untimed game, or the §4.3 window before the page answers
+		 *      `timeControl.get()`. The relative term is 0 there and this is the whole curve;
+		 *   2. **ultrabullet**, where `clockPressureFraction · base < clockPressureMs`. At base ≤ 20 s
+		 *      the absolute term is larger at 8–9 of 10 clock points (base 10 s: 9/10; 15 s: 9/10;
+		 *      20 s: 8/10; 25 s and above: 0/10).
+		 *
+		 * Both are pinned in `test/core/strength/blunder-clock.test.ts`.
+		 */
 		clockPressureMs: 20_000,
 		clockGain: 1.5,
+		/**
+		 * The same ramp expressed as a fraction of the game's **own** base clock (fix C step 4, the
+		 * owner's live 3+0 report: "as the time gets towards the end, play should get worse"). At or
+		 * above this fraction of the base clock `f_clock` is 1; below it, it climbs linearly to the
+		 * same `1 + clockGain` ceiling at an empty clock, so this widens *where* the existing
+		 * injection ramps without adding a failure mode or a new ceiling.
+		 *
+		 * Taken as a `max` with the absolute term above, never as a replacement: the late-game rate
+		 * the §7.2 tests and the §13.2 runs measure can only ever go up, and a game whose base clock
+		 * is unknown (untimed, or a time control the page has not answered yet) keeps exactly the
+		 * absolute curve.
+		 */
+		clockPressureFraction: 0.8,
 		/** `f_complexity = 1 + complexityGain·[std(cpEff) ≥ complexityStdCp]`. */
 		complexityGain: 0.6,
 		complexityStdCp: 150,

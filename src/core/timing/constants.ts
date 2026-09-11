@@ -124,6 +124,30 @@ export const TIMING_CONSTANTS = {
 		incFloorClockS: 5,
 		incFloor: 0.6,
 	},
+	/**
+	 * Relative-clock urgency (§8, fix C). `compression` above is written in **absolute** seconds,
+	 * so it says nothing until a 10+0 game has 30 s left (5 % of its base) while it covers half of
+	 * a 1+0 game — and between 3:00 and ~0:36 of a 3+0 game neither it nor the hard cap binds at
+	 * all. The owner's live 3+0 report ("it was still moving like it had a lot of time left even
+	 * though it didnt") is that gap, and the controller has ruled that the report overrides
+	 * Appendix D §3a.3's absolute thresholds.
+	 *
+	 * So this one is a fraction of the game's **own** starting clock: the factor is 1 at or above
+	 * `kneeFraction` of `base_s` and falls linearly to `floor` at an empty clock. It may only ever
+	 * pull the planned think down (it is ≤ 1 everywhere) and the plan applies
+	 * `min(compressionFactor, urgencyFactor)`, so where the §3a.3 compression is the smaller term
+	 * it is still the one that acts and the late-game regime §13.2 measures does not move.
+	 */
+	urgency: {
+		/** At or above this fraction of `base_s` the factor is 1: a full clock is not hurried. */
+		kneeFraction: 0.8,
+		/** Value at an empty clock — a human at 0:05 of a 3+0 is not 20× quicker, but is ~2× quicker. */
+		floor: 0.45,
+		/** An increment of at least this many seconds floors the factor (as `compression.incFloor` does) … */
+		incFloorIncS: 2,
+		/** … at this: the clock is low but every move buys time back. */
+		incFloor: 0.6,
+	},
 	/** Hard caps: `0.5·C`; `0.15·C` if `C < 30 && inc < 2`; `0.35 s` if `C < 3`. */
 	caps: {
 		fraction: 0.5,
@@ -299,6 +323,28 @@ export const TIMING_CONSTANTS = {
 		 * and the bound is 2e-3 (measurements in docs/models.md).
 		 */
 		fixtureProbTolerance: 2e-3,
+		/**
+		 * How quickly a move has to reach the board, in seconds, to count as a *fast move* for the
+		 * per-game budget (`fastShareCap`). Two seconds, because that is bucket 1's upper edge and the
+		 * bands' empirical priors are quoted against bucket edges.
+		 *
+		 * The anchor is the share of **real** human moves that arrive inside this bound
+		 * (`buckets.json`, 1 000 000 blitz moves a band): 17.8 % at 1200–1300, 21.3 % at 1500–1600,
+		 * 24.7 % at 1800–1900. Note carefully what that number is: a **marginal over positions**.
+		 *
+		 * It is read two ways, and the second is a compromise rather than a clean inference. The
+		 * feedback term budgets a *game's realised rate* against it, which is what a marginal
+		 * licenses. The feed-forward term thins a single position's bucket-0 conditional towards it,
+		 * which a marginal does **not** license — a calibrated model is supposed to answer "this
+		 * position is obvious" sometimes, and at such a position the true conditional is far above
+		 * the marginal. Feed-forward exists anyway because a rate over the game is asymptotic
+		 * (realised/budget ≈ ×4 at one move, ×1.06 at forty), so feedback alone cannot bind in the
+		 * opening — which is exactly where the owner saw 50–85 % instant moves in a 10+0. The cost
+		 * is measured and disclosed: the off-book sub-2 s share at the page runs ≈11 pp above the
+		 * pre-lane build, and the lane's review carries it as an accepted trade rather than a closed
+		 * finding. Buckets are selected by upper edge against this value, never by index.
+		 */
+		fastMoveMaxS: 2,
 		/** The top 4 buckets (≥ 26 s, §3b.1) or `t > longMedianMultiple·median` label the sample `long`. */
 		longBucketFrom: 26,
 		longMedianMultiple: 6,

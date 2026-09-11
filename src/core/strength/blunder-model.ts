@@ -13,6 +13,11 @@ import type { SelectionState } from "./types";
 
 export interface BlunderInputs {
 	myClockMs: number;
+	/**
+	 * The game's starting clock in ms, when it is known. Absent or 0 — an untimed game, or a time
+	 * control the page has not answered yet — keeps the absolute `clockPressureMs` curve alone.
+	 */
+	baseMs?: number;
 	/** Population std of the (jittered) `cpEff` over the top-K lines. */
 	cpStd: number;
 	blunderScale: number;
@@ -28,10 +33,25 @@ export interface BlunderTerms {
 	b: number;
 }
 
+/**
+ * `f_clock`: the larger of the absolute §7.2 ramp and the same ramp expressed as a fraction of the
+ * game's own base clock. A `max`, so the rate never falls below what it is without the relative term
+ * — the late game is unchanged — and `baseMs` absent or 0 leaves the absolute curve exactly alone.
+ */
+function clockFactor(myClockMs: number, baseMs: number | undefined): number {
+	const { clockPressureMs, clockGain, clockPressureFraction } = C.blunder;
+	const absolute = clamp((clockPressureMs - myClockMs) / clockPressureMs, 0, 1);
+	const relative =
+		baseMs !== undefined && baseMs > 0
+			? clamp((clockPressureFraction - clamp(myClockMs / baseMs, 0, 1)) / clockPressureFraction, 0, 1)
+			: 0;
+	return 1 + clockGain * Math.max(absolute, relative);
+}
+
 export function blunderTerms(E: number, inputs: BlunderInputs): BlunderTerms {
-	const { clockPressureMs, clockGain, complexityGain, complexityStdCp } = C.blunder;
+	const { complexityGain, complexityStdCp } = C.blunder;
 	const b0 = b0For(E);
-	const fClock = 1 + clockGain * clamp((clockPressureMs - inputs.myClockMs) / clockPressureMs, 0, 1);
+	const fClock = clockFactor(inputs.myClockMs, inputs.baseMs);
 	const fComplexity = 1 + complexityGain * (inputs.cpStd >= complexityStdCp ? 1 : 0);
 	const damper = inputs.state.blunderDamperLeft > 0 ? C.blunder.damperMultiplier : 1;
 	const b = b0 * fClock * fComplexity * inputs.blunderScale * damper;

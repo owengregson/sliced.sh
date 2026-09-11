@@ -19,7 +19,7 @@ import { computeFeatures, featuresToRecord, isBotPace } from "./features";
 import { allocateWindow, type MotorTimes, motorModel } from "./move-window";
 import { sampleOrientationMs } from "./orientation";
 import { samplePersona } from "./persona-latents";
-import { boundByCap, compressionFactor, hardCapSec } from "./pressure";
+import { boundByCap, hardCapSec, paceFactor } from "./pressure";
 import { buildTimingLogEntry } from "./timing-log";
 import type {
 	DistributionHead,
@@ -77,6 +77,7 @@ export function freshState(gameId: string, knobs?: TimingKnobs): GameTimingState
 		oppThinkMs: [],
 		myThinkMs: [],
 		plannedMs: [],
+		fastAdded: 0,
 		paceResiduals: [],
 		lastEvalOurPov: null,
 		lastPlan: null,
@@ -182,6 +183,7 @@ export class TimingModel {
 		st.oppThinkMs = [...previous.oppThinkMs];
 		st.myThinkMs = [...previous.myThinkMs];
 		st.plannedMs = [...previous.plannedMs];
+		st.fastAdded = previous.fastAdded;
 		st.paceResiduals = [...previous.paceResiduals];
 		st.lastEvalOurPov = previous.lastEvalOurPov;
 		st.lastPlan = previous.lastPlan;
@@ -243,13 +245,44 @@ export class TimingModel {
 		const sample = this.sampleGuarded(f, alloc);
 		let { tSec, mode } = sample;
 		const why = [...sample.why];
-		const comp = compressionFactor(f);
+		// `min(§3a.3 compression, relative-clock urgency)` — NOT the compression alone. The shipped
+		// ChessMimic head never reads `alloc`, so without this the budget controller has no effect on
+		// the plan at all and a 3+0 game is paced the same at 1:00 as at 3:00 (the owner's live
+		// report, 2026-09-10; the measured curves are in fixC-report.md). It is a `min`, so no move is
+		// ever planned slower than it is today and the last seconds stay exactly as §13.2 measures
+		// them.
+		const comp = paceFactor(f);
 		const capSec = hardCapSec(f);
 		tSec *= comp;
-		if (mode === "premove" && (!f.premove_eligible || this.forbidPremove)) {
+		// `premove` mode skips `boundByCap` and the physical floor below, because the hand is supposed to
+		// be on the piece already: pre-positioned during the opponent's think, leaving only press and
+		// release. `allocateWindow` then hands the plan `approachMs = thinkMs` with zero orientation.
+		//
+		// Nothing actually pre-positions the hand from this mode. Checked: the only readers of
+		// `plan.mode === "premove"` are `move-window.ts` (the window split), `preview-select.ts` (no
+		// previews) and the panel's copy — the executor's premove path is keyed on
+		// `rec.chosen.source === "premove"`, a different quantity. So the mode on its own produces a
+		// **100–220 ms whole move from a cold start** (measured p50 157 ms at ply 0 on the real bands)
+		// unless we really were waiting on this position with the move already entered, and no hand can
+		// deliver that — the brief's own figure for approach + press + drag + release is 400–900 ms.
+		//
+		// The condition for "we really were waiting" is `ponder_hit`: we predicted the opponent's reply
+		// and they played it. `premove_eligible`'s other three predictors (recapture, in book, only legal
+		// move) say a premove would have been *reasonable to enter*, not that one *was* entered — at ply 0
+		// `in_book` alone made the flick reachable, and at ply 2 with no prediction at all it made one
+		// reachable again. Appendix D §3a.5's premove logit is untouched; what is gated is whether the
+		// resulting mode is physically honourable.
+		const noPreEntry = f.ponder_hit === 0;
+		if (mode === "premove" && (!f.premove_eligible || this.forbidPremove || noPreEntry)) {
 			mode = "instant";
 			tSec = Math.max(tSec, C.instant.minS + C.instant.rangeS);
-			why.push(this.forbidPremove ? "no premove entered → instant" : "premove not eligible → instant");
+			why.push(
+				this.forbidPremove
+					? "no premove entered → instant"
+					: !f.premove_eligible
+						? "premove not eligible → instant"
+						: "nothing was pre-entered for this position (no ponder hit) → instant"
+			);
 		}
 		if (mode !== "premove") tSec *= this.settings.speedScale;
 		const median = this.head.median(f, this._persona, st, alloc) * comp;
@@ -262,7 +295,16 @@ export class TimingModel {
 		const clockEmergency = f.tc !== "untimed" && ctx.myClockMs < C.replan.emergencyClockMs;
 		let totalS: number;
 		let emergency = false;
-		if (mode === "premove") totalS = tSec;
+		// A premove plan still has to be physically deliverable. `ponder_hit` (above) says we predicted
+		// the reply, not that a move was *entered*: the only thing that enters one is the session's own
+		// §7.4 path, which sets `chosen.source = "premove"` and builds its own plan in `session.ts` —
+		// it never reaches here. So a premove-mode plan out of `planMove` is a hand that has hovered
+		// (the previous plan's `preMoveHoverMs`) but has not pressed, and the press, drag and release
+		// still cost `PHYSICAL_FLOOR_S`. Without this floor the plan was a 100–209 ms whole move
+		// (measured p50 154 ms), which is the same non-human signature the ponder-hit gate removed for
+		// the no-prediction case. `replan("opponent-moved")` computes the fire time itself and is
+		// unaffected.
+		if (mode === "premove") totalS = Math.max(tSec, PHYSICAL_FLOOR_S);
 		else {
 			// Instant: orientation + motor + the head's U(0.05, 0.25). Normal/long: Appendix D §5's
 			// `max(tSec, motor.total)` with the §8.4b item 2 orientation inside the window. A
@@ -308,6 +350,10 @@ export class TimingModel {
 		if (motor.promoS > 0) plan.promotionDelayMs = motor.promoS * 1000;
 
 		st.plannedMs.push(thinkMs);
+		// Counted here and not in the head: `sampleGuarded` discards re-sampled candidates, and a
+		// discarded sample must not consume the budget. `mode` is re-read because the premove/physical
+		// gates above can have converted the sample since the head produced it.
+		if (sample.addedFast === true && mode === "instant") st.fastAdded++;
 		st.lastPlan = plan;
 		st.lastEvalOurPov = f.eval_cp;
 		st.oppThinkMs = [...ctx.oppThinkMsHistory];

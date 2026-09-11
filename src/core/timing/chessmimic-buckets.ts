@@ -81,6 +81,47 @@ export function bucketMask(playerClockS: number, incrementS: number): boolean[] 
 	return Array.from({ length: CM.nBuckets }, (_, b) => b === 0 || b <= maxValid);
 }
 
+/** Lowest temperature the bucket draw will use; shared so `maskedBucketShare` cannot drift from it. */
+const TEMPERATURE_FLOOR = 1e-3;
+
+/** Temperature-scaled weights over the valid buckets, and their total. */
+function maskedWeights(
+	probs: readonly number[],
+	mask: readonly boolean[],
+	temperature: number
+): { items: number[]; weights: number[]; total: number } {
+	const T = Math.max(TEMPERATURE_FLOOR, temperature);
+	const items: number[] = [];
+	const weights: number[] = [];
+	let total = 0;
+	for (let b = 0; b < CM.nBuckets; b++) {
+		const p = probs[b] ?? 0;
+		if (!mask[b] || !(p > 0)) continue;
+		const w = p ** (1 / T);
+		items.push(b);
+		weights.push(w);
+		total += w;
+	}
+	return { items, weights, total };
+}
+
+/**
+ * The probability this draw lands in `bucket` — the same weighting `sampleBucket` uses, so the two
+ * cannot drift apart (they share `maskedWeights`, which is what C1 wants of the temperature floor).
+ * 0 when the bucket is masked out or carries no mass.
+ */
+export function maskedBucketShare(
+	probs: readonly number[],
+	mask: readonly boolean[],
+	temperature: number,
+	bucket: number
+): number {
+	const { items, weights, total } = maskedWeights(probs, mask, temperature);
+	if (!(total > 0)) return 0;
+	const at = items.indexOf(bucket);
+	return at < 0 ? 0 : (weights[at] ?? 0) / total;
+}
+
 /** Temperature-scaled draw over the valid buckets; bucket 0 when nothing else has mass. */
 export function sampleBucket(
 	probs: readonly number[],
@@ -88,7 +129,7 @@ export function sampleBucket(
 	temperature: number,
 	rng: Rng
 ): number {
-	const T = Math.max(1e-3, temperature);
+	const T = Math.max(TEMPERATURE_FLOOR, temperature);
 	const weights: number[] = [];
 	const items: number[] = [];
 	let total = 0;

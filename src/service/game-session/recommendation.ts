@@ -470,6 +470,11 @@ export class RecommendationPipeline {
 			rng: input.rng,
 			state: input.selectionState,
 		};
+		// §7.2 step 6 reads this to scale the clock-pressure term by the game's own base clock rather
+		// than by an absolute 20 s. Absent when the page has reported no control, which the blunder model
+		// treats as "unknown" and falls back to the absolute ramp for.
+		const baseMs = input.snapshot.timeControl?.baseMs ?? 0;
+		if (baseMs > 0) ctx.baseMs = baseMs;
 		const last = input.moves[input.moves.length - 1];
 		if (last !== undefined) ctx.lastMove = last;
 		const bestmove = analysis?.bestmove;

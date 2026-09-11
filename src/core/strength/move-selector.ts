@@ -317,6 +317,7 @@ export function selectMove(
 		cpStd,
 		blunderScale: ctx.blunderScale,
 		state,
+		...(ctx.baseMs === undefined ? {} : { baseMs: ctx.baseMs }),
 	});
 	rationale.push(
 		`b=${fmt(terms.b, 4)} (b0=${fmt(terms.b0, 4)} f_clock=${fmt(terms.fClock, 2)} f_complexity=${terms.fComplexity} scale=${ctx.blunderScale}${terms.damper !== 1 ? ` damper×${terms.damper}` : ""})`
