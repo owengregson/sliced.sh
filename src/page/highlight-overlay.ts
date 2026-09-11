@@ -1,15 +1,14 @@
 // src/page/highlight-overlay.ts
 /**
  * `highlight-overlay` (§5.5): the generic from/to-square + arrow overlay used
- * when native drawing is unavailable — i.e. when the board does not expose
- * `game.markings`, which is the live WebGL board's open question (see
- * `docs/qa-checklist.md` §B0.4).
+ * for recommendation feedback. Our SVG survives board presses and supports a
+ * one-shot drawing arrow plus square fade; native markings cannot animate.
  *
  * Presence rules (§13.3 rule 3): the overlay inserts nothing until a `draw`
  * command arrives; the one `<svg viewBox="0 0 8 8">` it appends goes to the
  * board host with `pointer-events: none`; it is idempotent by looking its own
- * per-build class up in the DOM (no `window` property); it carries no `id`,
- * `data-*` or text. Colours come from the payload (the adapter reads
+ * per-build class up in the DOM (no `window` property); its root carries no `id`,
+ * `data-*` or text. Gradient paint IDs are scoped to its per-build class. Colours come from the payload (the adapter reads
  * `TOKENS`), with the bound `colors` (also from `TOKENS`) as the fallback.
  *
  * `overlayStatements` is the reusable builder the bridge embeds; the
@@ -18,7 +17,9 @@
  */
 
 import { BRIDGE_ORIENTATION, BRIDGE_WIRE as W } from "@core/constants/bridge";
+import { HIGHLIGHT_MOTION } from "@core/constants/timings";
 import { defineProgram, type Expression, js, type Statement } from "@pagescript";
+import { arrowShapeStatements } from "./arrow-shape";
 import { defineHandle, definePost, KINDS, listen, orEmpty, post } from "./bridge-common";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -29,19 +30,10 @@ export const OVERLAY = {
 	clear: "ovClear",
 } as const;
 
-/** Arrow geometry in board units (one square = 1). */
-const ARROW = {
-	shaftHalfWidth: 0.11,
-	headHalfWidth: 0.3,
-	headLength: 0.4,
-	startInset: 0.25,
-} as const;
-
 const n = js.num;
 const num = (v: Expression): Expression => js.call(js.id("String"), v);
 const add = (a: Expression, b: Expression): Expression => js.op(a, "+", b);
 const sub = (a: Expression, b: Expression): Expression => js.op(a, "-", b);
-const mul = (a: Expression, b: Expression): Expression => js.op(a, "*", b);
 
 function setAttr(el: Expression, name: string, value: Expression): Statement {
 	return js.expr(js.call(js.member(el, "setAttribute"), js.str(name), value));
@@ -56,7 +48,7 @@ export interface OverlayParams {
 	hosts: Expression;
 	/** The per-build class name of the overlay `<svg>`. */
 	cls: Expression;
-	/** `{ from, to, arrow }` fallback colours. */
+	/** `{ from, to, arrow, edge }` fallback colours and soft shadow tint. */
 	colors: Expression;
 }
 
@@ -73,6 +65,33 @@ export function overlayStatements(p: OverlayParams): Statement[] {
 	const sq = js.id("sq");
 	const black = js.id("black");
 	const q = js.id("q");
+	const animations = js.id("ovAnimations");
+	const fadeStart = HIGHLIGHT_MOTION.arrowDrawMs + HIGHLIGHT_MOTION.arrowHoldMs;
+	const duration = fadeStart + HIGHLIGHT_MOTION.arrowFadeMs;
+	const ovStop = js.const_(
+		"ovStop",
+		js.arrow(
+			[],
+			[
+				js.forOf("animation", animations, [js.expr(js.call(js.member(js.id("animation"), "cancel")))]),
+				js.assign(animations, js.arr()),
+			]
+		)
+	);
+	const ovAnimate = js.const_(
+		"ovAnimate",
+		js.arrow(
+			["node", "frames", "options"],
+			[
+				js.const_(
+					"animation",
+					js.call(js.member(js.id("node"), "animate"), js.id("frames"), js.id("options"))
+				),
+				js.expr(js.call(js.member(animations, "push"), js.id("animation"))),
+				js.ret(js.id("animation")),
+			]
+		)
+	);
 
 	const ovHost = js.const_(
 		"ovHost",
@@ -143,8 +162,6 @@ export function overlayStatements(p: OverlayParams): Statement[] {
 	const h = js.id("h");
 	const a = js.id("a");
 	const cell = (i: number): Expression => js.member(c, js.num(i));
-	const at = (v: Expression, i: number): Expression => js.member(v, js.num(i));
-	const pt = (x: Expression, y: Expression): Expression => add(add(num(x), js.str(",")), num(y));
 	const ovDraw = js.const_(
 		OVERLAY.draw,
 		js.arrow(
@@ -152,6 +169,41 @@ export function overlayStatements(p: OverlayParams): Statement[] {
 			[
 				js.const_("el", js.call(js.id("ovEnsure"))),
 				js.if_(js.not(el), [js.ret()]),
+				js.const_(
+					"mark",
+					js.call(
+						js.member(js.id("JSON"), "stringify"),
+						js.arr(js.member(q, W.orientation), js.member(q, W.highlights), js.member(q, W.arrows))
+					)
+				),
+				js.if_(
+					js.and(
+						js.op(js.id("ovLastElement"), "===", el),
+						js.op(js.id("ovLastMark"), "===", js.id("mark"))
+					),
+					[js.ret()]
+				),
+				js.assign(js.id("ovLastElement"), el),
+				js.assign(js.id("ovLastMark"), js.id("mark")),
+				js.expr(js.call(js.id("ovStop"))),
+				js.const_(
+					"motion",
+					js.and(
+						js.op(js.typeof_(js.member(el, "animate")), "===", js.str("function")),
+						js.not(
+							js.and(
+								js.member(js.id("window"), "matchMedia"),
+								js.member(
+									js.call(
+										js.member(js.id("window"), "matchMedia"),
+										js.str(HIGHLIGHT_MOTION.reducedMotionQuery)
+									),
+									"matches"
+								)
+							)
+						)
+					)
+				),
 				js.while_(js.member(el, "firstChild"), [
 					js.expr(js.call(js.member(el, "removeChild"), js.member(el, "firstChild"))),
 				]),
@@ -179,71 +231,32 @@ export function overlayStatements(p: OverlayParams): Statement[] {
 					),
 					js.assign(js.id("n"), add(js.id("n"), n(1))),
 					js.expr(js.call(js.member(el, "appendChild"), rc)),
+					js.if_(js.id("motion"), [
+						js.const_(
+							"fade",
+							js.call(
+								js.id("ovAnimate"),
+								rc,
+								js.arr(
+									js.obj({ opacity: n(0), offset: n(0), easing: js.str("ease-out") }),
+									js.obj({ opacity: n(1), offset: n(HIGHLIGHT_MOTION.squareInMs / duration) }),
+									js.obj({ opacity: n(1), offset: n(fadeStart / duration) }),
+									js.obj({ opacity: n(0), offset: n(1) })
+								),
+								js.obj({ duration: n(duration), fill: js.str("forwards") })
+							)
+						),
+						js.expr(
+							js.call(
+								js.member(js.id("fade"), "finished", "then"),
+								js.arrow([], [js.expr(js.call(js.member(rc, "remove")))]),
+								js.arrow([], [])
+							)
+						),
+					]),
 				]),
 				js.forOf("a", orEmpty(js.member(q, W.arrows)), [
-					js.const_("s", js.call(js.id("ovCell"), js.member(a, W.from), black)),
-					js.const_("e", js.call(js.id("ovCell"), js.member(a, W.to), black)),
-					js.const_("x1", add(at(js.id("s"), 0), n(0.5))),
-					js.const_("y1", add(at(js.id("s"), 1), n(0.5))),
-					js.const_("x2", add(at(js.id("e"), 0), n(0.5))),
-					js.const_("y2", add(at(js.id("e"), 1), n(0.5))),
-					js.const_("dx", sub(js.id("x2"), js.id("x1"))),
-					js.const_("dy", sub(js.id("y2"), js.id("y1"))),
-					js.const_(
-						"len",
-						js.or(js.call(js.member(js.id("Math"), "hypot"), js.id("dx"), js.id("dy")), n(1))
-					),
-					js.const_("ux", js.op(js.id("dx"), "/", js.id("len"))),
-					js.const_("uy", js.op(js.id("dy"), "/", js.id("len"))),
-					js.const_("px", js.op(js.num(0), "-", js.id("uy"))),
-					js.const_("py", js.id("ux")),
-					// shaft start (inset from the centre) and head base
-					js.const_("bx", add(js.id("x1"), mul(js.id("ux"), n(ARROW.startInset)))),
-					js.const_("by", add(js.id("y1"), mul(js.id("uy"), n(ARROW.startInset)))),
-					js.const_("hx", sub(js.id("x2"), mul(js.id("ux"), n(ARROW.headLength)))),
-					js.const_("hy", sub(js.id("y2"), mul(js.id("uy"), n(ARROW.headLength)))),
-					js.const_("w", n(ARROW.shaftHalfWidth)),
-					js.const_("hw", n(ARROW.headHalfWidth)),
-					js.const_(
-						"pts",
-						js.call(
-							js.member(
-								js.arr(
-									pt(
-										add(js.id("bx"), mul(js.id("px"), js.id("w"))),
-										add(js.id("by"), mul(js.id("py"), js.id("w")))
-									),
-									pt(
-										add(js.id("hx"), mul(js.id("px"), js.id("w"))),
-										add(js.id("hy"), mul(js.id("py"), js.id("w")))
-									),
-									pt(
-										add(js.id("hx"), mul(js.id("px"), js.id("hw"))),
-										add(js.id("hy"), mul(js.id("py"), js.id("hw")))
-									),
-									pt(js.id("x2"), js.id("y2")),
-									pt(
-										sub(js.id("hx"), mul(js.id("px"), js.id("hw"))),
-										sub(js.id("hy"), mul(js.id("py"), js.id("hw")))
-									),
-									pt(
-										sub(js.id("hx"), mul(js.id("px"), js.id("w"))),
-										sub(js.id("hy"), mul(js.id("py"), js.id("w")))
-									),
-									pt(
-										sub(js.id("bx"), mul(js.id("px"), js.id("w"))),
-										sub(js.id("by"), mul(js.id("py"), js.id("w")))
-									)
-								),
-								"join"
-							),
-							js.str(" ")
-						)
-					),
-					js.const_("pg", createSvg("polygon")),
-					setAttr(js.id("pg"), "points", js.id("pts")),
-					setAttr(js.id("pg"), "fill", js.or(js.member(a, W.color), js.member(p.colors, "arrow"))),
-					js.expr(js.call(js.member(el, "appendChild"), js.id("pg"))),
+					js.expr(js.call(js.id("ovArrow"), el, a, black, js.id("motion"))),
 				]),
 			]
 		)
@@ -253,12 +266,28 @@ export function overlayStatements(p: OverlayParams): Statement[] {
 		js.arrow(
 			[],
 			[
+				js.expr(js.call(js.id("ovStop"))),
+				js.assign(js.id("ovLastMark"), js.nil()),
+				js.assign(js.id("ovLastElement"), js.nil()),
 				js.const_("el", js.call(js.id("ovFind"))),
 				js.if_(el, [js.expr(js.call(js.member(el, "remove")))]),
 			]
 		)
 	);
-	return [ovHost, ovFind, ovEnsure, ovCell, ovDraw, ovClear];
+	return [
+		js.let_("ovAnimations", js.arr()),
+		js.let_("ovLastMark", js.nil()),
+		js.let_("ovLastElement", js.nil()),
+		ovStop,
+		ovAnimate,
+		ovHost,
+		ovFind,
+		ovEnsure,
+		ovCell,
+		...arrowShapeStatements({ cls: p.cls, colors: p.colors }),
+		ovDraw,
+		ovClear,
+	];
 }
 
 /** `ovDraw(payload)` / `ovClear()` as statements. */

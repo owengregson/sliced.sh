@@ -410,13 +410,13 @@ describe("content entry — commands", () => {
 			// The overlay branch draws from screen coordinates, so every draw carries the
 			// orientation; nothing sent it before and an overlay mark was mirrored for black.
 			orientation: "white",
+			forceOverlay: true,
 		});
-		// a second mark replaces the first rather than stacking on it: native `game.markings` only
-		// ever *adds*, so a redraw without this clear left the old squares on the board for good
+		// A second SVG mark replaces atomically, without a separate clear or a blank frame.
 		feed.command({ kind: "arrow", lines: [{ from: "g1", to: "f3", weight: 1 }] });
 		expect(bridge.callsOf("draw")).toHaveLength(2);
-		expect(bridge.callsOf("clear")).toHaveLength(1);
-		expect(bridge.calls.at(-2)?.kind).toBe("clear");
+		expect(bridge.callsOf("clear")).toHaveLength(0);
+		expect(bridge.calls.at(-1)?.kind).toBe("draw");
 
 		// §13.3 rule 4 used to make this a clear ("no mark at move-submission time") and the two
 		// assertions below were its inverse. The owner has overruled the rule for the mark of the
@@ -432,9 +432,9 @@ describe("content entry — commands", () => {
 			timeoutMs: 300,
 		});
 		expect(bridge.calls.length).toBe(bridgeCallsBefore); // the verifier touches nothing
-		expect(bridge.callsOf("clear")).toHaveLength(1);
+		expect(bridge.callsOf("clear")).toHaveLength(0);
 		await sleep(10);
-		expect(bridge.callsOf("clear")).toHaveLength(1); // …and nothing clears later either
+		expect(bridge.callsOf("clear")).toHaveLength(0); // …and nothing clears later either
 		playD4(dom);
 		await waitFor(() => feed.of("observeMoveResult").length === 1, 2_000);
 		expect(feed.of("observeMoveResult")[0]).toEqual({
@@ -447,68 +447,41 @@ describe("content entry — commands", () => {
 		feed.command({ kind: "settings", highlightMoves: false });
 		feed.command({ kind: "highlight", from: "e2", to: "e4", style: "squares" });
 		expect(bridge.callsOf("draw")).toHaveLength(2);
-		expect(bridge.callsOf("clear")).toHaveLength(2);
+		expect(bridge.callsOf("clear")).toHaveLength(1);
 		feed.command({ kind: "clearHighlight" }); // nothing drawn: no extra bridge call
-		expect(bridge.callsOf("clear")).toHaveLength(2);
+		expect(bridge.callsOf("clear")).toHaveLength(1);
 	});
 	// Fix A (the owner's live report, 2026-09-10): the mark of the move the hand is playing must be
 	// ours, not one of the site's markings, so it survives the presses the action is made of.
-	it("a highlight command carrying `overlay` asks the bridge for a forced-overlay draw", async () => {
+	it("all recommendations use atomic overlays, leaving visual deduplication to the page", async () => {
 		const { feed, bridge } = boot("chesscom-live");
 		await waitFor(() => bridge.callsOf("getState").length > 0);
 		feed.command({ kind: "settings", highlightMoves: true });
 		feed.command({ kind: "highlight", from: "d2", to: "d4", style: "both" });
 		await sleep(10);
-		// The ordinary recommendation mark is unchanged: native markings, no flag on the wire.
 		expect(bridge.callsOf("draw")).toHaveLength(1);
-		expect(bridge.callsOf("draw")[0]?.payload).not.toHaveProperty("forceOverlay");
-
+		expect(bridge.callsOf("draw")[0]?.payload).toMatchObject({
+			forceOverlay: true,
+			orientation: "white",
+		});
 		feed.command({ kind: "highlight", from: "d2", to: "d4", style: "both", overlay: true });
 		await sleep(10);
 		expect(bridge.callsOf("draw")).toHaveLength(2);
-		expect(bridge.callsOf("draw")[1]?.payload).toMatchObject({
-			forceOverlay: true,
-			orientation: "white",
-			highlights: [
-				{ square: "d2", color: expect.any(String) },
-				{ square: "d4", color: expect.any(String) },
-			],
-		});
-		// One bridge call, not two: the page program removes our native markings inside the same
-		// `draw`, so the board is never unmarked for a frame — the hand is already acting by then.
-		expect(bridge.calls.at(-1)?.kind).toBe("draw");
 		expect(bridge.callsOf("clear")).toHaveLength(0);
+		feed.command({ kind: "clearHighlight" });
+		feed.command({ kind: "highlight", from: "d2", to: "d4", style: "both" });
+		await sleep(10);
+		expect(bridge.callsOf("draw")).toHaveLength(3);
 	});
-	// The page dropped its own record of the native keys inside that `draw` (it answers `{keys: []}`),
-	// so this side has to drop it too. Otherwise the next `clear` names keys the page no longer
-	// holds, and a keyless clear — which means "everything of ours" and is what actually heals a
-	// draw that never arrived — never gets sent.
-	it("a forced-overlay draw makes this side forget the native keys it replaced", async () => {
+
+	it("overlay draws keep clear keyless across replacements", async () => {
 		const { feed, bridge } = boot("chesscom-live");
-		// What the real page answers (`boot` installs a flat `{keys:["k1"]}`, so this replaces it):
-		// keys for a native draw, none for a forced-overlay one — the page has just dropped them.
-		bridge.responses.set("draw", (payload) =>
-			(payload as { forceOverlay?: boolean })?.forceOverlay === true
-				? { keys: [] }
-				: { keys: ["highlight|d2", "highlight|d4"] }
-		);
+		bridge.responses.set("draw", () => ({ keys: [] }));
 		await waitFor(() => bridge.callsOf("getState").length > 0);
 		feed.command({ kind: "settings", highlightMoves: true });
-
-		// A native draw: the page reports its keys and this side records them, so a clear names them.
 		feed.command({ kind: "highlight", from: "d2", to: "d4", style: "squares" });
 		await sleep(10);
-		feed.command({ kind: "clearHighlight" });
-		await sleep(10);
-		expect(bridge.callsOf("clear").at(-1)?.payload).toEqual({
-			keys: ["highlight|d2", "highlight|d4"],
-		});
-
-		// Draw natively again, then replace it with a forced-overlay draw: the keys are gone from
-		// the page, so the next clear must be the keyless "everything of ours" form.
-		feed.command({ kind: "highlight", from: "d2", to: "d4", style: "squares" });
-		await sleep(10);
-		feed.command({ kind: "highlight", from: "d2", to: "d4", style: "squares", overlay: true });
+		feed.command({ kind: "highlight", from: "e2", to: "e4", style: "squares" });
 		await sleep(10);
 		feed.command({ kind: "clearHighlight" });
 		await sleep(10);

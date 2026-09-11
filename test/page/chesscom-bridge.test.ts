@@ -211,7 +211,7 @@ describe("chesscom-bridge — behaviour", () => {
 		expect(svg?.getAttribute("class")).toBe(TOKENS_FOR_SEED.overlayClass);
 		expect(svg?.getAttribute("style")).toContain("pointer-events:none");
 		expect(svg?.querySelectorAll("rect").length).toBe(2);
-		expect(svg?.querySelectorAll("polygon").length).toBe(1);
+		expect(svg?.querySelectorAll("path").length).toBe(1);
 		// No native key to report, so nothing of ours is registered for `clear` to remove by key.
 		expect(reply(posts, "ov1")?.p).toEqual({ y: [] });
 

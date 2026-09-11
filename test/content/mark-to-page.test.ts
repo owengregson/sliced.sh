@@ -112,52 +112,25 @@ async function joinChain(): Promise<Joined> {
 }
 
 describe("the mark reaches the page: port command → wire → emitted bridge program → DOM", () => {
-	it("an ordinary highlight becomes chess.com markings; one carrying `overlay` becomes our own svg instead", async () => {
+	it("ordinary recommendations reach our SVG and an identical execution mark retains the same nodes", async () => {
 		const j = await joinChain();
 		j.command({ kind: "settings", highlightMoves: true });
-
-		// Default: the site's own markings, no DOM of ours.
 		j.command({ kind: "highlight", from: "d2", to: "d4", style: "both" });
-		await waitFor(() => j.game.markings.added.length > 0, 2_000);
-		expect(j.game.markings.added.map((m) => m.type)).toEqual(["highlight", "highlight", "arrow"]);
-		expect(j.game.markings.added[0]?.data.square).toBe("d2");
-		expect(j.svg()).toBeNull();
-		const nativeDraws = j.game.markings.added.length;
-
-		// The mark of a move the hand is acting on: our own `<svg>`, and not one more marking.
-		j.command({ kind: "highlight", from: "d2", to: "d4", style: "both", overlay: true });
 		const svg = await j.svgWithin();
-		// The one hop everything else tests from both sides and never across: `encodePayload`'s
-		// `forceOverlay` → `v`. Without it the page takes the native branch and there is no svg.
 		expect(svg).not.toBeNull();
 		expect(svg?.getAttribute("class")).toBe(TOKENS_FOR_SEED.overlayClass);
 		expect(svg?.getAttribute("style")).toContain("pointer-events:none");
 		expect(svg?.querySelectorAll("rect").length).toBe(2);
-		expect(svg?.querySelectorAll("polygon").length).toBe(1);
-		expect(j.game.markings.added.length).toBe(nativeDraws);
-		// …and the markings it replaced are gone, so the two never stack.
-		expect(j.game.markings.removed).toEqual(["highlight|d2", "highlight|d4", "arrow|d2d4"]);
-	});
-
-	// The verifier is what took the mark away mid-action, and it did so whichever kind of mark was
-	// on the board — so this is asserted over a *native* mark too, where it is independent of
-	// everything else in this lane. Pre-fix the content script's `observeMove` responder began with
-	// `highlights.clearForExecution()`, so each of the calls below removed our markings from the
-	// page; `runWithRetry` issues one after every attempt (`verify`) and one before every retry
-	// (`recheck`), which is why tier 2 ran with nothing on the board.
-	it("the verifier removes nothing from the page — native markings", async () => {
-		const j = await joinChain();
-		j.command({ kind: "settings", highlightMoves: true });
-		j.command({ kind: "highlight", from: "d2", to: "d4", style: "both" });
-		await waitFor(() => j.game.markings.added.length === 3, 2_000);
-
-		// verify (attempt 0), recheck (before the retry), verify (attempt 1 — tier 2).
-		for (const id of ["v0", "r0", "v1"]) {
-			j.command({ kind: "observeMove", id, expected: { from: "d2", to: "d4" }, timeoutMs: 40 });
-		}
-		await sleep(160);
-		expect(j.game.markings.removed).toEqual([]);
-		expect(j.game.markings.added.length).toBe(3);
+		expect(svg?.querySelectorAll("path").length).toBe(1);
+		const head = svg?.querySelector("path");
+		j.command({ kind: "highlight", from: "d2", to: "d4", style: "both", overlay: true });
+		await sleep(20);
+		expect(j.svg()?.querySelector("path")).toBe(head);
+		expect(j.game.markings.added).toEqual([]);
+		j.command({ kind: "arrow", lines: [{ from: "g1", to: "f3", weight: 1 }] });
+		await waitFor(() => j.svg()?.querySelectorAll("rect").length === 0);
+		expect(j.svg()?.querySelectorAll("path").length).toBe(1);
+		expect(j.game.markings.added).toEqual([]);
 	});
 
 	it("the verifier removes nothing from the page — the overlay mark, and completion's clear does", async () => {

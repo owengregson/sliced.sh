@@ -4,8 +4,7 @@
  *   fixture mutation → `position` on the game port → the SW receives the
  *   `PositionSnapshot`; SW `highlight` → the adapter draws through the real
  *   `PageBridgeClient` → the real `chesscom-bridge` program (evaluated in the
- *   tab's happy-dom with a fake `wc-chess-board.game`) records
- *   `markings.addOne`.
+ *   tab's happy-dom with a fake `wc-chess-board.game`) draws the animated SVG overlay.
  *
  * The content script is the real bundle entry (`import("@content/index")`
  * auto-boots on the tab's `window`), the port is the real `connectPort`, and
@@ -124,19 +123,30 @@ describe("position feed — content ⇄ SW over the game port", () => {
 		expect(moved?.lastMove).toEqual({ from: "d2", to: "d4", san: "d4" });
 		expect(of("moveObserved").at(-1)?.san).toBe("d4");
 
-		// SW → content: highlights only after settings enables them; the page bridge draws natively
+		// SW → content: highlights only after settings enables them; the bridge owns the overlay.
+		const overlay = () => doc.querySelector("wc-chess-board > svg:not(.coordinates)");
 		const port = ports[0];
 		if (!port) throw new Error("no port");
 		port.post({ kind: "highlight", from: "d4", to: "d5", style: "both" });
 		await new Promise((r) => setTimeout(r, 60));
 		expect(game.markings.added).toHaveLength(0);
+		expect(overlay()).toBeNull();
 		port.post({ kind: "settings", highlightMoves: true });
 		port.post({ kind: "highlight", from: "d4", to: "d5", style: "both" });
-		await waitFor(() => game.markings.added.length === 3, 3_000);
-		expect(game.markings.added.map((m) => m.type)).toEqual(["highlight", "highlight", "arrow"]);
-		expect(game.markings.added[2]?.data).toMatchObject({ from: "d4", to: "d5" });
+		await waitFor(() => overlay()?.querySelector("path") !== null && overlay() !== null, 3_000);
+		expect(
+			[...(overlay()?.querySelectorAll("rect") ?? [])].map((r) => [
+				r.getAttribute("x"),
+				r.getAttribute("y"),
+			])
+		).toEqual([
+			["3", "4"],
+			["3", "3"],
+		]);
+		expect(overlay()?.querySelectorAll("path")).toHaveLength(1);
+		expect(game.markings.added).toHaveLength(0);
 		port.post({ kind: "clearHighlight" });
-		await waitFor(() => game.markings.removed.length === 3, 3_000);
+		await waitFor(() => overlay() === null, 3_000);
 
 		// the page realm has no inserted element of ours (the fixture's own coordinates svg stays)
 		expect(dom.document.querySelectorAll("wc-chess-board svg:not(.coordinates)").length).toBe(0);

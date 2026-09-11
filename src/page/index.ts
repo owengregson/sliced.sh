@@ -41,6 +41,7 @@ export const OVERLAY_COLORS = {
 	from: TOKENS.color.dark.hlFrom,
 	to: TOKENS.color.dark.hlTo,
 	arrow: TOKENS.color.dark.hlArrow,
+	edge: TOKENS.color.dark.canvas,
 } as const;
 
 /** The two seed-derived direction tokens plus the inserted elements' classes (§13.3 rules 3, 5). */

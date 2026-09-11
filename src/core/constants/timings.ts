@@ -178,3 +178,13 @@ export type TimedTcClassPreset = "fast" | "natural" | "slow";
 
 /** `manual` shows recommendations and never auto-plays (§4.6). */
 export const MANUAL_TIMING_PROFILE = "manual" satisfies TimingProfile;
+
+/** One-shot recommendation feedback; all durations are independent of the move's think time. */
+export const HIGHLIGHT_MOTION = {
+	squareInMs: 200,
+	arrowDrawMs: 340,
+	arrowHoldMs: 180,
+	arrowFadeMs: 300,
+	drawEasing: "cubic-bezier(0.22, 0.68, 0.3, 1)",
+	reducedMotionQuery: "(prefers-reduced-motion: reduce)",
+} as const;
