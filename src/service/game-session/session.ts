@@ -107,6 +107,7 @@ import type { PersonaId, Settings } from "@typedefs/settings";
 import type { MoveTelemetryRecord } from "@typedefs/telemetry";
 import type { TimingPlan } from "@typedefs/timing";
 import { PonderController } from "./ponder";
+import { PremoveAttemptLimit } from "./premove-attempts";
 import { autoPlayAllowed, effectiveTimingProfile, timingSettingsFor } from "./presets";
 import type { RecommendationInput, RecommendationOutcome } from "./recommendation";
 import { ownMoveBudget, RecommendationPipeline } from "./recommendation";
@@ -414,6 +415,7 @@ export class GameSession implements SessionSource {
 	private premove: PremoveArm | null = null;
 	/** Fix F: the premove this session has entered on the site, until the next position settles it. */
 	private premoveEntry: PremoveEntry | null = null;
+	private readonly premoveAttempts = new PremoveAttemptLimit();
 	/**
 	 * Fix F: whether the *site* keeps the premoves we send. chess.com's own premove setting is not
 	 * readable, so this is learned from the one observation that answers it: a **completed** gesture,
@@ -1855,6 +1857,13 @@ export class GameSession implements SessionSource {
 		const executor = this.executorHandle;
 		if (!armed || !executor || this.disposed) return;
 		if (this.premoveEntry !== null) return;
+		if (!this.premoveAttempts.canQueue(armed.chosen.uci)) {
+			log.debug("game-session: repeated avoided premove held for a legal reactive reply", {
+				tabId: this.deps.tabId,
+				uci: armed.chosen.uci,
+			});
+			return;
+		}
 		if (
 			this.premoveQueueing === false ||
 			!isQueueableCandidate(snapshot.fen, {
@@ -2063,6 +2072,7 @@ export class GameSession implements SessionSource {
 		}
 		const played = this.premoveLanded(entry, snapshot);
 		if (played !== null) {
+			this.premoveAttempts.reset();
 			this.premoveQueueing = true;
 			this.premove = null;
 			this.notePremovePlies(entry, played, snapshot);
@@ -2091,6 +2101,26 @@ export class GameSession implements SessionSource {
 			this.droppedPremoveFrom = entry.chosen.from;
 		const afterReply = applyMoves(entry.fromFen, [entry.reply]);
 		const predicted = afterReply !== null && boardKeyOf(afterReply) === boardKeyOf(snapshot.fen);
+		// Do not infer an ignored attempt from a corrected reading, a skipped position, or an
+		// opponent move that interrupted the gesture. A late acknowledgement is conservatively
+		// ignored too: only a completed report already present when the reply arrived counts.
+		const completedBeforeReply =
+			result.outcome === "dispatched" &&
+			entry.settleWith === null &&
+			(result.at === undefined || result.at <= snapshot.capturedAt);
+		const observedReply =
+			snapshot.ply === entry.ply &&
+			(predicted ||
+				legalMoves(entry.fromFen).some((reply) => {
+					const after = applyMoves(entry.fromFen, [reply]);
+					return after !== null && boardKeyOf(after) === boardKeyOf(snapshot.fen);
+				}));
+		if (observedReply)
+			this.premoveAttempts.observe(entry.chosen.uci, {
+				completedBeforeReply,
+				predicted,
+				landed: false,
+			});
 		if (predicted) {
 			// Only a *completed* gesture is evidence about the site. A drag the arriving position
 			// aborted mid-flight still carries `pressed`, and treating that as "the site does not
@@ -2373,6 +2403,7 @@ export class GameSession implements SessionSource {
 		this.premove = null;
 		this.premoveEntry = null;
 		// `premoveQueueing` is *not* reset here: it is a fact about the page, not about the game.
+		this.premoveAttempts.reset();
 		this.droppedPremoveFrom = null;
 		this.moves = [];
 		this.positionHistory = null;
@@ -2540,6 +2571,7 @@ export class GameSession implements SessionSource {
 		// moving brings a new position, and `onPosition`'s own clear erases it there. This is the one
 		// mark that outlives its own action, and it outlives it by design.
 		if (this.settlePremoveDrag(report)) return;
+		if (report.rec.chosen.source === "premove") this.premoveAttempts.reset();
 		this.apply("executed");
 		// The move is on the board: the prediction has been spent, and the site's own last-move
 		// marking is what belongs there now.

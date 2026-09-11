@@ -250,7 +250,6 @@ describe("HandController urgent gestures", () => {
 		{ budget: 120, mode: "normal" as const, features: { clockRace: 0.5 } },
 		{ budget: 240, mode: "normal" as const, features: { clockRace: 1 } },
 		{ budget: 300, mode: "normal" as const, features: { loneKing: 1 } },
-		{ budget: 90, mode: "premove" as const, features: {} },
 	])(
 		"executes a guarded drag inside its $budget ms budget ($mode)",
 		async ({ budget, mode, features }) => {
@@ -284,6 +283,86 @@ describe("HandController urgent gestures", () => {
 			expect(release!.at).toBeGreaterThanOrEqual(budget - 1);
 			expect(sim.now() - start).toBeLessThanOrEqual(budget + 1);
 			expect(cmds.at(-1)?.type).toBe("mouseReleased");
+		}
+	);
+});
+
+describe("HandController premove gestures", () => {
+	it("uses a generated path to the promotion picker after a premove drag", async () => {
+		const ctrl = makeController(7);
+		promotionRect = { left: 400, top: 100, width: 80, height: 80 };
+		const plan = makePlan({ promotion: "q", expected: { uci: "e2e4q", premove: true } });
+		const timing = makeTiming({
+			mode: "premove",
+			thinkMs: 20,
+			dragDurationMs: 0,
+			preMoveHoverMs: 0,
+			features: { clockRace: 1 },
+			window: { orientationMs: 0, scanMs: 0, previewMs: 0, decisionMs: 0, approachMs: 20 },
+		});
+		const result = await run(ctrl, plan, timing);
+		const cmds = commands();
+		const firstRelease = cmds.findIndex((c) => c.type === "mouseReleased");
+		const pickerPress = cmds.findIndex((c, i) => i > firstRelease && c.type === "mousePressed");
+		const pickerTravel = cmds
+			.slice(firstRelease + 1, pickerPress)
+			.filter((c) => c.type === "mouseMoved");
+		expect(result.ok).toBe(true);
+		expect(pickerTravel.length).toBeGreaterThan(5);
+		expect(pickerTravel.every((c) => c.buttons === 0)).toBe(true);
+		expect(cmds[pickerPress]!.at - cmds[firstRelease]!.at).toBeGreaterThan(100);
+		expect(inside(cmds[pickerPress]!, promotionRect)).toBe(true);
+		expect(cmds.filter((c) => c.type === "mousePressed")).toHaveLength(2);
+		expect(cmds.filter((c) => c.type === "mouseReleased")).toHaveLength(2);
+	});
+	it.each([
+		{ mode: "premove" as const, queued: true, features: {} },
+		{ mode: "premove" as const, queued: false, features: {} },
+		{ mode: "premove" as const, queued: true, features: { clockRace: 1 } },
+		{ mode: "premove" as const, queued: false, features: { loneKing: 1 } },
+		{ mode: "instant" as const, queued: true, features: { clockRace: 1 } },
+	])(
+		"keeps both generated mouse legs for $mode (queued=$queued), even with a 20 ms reaction budget",
+		async ({ mode, queued, features }) => {
+			const ctrl = makeController(9);
+			const plan = makePlan({ expected: { uci: "e2e4", premove: queued } });
+			const timing = makeTiming({
+				thinkMs: 20,
+				dragDurationMs: 0,
+				preMoveHoverMs: 0,
+				mode,
+				features,
+				window: { orientationMs: 0, scanMs: 0, previewMs: 0, decisionMs: 0, approachMs: 20 },
+			});
+			const result = await run(ctrl, plan, timing);
+			const cmds = commands();
+			const pressIndex = cmds.findIndex((c) => c.type === "mousePressed");
+			const releaseIndex = cmds.findIndex((c) => c.type === "mouseReleased");
+			const approach = cmds.slice(0, pressIndex).filter((c) => c.type === "mouseMoved");
+			const drag = cmds.slice(pressIndex + 1, releaseIndex).filter((c) => c.type === "mouseMoved");
+			expect(result.outcome).toBe("executed");
+			expect(approach.length).toBeGreaterThan(5);
+			expect(drag.length).toBeGreaterThan(5);
+			expect(approach.every((c) => c.buttons === 0)).toBe(true);
+			expect(drag.every((c) => c.buttons === 1)).toBe(true);
+			expect(inside(cmds[pressIndex]!, plan.from.rect)).toBe(true);
+			expect(inside(cmds[releaseIndex]!, plan.to.rect)).toBe(true);
+			expect(cmds.filter((c) => c.type === "mousePressed")).toHaveLength(1);
+			expect(cmds.filter((c) => c.type === "mouseReleased")).toHaveLength(1);
+			// Reaction time does not license instantaneous pointer travel: preserve the profile cap.
+			let previous = { ...START_POINT, at: 0 };
+			for (const cmd of cmds) {
+				const distance = Math.hypot(cmd.x - previous.x, cmd.y - previous.y);
+				expect(distance).toBeLessThanOrEqual(
+					(plan.motor.peakSpeedCapPxPerS * (cmd.at - previous.at)) / 1000 + 1
+				);
+				previous = cmd;
+			}
+			expect(result.elapsedMs).toBeGreaterThan(200);
+			expect(ctrl.states).toContain("approaching");
+			expect(ctrl.states).toContain("grabbing");
+			expect(ctrl.states).toContain("dragging");
+			expect(ctrl.states).toContain("dropping");
 		}
 	);
 });

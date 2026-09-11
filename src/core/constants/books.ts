@@ -55,6 +55,8 @@ export const PREMOVE = {
 	fastQueueDelayMaxMs: 60,
 	tradeQueueDelayMinMs: 80,
 	tradeQueueDelayMaxMs: 220,
+	/** Stop re-queueing the same move after this many consecutive avoided, completed attempts. */
+	maxIgnoredQueueAttempts: 2,
 	/** Opponent prediction when no `ponder` move is available: `go movetime 150` MultiPV 3. */
 	ponderMovetimeMs: 150,
 	ponderMultiPv: 3,

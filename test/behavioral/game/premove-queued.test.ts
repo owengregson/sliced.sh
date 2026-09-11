@@ -12,6 +12,7 @@ import { chromeLocalGet } from "@core/chrome/storage";
 import { DEFAULT_KEYBINDS } from "@core/constants/defaults";
 import { LOCAL_KEYS } from "@core/constants/storage-keys";
 import { TOAST_KEYS } from "@core/constants/toasts";
+import { MOTOR_DEFAULTS, PROFILE_NOISE } from "@core/motor/constants";
 import type { SessionStats, Square } from "@typedefs/game";
 import type { AcBlob } from "@typedefs/telemetry";
 import type { TimingLogEntry } from "@typedefs/timing";
@@ -20,7 +21,7 @@ import {
 	assertHumanShapedAc,
 	assertWellFormedAc,
 } from "../../../tools/telemetry-conformance/ac-model";
-import { createGameHarness, type GameHarness } from "./harness";
+import { createGameHarness, type GameHarness, type GameHarnessOptions } from "./harness";
 import { positionKey } from "./scripted-engine";
 
 let h: GameHarness;
@@ -219,6 +220,9 @@ interface Armed {
 
 interface ArmOptions {
 	seed: number;
+	/** Clocks when the opponent-turn position is published, after our ordinary first move. */
+	clocks?: { w: number; b: number };
+	onCommand?: GameHarnessOptions["onCommand"];
 	/** Whether the *site* holds premoves (chess.com's own setting, which we cannot read). */
 	premoves: boolean;
 	scenario?: Scenario;
@@ -269,6 +273,7 @@ async function armPremove(o: ArmOptions): Promise<Armed> {
 		gameId: `premove-queued-${o.seed}`,
 		seed: `queued-${o.seed}`,
 		premoves: o.premoves,
+		...(o.onCommand ? { onCommand: o.onCommand } : {}),
 	});
 	// The engine's line order, so the policy sees exactly one plausible reply and one recapture.
 	h.transport.prefer.set(positionKey(scenario.fen), [scenario.move]);
@@ -292,7 +297,7 @@ async function armPremove(o: ArmOptions): Promise<Armed> {
 		};
 	}
 	// The opponent is to move: this is the window a premove is entered in.
-	await h.arrive();
+	await h.arrive(null, o.clocks);
 	const mark = h.sim.debugger.commandsFor("Input.dispatchMouseEvent").length;
 	const toastMark = h.toasts.length;
 	if (o.stopAtPending === true) {
@@ -345,6 +350,144 @@ function queued(): boolean {
 }
 
 describe("game session: a queued premove (Fix F)", () => {
+	it.each(["completed", "interrupted"] as const)(
+		"limits repeated avoided queue entries only after completed drags (second: %s)",
+		async (secondAttempt) => {
+			const { scenario } = await armPremove({ seed: 0, premoves: true });
+			expect(queued()).toBe(true);
+			// The bishop keeps threatening c3, but Black sidesteps with the king twice. White's
+			// ordinary moves preserve b2/c3, so the candidate is exactly the same full UCI each turn.
+			const turns = [
+				{ reply: "e8f8", move: "f1g1" },
+				{ reply: "f8g8", move: "g1h1" },
+			];
+			for (let index = 0; index < turns.length; index++) {
+				const turn = turns[index]!;
+				const afterAvoided = applyMoves(h.site.board.fen(), [turn.reply])!;
+				const afterOurMove = applyMoves(afterAvoided, [turn.move])!;
+				const afterPredicted = applyMoves(afterOurMove, [scenario.reply])!;
+				h.transport.prefer.set(positionKey(afterAvoided), [turn.move]);
+				h.transport.prefer.set(positionKey(afterOurMove), [scenario.reply]);
+				h.transport.prefer.set(positionKey(afterPredicted), [scenario.premove]);
+				await h.arrive(turn.reply);
+				expect(h.site.premoveQueued()).toBeNull();
+				expect(await h.until(() => h.site.board.lastMove()?.uci === turn.move, 30_000)).toBe(true);
+				expect(await h.until(() => h.executor()?.isRunning() === false, 4_000)).toBe(true);
+				const mark = h.sim.debugger.commandsFor("Input.dispatchMouseEvent").length;
+				await h.arrive();
+				if (index === 0) {
+					if (secondAttempt === "interrupted") {
+						expect(
+							await h.until(
+								() =>
+									pressCount(mark) === 1 &&
+									!dispatched(mark).some((point) => point.type === "mouseReleased"),
+								OPPONENT_THINK_MS,
+								1
+							)
+						).toBe(true);
+					} else {
+						expect(await h.until(queued, OPPONENT_THINK_MS)).toBe(true);
+						expect(await h.until(() => h.executor()?.isRunning() === false, 4_000)).toBe(true);
+					}
+					expect(pressCount(mark)).toBe(1);
+				} else {
+					await h.advance(OPPONENT_THINK_MS);
+					expect(queued()).toBe(secondAttempt === "interrupted");
+					expect(pressCount(mark)).toBe(secondAttempt === "interrupted" ? 1 : 0);
+				}
+			}
+			// Suppression only affects speculative entry. Bxc3 still gets a legal reactive bxc3 if
+			// blocked; after an interrupted attempt, the third queue remains available and fires.
+			await h.arrive(scenario.reply);
+			expect(await h.until(() => h.site.board.lastMove()?.uci === scenario.premove, 5_000)).toBe(true);
+			expect(await h.until(() => unscoredRows().length === 1, 5_000)).toBe(true);
+			expect(unscoredRows()[0]?.mode).toBe("premove");
+		}
+	);
+
+	it.each([
+		{ label: "ordinary clocks", clocks: { w: 180_000, b: 180_000 } },
+		{ label: "an urgent opponent clock", clocks: { w: 180_000, b: 1_000 } },
+	])(
+		"visibly approaches and drags to queue with $label, then lets the site fire instantly",
+		async ({ clocks }) => {
+			let entered = false;
+			for (let seed = 0; seed < SEEDS && !entered; seed++) {
+				await h?.dispose();
+				const cursor: Array<{ x: number; y: number; down: boolean; at: number }> = [];
+				const { mark, scenario } = await armPremove({
+					seed,
+					premoves: true,
+					clocks,
+					onCommand: (command) => {
+						if (command.kind === "cursorTo") cursor.push({ ...command, at: Date.now() });
+					},
+				});
+				if (!queued()) continue;
+				entered = true;
+				const input = h.sim.debugger
+					.commandsFor("Input.dispatchMouseEvent")
+					.slice(mark)
+					.map((command) => {
+						const p = command.params as { type: string; x: number; y: number; buttons: number };
+						return { ...p, at: command.at };
+					});
+				const pressIndex = input.findIndex((point) => point.type === "mousePressed");
+				const releaseIndex = input.findIndex((point) => point.type === "mouseReleased");
+				const press = input[pressIndex]!;
+				const release = input[releaseIndex]!;
+				const approach = input.slice(0, pressIndex).filter((point) => point.type === "mouseMoved");
+				const drag = input
+					.slice(pressIndex + 1, releaseIndex)
+					.filter((point) => point.type === "mouseMoved");
+				// A fast decision must still enter the queue through two sampled mouse paths. The
+				// former 0–120 ms emergency path emitted only one or a few points per leg.
+				expect(approach.length).toBeGreaterThan(5);
+				expect(drag.length).toBeGreaterThan(5);
+				expect(approach.every((point) => point.buttons === 0)).toBe(true);
+				expect(drag.every((point) => point.buttons === 1)).toBe(true);
+				expect(press.at - approach[0]!.at).toBeGreaterThan(100);
+				expect(release.at - press.at).toBeGreaterThan(100);
+				// The page receives the same intermediate positions and button state that the board
+				// receives, over elapsed time, rather than a cosmetic jump after the move has landed.
+				for (const point of [...approach, ...drag]) {
+					expect(
+						cursor.some(
+							(visible) =>
+								visible.x === point.x &&
+								visible.y === point.y &&
+								visible.down === (point.buttons === 1) &&
+								Math.abs(visible.at - point.at) <= 1
+						)
+					).toBe(true);
+				}
+				const speedCap =
+					MOTOR_DEFAULTS.peakSpeedCapPxPerS *
+					(1 + PROFILE_NOISE.perGameOffset) *
+					(1 + PROFILE_NOISE.perMoveClamp);
+				for (const leg of [approach, [press, ...drag, release]]) {
+					for (let i = 1; i < leg.length; i++) {
+						const previous = leg[i - 1]!;
+						const point = leg[i]!;
+						expect(Math.hypot(point.x - previous.x, point.y - previous.y)).toBeLessThanOrEqual(
+							(speedCap * (point.at - previous.at)) / 1000 + 1
+						);
+					}
+				}
+				expect(h.site.board.lastMove()?.uci).toBe(scenario.move);
+				expect(h.site.board.chess.turn()).toBe("b");
+				expect(h.site.premoveQueued()).toEqual({ from: scenario.from, to: scenario.to });
+				const presses = pressCount();
+				await h.arrive(scenario.reply, clocks);
+				expect(h.site.board.lastMove()?.uci).toBe(scenario.premove);
+				expect(h.site.premoveQueued()).toBeNull();
+				expect(pressCount()).toBe(presses);
+			}
+			expect(entered).toBe(true);
+		}
+	);
+
 	it("resumes free exploration after a queued drag without touching the queued piece again", async () => {
 		let entered = false;
 		for (let seed = 0; seed < SEEDS && !entered; seed++) {

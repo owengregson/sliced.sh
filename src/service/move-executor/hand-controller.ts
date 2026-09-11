@@ -703,7 +703,9 @@ export class HandController {
 			SAMPLING.press.innerFrac,
 			rng
 		);
-		if (fastTouch(timing)) {
+		// Premove timing describes reaction/queue latency, not a license to compress pointer travel.
+		// Entry and reactive fallback both use the normal generated approach and held drag below.
+		if (fastTouch(timing) && timing.mode !== "premove" && !plan.expected.premove) {
 			const drop = samplePointInRect(
 				rects.to,
 				SAMPLING.release.sigmaFrac,
@@ -939,9 +941,10 @@ export class HandController {
 			this.rng
 		);
 		const urgent = fastTouch(timing);
-		const path = urgent
-			? fastPath(this.backend.position(), target, sampleRange(FAST_TOUCH.promotionTravelMs, this.rng))
-			: generatePath(this.backend.position(), target, rect, m, this.rng);
+		const path =
+			urgent && timing.mode !== "premove" && !plan.expected.premove
+				? fastPath(this.backend.position(), target, sampleRange(FAST_TOUCH.promotionTravelMs, this.rng))
+				: generatePath(this.backend.position(), target, rect, m, this.rng);
 		const planned = reply ? { board: reply.boardRect, flipped: reply.flipped } : null;
 		const guard = guardOf(planned, (r) => this.guardBoard(r));
 		await this.travel(path, guard);
