@@ -159,6 +159,62 @@ describe("CdpMouse", () => {
 		expect(mouseCommands().map((c) => c.at - START)).toEqual([10, 25, 30]);
 	});
 
+	it("coalesces overdue motion samples when per-event transport is slower than the path cadence", async () => {
+		sim.debugger.respond(
+			CDP.inputDispatchMouseEvent,
+			() => new Promise((resolve) => setTimeout(() => resolve({}), 16))
+		);
+		const seen: Array<{ x: number; y: number; pressed: boolean }> = [];
+		const mouse = makeMouse({ x: 0, y: 0 }, (point) => seen.push(point));
+		const path = Array.from({ length: 100 }, (_, i) => ({ x: (i + 1) * 2, y: 0, dtMs: 4 }));
+		const done = mouse.travel(path);
+		await sim.time.advance(3000);
+		await done;
+		const cmds = mouseCommands();
+		expect(cmds.at(-1)!.at - START).toBeLessThan(450);
+		expect(cmds.length).toBeGreaterThan(20);
+		expect(cmds.length).toBeLessThan(40);
+		expect(mouse.position).toEqual({ x: 200, y: 0 });
+		expect(seen.map((point) => point.x)).toEqual(cmds.map((cmd) => cmd.x as number));
+		for (let i = 1; i < cmds.length; i++) {
+			const previous = cmds[i - 1]!;
+			const current = cmds[i]!;
+			expect(current.at - previous.at).toBeGreaterThanOrEqual(16);
+			expect((current.x as number) - (previous.x as number)).toBeLessThanOrEqual(8);
+		}
+	});
+
+	it("re-anchors a delayed wake-up instead of jumping over the entire path", async () => {
+		let firstTimer = true;
+		const mouse = new CdpMouse(
+			(method, params) => debuggerSend(tabId, method, params),
+			{ x: 0, y: 0 },
+			{
+				now: sim.now,
+				scheduler: {
+					setTimeout(fn, ms) {
+						const delay = firstTimer ? ms + 100 : ms;
+						firstTimer = false;
+						return setTimeout(fn, delay);
+					},
+					clearTimeout: defaultScheduler.clearTimeout,
+				},
+			}
+		);
+		const done = mouse.travel([
+			{ x: 10, y: 0, dtMs: 4 },
+			{ x: 20, y: 0, dtMs: 4 },
+			{ x: 30, y: 0, dtMs: 4 },
+		]);
+		await sim.time.advance(300);
+		await done;
+		expect(mouseCommands().map((command) => [command.x, command.at - START])).toEqual([
+			[10, 104],
+			[20, 108],
+			[30, 112],
+		]);
+	});
+
 	it("a rejected press leaves the button state up (the renderer never acknowledged it)", async () => {
 		sim.debugger.respond(CDP.inputDispatchMouseEvent, async (params) => {
 			if ((params as { type: string }).type === "mousePressed") throw new Error("Target closed");

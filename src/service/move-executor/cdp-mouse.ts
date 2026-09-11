@@ -130,11 +130,27 @@ export class CdpMouse {
 		beforePoint?: () => void
 	): Promise<void> {
 		let due = this.now();
-		for (const pt of path) {
+		for (let i = 0; i < path.length; i++) {
+			let pt = path[i];
+			if (!pt) continue;
 			throwIfAborted(signal);
 			due += pt.dtMs;
 			await this.waitUntil(due, signal);
 			throwIfAborted(signal);
+			// Admission and renderer ACKs can each take longer than a compressed motor sample.
+			// Replay the current point on the absolute trajectory, rather than accumulating a
+			// transport round-trip for every obsolete sample. This never advances past the clock;
+			// the final point, input admission, button edges and per-dispatch guard are preserved.
+			// A long renderer stall still re-anchors below, so recovery cannot skip an entire leg.
+			const now = this.now();
+			if (now - due > CDP.stallResyncMs) due = now;
+			let next = path[i + 1];
+			while (next && due + next.dtMs <= now) {
+				due += next.dtMs;
+				pt = next;
+				i++;
+				next = path[i + 1];
+			}
 			beforePoint?.();
 			await this.dispatch("mouseMoved", pt, this.buttons, {}, signal, beforePoint);
 			if (this.now() - due > CDP.stallResyncMs) due = this.now();
