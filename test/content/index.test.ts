@@ -748,6 +748,53 @@ describe("content entry — executor responders (Task 30)", () => {
 });
 
 describe("content entry — the pointer mirror (Fix D)", () => {
+	it("acknowledges cold and display-disabled input without waiting for a mirror that is not drawn", async () => {
+		const { feed, bridge } = boot("chesscom-live");
+		const pointer = {
+			type: "mousePressed" as const,
+			x: 120,
+			y: 240,
+			buttons: 1,
+			timestampMs: Date.now(),
+		};
+		feed.command({ kind: "cursorPrepare", id: "cold", pointer });
+		await waitFor(() => feed.of("cursorPrepared").length === 1);
+		expect(bridge.callsOf("cursorPrepare")).toHaveLength(0);
+		feed.command({ kind: "cursorHide" });
+		feed.command({ kind: "cursorPrepare", id: "display-off", pointer });
+		await waitFor(() => feed.of("cursorPrepared").length === 2);
+		expect(bridge.callsOf("cursorPrepare")).toHaveLength(0);
+		expect(bridge.notified).toHaveLength(0);
+	});
+	it("waits for the page hit-test aperture before acknowledging pointer admission", async () => {
+		const { feed, bridge } = boot("chesscom-live");
+		let finish: (value: boolean) => void = () => {};
+		bridge.responses.set(
+			"cursorPrepare",
+			() =>
+				new Promise<boolean>((resolve) => {
+					finish = resolve;
+				})
+		);
+		feed.command({ kind: "cursorTo", x: 100, y: 200, down: false });
+		const pointer = {
+			type: "mouseMoved" as const,
+			x: 120,
+			y: 240,
+			buttons: 0,
+			timestampMs: Date.now(),
+		};
+		feed.command({ kind: "cursorPrepare", id: "pointer-one", pointer });
+		expect(feed.of("cursorPrepared")).toHaveLength(0);
+		expect(bridge.callsOf("cursorPrepare")[0]?.payload).toEqual({ x: 120, y: 240 });
+		finish(true);
+		await waitFor(() => feed.of("cursorPrepared").length === 1);
+		feed.command({ kind: "cursorPrepare", id: "pointer-late", pointer });
+		feed.command({ kind: "cursorHide" });
+		finish(true);
+		await sleep(0);
+		expect(feed.of("cursorPrepared")).toEqual([{ kind: "cursorPrepared", id: "pointer-one" }]);
+	});
 	it("relays `cursorTo` / `cursorHide` to the bridge without a round trip, and erases it on dispose", () => {
 		const { feed, bridge, handle } = boot("chesscom-live");
 		expect(bridge.notified).toHaveLength(0);

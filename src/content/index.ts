@@ -400,8 +400,11 @@ function bootContent(
 				boardCheck(cmd);
 				return;
 			case "cursorPrepare":
-				cursor.prepareVirtualPointer(cmd.pointer);
-				post({ kind: "cursorPrepared", id: cmd.id });
+				void virtualCursor.prepare(cmd.pointer).then((ready) => {
+					if (!ready || disposed) return;
+					cursor.prepareVirtualPointer(cmd.pointer);
+					post({ kind: "cursorPrepared", id: cmd.id });
+				});
 				return;
 			case "cursorProbe":
 				cursorProbe(cmd.id);

@@ -24,6 +24,7 @@
  */
 
 import { BRIDGE_KINDS, type PageBridge } from "@content/adapters/adapter";
+import { POINTER_CONTROL, type PreparedPointer } from "@core/constants/cdp";
 import type { GamePortCommand } from "@core/constants/messages";
 
 export interface VirtualCursor {
@@ -31,6 +32,8 @@ export interface VirtualCursor {
 	shown(): boolean;
 	/** Apply a port command; returns whether it was one of the mirror's. */
 	apply(cmd: GamePortCommand): boolean;
+	/** Wait until native hit testing can reach the announced virtual coordinate. */
+	prepare(pointer: PreparedPointer): Promise<boolean>;
 	/** Erase the mirror if it is drawn and accept nothing further. */
 	dispose(): void;
 }
@@ -60,6 +63,23 @@ export function createVirtualCursor(
 
 	const api: VirtualCursor = {
 		shown: () => drawn,
+		async prepare(pointer) {
+			if (disposed) return false;
+			// The first accepted point creates the mirror. A hidden mirror has no
+			// hit-test shield to open, including when its display setting is off.
+			if (!drawn) return true;
+			if (!bridge.isAvailable()) return false;
+			try {
+				const opened = await bridge.call<boolean>(
+					BRIDGE_KINDS.cursorPrepare,
+					{ x: pointer.x, y: pointer.y },
+					POINTER_CONTROL.prepareTimeoutMs
+				);
+				return opened === true && !disposed && drawn;
+			} catch {
+				return false;
+			}
+		},
 		apply(cmd) {
 			switch (cmd.kind) {
 				case "cursorTo":

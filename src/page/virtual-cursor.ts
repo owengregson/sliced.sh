@@ -8,12 +8,14 @@
  * events are *trusted*, so a page-side listener could not tell the hand's
  * pointer from the owner's.
  *
- * Presence rules (§13.3 rule 3): nothing is inserted until the first `cursorTo`
- * arrives; the one `<div>` it appends to `document.body` carries the per-build
- * class (which is also how the program finds it again — no `window` property),
- * no `id`, no `data-*` and no text; it is `pointer-events: none` with no
- * listener of any kind, so it can never be interacted with; `cursorHide`
- * removes it.
+ * Nothing is inserted until the first `cursorTo`. The pointer artwork and native
+ * hit-test shield use per-build classes and are removed together by `cursorHide`.
+ * The artwork cannot receive input. The transparent shield occupies the top layer
+ * where supported, intercepting native hover before page event handlers run.
+ * `cursorPrepare` briefly opens a two-pixel aperture at the next announced point;
+ * the acknowledged `cursorTo` seals it, with a timeout if dispatch fails. Page
+ * shortcuts remain available. This also suppresses stationary native CSS hover;
+ * admitted virtual pointer events still reach the site's handlers.
  *
  * Coordinates: `x` / `y` are viewport CSS px. `Input.dispatchMouseEvent` takes
  * its coordinates in exactly that space ("relative to the main frame's
@@ -39,6 +41,7 @@
  */
 
 import { BRIDGE_WIRE as W } from "@core/constants/bridge";
+import { POINTER_CONTROL } from "@core/constants/cdp";
 import { defineProgram, type Expression, js, type Statement } from "@pagescript";
 import cursorCss from "../../css/page-cursor.css?raw";
 import { defineHandle, KINDS, listen } from "./bridge-common";
@@ -46,10 +49,12 @@ import markup from "./templates/virtual-cursor.html?raw";
 
 const doc = js.id("document");
 
-/** Names of the two functions `cursorStatements` declares in the enclosing closure. */
+/** Function names shared by the bridge and standalone page program. */
 export const CURSOR = {
 	to: "curTo",
 	hide: "curHide",
+	prepare: "curPrepare",
+	seal: "curSeal",
 } as const;
 
 /**
@@ -66,6 +71,8 @@ export const CURSOR_ART = {
 	pressScale: 0.88,
 	/** Above the site's own layers; the element has no layout effect of its own. */
 	zIndex: 2_147_483_000,
+	/** A CSS-pixel aperture, not a board-sized passthrough. */
+	apertureRadiusPx: 1,
 } as const;
 
 const A = CURSOR_ART;
@@ -105,12 +112,107 @@ export interface CursorParams {
  *   `curFind()`     — the existing element (DOM lookup by class), or null
  *   `curEnsure()`   — that element, inserting it the first time
  *   `curTo(q)`      — move to a wire payload `{ x, y, d }`
- *   `curHide()`     — remove the element
+ *   `curPrepare(q)` — briefly open the announced native hit-test coordinate
+ *   `curSeal()`     — close the input aperture
+ *   `curHide()`     — remove the artwork, stylesheet and shield
  */
 export function cursorStatements(p: CursorParams): Statement[] {
 	const el = js.id("el");
 	const host = js.id("host");
 	const q = js.id("q");
+	const shield = js.id("curShield");
+	const shieldState = js.let_("curShield", js.nil());
+	const shieldFind = js.const_(
+		"curFindShield",
+		js.arrow([], js.call(js.member(doc, "querySelector"), joined([js.str("."), p.cls, js.str("h")])))
+	);
+	const shieldTimer = js.let_("curShieldTimer", js.nil());
+	const shieldSeal = js.const_(
+		CURSOR.seal,
+		js.arrow(
+			[],
+			[
+				js.expr(js.call(js.id("clearTimeout"), js.id("curShieldTimer"))),
+				js.assign(js.id("curShieldTimer"), js.nil()),
+				js.assign(shield, js.call(js.id("curFindShield"))),
+				js.if_(shield, [js.assign(js.member(shield, "style", "clipPath"), js.str("none"))]),
+			]
+		)
+	);
+	const curPrepare = js.const_(
+		CURSOR.prepare,
+		js.arrow(
+			["q"],
+			[
+				js.if_(js.or(js.not(q), js.not(js.call(js.id("curFind")))), [js.ret(js.bool(false))]),
+				js.if_(
+					js.not(
+						js.and(
+							js.call(js.member(js.id("Number"), "isFinite"), js.member(q, W.x)),
+							js.call(js.member(js.id("Number"), "isFinite"), js.member(q, W.y))
+						)
+					),
+					[js.ret(js.bool(false))]
+				),
+				js.expr(js.call(js.id(CURSOR.seal))),
+				js.if_(js.not(shield), [
+					js.assign(shield, js.call(js.member(doc, "createElement"), js.str("div"))),
+					js.expr(js.call(js.member(shield, "setAttribute"), js.str("class"), add(p.cls, js.str("h")))),
+					js.expr(
+						js.call(
+							js.member(shield, "setAttribute"),
+							js.str("style"),
+							js.str(
+								`position:fixed;inset:0;width:auto;height:auto;margin:0;padding:0;border:0;pointer-events:auto;cursor:none;z-index:${A.zIndex - 1};background:transparent;`
+							)
+						)
+					),
+					js.expr(js.call(js.member(doc, "body", "appendChild"), shield)),
+					js.if_(js.op(js.typeof_(js.member(shield, "showPopover")), "===", js.str("function")), [
+						js.expr(js.call(js.member(shield, "setAttribute"), js.str("popover"), js.str("manual"))),
+						js.try_([js.expr(js.call(js.member(shield, "showPopover")))], "error", [
+							js.expr(js.call(js.member(shield, "removeAttribute"), js.str("popover"))),
+						]),
+					]),
+				]),
+				js.const_("x0", js.op(js.member(q, W.x), "-", js.num(A.apertureRadiusPx))),
+				js.const_("x1", js.op(js.member(q, W.x), "+", js.num(A.apertureRadiusPx))),
+				js.const_("y0", js.op(js.member(q, W.y), "-", js.num(A.apertureRadiusPx))),
+				js.const_("y1", js.op(js.member(q, W.y), "+", js.num(A.apertureRadiusPx))),
+				js.assign(
+					js.member(shield, "style", "clipPath"),
+					joined([
+						js.str("polygon(evenodd,0 0,100% 0,100% 100%,0 100%,0 0,"),
+						text(js.id("x0")),
+						js.str("px "),
+						text(js.id("y0")),
+						js.str("px,"),
+						text(js.id("x1")),
+						js.str("px "),
+						text(js.id("y0")),
+						js.str("px,"),
+						text(js.id("x1")),
+						js.str("px "),
+						text(js.id("y1")),
+						js.str("px,"),
+						text(js.id("x0")),
+						js.str("px "),
+						text(js.id("y1")),
+						js.str("px,"),
+						text(js.id("x0")),
+						js.str("px "),
+						text(js.id("y0")),
+						js.str("px)"),
+					])
+				),
+				js.assign(
+					js.id("curShieldTimer"),
+					js.call(js.id("setTimeout"), js.id(CURSOR.seal), js.num(POINTER_CONTROL.expiresMs))
+				),
+				js.ret(js.bool(true)),
+			]
+		)
+	);
 	const curBase = js.const_(
 		"curBase",
 		joined([js.str(STYLE_HEAD), text(p.fadeMs), js.str(STYLE_TAIL)])
@@ -168,6 +270,8 @@ export function cursorStatements(p: CursorParams): Statement[] {
 					])
 				),
 				js.assign(js.member(el, "style", "opacity"), js.str("1")),
+				js.expr(js.call(js.id(CURSOR.prepare), q)),
+				js.expr(js.call(js.id(CURSOR.seal))),
 			]
 		)
 	);
@@ -177,24 +281,40 @@ export function cursorStatements(p: CursorParams): Statement[] {
 			[],
 			[
 				js.const_("el", js.call(js.id("curFind"))),
+				js.expr(js.call(js.id(CURSOR.seal))),
 				js.if_(el, [js.expr(js.call(js.member(el, "remove")))]),
+				js.if_(shield, [js.expr(js.call(js.member(shield, "remove")))]),
+				js.assign(shield, js.nil()),
 			]
 		)
 	);
-	return [curBase, curFind, curEnsure, curTo, curHide];
+	return [
+		shieldState,
+		shieldTimer,
+		shieldFind,
+		shieldSeal,
+		curBase,
+		curFind,
+		curEnsure,
+		curPrepare,
+		curTo,
+		curHide,
+	];
 }
 
 /** `curTo(payload)` / `curHide()` as statements. */
 export const cursor = {
 	to: (payload: Expression): Statement => js.expr(js.call(js.id(CURSOR.to), payload)),
 	hide: (): Statement => js.expr(js.call(js.id(CURSOR.hide))),
+	prepare: (payload: Expression): Expression => js.call(js.id(CURSOR.prepare), payload),
 };
 
 /**
- * Standalone mirror program: listens for `cursorTo` / `cursorHide` from the
+ * Standalone mirror program: listens for the pointer commands from the
  * content script and answers neither — the stream is fire-and-forget, so a
  * reply per point would double the traffic for nothing. It therefore declares
- * no `post` at all; `peer` is the seed-derived content-side direction token.
+ * no `post` at all; production request acknowledgments live in the chess.com
+ * bridge. `peer` is the seed-derived content-side direction token.
  */
 export const virtualCursor = defineProgram({
 	name: "virtual-cursor",
@@ -209,6 +329,7 @@ export const virtualCursor = defineProgram({
 			defineHandle([
 				{ kind: KINDS.cursorTo, body: [cursor.to(js.id("q"))] },
 				{ kind: KINDS.cursorHide, body: [cursor.hide()] },
+				{ kind: KINDS.cursorPrepare, body: [js.expr(cursor.prepare(js.id("q")))] },
 			]),
 			listen(p.peer),
 		]),

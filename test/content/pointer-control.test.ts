@@ -88,6 +88,25 @@ function setup() {
 }
 
 describe("virtual page pointer ownership", () => {
+	it("accounts for announced input before the first mirrored point and with cursor display disabled", () => {
+		const { tracker, fire, pointer, seen, samples } = setup();
+		const press = pointer("mousePressed", 1);
+		tracker.prepareVirtualPointer(press);
+		expect(tracker.virtualPointerDelivered(press)).toBe(false);
+		expect(fire("pointerdown", { buttons: 1 }).defaultPrevented).toBe(false);
+		fire("mousedown", { buttons: 1 });
+		expect(tracker.virtualPointerDelivered(press)).toBe(true);
+		const release = pointer("mouseReleased");
+		tracker.prepareVirtualPointer(release);
+		fire("pointerup");
+		fire("mouseup");
+		fire("click");
+		expect(tracker.virtualPointerDelivered(release)).toBe(true);
+		expect(seen).toEqual(["pointerdown", "mousedown", "pointerup", "mouseup", "click"]);
+		expect(samples).toHaveLength(0);
+		expect(fire("pointermove", { x: 10 }).defaultPrevented).toBe(false);
+		expect(samples).toHaveLength(1);
+	});
 	it("recalibrates event timestamps after a wall-clock jump without needing a page reload", () => {
 		const { tracker, fire, pointer, shiftClock } = setup();
 		tracker.setVirtualActive(true);

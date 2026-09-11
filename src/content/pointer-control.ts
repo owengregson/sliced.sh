@@ -85,7 +85,6 @@ export function createPointerControl(win: Window, now: () => number): PointerCon
 			);
 		},
 		filter(event) {
-			if (!active) return false;
 			const mouse = event as MouseEvent;
 			// Keyboard and accessibility activation has no pointing device; keep page shortcuts usable.
 			if (
@@ -110,6 +109,9 @@ export function createPointerControl(win: Window, now: () => number): PointerCon
 				remaining.set(event.type, count - 1);
 				return true;
 			}
+			// Delivery accounting also applies before the first mirrored point and
+			// when its display is off. Only unmatched input depends on isolation.
+			if (!active) return false;
 			event.preventDefault();
 			event.stopImmediatePropagation();
 			return false;

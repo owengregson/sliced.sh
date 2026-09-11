@@ -47,6 +47,36 @@ const to = (x: number, y: number, down = false): GamePortCommand => ({
 const hide: GamePortCommand = { kind: "cursorHide" };
 
 describe("content virtual-cursor relay", () => {
+	it("admits input without a mirror, waits for its active aperture, and rejects late replies after hiding", async () => {
+		const bridge = fakeBridge();
+		let finish: (value: boolean) => void = () => {};
+		bridge.call = <T>() =>
+			new Promise<T>((resolve) => {
+				finish = (value) => resolve(value as T);
+			});
+		const mirror = createVirtualCursor(bridge);
+		const pointer = {
+			type: "mouseMoved" as const,
+			x: 10,
+			y: 20,
+			buttons: 0,
+			timestampMs: Date.now(),
+		};
+		expect(await mirror.prepare(pointer)).toBe(true);
+		mirror.apply(to(10, 20));
+		const admitted = mirror.prepare(pointer);
+		finish(true);
+		expect(await admitted).toBe(true);
+		const stale = mirror.prepare(pointer);
+		mirror.apply(hide);
+		finish(true);
+		expect(await stale).toBe(false);
+		mirror.apply(to(10, 20));
+		bridge.call = () => Promise.reject(new Error("missing bridge"));
+		expect(await mirror.prepare(pointer)).toBe(false);
+		mirror.dispose();
+		expect(await mirror.prepare(pointer)).toBe(false);
+	});
 	it("claims the two commands and nothing else", () => {
 		const bridge = fakeBridge();
 		const mirror = createVirtualCursor(bridge);

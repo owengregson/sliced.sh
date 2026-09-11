@@ -249,6 +249,8 @@ export const BRIDGE_KINDS = {
 	 */
 	cursorTo: "cursorTo",
 	cursorHide: "cursorHide",
+	/** Request/reply: open only the next virtual point through the native hit-test shield. */
+	cursorPrepare: "cursorPrepare",
 } as const;
 
 /** Normalised `getState` / `move` / `state` payload from the bridge. */

@@ -301,6 +301,18 @@ describe("chesscom-bridge — behaviour", () => {
 		expect(win.document.querySelector(`.${cls}`)).toBeNull();
 		expect(posts.length).toBe(before);
 	});
+	it("acknowledges an opened input aperture only while the virtual pointer exists", async () => {
+		const { win, posts } = await boot();
+		sendToPage(win, command("cursorPrepare", "closed", { x: 120, y: 240 }));
+		expect(reply(posts, "closed")?.p).toBe(false);
+		sendToPage(win, command("cursorTo", "to", { x: 120, y: 240, d: false }));
+		sendToPage(win, command("cursorPrepare", "opened", { x: 125, y: 245 }));
+		expect(reply(posts, "opened")?.p).toBe(true);
+		const shield = win.document.querySelector(
+			`.${TOKENS_FOR_SEED.cursorClass}h`
+		) as HTMLElement | null;
+		expect(shield?.style.clipPath).toContain("124px 244px");
+	});
 	it("re-attaches when the SPA replaces the board element and posts load", async () => {
 		const { win, posts, game } = await boot();
 		const fresh = fakeGame("8/8/8/8/8/8/8/K6k w - - 0 1");

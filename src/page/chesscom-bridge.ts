@@ -301,6 +301,7 @@ export const chesscomBridge = defineProgram({
 					// command per dispatched point, so a reply each would double the traffic.
 					{ kind: KINDS.cursorTo, body: [cursor.to(q)] },
 					{ kind: KINDS.cursorHide, body: [cursor.hide()] },
+					{ kind: KINDS.cursorPrepare, body: [post(KINDS.cursorPrepare, i, cursor.prepare(q))] },
 				],
 				[
 					// the SPA may have replaced the board since we attached

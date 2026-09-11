@@ -165,4 +165,33 @@ describe("virtual-cursor (the page-realm pointer mirror)", () => {
 		expect(() => sendToPage(win, hide)).not.toThrow();
 		expect(el(win)).toBeNull();
 	});
+
+	it("keeps one sealed native hit-test shield and removes it on hide, including repeated evaluation", () => {
+		const { win } = boot();
+		sendToPage(win, to(100, 200));
+		const shield = () => win.document.querySelector(`.${cursorClass}h`) as HTMLElement | null;
+		expect(shield()?.style.pointerEvents).toBe("auto");
+		expect(shield()?.style.clipPath).toBe("none");
+		runProgram(bound, win);
+		sendToPage(win, to(200, 300));
+		expect(win.document.querySelectorAll(`.${cursorClass}h`)).toHaveLength(1);
+		sendToPage(win, command("cursorPrepare", "prepare", { x: 210, y: 310 }));
+		expect(shield()?.style.clipPath).toContain("209px 309px");
+		sendToPage(win, to(210, 310));
+		expect(shield()?.style.clipPath).toBe("none");
+		sendToPage(win, command("cursorHide", "hide"));
+		expect(win.document.body.children).toHaveLength(0);
+		sendToPage(win, command("cursorPrepare", "late", { x: 210, y: 310 }));
+		expect(win.document.body.children).toHaveLength(0);
+	});
+
+	it("seals an aperture when dispatch never acknowledges it", async () => {
+		const { win } = boot();
+		sendToPage(win, to(100, 200));
+		sendToPage(win, command("cursorPrepare", "prepare", { x: 150, y: 250 }));
+		const shield = win.document.querySelector(`.${cursorClass}h`) as HTMLElement | null;
+		expect(shield?.style.clipPath).toContain("149px 249px");
+		await new Promise((resolve) => setTimeout(resolve, 280));
+		expect(shield?.style.clipPath).toBe("none");
+	});
 });
