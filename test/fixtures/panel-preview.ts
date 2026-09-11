@@ -83,6 +83,7 @@ snapshot.settings = normalizeSettings({
 		reducedMotion: query.get("motion") === "reduced" ? "on" : "system",
 	},
 });
+if (query.get("rating") === "fixed") snapshot.settings.strength.matchOpponentRating = false;
 snapshot.session.clocks = { w: { ms: 192000, running: false }, b: { ms: 178000, running: false } };
 snapshot.session.myColor = "w";
 snapshot.opponent = {
@@ -209,6 +210,13 @@ if (query.get("clocks") === "running" && snapshot.session.clocks) {
 if (query.get("eval") === "off") snapshot.settings.display.evalBar = false;
 if (query.has("opponent")) snapshot.opponent.name = query.get("opponent") ?? "";
 const listeners = new Set<SnapshotListener>();
+local[LOCAL_KEYS.settings] = snapshot.settings;
+storageListeners.add((changes) => {
+	const change = changes[LOCAL_KEYS.settings] as { newValue?: unknown } | undefined;
+	if (!change) return;
+	snapshot = { ...snapshot, settings: normalizeSettings(change.newValue) };
+	for (const listener of listeners) listener(snapshot);
+});
 const store: PanelStore = {
 	get snapshot() {
 		return state === "loading" ? null : snapshot;

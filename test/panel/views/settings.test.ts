@@ -108,6 +108,12 @@ const noRouter: Router = {
 	current: "settings",
 };
 
+function fixedRating(snapshot: PanelSnapshot = makeSnapshot()): PanelSnapshot {
+	snapshot.settings = normalizeSettings(snapshot.settings);
+	snapshot.settings.strength.matchOpponentRating = false;
+	return snapshot;
+}
+
 async function mountSettings(
 	snapshot: PanelSnapshot = makeSnapshot(),
 	options: { view?: View } = {}
@@ -243,7 +249,7 @@ describe("settings view · rows", () => {
 	});
 
 	it("changing a row writes the clamped value through setSettings and reflects the stored result", async () => {
-		const h = await mountSettings();
+		const h = await mountSettings(fixedRating());
 		// Toggle → boolean patch.
 		click(q(row(h.root, "strength.useOpeningBook"), "[role=switch]"));
 		await dom.tick(0);
@@ -377,8 +383,29 @@ describe("settings view · playing sessions", () => {
 });
 
 describe("settings view · live interaction", () => {
+	it("disables and dims the fixed target while matching the opponent, retaining its saved value", async () => {
+		const h = await mountSettings();
+		const target = row(h.root, "strength.targetElo");
+		const thumb = q(target, "[role=slider]");
+		expect(h.root.classList.contains("sl-settings--matched-rating")).toBe(true);
+		expect(thumb.getAttribute("aria-disabled")).toBe("true");
+		expect(q<HTMLElement>(target, ".sl-settings-row__help").hidden).toBe(true);
+		key(thumb, "keydown", { key: "End" });
+		expect(h.patches).toHaveLength(0);
+		click(q(row(h.root, "strength.matchOpponentRating"), "[role=switch]"));
+		await dom.tick(0);
+		expect(thumb.getAttribute("aria-disabled")).toBeNull();
+		expect(h.root.classList.contains("sl-settings--matched-rating")).toBe(false);
+		key(thumb, "keydown", { key: "End" });
+		await dom.tick(0);
+		expect(h.settings().strength.targetElo).toBe(LIMITS.eloMax);
+		click(q(row(h.root, "strength.matchOpponentRating"), "[role=switch]"));
+		await dom.tick(0);
+		expect(thumb.getAttribute("aria-disabled")).toBe("true");
+		expect(h.settings().strength.targetElo).toBe(LIMITS.eloMax);
+	});
 	it("keeps live settings writable through game transitions", async () => {
-		const h = await mountSettings(makeSnapshot({ state: "live:opponent-turn" }));
+		const h = await mountSettings(fixedRating(makeSnapshot({ state: "live:opponent-turn" })));
 		expect(h.root.getAttribute("aria-disabled")).toBeNull();
 		expect(h.root.classList.contains("sl-settings--locked")).toBe(false);
 		const book = q(row(h.root, "strength.useOpeningBook"), "[role=switch]");
@@ -387,7 +414,7 @@ describe("settings view · live interaction", () => {
 		await dom.tick(0);
 		expect(h.patches).toEqual([{ strength: { useOpeningBook: false } }]);
 		for (const state of ["game-over", "live:my-turn:analysing"] as const) {
-			h.store.emit(makeSnapshot({ state }));
+			h.store.emit(fixedRating(makeSnapshot({ state })));
 			await dom.tick(0);
 			expect(h.root.getAttribute("aria-disabled")).toBeNull();
 			expect(
@@ -479,7 +506,7 @@ describe("settings view · strength", () => {
 		expect(strengthLabel(1200)).toBe("Club 1200");
 		expect(strengthLabel(2650)).toBe("Elite 2650");
 
-		const h = await mountSettings();
+		const h = await mountSettings(fixedRating());
 		const slider = row(h.root, "strength.targetElo");
 		const thumb = q(slider, "[role=slider]");
 		expect(thumb.getAttribute("aria-valuetext")).toBe("Expert 1500");

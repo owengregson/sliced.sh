@@ -70,6 +70,8 @@ export const STRENGTH_UI = {
 	sliderStep: 50,
 	/** Begin the restrained strength glow in the top engine-strength range. */
 	glowElo: 3_200,
+	/** Minor gray divisions; the network boundary remains the taller primary marker. */
+	sliderTickStep: 200,
 } as const;
 
 /** Task 24 — Live view height strategy (Appendix F §8.2). */

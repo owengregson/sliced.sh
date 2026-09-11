@@ -501,6 +501,7 @@ export function createSettingsView(overrides: Partial<SettingsViewDeps> = {}): V
 
 			function disabledFor(path: SettingsLeafPath): boolean {
 				if (locked) return true;
+				if (path === "strength.targetElo") return settings.strength.matchOpponentRating;
 				if (
 					path.startsWith("automation.autoQueueSession") ||
 					path.startsWith("automation.autoQueueBreak")
@@ -514,6 +515,7 @@ export function createSettingsView(overrides: Partial<SettingsViewDeps> = {}): V
 					control.setValue(settings);
 					control.setDisabled(disabledFor(path));
 				}
+				root.classList.toggle("sl-settings--matched-rating", settings.strength.matchOpponentRating);
 			}
 
 			function applyLock(): void {

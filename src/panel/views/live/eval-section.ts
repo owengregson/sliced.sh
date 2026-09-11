@@ -1,7 +1,6 @@
 /**
- * Eval section (Appendix F §4.4 items 1–3, §5.5, §5.9): the eval rail spanning the two player
- * rows, the opponent/your rows mirrored around the move card like a board (rail flipped when
- * you are Black), clocks with the active caret and the < 20 s danger, the eval numeral with
+ * Eval section: a fixed horizontal White-relative rail beneath the two player clocks,
+ * clocks with the active caret and the < 20 s danger, the eval numeral with
  * its sign and `M5` / `−M3` mate form, and the fixed-width WDL groups. Engine scores arrive
  * from the side to move (`Recommendation.eval`, `.wdl`); everything is shown from White's
  * point of view through `toWhitePov` (Task 13).
@@ -134,11 +133,10 @@ export function createEvalSection(options: EvalSectionOptions): EvalSectionHandl
 		const snap = state.snapshot;
 		const myColor: Color = snap.session.myColor ?? "w";
 		const theirs = other(myColor);
-		// Rows mirror the board: opponent on top, you at the bottom; the rail's white end is at
-		// the row of the white player (§4.4 item 1).
+		// The horizontal rail is always White on the left and Black on the right, matching
+		// the White-relative score and WDL regardless of board orientation.
 		renderRow(opponent, theirs, state);
 		renderRow(me, myColor, state);
-		bar.el.classList.toggle("sl-evalbar--flipped", myColor === "b");
 		opponent.name.textContent =
 			snap.opponent?.name ?? COPY.eval[theirs === "w" ? "whiteName" : "blackName"];
 		opponent.name.title = opponent.name.textContent;

@@ -7,7 +7,7 @@
 
 import { STRENGTH_UI, UI_TIMINGS } from "@core/constants/ui";
 import { clamp } from "@core/util/clamp";
-import { playUiSound } from "../sounds";
+import { playSliderSound } from "../sounds";
 import { instantiate, part } from "../template";
 import html from "../views/templates/components/slider.html?raw";
 
@@ -64,6 +64,7 @@ export function createSlider(host: HTMLElement | null, options: SliderOptions): 
 	const scale = part(el, ".sl-slider__scale");
 	const hint = part(el, ".sl-slider__hint");
 	const divider = part(el, ".sl-slider__divider");
+	const ticks = part(el, ".sl-slider__ticks");
 	const boundary = part(el, ".sl-slider__boundary");
 	if (options.threshold) {
 		divider.hidden = false;
@@ -78,6 +79,7 @@ export function createSlider(host: HTMLElement | null, options: SliderOptions): 
 	let value = options.value;
 	let disabled = options.disabled ?? false;
 	let dragging: number | null = null;
+	let tickRange = "";
 
 	if (options.ariaLabel) thumb.setAttribute("aria-label", options.ariaLabel);
 	if (options.scale?.length) {
@@ -98,6 +100,23 @@ export function createSlider(host: HTMLElement | null, options: SliderOptions): 
 
 	function render(): void {
 		const pct = max > min ? ((value - min) / (max - min)) * 100 : 0;
+		const range = `${min}:${max}`;
+		if (options.strength && range !== tickRange) {
+			tickRange = range;
+			ticks.replaceChildren();
+			for (
+				let mark = Math.ceil(min / STRENGTH_UI.sliderTickStep) * STRENGTH_UI.sliderTickStep;
+				mark <= max;
+				mark += STRENGTH_UI.sliderTickStep
+			) {
+				if (mark < min) continue;
+				const tick = document.createElement("span");
+				tick.className = "sl-slider__tick";
+				tick.style.left = `${(((mark - min) / (max - min)) * 100).toFixed(3)}%`;
+				tick.dataset.value = String(mark);
+				ticks.append(tick);
+			}
+		}
 		if (options.threshold) {
 			const thresholdPct =
 				max > min ? clamp((options.threshold.value - min) / (max - min), 0, 1) * 100 : 0;
@@ -108,6 +127,14 @@ export function createSlider(host: HTMLElement | null, options: SliderOptions): 
 		el.classList.toggle("sl-slider--strength", options.strength === true);
 		el.classList.toggle("sl-slider--hot", options.strength === true && value >= STRENGTH_UI.glowElo);
 		el.style.setProperty("--sl-slider-heat", String(clamp(pct / 100, 0, 1)));
+		el.style.setProperty(
+			"--sl-slider-energy",
+			String(
+				max > STRENGTH_UI.glowElo
+					? clamp((value - STRENGTH_UI.glowElo) / (max - STRENGTH_UI.glowElo), 0, 1)
+					: 0
+			)
+		);
 		thumb.style.left = `${pct.toFixed(3)}%`;
 		thumb.setAttribute("aria-valuemin", String(min));
 		thumb.setAttribute("aria-valuemax", String(max));
@@ -118,7 +145,7 @@ export function createSlider(host: HTMLElement | null, options: SliderOptions): 
 		valueEl.textContent = format(value);
 		const danger = options.danger?.(value) === true;
 		el.classList.toggle("sl-slider--danger", danger);
-		hint.hidden = !(danger && options.dangerHint);
+		hint.hidden = disabled || !(danger && options.dangerHint);
 		hint.textContent = danger && options.dangerHint ? options.dangerHint : "";
 		el.classList.toggle("sl-slider--disabled", disabled);
 		thumb.setAttribute("tabindex", disabled ? "-1" : "0");
@@ -131,6 +158,7 @@ export function createSlider(host: HTMLElement | null, options: SliderOptions): 
 		const changed = snapped !== value;
 		value = snapped;
 		render();
+		if (changed && dragging !== null && max > min) playSliderSound((value - min) / (max - min));
 		if (changed || commit) options.onChange(value, commit);
 	}
 
@@ -194,7 +222,7 @@ export function createSlider(host: HTMLElement | null, options: SliderOptions): 
 		dragging = null;
 		el.classList.remove("sl-slider--active");
 		set(valueAt(event.clientX), true);
-		playUiSound("sliderRelease");
+		if (max > min) playSliderSound((value - min) / (max - min), "release");
 	};
 	const onPointerCancel = (event: PointerEvent): void => {
 		if (dragging === null || event.pointerId !== dragging) return;
@@ -222,6 +250,15 @@ export function createSlider(host: HTMLElement | null, options: SliderOptions): 
 			if (patch.min !== undefined) min = patch.min;
 			if (patch.max !== undefined) max = patch.max;
 			if (patch.disabled !== undefined) disabled = patch.disabled;
+			if (disabled && dragging !== null) {
+				try {
+					track.releasePointerCapture?.(dragging);
+				} catch {
+					// A removed or unsupported pointer capture has no remaining drag to release.
+				}
+				dragging = null;
+				el.classList.remove("sl-slider--active");
+			}
 			if (patch.value !== undefined) value = snap(patch.value);
 			else value = snap(value);
 			render();

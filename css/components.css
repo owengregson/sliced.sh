@@ -685,41 +685,37 @@
 .sl-evalbar {
 	position: relative;
 	display: flex;
-	flex-direction: column;
 	align-items: center;
-	width: var(--sl-size-rail);
-	height: 100%;
-	min-height: var(--sl-space-16);
+	width: 100%;
+	height: var(--sl-space-6);
 }
 
-/* track 8 px (size.rail), radius.full, eval-black; white fills from the bottom */
+/* White fills from the left; the center marker is fixed at an equal position. */
 .sl-evalbar__track {
 	position: relative;
-	width: var(--sl-size-rail);
+	width: 100%;
+	height: 100%;
 	flex: 1 1 auto;
-	border-radius: var(--sl-radius-full);
+	border-radius: var(--sl-radius-xs);
 	background: var(--sl-color-eval-black);
 	overflow: hidden;
 }
 
 .sl-evalbar__white {
 	position: absolute;
-	inset: auto 0 0 0;
-	height: 50%;
+	inset: 0 auto 0 0;
+	width: 50%;
+	height: 100%;
 	background: var(--sl-color-eval-white);
-	transition: height var(--sl-motion-duration-6) var(--sl-motion-easing-standard);
-}
-
-.sl-evalbar--flipped .sl-evalbar__white {
-	inset: 0 0 auto 0;
+	transition: width var(--sl-motion-duration-6) var(--sl-motion-easing-standard);
 }
 
 .sl-evalbar__divider {
 	position: absolute;
-	left: 0;
-	right: 0;
-	top: 50%;
-	height: var(--sl-hairline);
+	left: 50%;
+	top: 0;
+	bottom: 0;
+	width: var(--sl-hairline);
 	background: var(--sl-color-eval-divider);
 	pointer-events: none;
 }
@@ -733,21 +729,16 @@
 }
 
 .sl-evalbar__mate[data-side="white"] {
-	bottom: calc(100% + var(--sl-space-1));
+	left: var(--sl-space-2);
+	transform: none;
+	color: var(--sl-color-eval-black);
 }
 
 .sl-evalbar__mate[data-side="black"] {
-	top: calc(100% + var(--sl-space-1));
-}
-
-.sl-evalbar--flipped .sl-evalbar__mate[data-side="white"] {
-	bottom: auto;
-	top: calc(100% + var(--sl-space-1));
-}
-
-.sl-evalbar--flipped .sl-evalbar__mate[data-side="black"] {
-	top: auto;
-	bottom: calc(100% + var(--sl-space-1));
+	left: auto;
+	right: var(--sl-space-2);
+	transform: none;
+	color: var(--sl-color-eval-white);
 }
 
 /* jumps > 30 % use duration.4 so blunders register */

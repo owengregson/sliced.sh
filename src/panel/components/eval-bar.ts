@@ -103,7 +103,7 @@ export function createEvalBar(host: HTMLElement | null): EvalBarHandle {
 
 	function paint(share: number, jump: boolean): void {
 		const pct = Math.round(share * PERCENT);
-		white.style.height = `${pct}%`;
+		white.style.width = `${pct}%`;
 		el.setAttribute("aria-valuenow", String(pct));
 		el.classList.toggle("sl-evalbar--jump", jump);
 		lastShare = share;

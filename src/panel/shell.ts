@@ -30,7 +30,7 @@ import { mountIcons } from "./icons-mount";
 import { installPanelKeybinds } from "./keybinds";
 import { resetEscapeHandlers, viewSwitchIndex } from "./keys";
 import { isHandsOff, isLiveGame, PanelRouter } from "./router";
-import { setUiSoundsEnabled } from "./sounds";
+import { playUiSound, setUiSoundsEnabled } from "./sounds";
 import type { PanelStore } from "./store";
 import { instantiate, part } from "./template";
 import { createThemeController, type MatchMedia, type ThemeController } from "./theme";
@@ -155,7 +155,10 @@ export function bootShell(root: HTMLElement, options: ShellOptions): PanelShell 
 		],
 		value: ui.tab,
 		ariaLabel: COPY.nav.viewSwitch,
-		onChange: (tab) => setTab(tab),
+		onChange: (tab) => {
+			playUiSound("navigate");
+			setTab(tab);
+		},
 	});
 	mountIcons(root);
 

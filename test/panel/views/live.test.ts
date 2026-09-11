@@ -130,7 +130,7 @@ describe("telemetry, hand and executor pills (§10.4, §9.7)", () => {
 });
 
 describe("rows, clocks and eval (§4.4 items 1–3, §5.5, §5.9)", () => {
-	it("mirrors the rows by myColor and flips the rail", async () => {
+	it("mirrors player colors while the horizontal evaluation stays White-relative", async () => {
 		h = await mountLive(dom.sim, liveSnapshot({ myColor: "w" }));
 		const rows = h.qa(".sl-live__row");
 		expect(rows.map((r) => r.dataset.row)).toEqual(["opponent", "me"]);
@@ -149,7 +149,7 @@ describe("rows, clocks and eval (§4.4 items 1–3, §5.5, §5.9)", () => {
 		);
 		const flipped = h.qa(".sl-live__row");
 		expect(flipped.map((r) => r.dataset.color)).toEqual(["w", "b"]);
-		expect(h.q(".sl-evalbar").classList.contains("sl-evalbar--flipped")).toBe(true);
+		expect(h.q(".sl-evalbar").classList.contains("sl-evalbar--flipped")).toBe(false);
 	});
 
 	it("active clock styling, caret on the side to move, <20 s danger, unknown clocks", async () => {
@@ -523,7 +523,7 @@ describe("lines (§5.7)", () => {
 });
 
 describe("strength card (§4.4 item 7, §5.12)", () => {
-	it("shows the active derived Elo while the popover edits the configured target", async () => {
+	it("shows active derived Elo and enables the fixed target only after opponent matching is disabled", async () => {
 		h = await mountLive(dom.sim, idleSnapshot());
 		expect(h.q(".sl-live__strength-elo").textContent).toBe("1893");
 		expect(h.q(".sl-live__strength-label").textContent).toBe(
@@ -541,6 +541,13 @@ describe("strength card (§4.4 item 7, §5.12)", () => {
 			String(LIMITS.nnueSmallEloMax)
 		);
 		expect(thumb?.getAttribute("aria-valuenow")).toBe("1500");
+		expect(thumb?.getAttribute("aria-disabled")).toBe("true");
+		if (thumb) key(thumb, "keydown", { key: "ArrowRight", code: "ArrowRight" });
+		expect(thumb?.getAttribute("aria-valuenow")).toBe("1500");
+		const manual = idleSnapshot();
+		manual.settings.strength.matchOpponentRating = false;
+		h.store.emit(manual);
+		expect(thumb?.getAttribute("aria-disabled")).toBeNull();
 		if (thumb) key(thumb, "keydown", { key: "ArrowRight", code: "ArrowRight" });
 		await dom.tick(0);
 		expect((await chromeLocalGet(LOCAL_KEYS.settings))?.strength.targetElo).toBe(1550);

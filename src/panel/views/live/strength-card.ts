@@ -107,8 +107,9 @@ export function createStrengthCard(host: HTMLElement): StrengthCardHandle {
 			ariaLabel: COPY_LIVE.strength.rating,
 			threshold: STRENGTH_NETWORK_THRESHOLD,
 			strength: true,
+			disabled: strength.matchOpponentRating,
 			onChange: (value, commit) => {
-				if (commit) write({ strength: { targetElo: value } });
+				if (commit && !strength?.matchOpponentRating) write({ strength: { targetElo: value } });
 			},
 		});
 		chips = createChipGroup<PersonaId>(part(content, ".sl-live__strength-personas"), {
@@ -165,7 +166,7 @@ export function createStrengthCard(host: HTMLElement): StrengthCardHandle {
 			closePopover();
 		} else open.removeAttribute("aria-disabled");
 		// The open popover follows external changes (another view, the SW's normalisation).
-		slider?.update({ value: strength.targetElo });
+		slider?.update({ value: strength.targetElo, disabled: strength.matchOpponentRating });
 		chips?.update({ value: strength.persona });
 		segment?.update({ value: strength.selectionMode });
 	}

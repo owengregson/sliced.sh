@@ -2,12 +2,20 @@
 // bubble text from the human-label function, danger zone hint.
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { LIMITS } from "@core/constants";
+import { SLIDER_SOUND, SOUNDS } from "@core/constants/sounds";
 import { createSlider, type SliderHandle } from "@panel/components/slider";
 import { COPY } from "@panel/copy";
+import {
+	createSoundPlayer,
+	type SoundPlayer,
+	type SoundSource,
+	setUiSoundPlayer,
+} from "@panel/sounds";
 import { bootPanelDom, key, mount, type PanelDom, pointer } from "../dom";
 
 let dom: PanelDom;
 let handle: SliderHandle | null = null;
+let previousSoundPlayer: SoundPlayer | null = null;
 
 beforeEach(async () => {
 	dom = await bootPanelDom();
@@ -15,6 +23,8 @@ beforeEach(async () => {
 afterEach(async () => {
 	handle?.dispose();
 	handle = null;
+	if (previousSoundPlayer) setUiSoundPlayer(previousSoundPlayer);
+	previousSoundPlayer = null;
 	await dom.teardown();
 });
 
@@ -108,8 +118,16 @@ describe("createSlider", () => {
 		expect(handle.value).toBe(1000);
 	});
 
-	it("pointer drag on the track tracks the pointer and commits on release", () => {
+	it("pointer drag tracks and commits the value with a final pitch-matched release tick", async () => {
 		const seen: Array<[number, boolean]> = [];
+		const samples: Array<SoundSource & { url: string }> = [];
+		const soundPlayer = createSoundPlayer((url) => {
+			const source = { url, play() {}, pause() {} };
+			samples.push(source);
+			return source;
+		});
+		soundPlayer.setEnabled(true);
+		previousSoundPlayer = setUiSoundPlayer(soundPlayer);
 		const el = mount(document.createElement("div"));
 		handle = createSlider(el, {
 			min: 0,
@@ -127,6 +145,7 @@ describe("createSlider", () => {
 		pointer(track, "pointerdown", { pointerId: 2, clientX: 150, isPrimary: true });
 		expect(handle.value).toBe(25);
 		expect(handle.el.classList.contains("sl-slider--active")).toBe(true);
+		await dom.tick(SLIDER_SOUND.intervalMs);
 		pointer(track, "pointermove", { pointerId: 2, clientX: 250 });
 		expect(handle.value).toBe(75);
 		pointer(track, "pointerup", { pointerId: 2, clientX: 250 });
@@ -136,6 +155,31 @@ describe("createSlider", () => {
 			[75, false],
 			[75, true],
 		]);
+		expect(samples).toHaveLength(3);
+		expect(samples.every((sample) => sample.url.endsWith(SOUNDS.smallSlide))).toBe(true);
+		expect(samples[1]?.playbackRate).toBeGreaterThan(samples[0]?.playbackRate ?? 0);
+		expect(samples[2]?.playbackRate).toBe(samples[1]?.playbackRate);
+	});
+
+	it("cancels an active drag when a live settings update disables the control", () => {
+		const seen: Array<[number, boolean]> = [];
+		handle = createSlider(document.body, {
+			min: 0,
+			max: 100,
+			step: 1,
+			value: 50,
+			label: String,
+			onChange: (v, commit) => seen.push([v, commit]),
+		});
+		const track = handle.el.querySelector<HTMLElement>(".sl-slider__track")!;
+		Object.defineProperty(track, "getBoundingClientRect", { value: () => ({ left: 0, width: 100 }) });
+		pointer(track, "pointerdown", { pointerId: 1, clientX: 60, isPrimary: true });
+		handle.update({ value: 50, disabled: true });
+		pointer(track, "pointermove", { pointerId: 1, clientX: 100 });
+		pointer(track, "pointerup", { pointerId: 1, clientX: 100 });
+		expect(handle.value).toBe(50);
+		expect(seen).toEqual([[60, false]]);
+		expect(handle.el.classList.contains("sl-slider--active")).toBe(false);
 	});
 });
 
@@ -175,17 +219,41 @@ it("strength heat increases continuously and only high Elo adds the glow", () =>
 		value: LIMITS.eloMin,
 		label,
 		strength: true,
+		threshold: {
+			value: 3200,
+			label: "3200",
+			lowerLabel: "Small NNUE",
+			upperLabel: "Large NNUE",
+			description: "Large NNUE starts at 3200",
+		},
 		onChange: () => {},
 	});
 	let previous = -1;
-	for (const value of [400, 1200, 2000, 2600, 3200, 3650]) {
+	for (const value of [400, 1200, 2000, 2600, 3200, 3800]) {
 		handle.update({ value });
 		const heat = Number(handle.el.style.getPropertyValue("--sl-slider-heat"));
 		expect(heat).toBeGreaterThan(previous);
 		previous = heat;
 		expect(handle.el.classList.contains("sl-slider--hot")).toBe(value >= 3200);
+		expect(Number(handle.el.style.getPropertyValue("--sl-slider-energy"))).toBe(
+			Math.max(0, (value - 3200) / (LIMITS.eloMax - 3200))
+		);
 	}
 	expect(previous).toBe(1);
 	handle.update({ value: 1500 });
 	expect(handle.el.classList.contains("sl-slider--hot")).toBe(false);
+	// Energy stays mounted so opacity can fade out after leaving the high-strength range.
+	expect(handle.el.querySelector(".sl-slider__energy")).not.toBeNull();
+	expect(handle.el.style.getPropertyValue("--sl-slider-energy")).toBe("0");
+	const ticks = [...handle.el.querySelectorAll<HTMLElement>(".sl-slider__tick")];
+	expect(ticks.length).toBeGreaterThan(10);
+	expect(ticks[0]?.dataset.value).toBe("400");
+	expect(ticks[0]?.style.left).toBe("0.000%");
+	expect(ticks.at(-1)?.dataset.value).toBe("3800");
+	expect(ticks.at(-1)?.style.left).toBe("100.000%");
+	const thresholdTick = ticks.find((tick) => tick.dataset.value === "3200");
+	expect(thresholdTick).toBeDefined();
+	expect(thresholdTick?.style.left).toBe(
+		handle.el.querySelector<HTMLElement>(".sl-slider__divider")?.style.left
+	);
 });

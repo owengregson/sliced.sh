@@ -17,3 +17,12 @@ export const SOUNDS = {
 	slamHeavy: "slam_heavy.wav",
 	slamLow: "slam_low.wav",
 } as const;
+
+/** Scrubbing feedback: quiet, pitch-mapped samples with a shared rate limit. */
+export const SLIDER_SOUND = {
+	intervalMs: 130,
+	minDelta: 0.01,
+	pitchMin: 0.8,
+	pitchRange: 0.65,
+	volume: 0.22,
+} as const;

@@ -53,7 +53,7 @@ describe("createEvalBar", () => {
 		handle.update({ score: { cp: 134 }, wdl: [0.71, 0.22, 0.07] });
 		expect(root.getAttribute("aria-valuetext")).toBe("White +1.34, 71% win, 22% draw, 7% loss");
 		expect(root.getAttribute("aria-valuenow")).toBe("82");
-		expect(root.querySelector<HTMLElement>(".sl-evalbar__white")?.style.height).toBe("82%");
+		expect(root.querySelector<HTMLElement>(".sl-evalbar__white")?.style.width).toBe("82%");
 		expect(root.classList.contains("sl-evalbar--neutral")).toBe(false);
 		expect(root.classList.contains("sl-evalbar--live")).toBe(true);
 		expect(root.querySelector(".sl-evalbar__divider")).not.toBeNull();
@@ -75,14 +75,14 @@ describe("createEvalBar", () => {
 		handle.update({ score: { mate: 5 } });
 		expect(handle.el.getAttribute("aria-valuetext")).toBe("Mate in 5 for White");
 		expect(handle.el.classList.contains("sl-evalbar--mate")).toBe(true);
-		expect(handle.el.querySelector<HTMLElement>(".sl-evalbar__white")?.style.height).toBe("100%");
+		expect(handle.el.querySelector<HTMLElement>(".sl-evalbar__white")?.style.width).toBe("100%");
 		const mate = handle.el.querySelector<HTMLElement>(".sl-evalbar__mate");
 		expect(mate?.hasAttribute("hidden")).toBe(false);
 		expect(mate?.textContent).toBe("M5");
 		expect(mate?.dataset.side).toBe("white");
 		handle.update({ score: { mate: -3 } });
 		expect(handle.el.getAttribute("aria-valuetext")).toBe("Mate in 3 for Black");
-		expect(handle.el.querySelector<HTMLElement>(".sl-evalbar__white")?.style.height).toBe("0%");
+		expect(handle.el.querySelector<HTMLElement>(".sl-evalbar__white")?.style.width).toBe("0%");
 		expect(mate?.dataset.side).toBe("black");
 	});
 
@@ -98,7 +98,7 @@ describe("createEvalBar", () => {
 		expect(handle.el.classList.contains("sl-evalbar--jump")).toBe(false);
 		handle.update({ neutral: true });
 		expect(handle.el.classList.contains("sl-evalbar--neutral")).toBe(true);
-		expect(handle.el.querySelector<HTMLElement>(".sl-evalbar__white")?.style.height).toBe("50%");
+		expect(handle.el.querySelector<HTMLElement>(".sl-evalbar__white")?.style.width).toBe("50%");
 		expect(handle.el.getAttribute("aria-valuenow")).toBe("50");
 	});
 });

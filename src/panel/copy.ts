@@ -136,7 +136,7 @@ export const COPY = {
 		largeNetwork: "Large NNUE",
 		networkCutoff: (elo: number): string => String(elo),
 		networkDescription: (cutoff: number, max: number): string =>
-			`Above ${cutoff}: automatic large NNUE download. ${max}: maximum engine strength; approximate rating.`,
+			`Above ${cutoff}: bundled large NNUE. ${max}: maximum engine strength; approximate rating.`,
 	},
 	persona: {
 		cautious: "Solid moves; longer think times.",
@@ -482,7 +482,6 @@ export const SETTINGS_COPY = {
 		},
 		"strength.targetElo": {
 			label: "Target rating",
-			help: COPY.strength.networkDescription(LIMITS.nnueSmallEloMax, LIMITS.eloMax),
 		},
 		"strength.matchOpponentRating": {
 			label: "Match opponent rating",
@@ -568,7 +567,7 @@ export const SETTINGS_COPY = {
 		"display.reducedMotion": { label: "Reduced motion" },
 		"display.virtualCursor": {
 			label: "Virtual pointer",
-			help: "Hides the system pointer and blocks physical mouse input while active.",
+			help: "Blocks physical mouse input and shows a disabled system cursor while active.",
 		},
 		"engine.threads": { label: "Engine threads" },
 		"engine.hashMb": { label: "Hash" },

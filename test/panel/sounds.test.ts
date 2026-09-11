@@ -2,6 +2,7 @@
 // chrome.runtime.getURL("assets/sounds/…").
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { SOUNDS, SOUNDS_DIR } from "@core/constants";
+import { SLIDER_SOUND } from "@core/constants/sounds";
 import {
 	createSoundPlayer,
 	playUiSound,
@@ -28,7 +29,8 @@ describe("ui sounds", () => {
 			toggleOff: "clickLightOff",
 			arm: "clickHeavy",
 			disarm: "clickHeavyOff",
-			sliderRelease: "slide",
+			sliderMove: "smallSlide",
+			navigate: "clickLight",
 			stepper: "smallSlide",
 			keybindSaved: "tick",
 			movePlayed: "makeMove",
@@ -39,6 +41,49 @@ describe("ui sounds", () => {
 		expect(used.has("slamLight")).toBe(false);
 		expect(used.has("slamHeavy")).toBe(false);
 		expect(used.has("guiOff")).toBe(false);
+	});
+
+	it("rate-limits quiet slider samples, maps position to pitch, and stops overlapping samples", async () => {
+		const samples: Array<{
+			playbackRate?: number;
+			preservesPitch?: boolean;
+			volume?: number;
+			pauses: number;
+			play(): void;
+			pause(): void;
+		}> = [];
+		const player = createSoundPlayer(() => {
+			const source = {
+				pauses: 0,
+				play() {},
+				pause() {
+					this.pauses++;
+				},
+			};
+			samples.push(source);
+			return source;
+		});
+		expect(player.slider(0)).toBe(false);
+		player.setEnabled(true);
+		expect(player.slider(0)).toBe(true);
+		expect(player.slider(1)).toBe(false);
+		await dom.tick(SLIDER_SOUND.intervalMs);
+		expect(player.slider(0.001)).toBe(false);
+		expect(player.slider(1)).toBe(true);
+		expect(samples).toHaveLength(2);
+		expect(samples[0]?.pauses).toBe(1);
+		expect(samples[0]?.preservesPitch).toBe(false);
+		expect(samples[1]?.playbackRate).toBeGreaterThan(samples[0]?.playbackRate ?? 0);
+		expect(samples[1]?.volume).toBeLessThan(0.3);
+		// A release at the same value is always audible, even immediately after a scrub sample.
+		expect(player.slider(1, "release")).toBe(true);
+		expect(samples).toHaveLength(3);
+		expect(samples[1]?.pauses).toBe(1);
+		expect(samples[2]?.playbackRate).toBe(samples[1]?.playbackRate);
+		player.setEnabled(false);
+		expect(samples[2]?.pauses).toBe(1);
+		expect(player.slider(0.5)).toBe(false);
+		expect(player.slider(1, "release")).toBe(false);
 	});
 
 	it("is gated and plays through the runtime URL", () => {

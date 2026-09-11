@@ -51,5 +51,5 @@ const server = Bun.serve({
 	},
 });
 process.stdout.write(
-	`Panel preview: ${server.url}?state=live\nStates: live, analysing, thinking (scheduled), executing, opponent, lowtime, error, cached-opponent, cached-thinking, no-rec, unarmed, disabled, crashed, settings, engine, waiting, unsupported, login, expired, update, loading. Add &theme=light, &motion=reduced, &search=premove or &elo=3650.\n`
+	`Panel preview: ${server.url}?state=live\nStates: live, analysing, thinking (scheduled), executing, opponent, lowtime, error, cached-opponent, cached-thinking, no-rec, unarmed, disabled, crashed, settings, engine, waiting, unsupported, login, expired, update, loading. Add &theme=light, &motion=reduced, &search=premove or &elo=3800.\n`
 );
