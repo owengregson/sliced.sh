@@ -134,6 +134,11 @@ function unscoredRows(): TimingLogEntry[] {
  * report arriving after the next position had opened its window closed *that* one, and the real move
  * that followed kept its `actualMs` and lost its `telemetry` — invisible to everything `report.py`
  * computes.
+ *
+ * It is not a *global* invariant of the session: a pre-existing defect outside this lane loses the
+ * record of any move whose `executed` report lands after the next position arrived, because
+ * `recordMove` aims `markActual`/`attachTelemetry` at `snapshot.ply`, which is the new position's by
+ * then (review Minor N4). These cases assert it over runs that do not contain that ordering.
  */
 function playedRowsWithoutTelemetry(): TimingLogEntry[] {
 	return h.timingLog.entries().filter((e) => e.actualMs !== null && e.telemetry === undefined);
@@ -162,6 +167,8 @@ function rowsWithBlobs(only?: (e: TimingLogEntry) => boolean): {
 		acs.push(t.ac);
 		const meta: AcMoveMeta = { mode: e.mode, thinkMs: e.actualMs ?? e.plannedMs, clockMs: e.clockMs };
 		if (t.nReasonable !== undefined) meta.nReasonable = t.nReasonable;
+		// The row states whose window it was; the model is never told to infer it from the mode.
+		if (t.ownerOwnsWindow === true) meta.ownerOwnsWindow = true;
 		moves.push(meta);
 	}
 	return { acs, moves };
@@ -174,16 +181,32 @@ function assertRowsHumanShaped(): void {
 }
 
 /**
- * Every **premove** row against the per-move half of the §13.2 model — well-formedness and conduct,
- * with **no statistical band** (owner's ruling, Fix round 2). A premove press is a committed move
- * attempt, not a §9.3a preview touch, so pooling it into the preview-rate band would corrupt the one
- * population another lane has just measured. What a premove row can be held to — and what Critical 1
- * needed and did not have — is that it describes a real window.
+ * Every **queued-premove** row against the per-move half of the §13.2 model — well-formedness and
+ * conduct, with **no statistical band** (owner's ruling, Fix round 2). A premove press is a committed
+ * move attempt, not a §9.3a preview touch, so pooling it into the preview-rate band would corrupt
+ * the one population another lane has just measured. What such a row can be held to — and what
+ * Critical 1 needed and did not have — is that it describes a real window.
+ *
+ * The rows are selected by "played and carrying no §13.6 quality pair", **not** by `mode`: the timing
+ * model plans plenty of *searched* moves in `premove` mode, and those rows are ordinary own-turn rows
+ * that must keep every strict rule. Only a premove is unscored.
  */
-function assertPremoveRowsWellFormed(): void {
-	const { acs, moves } = rowsWithBlobs((e) => e.mode === "premove" && e.actualMs !== null);
+function assertQueuedPremoveRows(): void {
+	const isQueued = (e: TimingLogEntry): boolean =>
+		e.actualMs !== null && e.telemetry?.top1 === undefined;
+	const rows = h.timingLog.entries().filter(isQueued);
+	const { acs, moves } = rowsWithBlobs(isQueued);
 	expect(acs.length).toBeGreaterThan(0);
 	assertWellFormedAc(acs, { moves });
+	for (const e of rows) {
+		// The owner's first ruling, enforced: a premove press is a committed move attempt, not a
+		// §9.3a preview touch, and `multiSelectEligible` is the *only* thing keeping it out of the
+		// preview-rate band — `report.py` takes that band's denominator from this field, and the band
+		// was measured at 6–8 % over a population with no premove presses in it.
+		expect(e.telemetry?.multiSelectEligible).toBe(false);
+		// …and the row says whose window it was, rather than leaving the model to guess from the mode.
+		expect(e.telemetry?.ownerOwnsWindow).toBe(true);
+	}
 }
 
 interface Armed {
@@ -396,7 +419,7 @@ describe("game session: a queued premove (Fix F)", () => {
 			// Every played move kept the record of the window it was played in, and the whole export
 			// satisfies the project's own §13.2 model.
 			expect(playedRowsWithoutTelemetry()).toHaveLength(0);
-			assertPremoveRowsWellFormed();
+			assertQueuedPremoveRows();
 			assertRowsHumanShaped();
 			// And every row's realised think is its *own*. `TimingModel.observe` writes `actualMs`
 			// under the model's last-planned ply, so calling it for a hand-built premove plan lands
@@ -468,7 +491,7 @@ describe("game session: a queued premove (Fix F)", () => {
 			expect(stats?.moves).toBe(2);
 			expect(stats?.scoredMoves).toBe(1);
 			expect(playedRowsWithoutTelemetry()).toHaveLength(0);
-			assertPremoveRowsWellFormed();
+			assertQueuedPremoveRows();
 			assertRowsHumanShaped();
 		}
 		expect(fired).toBe(true);
@@ -572,7 +595,7 @@ describe("game session: the opponent replies while the premove drag is still in 
 			expect(playedRowsWithoutTelemetry()).toHaveLength(0);
 			// The per-move half of the model, over the premove row itself: this is the guard Critical 1
 			// needed, and it costs no band (Fix round 2).
-			assertPremoveRowsWellFormed();
+			assertQueuedPremoveRows();
 			assertRowsHumanShaped();
 		}
 		expect(fired).toBe(true);
@@ -881,7 +904,7 @@ describe("game session: what a premove may and may not claim (Fix F)", () => {
 			expect((ac?.TotalFocusTime ?? 0) + (ac?.TotalBlurTime ?? 0)).toBeGreaterThanOrEqual(
 				ac?.MoveHoldTime ?? 0
 			);
-			assertPremoveRowsWellFormed();
+			assertQueuedPremoveRows();
 		}
 		expect(reached).toBe(true);
 	}, 180_000);

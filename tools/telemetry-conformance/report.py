@@ -228,6 +228,12 @@ def summarize(entries: list[dict[str, Any]], target_elo: int) -> dict[str, Any]:
     if not telemetry:
         return summary
 
+    # Every blur from every row, deliberately including the rows that carry `ownerOwnsWindow` (a
+    # premove sent during the opponent's turn, Fix F). The per-move model in `ac-model.ts` excuses an
+    # owner-caused focus edge inside such a window -- it is his behaviour, and the assistant still
+    # never moves focus -- but the *game-level* verdict below must not: chess.com cannot tell who
+    # caused a blur either, so a game with one in it is a game the owner needs to see, whoever caused
+    # it. Relabelling what we call the row is the ruling; hiding the event from this line is not.
     blur = sum(int(t["telemetry"]["ac"].get("BlurCount", 0)) for t in telemetry)
     toggles = sum(1 for t in telemetry if t["telemetry"]["ac"].get("DidToggle"))
     untrusted = sum(1 for t in telemetry if not t["telemetry"]["ac"].get("EventTrusted"))

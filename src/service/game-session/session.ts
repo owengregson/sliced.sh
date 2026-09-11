@@ -1368,7 +1368,9 @@ export class GameSession implements SessionSource {
 			clockMs: snapshot.clocks[myColor].ms,
 			plan,
 			rec,
-			window: this.window.fork(),
+			// The fork is the window the drag happens in; `now` is what it opens at if the session's
+			// own window has already been closed by a late report for the previous move.
+			window: this.window.fork(now),
 			result: null,
 			record: null,
 			abandoned: null,
@@ -1403,15 +1405,25 @@ export class GameSession implements SessionSource {
 		const pressed = result.pressed === true || result.pressedAny === true;
 		if (result.outcome === "dispatched" || pressed) {
 			entry.result = result;
-			entry.record = entry.window.close({
+			// `??=`, not `=`: one terminal report per execution is the rule, but closing the fork a
+			// second time would replace a good record with `null` (a closed window produces none), so
+			// the footgun is removed rather than relied on.
+			entry.record ??= entry.window.close({
 				elapsedMs: result.elapsedMs,
 				pointerOffsetPx: result.pointerOffsetPx ?? 0,
 				multiplePieces: selectedMultiplePieces(result, entry.chosen.from),
 				orientationMs: entry.plan.orientationMs,
+				// §13.2: a premove is never "non-trivial" — a premove press is a committed move
+				// attempt, not a §9.3a preview touch, so it must never enter the preview-rate band
+				// (`report.py` takes that denominator from this very field).
 				multiSelectEligible: false,
 				nReasonable: 1,
 				// §13.6: a premove is decided before its position exists and carries no evaluation.
 				quality: undefined,
+				// The window is the opponent's turn, a period the owner owns: a focus edge in it is his
+				// behaviour, and the §13.2 conduct rules are told so explicitly rather than inferring
+				// it from the mode.
+				ownerOwnsWindow: true,
 				at: result.at ?? this.now(),
 			});
 		}

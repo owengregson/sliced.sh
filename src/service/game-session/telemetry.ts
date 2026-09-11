@@ -49,6 +49,13 @@ export interface MoveWindowClose {
 	nReasonable: number;
 	/** The §13.6 pair, omitted for a move with no engine evaluation (§13.6 / `isScoredMove`). */
 	quality?: { top1: boolean; cpLoss: number } | undefined;
+	/**
+	 * The caller states that this window spans a period the **owner** owns rather than one of ours —
+	 * true only for a premove sent during the opponent's turn (Fix F). It is never inferred: a
+	 * searched move can plan in `premove` mode, so the mode is not the fact. A window opened on our
+	 * own turn cannot be declared the owner's, whatever the caller says (`close` drops it).
+	 */
+	ownerOwnsWindow?: boolean | undefined;
 	/** Epoch ms of the drop. */
 	at: number;
 }
@@ -88,9 +95,14 @@ export class MoveWindow {
 	 * *that* one, so the premove's row carried `TotalFocusTime 0` (an `assertHumanShapedAc`
 	 * violation) and the real move that followed lost its §13.2 record entirely.
 	 */
-	fork(): MoveWindow {
+	fork(fallbackStart: number): MoveWindow {
 		const copy = new MoveWindow();
+		// A window already closed (a late report for the previous move closed it) would fork as a
+		// *closed* window, and a closed window produces no record at all — a played move with
+		// `actualMs` and no §13.2 blob. `fallbackStart` is what the fork opens at instead; it is the
+		// opponent's turn either way, so the fork is never our own window.
 		if (this.startedAt !== null) copy.open(this.startedAt, this.ownTurn);
+		else copy.open(fallbackStart, false);
 		for (const e of this.edges) copy.edge(e.hasFocus, e.at);
 		return copy;
 	}
@@ -159,6 +171,10 @@ export class MoveWindow {
 			multiSelectEligible: c.multiSelectEligible,
 			nReasonable: c.nReasonable,
 		};
+		// Only a window that was not opened on our own turn can be the owner's, whatever the caller
+		// says: the bit decides whether the §13.2 conduct rules excuse a focus edge in this row, so it
+		// is not something a caller may assert about a window we own.
+		if (c.ownerOwnsWindow === true && !this.ownTurn) record.ownerOwnsWindow = true;
 		if (c.quality) {
 			record.top1 = c.quality.top1;
 			record.cpLoss = c.quality.cpLoss;

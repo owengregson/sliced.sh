@@ -35,14 +35,16 @@ function blob(over: Partial<AcBlob> = {}): AcBlob {
 	};
 }
 
-function meta(mode: TimingMode): AcMoveMeta {
-	return { mode, thinkMs: 600, clockMs: 120_000, nReasonable: 2 };
+function meta(mode: TimingMode, ownerOwnsWindow = false): AcMoveMeta {
+	const m: AcMoveMeta = { mode, thinkMs: 600, clockMs: 120_000, nReasonable: 2 };
+	if (ownerOwnsWindow) m.ownerOwnsWindow = true;
+	return m;
 }
 
 /** The violations `assertWellFormedAc` reports for one blob, or `[]` when it accepts it. */
-function violations(ac: AcBlob, mode: TimingMode): string[] {
+function violations(ac: AcBlob, mode: TimingMode, ownerOwnsWindow = false): string[] {
 	try {
-		assertWellFormedAc([ac], { moves: [meta(mode)] });
+		assertWellFormedAc([ac], { moves: [meta(mode, ownerOwnsWindow)] });
 		return [];
 	} catch (error) {
 		const list = (error as { violations?: string[] }).violations;
@@ -53,13 +55,13 @@ function violations(ac: AcBlob, mode: TimingMode): string[] {
 
 describe("ac well-formedness: a row has to describe a real window", () => {
 	it("accepts a clean premove row", () => {
-		expect(violations(blob(), "premove")).toEqual([]);
+		expect(violations(blob(), "premove", true)).toEqual([]);
 	});
 
 	it("refuses the exact shape review caught: a window that cannot contain its own hold", () => {
 		// A premove report closing the *next* position's window produced this: the hold is the drag's
 		// several hundred ms, and the window it claims to have happened in has no duration at all.
-		const bad = violations(blob({ MoveHoldTime: 458, TotalFocusTime: 0 }), "premove");
+		const bad = violations(blob({ MoveHoldTime: 458, TotalFocusTime: 0 }), "premove", true);
 		expect(bad.join(" ")).toContain("shorter than MoveHoldTime");
 	});
 
@@ -73,9 +75,9 @@ describe("ac well-formedness: a row has to describe a real window", () => {
 			DidBlurOnOpponentTurn: true,
 			MoveToFirstBlurTime: 300,
 		});
-		expect(violations(ac, "premove")).toEqual([]);
+		expect(violations(ac, "premove", true)).toEqual([]);
 		// …and 200 + 100 ms is not a window that can contain a 1500 ms hold, blur or no blur.
-		const tooShort = violations({ ...ac, TotalFocusTime: 200, TotalBlurTime: 100 }, "premove");
+		const tooShort = violations({ ...ac, TotalFocusTime: 200, TotalBlurTime: 100 }, "premove", true);
 		expect(tooShort.join(" ")).toContain("shorter than MoveHoldTime");
 	});
 
@@ -109,20 +111,31 @@ describe("ac conduct: whose focus edge is it", () => {
 		MoveToFirstBlurTime: 400,
 	});
 
-	it("accepts the owner's blur on a premove row: his behaviour, not our misconduct", () => {
+	it("accepts the owner's blur when the row says the window was his", () => {
 		// §13.4 is a rule about the assistant never moving focus, and it still never does. A premove's
 		// window is opened over the opponent's turn, when the owner is free to click whatever he likes.
-		expect(violations(ownersBlur, "premove")).toEqual([]);
+		expect(violations(ownersBlur, "premove", true)).toEqual([]);
 	});
 
-	it("still refuses it on every other mode, where the window is one we own", () => {
+	it("the mode alone excuses nothing: the *writer* has to say whose window it was", () => {
+		// `mode: "premove"` is not the fact — the timing model plans searched moves in that mode too,
+		// so the exemption keys on `MoveTelemetryRecord.ownerOwnsWindow`, which only the premove path
+		// sets and which `MoveWindow.close` refuses for a window opened on our own turn.
+		expect(violations(ownersBlur, "premove", false).join(" ")).toContain("BlurCount 1");
+	});
+
+	it("still refuses it on every other mode, because nothing marks those windows as the owner's", () => {
+		// The bit is the discriminator, not the mode — so what keeps these rows strict is that nothing
+		// sets it for them. `MoveWindow.close` is where that is enforced (it refuses the bit for a
+		// window opened on our own turn), and `test/service/game-session/telemetry.test.ts` pins it.
 		for (const mode of ["normal", "long", "instant"] as const)
 			expect(violations(ownersBlur, mode).join(" ")).toContain("BlurCount 1");
 	});
 
-	it("still refuses a focus edge on our own turn, premove or not", () => {
+	it("still refuses a focus edge on our own turn, bit or no bit", () => {
 		const ourTurn = blob({ BlurCount: 1, DidBlurOnOwnTurn: true, TotalBlurTime: 700 });
-		expect(violations(ourTurn, "premove").join(" ")).toContain("on our turn");
+		expect(violations(ourTurn, "premove", true).join(" ")).toContain("on our turn");
+		expect(violations(ourTurn, "premove", true).join(" ")).toContain("BlurCount 1");
 		expect(violations(ourTurn, "normal").join(" ")).toContain("on our turn");
 	});
 
@@ -136,19 +149,22 @@ describe("ac conduct: whose focus edge is it", () => {
 			LastFocusToMoveTime: 200,
 		});
 		expect(violations(toggled, "normal").join(" ")).toContain("DidToggle");
-		expect(violations(toggled, "premove")).toEqual([]); // the owner clicked away and came back
+		// …and accepts it on a premove row the writer marked: the owner clicked away and came back.
+		expect(violations(toggled, "premove", true)).toEqual([]);
 	});
 
-	it("never excuses untrusted input, whatever the mode", () => {
+	it("never excuses untrusted input, whatever the mode or the bit", () => {
 		for (const mode of ["premove", "normal"] as const)
-			expect(violations(blob({ EventTrusted: false }), mode).join(" ")).toContain(
-				"EventTrusted false"
-			);
+			for (const owners of [false, true])
+				expect(violations(blob({ EventTrusted: false }), mode, owners).join(" ")).toContain(
+					"EventTrusted false"
+				);
 	});
 
 	it("holds the hold-time floor for a searched move and exempts premove/instant", () => {
 		const fast = blob({ MoveHoldTime: TELEMETRY_BANDS.holdTime.minMs - 1 });
 		expect(violations(fast, "normal").join(" ")).toContain("MoveHoldTime");
+		expect(violations(fast, "normal", true).join(" ")).toContain("MoveHoldTime"); // the bit is not a floor exemption
 		expect(violations(fast, "premove")).toEqual([]);
 		expect(violations(fast, "instant")).toEqual([]);
 	});

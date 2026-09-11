@@ -19,6 +19,13 @@ export interface AcMoveMeta {
 	thinkMs: number;
 	clockMs: number;
 	nReasonable?: number;
+	/**
+	 * `MoveTelemetryRecord.ownerOwnsWindow`: this row's window spans a period the **owner** owns (the
+	 * opponent's turn, around a premove the hand sent during it), so a focus edge in it is his
+	 * behaviour rather than our misconduct. Stated by the writer, never inferred from `mode` — a
+	 * searched move can legitimately plan in `premove` mode, so the mode is not the fact.
+	 */
+	ownerOwnsWindow?: boolean;
 }
 
 /** `AcMoveMeta` of a harness move (`SimulatedMove` or a Task 30 record with the same fields). */
@@ -217,13 +224,14 @@ export function summarizeAc(acs: readonly AcBlob[], moves?: readonly AcMoveMeta[
  * likes. A focus edge there is his behaviour, not ours — and §13.4 is a rule about the assistant
  * never moving focus, which it still never does.
  *
- * The discriminator is the blob's own turn fields, not a claim: an edge on our **own** turn is
- * always a conduct violation, whatever the mode, because a blur inside a window we own cancels the
- * move and `MoveWindow.discard()` means no record is produced at all. So the only focus edges that
- * can ever reach an exported row are the owner's, during a premove.
+ * Two things have to agree, and neither is the move's `mode`: the **writer** must have said so
+ * (`MoveTelemetryRecord.ownerOwnsWindow`, set only by the premove path and refused by
+ * `MoveWindow.close` for a window opened on our own turn), and the blob must carry no own-turn edge.
+ * Keying on `mode === "premove"` would have been a coincidence rather than a property — a searched
+ * move can plan in that mode — so the fact is carried explicitly from the one place that knows it.
  */
 function ownerOwnsTheWindow(ac: AcBlob, meta: AcMoveMeta | undefined): boolean {
-	if (meta?.mode !== "premove") return false;
+	if (meta?.ownerOwnsWindow !== true) return false;
 	return !(ac.DidBlurOnOwnTurn || ac.DidFocusOnOwnTurn);
 }
 
