@@ -160,16 +160,18 @@ describe("ChessMimicHead", () => {
 				expect(s.why.join(" ")).toContain("bucket 3");
 			}
 		}
-		// The model's bucket-0 mass reaches the plan instead of being redistributed wholesale. How much
-		// of it gets through over a whole game is `fastShareCap` against the game's realised page-level
-		// rate (round 4, chessmimic-instant-cap.test.ts). This case samples the head directly with a
-		// fresh state, so no plan has been recorded and the budget is wide open — which is exactly the
-		// first-move condition, and the whole of the model's 0.9 gets through.
+		// The model's bucket-0 mass reaches the plan instead of being redistributed wholesale, and how
+		// much of it gets through is `fastShareCap` — `min(share, cap)`, via the feed-forward thinning
+		// that holds the rate at the budget from the first move rather than only asymptotically
+		// (round 6; the budget's own behaviour is pinned in chessmimic-instant-cap.test.ts).
 		//
-		// The load-bearing assertion is that it is the model's mass and not zero. Zero is what the
-		// branch this case replaced produced, at every speed and every clock.
-		expect(fastShareCap(f, "1500_1600")).toBeGreaterThan(0);
-		expect(instant / N).toBeGreaterThan(0.8);
+		// The load-bearing assertion is that it is the budget and **not zero**. Zero is what the branch
+		// this case replaced produced, at every speed and every clock.
+		const cap = fastShareCap(f, "1500_1600");
+		expect(cap).toBeGreaterThan(0);
+		expect(cap).toBeLessThan(0.9); // the fixture's own mass, so the budget is what binds here
+		expect(instant / N).toBeGreaterThan(cap * 0.7);
+		expect(instant / N).toBeLessThanOrEqual(cap * 1.2);
 		expect(instant).toBeLessThan(N);
 	});
 	it("labels the top buckets long and adds s_game + AR(1) on top", async () => {

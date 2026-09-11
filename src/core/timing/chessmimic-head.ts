@@ -23,6 +23,7 @@ import {
 	CHESSMIMIC_BUCKETS,
 	CLOCK_BUCKET_BOUNDARIES,
 	distributionMedianSec,
+	maskedBucketShare,
 	sampleBucket,
 	sampleWithinBucket,
 } from "./chessmimic-buckets";
@@ -334,14 +335,28 @@ export class ChessMimicHead implements DistributionHead {
 			// against the band's human fast rate, measured over this game's adopted plans. Over budget the
 			// draw falls back to the next affordable bucket — which is what this branch did for *every*
 			// draw before 2026-09-10, so the closed path is the pre-lane path and cannot be slower.
+			// Two terms, because one cannot do it. The **feed-forward** term thins the draw against the
+			// model's own bucket-0 conditional, so the realised rate is `min(share, cap)` from the very
+			// first move: a rate measured over the game alone is an asymptotic bound
+			// (`(1 + (n−1)·cap)/n`), which runs 1.5–4× over budget for the first few moves — and the
+			// opening is exactly where the 10+0 tell lived, measured at 63–78 % off book with feedback
+			// only. The **feedback** term is the game rate, which catches anything the feed-forward term
+			// lets through — including `sampleGuarded`'s CV-guard re-draws, which is why the bound on the
+			// realised rate survives them.
+			const share = maskedBucketShare(c.probs, mask, this.temperature, 0);
 			const realised = fastAddedShare(st);
 			const cap = fastShareCap(f, c.band);
-			if (realised <= cap)
+			const withinBudget = realised <= cap;
+			const thinned = share <= cap || rng.next() * share < cap;
+			if (withinBudget && thinned)
 				return {
 					tSec: this.instantSec(c.band, rng),
 					mode: "instant",
 					addedFast: true,
-					why: [...why, `bucket 0 → instant (added ${realised.toFixed(2)} ≤ budget ${cap.toFixed(2)})`],
+					why: [
+						...why,
+						`bucket 0 → instant (share ${share.toFixed(2)}, added ${realised.toFixed(2)}, budget ${cap.toFixed(2)})`,
+					],
 				};
 			const rest = mask.map((m, b) => m && b > 0);
 			const again = sampleBucket(c.probs, rest, this.temperature, rng);
