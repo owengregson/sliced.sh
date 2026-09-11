@@ -1397,7 +1397,7 @@ export class GameSession implements SessionSource {
 	 * *record*, nothing more. `rec.plan.deadlineMs` is in the past by definition — that is what
 	 * "withheld" means — so `MoveExecutor.schedule` fits the plan's `thinkMs` down to
 	 * `EXECUTOR.minExecutionMs`, and the §8.6 row would then report a move that waited twenty seconds
-	 * as a 250 ms think. `TimingModel.replan(…, "engine-not-ready")` is the existing reason for "the
+	 * as a 250 ms think. `TimingModel.replan(…, "withheld-then-released")` is the existing reason for "the
 	 * move could not be made when it was due": it folds the elapsed wait into the think, so
 	 * `plannedMs`, the panel's plan line and `preMoveHoverMs` all match the wall-clock hold chess.com
 	 * saw.
@@ -1451,7 +1451,7 @@ export class GameSession implements SessionSource {
 		const timing = this.timing;
 		const ctx = timing ? this.timingContextFor(rec) : null;
 		if (!timing || !ctx) return rec;
-		// `engine-not-ready` folds `now - <the position's arrival>` into the think and applies no clock
+		// `withheld-then-released` folds `now - <the position's arrival>` into the think and applies no clock
 		// cap of its own (unlike `clock-jump`), so a long enough wait would record a `plannedMs` longer
 		// than the clock the move started with — a malformed §8.6 row, and the same number
 		// `report.py`'s think-time bands read. The clock in the snapshot is frozen at the moment the
@@ -1460,7 +1460,7 @@ export class GameSession implements SessionSource {
 		//
 		// `affordable` is deliberately not floored at 0. A clock shorter than the approach makes it
 		// negative, which tells the model the move started *after* now — and that cannot change the
-		// answer, because `engine-not-ready` returns `max(plan.thinkMs, spent + approach)` and
+		// answer, because `withheld-then-released` returns `max(plan.thinkMs, spent + approach)` and
 		// `approachMs <= thinkMs` by construction, so the `plan.thinkMs` term wins for any negative
 		// `spent`. Measured identical (think and window sum, to the millisecond) with and without a
 		// floor at clocks of 200 ms and 50 ms against a 20 s wait. A floor here would be a line no
@@ -1469,7 +1469,7 @@ export class GameSession implements SessionSource {
 		const startedAt = rec.plan.deadlineMs - rec.plan.thinkMs;
 		const affordable = ctx.myClockMs - rec.plan.window.approachMs;
 		const nowMs = ctx.myClockMs > 0 ? Math.min(ctx.nowMs, startedAt + affordable) : ctx.nowMs;
-		return { ...rec, plan: timing.replan(rec.plan, { ...ctx, nowMs }, "engine-not-ready") };
+		return { ...rec, plan: timing.replan(rec.plan, { ...ctx, nowMs }, "withheld-then-released") };
 	}
 
 	/**

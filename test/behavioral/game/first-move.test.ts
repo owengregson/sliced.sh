@@ -918,7 +918,7 @@ describe("game session: the first move as white (Fix G)", () => {
 	});
 
 	it("the re-planned think never exceeds the clock the move started with", async () => {
-		// `engine-not-ready` folds the wait into the think and caps nothing, so a wait longer than the
+		// `withheld-then-released` folds the wait into the think and caps nothing, so a wait longer than the
 		// clock would record a §8.6 row claiming a think the clock could not have afforded — and that
 		// number is what `report.py`'s think bands read.
 		h = await createGameHarness({

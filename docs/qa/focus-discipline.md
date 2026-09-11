@@ -124,7 +124,7 @@ two reasons at once. Row 10's own tests are the evidence.
   - **The released move is re-planned, and what that fixes is the *record*.** A withheld plan's
     deadline is in the past, so `MoveExecutor.schedule` fits its `thinkMs` down to
     `EXECUTOR.minExecutionMs` and the §8.6 row would report a move that waited twenty seconds as a
-    250 ms think. `reconsider` re-plans through `TimingModel.replan(…, "engine-not-ready")`, so
+    250 ms think. `reconsider` re-plans through `TimingModel.replan(…, "withheld-then-released")`, so
     `plannedMs`, the panel's plan line and `preMoveHoverMs` match the wall-clock hold chess.com saw —
     bounded by the clock the move started with, because a recorded think the clock could not have
     afforded is a malformed row. It is **not** what makes the post-click interval vary: measured over

@@ -419,7 +419,7 @@ export class TimingModel {
 				p.preMoveHoverMs = 0;
 				return p;
 			}
-			case "engine-not-ready": {
+			case "withheld-then-released": {
 				const thinkMs = Math.max(plan.thinkMs, spent + approach);
 				const extra = thinkMs - plan.thinkMs;
 				return this.withElapsed(
@@ -427,7 +427,7 @@ export class TimingModel {
 					ctx,
 					thinkMs,
 					{ ...plan.window, scanMs: plan.window.scanMs + extra },
-					`engine not ready: extended by ${extra.toFixed(0)} ms`
+					`withheld then released: extended by ${extra.toFixed(0)} ms`
 				);
 			}
 			case "engine-changed": {

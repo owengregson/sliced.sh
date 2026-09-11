@@ -402,13 +402,13 @@ describe("TimingModel.replan / observe", () => {
 		expect(m.state.myThinkMs).toEqual([900]);
 		expect(entries[0]?.actualMs).toBe(900);
 	});
-	it("engine-not-ready extends by the motor time; engine-changed re-samples with the same ε", () => {
+	it("withheld-then-released extends by the motor time; engine-changed re-samples with the same ε", () => {
 		const { m } = model();
 		m.startGame(meta);
 		const c = ctx();
 		const plan = m.planMove(c);
 		const eps = m.state.eps;
-		const late = m.replan(plan, { ...c, nowMs: plan.deadlineMs + 50 }, "engine-not-ready");
+		const late = m.replan(plan, { ...c, nowMs: plan.deadlineMs + 50 }, "withheld-then-released");
 		expect(late.thinkMs).toBeGreaterThanOrEqual(plan.thinkMs + 50);
 		const changed = m.replan(
 			plan,

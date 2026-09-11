@@ -53,7 +53,9 @@ export interface TimingContext {
 }
 
 export type ReplanReason =
-	| "engine-not-ready"
+	/** A plan whose deadline has passed is re-delivered: fold the wait into the think so the §8.6
+	 * row reports the hold the page actually saw, not the floor `schedule` would fit it to. */
+	| "withheld-then-released"
 	| "engine-changed"
 	| "clock-jump"
 	| "opponent-moved"
