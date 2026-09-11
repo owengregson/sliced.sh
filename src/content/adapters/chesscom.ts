@@ -6,8 +6,10 @@
 
 import { turnFieldOf } from "@core/chess/fen";
 import { squareOf } from "@core/chess/squares";
+import type { NewGameTargetResult } from "@core/constants/messages";
 import { TIMINGS } from "@core/constants/timings";
 import { log } from "@core/logger";
+import type { Pt } from "@core/motor/types";
 import type {
 	Color,
 	GameResult,
@@ -26,7 +28,6 @@ import {
 	type ClockReading,
 	type DrawOptions,
 	type MoveWatch,
-	type NewGameAttemptStatus,
 	type NewGameMode,
 	type Opponent,
 	type PositionInfo,
@@ -120,6 +121,8 @@ function plyOf(list: MoveList): number {
 }
 
 export class ChessComAdapter extends AdapterBase implements SiteAdapter {
+	private restartControl: HTMLElement | null = null;
+	private restartTargetId = "";
 	readonly site = SITE;
 	private observedBoard: Element | null = null;
 	private observedMoveList: Element | null = null;
@@ -316,21 +319,19 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 
 	// ---- actions ------------------------------------------------------------------
 
-	/**
-	 * Activates the site's own new-game / rematch button with `HTMLElement.click()`.
-	 * This is a button activation the page offers to the user — not board input —
-	 * and the one permitted synthetic action in the content script (§9.1, §13).
-	 */
-	tryStartNewGame(
+	/** Discover a control without activating it, or revalidate the exact element under a point. */
+	newGameTarget(
 		mode: NewGameMode,
-		beforeStart?: () => void,
-		expectedGameId?: string | null
-	): NewGameAttemptStatus {
+		expectedGameId?: string | null,
+		targetId?: string,
+		point?: Pt
+	): NewGameTargetResult {
 		const currentId = this.urlGameId() ?? this.readSnapshot()?.gameId;
-		if (expectedGameId && currentId && currentId !== expectedGameId) return "in-game";
+		if (expectedGameId && currentId && currentId !== expectedGameId) return { status: "in-game" };
 		const kind = pageKindFromPath(this.win.location.pathname);
-		if (kind !== "live-game" && kind !== "live-lobby" && kind !== "vs-computer") return "not-ready";
-		if (newGameSearchActive(this.doc, this.win)) return "searching";
+		if (kind !== "live-game" && kind !== "live-lobby" && kind !== "vs-computer")
+			return { status: "not-ready" };
+		if (newGameSearchActive(this.doc, this.win)) return { status: "searching" };
 		const running = [this.getClock("w"), this.getClock("b")].some(
 			(clock) => clock?.running && clock.ms > 0
 		);
@@ -341,12 +342,37 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 			this.getFen() !== null &&
 			(running || playing)
 		)
-			return "in-game";
-		const control = newGameControl(this.doc, this.win, mode, kind === "vs-computer");
-		if (!control) return "not-ready";
-		beforeStart?.();
-		control.click();
-		return "started";
+			return { status: "in-game" };
+		const control = newGameControl(
+			this.doc,
+			this.win,
+			mode,
+			kind === "vs-computer",
+			kind === "live-lobby"
+		);
+		if (!control) return { status: "not-ready" };
+		if (
+			targetId !== undefined &&
+			(this.restartControl !== control || targetId !== this.restartTargetId)
+		)
+			return { status: "not-ready" };
+		if (point) {
+			const hit = this.doc.elementFromPoint(point.x, point.y);
+			if (!hit || (hit !== control && !control.contains(hit))) return { status: "not-ready" };
+		}
+		if (this.restartControl !== control) {
+			this.restartControl = control;
+			this.restartTargetId = this.win.crypto.randomUUID();
+		}
+		const rect = control.getBoundingClientRect();
+		return {
+			status: "ready",
+			target: {
+				targetId: this.restartTargetId,
+				rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+				viewport: { width: this.win.innerWidth, height: this.win.innerHeight },
+			},
+		};
 	}
 
 	probe(): ProbeReport {

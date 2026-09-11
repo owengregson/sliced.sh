@@ -26,15 +26,15 @@ describe("restart control discovery", () => {
 		const clicks: string[] = [];
 		for (const button of dom.document.querySelectorAll("button"))
 			button.addEventListener("click", () => clicks.push(button.id));
-		expect(adapter.tryStartNewGame("new")).toBe("started");
-		expect(clicks).toEqual(["next"]);
+		expect(adapter.newGameTarget("new").status).toBe("ready");
+		expect(clicks).toEqual([]);
 		dom.query("#next").setAttribute("aria-label", "New Game");
 		dom.query("#next").textContent = "Cancel";
-		for (let i = 0; i < 3; i++) expect(adapter.tryStartNewGame("new")).toBe("searching");
-		expect(clicks).toEqual(["next"]);
+		for (let i = 0; i < 3; i++) expect(adapter.newGameTarget("new").status).toBe("searching");
+		expect(clicks).toEqual([]);
 		dom.query("#next").remove();
-		expect(adapter.tryStartNewGame("new")).toBe("not-ready");
-		expect(clicks).toEqual(["next"]);
+		expect(adapter.newGameTarget("new").status).toBe("not-ready");
+		expect(clicks).toEqual([]);
 	});
 
 	it("skips disabled and hidden modal copies and retries when the sidebar action becomes ready", () => {
@@ -47,39 +47,36 @@ describe("restart control discovery", () => {
 		holder.setAttribute("hidden", "");
 		let clicked = 0;
 		next.addEventListener("click", () => clicked++);
-		expect(adapter.tryStartNewGame("new")).toBe("not-ready");
+		expect(adapter.newGameTarget("new").status).toBe("not-ready");
 		holder.removeAttribute("hidden");
 		next.setAttribute("aria-busy", "true");
-		expect(adapter.tryStartNewGame("new")).toBe("not-ready");
+		expect(adapter.newGameTarget("new").status).toBe("not-ready");
 		next.removeAttribute("aria-busy");
 		holder.setAttribute("style", "opacity:0");
-		expect(adapter.tryStartNewGame("new")).toBe("not-ready");
+		expect(adapter.newGameTarget("new").status).toBe("not-ready");
 		holder.removeAttribute("style");
 		dom.layoutElement(next, { ...RECT, y: 900 });
-		expect(adapter.tryStartNewGame("new")).toBe("not-ready");
+		expect(adapter.newGameTarget("new").status).toBe("not-ready");
 		dom.layoutElement(next, RECT);
-		expect(adapter.tryStartNewGame("new")).toBe("started");
-		expect(clicked).toBe(1);
+		expect(adapter.newGameTarget("new").status).toBe("ready");
+		expect(clicked).toBe(0);
 	});
 
 	it("does not activate stale-game or in-progress controls and does not equate a paused board with a new game", () => {
 		const over = boot();
 		over.dom.layout("button", RECT);
-		let before = 0;
-		expect(over.adapter.tryStartNewGame("new", () => before++, "old-game")).toBe("in-game");
-		expect(before).toBe(0);
+		expect(over.adapter.newGameTarget("new", "old-game").status).toBe("in-game");
 		const live = boot("chesscom-live");
 		live.dom.document.body.insertAdjacentHTML(
 			"beforeend",
 			'<button aria-label="New Game">New Game</button>'
 		);
 		live.dom.layout("button", RECT);
-		expect(live.adapter.tryStartNewGame("new", () => before++)).toBe("in-game");
-		expect(before).toBe(0);
+		expect(live.adapter.newGameTarget("new").status).toBe("in-game");
 		live.dom.query('button[aria-label="New Game"]').remove();
 		for (const clock of live.dom.document.querySelectorAll(".clock-component"))
 			clock.classList.remove("clock-player-turn", "clock-playerTurn", "running");
-		expect(live.adapter.tryStartNewGame("new")).toBe("not-ready");
+		expect(live.adapter.newGameTarget("new").status).toBe("not-ready");
 	});
 
 	it("recognizes Play Again only for computer games", () => {
@@ -91,8 +88,8 @@ describe("restart control discovery", () => {
 				'<div class="game-over-modal-shell-buttons"><button data-cy="game-over-modal-play-again-button">Play Again</button></div>'
 			);
 			dom.layout("button", RECT);
-			expect(adapter.tryStartNewGame("new")).toBe(
-				name === "chesscom-computer" ? "started" : "not-ready"
+			expect(adapter.newGameTarget("new").status).toBe(
+				name === "chesscom-computer" ? "ready" : "not-ready"
 			);
 		}
 	});
@@ -100,12 +97,12 @@ describe("restart control discovery", () => {
 	it("waits for a delayed control and ignores a hidden queue indicator", () => {
 		const { dom, adapter } = boot();
 		for (const button of dom.document.querySelectorAll("button")) button.remove();
-		expect(adapter.tryStartNewGame("new")).toBe("not-ready");
+		expect(adapter.newGameTarget("new").status).toBe("not-ready");
 		dom.query(".new-game-buttons-component").innerHTML =
 			'<button hidden aria-label="Cancel Search">Cancel</button><button aria-label="New Game">New Game</button>';
 		dom.layout("button", RECT);
-		expect(adapter.tryStartNewGame("new")).toBe("started");
+		expect(adapter.newGameTarget("new").status).toBe("ready");
 		dom.query('[aria-label="Cancel Search"]').removeAttribute("hidden");
-		expect(adapter.tryStartNewGame("new")).toBe("searching");
+		expect(adapter.newGameTarget("new").status).toBe("searching");
 	});
 });

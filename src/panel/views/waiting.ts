@@ -168,7 +168,10 @@ export function createWaitingView(options: WaitingViewOptions = {}): View {
 						? snapshot.session.autoQueue
 						: undefined;
 				const remaining = queue ? queue.dueAt - Date.now() : 0;
-				const counting = queue?.status === "waiting" && queue.attempts === 0 && remaining > 0;
+				const counting =
+					(queue?.status === "waiting" || queue?.status === "break") &&
+					queue.attempts === 0 &&
+					remaining > 0;
 				dot.dataset.state = assistantOff || reading || queue ? "warn" : "ok";
 				// The visible timer updates every second without announcing every tick.
 				status.setAttribute("role", counting ? "timer" : "status");
@@ -177,7 +180,9 @@ export function createWaitingView(options: WaitingViewOptions = {}): View {
 					? COPY.move.disabled
 					: queue
 						? counting
-							? COPY.waiting.queueDelay(formatCountdown(remaining))
+							? queue.status === "break"
+								? COPY.waiting.queueBreak(formatCountdown(remaining))
+								: COPY.waiting.queueDelay(formatCountdown(remaining))
 							: queue.status === "searching"
 								? COPY.waiting.queueSearching
 								: queue.status === "retrying"

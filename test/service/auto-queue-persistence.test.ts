@@ -31,6 +31,60 @@ describe("durable autoqueue persistence", () => {
 		expect(sim.alarms.list()).toEqual([]);
 	});
 
+	it("persists active session progress without an alarm, then wakes for its break", async () => {
+		const store = createAutoQueuePersistence();
+		const session = {
+			gameId: "second",
+			startedAt: 900000,
+			endsAt: 1300000,
+			completedGames: 1,
+			lastFinishedGameId: "first",
+			breakUntil: null,
+		};
+		const active = { "4": { gameId: "second", dueAt: null, session } };
+		await store.save(active);
+		expect(await store.load()).toEqual(active);
+		expect(sim.alarms.list()).toEqual([]);
+		const takingBreak = {
+			"4": {
+				gameId: "second",
+				dueAt: 1600000,
+				session: { ...session, completedGames: 2, lastFinishedGameId: "second", breakUntil: 1600000 },
+			},
+		};
+		await store.save(takingBreak);
+		expect(await store.load()).toEqual(takingBreak);
+		expect(sim.alarms.list()).toEqual([{ name: ALARM_NAMES.autoQueue, scheduledTime: 1600000 }]);
+	});
+
+	it("rejects malformed active sessions without losing valid pending queue recovery", async () => {
+		const session = {
+			gameId: "first",
+			startedAt: 900000,
+			endsAt: 1300000,
+			completedGames: 0,
+			lastFinishedGameId: null,
+			breakUntil: null,
+		};
+		for (const malformed of [
+			null,
+			[],
+			{ ...session, endsAt: 800000 },
+			{ ...session, completedGames: -1 },
+			{ ...session, breakUntil: 1200000 },
+			{ ...session, startedAt: Number.NaN },
+			{ ...session, gameId: 3 },
+		]) {
+			const store = createAutoQueuePersistence({
+				read: async () => ({
+					"1": { gameId: "first", dueAt: null, session: malformed },
+					"2": { gameId: "first", dueAt: 1600000, session: malformed },
+				}),
+			});
+			expect(await store.load()).toEqual({ "2": pending("first", 1600000) });
+		}
+	});
+
 	it("restores saved state and receives its alarm after the worker terminates and reboots", async () => {
 		const first = await bootSwContext(sim);
 		const records = { "4": pending("finished-game", sim.now() + 60000) };

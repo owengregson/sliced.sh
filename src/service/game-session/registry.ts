@@ -35,6 +35,7 @@ import type { FocusGate } from "@service/focus-gate";
 import type { HandOwnership } from "@service/hand-ownership";
 import type { Keepalive } from "@service/keepalive";
 import { MoveExecutor } from "@service/move-executor";
+import { NewGameInput } from "@service/new-game-input";
 import type {
 	ExecutorHandle,
 	HandSources,
@@ -103,6 +104,7 @@ export class SessionRegistry implements GameSessionRegistry, SnapshotSources {
 	private readonly sessions = new Map<number, Entry>();
 	private readonly offs: Array<() => void> = [];
 	private readonly autoQueue: AutoQueue;
+	private readonly newGameInput: NewGameInput;
 	private disposed = false;
 	private holdingKeepalive = false;
 
@@ -111,11 +113,27 @@ export class SessionRegistry implements GameSessionRegistry, SnapshotSources {
 		this.now = deps.now ?? defaultNow;
 		this.scheduler = deps.scheduler ?? defaultScheduler;
 		this.hand = { debugger: deps.debugger, focus: deps.focus, ownership: deps.ownership };
-		this.autoQueue = new AutoQueue({
+		// New worker lifetimes must not replay identical session lengths and button paths.
+		// Tests can inject a fixed seed; sampled session/break deadlines are persisted separately.
+		const queueSeed = deps.seed ?? crypto.randomUUID();
+		this.newGameInput = new NewGameInput({
 			link: deps.link,
+			debugger: deps.debugger,
+			ownership: deps.ownership,
+			focus: deps.focus,
+			rng: createRng(`${queueSeed}:queue-input`),
 			scheduler: this.scheduler,
 			now: this.now,
-			rng: createRng(`${deps.seed ?? "sl"}:auto-queue`),
+			showCursor: () => deps.getSettings().display.virtualCursor,
+		});
+		this.autoQueue = new AutoQueue({
+			attempt: async (tabId, gameId, signal) => {
+				await this.sessions.get(tabId)?.session.executor()?.whenIdle();
+				return this.newGameInput.attempt(tabId, gameId, signal);
+			},
+			scheduler: this.scheduler,
+			now: this.now,
+			rng: createRng(`${queueSeed}:auto-queue`),
 			persistence: createAutoQueuePersistence(),
 			canQueue: (tabId, gameId) => {
 				if (deps.settingsKnown?.() === false) return "hold";
@@ -165,7 +183,7 @@ export class SessionRegistry implements GameSessionRegistry, SnapshotSources {
 				} catch {
 					/* An invalid destination cancels pending input. */
 				}
-				const preserve = queuePage && this.autoQueue.isPending(tabId);
+				const preserve = queuePage && this.autoQueue.isTracking(tabId);
 				this.sessions.get(tabId)?.session.onTabEvent("navigated", preserve);
 				if (!queuePage) this.autoQueue.cancel(tabId);
 			})
@@ -256,8 +274,9 @@ export class SessionRegistry implements GameSessionRegistry, SnapshotSources {
 		if (this.disposed) return;
 		this.disposed = true;
 		for (const off of this.offs.splice(0)) off();
-		for (const tabId of [...this.sessions.keys()]) this.drop(tabId, "disposed");
+		for (const tabId of [...this.sessions.keys()]) this.drop(tabId, "disposed", true);
 		this.autoQueue.dispose();
+		this.newGameInput.dispose();
 		void this.deps.keepalive.release(KEEPALIVE_REASONS.game);
 	}
 

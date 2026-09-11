@@ -32,10 +32,21 @@ export interface PersonaLatents {
 /** `Record<tabId, boolean>` — chrome.storage keys are strings, so tab ids are stringified. */
 export type TabFlags = Record<string, boolean>;
 
+/** One playing session; deadlines and progress survive a quiet MV3 worker. */
+export interface PlayingSession {
+	gameId: string | null;
+	startedAt: number;
+	endsAt: number;
+	completedGames: number;
+	lastFinishedGameId: string | null;
+	breakUntil: number | null;
+}
+
 export interface PendingAutoQueue {
 	gameId: string | null;
-	/** Absolute wall-clock deadline, preserved across service-worker lifetimes. */
-	dueAt: number;
+	/** Null while a game is active; otherwise an absolute, persisted matchmaking deadline. */
+	dueAt: number | null;
+	session?: PlayingSession;
 }
 
 export type PendingAutoQueues = Record<string, PendingAutoQueue>;

@@ -168,7 +168,7 @@ describe("ChessComAdapter — state readers", () => {
 		adapter.getMoveList();
 		adapter.squareToPoint("e2");
 		adapter.probe();
-		adapter.tryStartNewGame("new");
+		adapter.newGameTarget("new").status;
 		expect(spy.hits()).toBe(0);
 	});
 });
@@ -302,7 +302,7 @@ describe("ChessComAdapter — game over and new game", () => {
 		expect(results).toEqual(["1-0"]);
 		expect(adapter.isGameOver()).toBe(true);
 	});
-	it("tryStartNewGame clicks the first matching ladder entry only", () => {
+	it("newGameTarget discovers controls without activating either one", () => {
 		const { dom, adapter } = boot("chesscom-gameover");
 		dom.layout("button", { x: 200, y: 200, width: 150, height: 40 });
 		const clicked: string[] = [];
@@ -310,12 +310,12 @@ describe("ChessComAdapter — game over and new game", () => {
 			b.addEventListener("click", () =>
 				clicked.push(b.getAttribute("data-cy") ?? b.textContent ?? "")
 			);
-		expect(adapter.tryStartNewGame("new")).toBe("started");
-		expect(clicked).toEqual(["game-over-modal-new-game-button"]);
-		expect(adapter.tryStartNewGame("rematch")).toBe("started");
-		expect(clicked).toEqual(["game-over-modal-new-game-button", "game-over-modal-rematch-button"]);
+		expect(adapter.newGameTarget("new").status).toBe("ready");
+		expect(clicked).toEqual([]);
+		expect(adapter.newGameTarget("rematch").status).toBe("ready");
+		expect(clicked).toEqual([]);
 		const live = boot("chesscom-live");
-		expect(live.adapter.tryStartNewGame("new")).toBe("in-game");
+		expect(live.adapter.newGameTarget("new").status).toBe("in-game");
 	});
 });
 

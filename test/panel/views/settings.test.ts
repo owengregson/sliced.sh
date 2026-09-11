@@ -300,73 +300,79 @@ describe("settings view · rows", () => {
 	});
 });
 
-describe("settings view · automatic queue delay", () => {
-	it("enables dependent controls in order and preserves the chosen delay when auto-queue is off", async () => {
-		const h = await mountSettings();
-		const queue = q(row(h.root, "automation.autoQueue"), "[role=switch]");
-		const delay = q(row(h.root, "automation.autoQueueDelayEnabled"), "[role=switch]");
-		const maxRow = row(h.root, "automation.autoQueueDelayMaxMinutes");
-		const max = q(maxRow, ".sl-stepper");
-		const increment = q(maxRow, ".sl-stepper__button--inc");
-		expect(delay.getAttribute("aria-disabled")).toBe("true");
-		expect(max.getAttribute("aria-disabled")).toBe("true");
-		expect(q(maxRow, ".sl-stepper__value").textContent).toBe("5 min");
-		click(delay);
-		click(increment);
-		await dom.tick(0);
-		expect(h.patches).toEqual([]);
+describe("settings view · playing sessions", () => {
+	it.each([
+		["automation.autoQueueSessionMinMinutes", 20],
+		["automation.autoQueueSessionMaxMinutes", 60],
+		["automation.autoQueueBreakMinMinutes", 5],
+		["automation.autoQueueBreakMaxMinutes", 20],
+	] as const)(
+		"enables %s with auto-queue and retains its value when disabled",
+		async (path, initial) => {
+			const h = await mountSettings();
+			const queue = q(row(h.root, "automation.autoQueue"), "[role=switch]");
+			const target = row(h.root, path);
+			const stepper = q(target, ".sl-stepper");
+			const increment = q(target, ".sl-stepper__button--inc");
+			expect(stepper.getAttribute("aria-disabled")).toBe("true");
+			expect(q(target, ".sl-stepper__value").textContent).toBe(`${initial} min`);
+			click(increment);
+			await dom.tick(0);
+			expect(h.patches).toEqual([]);
+			click(queue);
+			await dom.tick(0);
+			expect(stepper.getAttribute("aria-disabled")).toBeNull();
+			click(increment);
+			await dom.tick(0);
+			expect(q(target, ".sl-stepper__value").textContent).toBe(`${initial + 1} min`);
+			click(queue);
+			await dom.tick(0);
+			expect(stepper.getAttribute("aria-disabled")).toBe("true");
+			click(queue);
+			await dom.tick(0);
+			expect(q(target, ".sl-stepper__value").textContent).toBe(`${initial + 1} min`);
+		}
+	);
 
-		click(queue);
-		await dom.tick(0);
-		expect(delay.getAttribute("aria-disabled")).toBeNull();
-		expect(max.getAttribute("aria-disabled")).toBe("true");
-		click(delay);
-		await dom.tick(0);
-		expect(max.getAttribute("aria-disabled")).toBeNull();
-		click(increment);
-		await dom.tick(0);
-		expect(h.patches.at(-1)).toEqual({ automation: { autoQueueDelayMaxMinutes: 6 } });
-		expect(q(maxRow, ".sl-stepper__value").textContent).toBe("6 min");
-
-		click(queue);
-		await dom.tick(0);
-		expect(delay.getAttribute("aria-disabled")).toBe("true");
-		expect(max.getAttribute("aria-disabled")).toBe("true");
-		expect(h.settings().automation.autoQueueDelayEnabled).toBe(true);
-		expect(h.settings().automation.autoQueueDelayMaxMinutes).toBe(6);
-		click(queue);
-		await dom.tick(0);
-		expect(max.getAttribute("aria-disabled")).toBeNull();
-		click(delay);
-		await dom.tick(0);
-		expect(max.getAttribute("aria-disabled")).toBe("true");
-		expect(h.settings().automation.autoQueueDelayMaxMinutes).toBe(6);
-	});
-
-	it("bounds the delay stepper and follows external dependency changes", async () => {
+	it("keeps a range ordered when one endpoint crosses the other", async () => {
 		const automation = {
 			...DEFAULT_SETTINGS.automation,
 			autoQueue: true,
-			autoQueueDelayEnabled: true,
-			autoQueueDelayMaxMinutes: LIMITS.autoQueueDelayMinutesMax,
+			autoQueueSessionMinMinutes: 30,
+			autoQueueSessionMaxMinutes: 30,
+			autoQueueBreakMinMinutes: 10,
+			autoQueueBreakMaxMinutes: 10,
 		};
 		const h = await mountSettings(makeSnapshot({ settings: { automation } }));
-		const maxRow = row(h.root, "automation.autoQueueDelayMaxMinutes");
+		click(q(row(h.root, "automation.autoQueueSessionMinMinutes"), ".sl-stepper__button--inc"));
+		await dom.tick(0);
+		expect(h.patches.at(-1)).toEqual({
+			automation: { autoQueueSessionMinMinutes: 31, autoQueueSessionMaxMinutes: 31 },
+		});
+		click(q(row(h.root, "automation.autoQueueBreakMaxMinutes"), ".sl-stepper__button--dec"));
+		await dom.tick(0);
+		expect(h.patches.at(-1)).toEqual({
+			automation: { autoQueueBreakMinMinutes: 9, autoQueueBreakMaxMinutes: 9 },
+		});
+	});
+
+	it("bounds session settings and follows external dependency changes", async () => {
+		const automation = {
+			...DEFAULT_SETTINGS.automation,
+			autoQueue: true,
+			autoQueueSessionMaxMinutes: LIMITS.autoQueueSessionMinutesMax,
+		};
+		const h = await mountSettings(makeSnapshot({ settings: { automation } }));
+		const maxRow = row(h.root, "automation.autoQueueSessionMaxMinutes");
 		expect(q(maxRow, ".sl-stepper__button--inc").getAttribute("aria-disabled")).toBe("true");
 		click(q(maxRow, ".sl-stepper__button--inc"));
 		await dom.tick(0);
 		expect(h.patches).toEqual([]);
-		h.store.emit(
-			makeSnapshot({
-				settings: { automation: { ...automation, autoQueueDelayMaxMinutes: 1 } },
-			})
-		);
-		expect(q(maxRow, ".sl-stepper__button--dec").getAttribute("aria-disabled")).toBe("true");
-		expect(q(maxRow, ".sl-stepper__value").textContent).toBe("1 min");
 		h.store.emit(makeSnapshot({ settings: { automation: { ...automation, autoQueue: false } } }));
 		expect(q(maxRow, ".sl-stepper").getAttribute("aria-disabled")).toBe("true");
-		expect(clampRowValue("automation.autoQueueDelayMaxMinutes", 0)).toBe(1);
-		expect(clampRowValue("automation.autoQueueDelayMaxMinutes", 999)).toBe(60);
+		expect(clampRowValue("automation.autoQueueSessionMinMinutes", 0)).toBe(1);
+		expect(clampRowValue("automation.autoQueueSessionMaxMinutes", 999)).toBe(240);
+		expect(clampRowValue("automation.autoQueueBreakMaxMinutes", 999)).toBe(180);
 	});
 });
 

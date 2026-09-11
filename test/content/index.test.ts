@@ -293,7 +293,49 @@ describe("content entry — feed", () => {
 });
 
 describe("content entry — commands", () => {
-	it("releases stale pointer isolation only when a safe restart control is ready, then acknowledges its click", () => {
+	it("opens the virtual hit-test aperture before revalidating a restart target", async () => {
+		const { dom, feed, bridge } = boot("chesscom-gameover");
+		const next = dom.query('[data-cy="game-over-modal-new-game-button"]');
+		for (const button of dom.document.querySelectorAll("button"))
+			if (button !== next) button.remove();
+		dom.layoutElement(next, { x: 200, y: 200, width: 150, height: 40 });
+		feed.command({ kind: "startNewGame", id: "discover", gameId: null });
+		const reply = feed.of("startNewGameResult").at(-1);
+		if (reply?.status !== "ready") throw new Error("target was not discovered");
+		feed.command({ kind: "cursorTo", x: 100, y: 100, down: false });
+		let open = false;
+		Object.defineProperty(dom.document, "elementFromPoint", {
+			configurable: true,
+			value: () => (open ? next : null),
+		});
+		bridge.responses.set("cursorPrepare", () => {
+			open = true;
+			return true;
+		});
+		feed.command({
+			kind: "startNewGame",
+			id: "verify",
+			gameId: null,
+			targetId: reply.target.targetId,
+			point: { x: 250, y: 220 },
+		});
+		await waitFor(() => feed.of("startNewGameResult").length === 2);
+		expect(feed.of("startNewGameResult").at(-1)?.status).toBe("ready");
+		expect(bridge.callsOf("cursorPrepare")).toHaveLength(1);
+		expect(feed.of("cursorPrepared")).toHaveLength(0);
+		bridge.responses.set("cursorPrepare", () => false);
+		feed.command({
+			kind: "startNewGame",
+			id: "blocked",
+			gameId: null,
+			targetId: reply.target.targetId,
+			point: { x: 250, y: 220 },
+		});
+		await waitFor(() => feed.of("startNewGameResult").length === 3);
+		expect(feed.of("startNewGameResult").at(-1)?.status).toBe("not-ready");
+	});
+
+	it("discovers safe restart geometry without hiding the pointer or activating the control", () => {
 		const { dom, feed, bridge } = boot("chesscom-gameover");
 		dom.layout("button", { x: 200, y: 200, width: 150, height: 40 });
 		const next = dom.query('[data-cy="game-over-modal-new-game-button"]');
@@ -305,12 +347,12 @@ describe("content entry — commands", () => {
 		expect(bridge.notified.some((message) => message.kind === "cursorHide")).toBe(false);
 		expect(feed.of("startNewGameResult").at(-1)?.status).toBe("in-game");
 		feed.command({ kind: "startNewGame", id: "next", gameId: "173765478165" });
-		expect(clicked).toBe(1);
-		expect(bridge.notified.at(-1)?.kind).toBe("cursorHide");
-		expect(feed.of("startNewGameResult").at(-1)).toEqual({
+		expect(clicked).toBe(0);
+		expect(bridge.notified.some((message) => message.kind === "cursorHide")).toBe(false);
+		expect(feed.of("startNewGameResult").at(-1)).toMatchObject({
 			kind: "startNewGameResult",
 			id: "next",
-			status: "started",
+			status: "ready",
 		});
 	});
 
@@ -337,12 +379,13 @@ describe("content entry — commands", () => {
 			next.textContent = "Cancel";
 		});
 		feed.command({ kind: "startNewGame", id: "ready", gameId: null });
+		next.textContent = "Cancel";
 		feed.command({ kind: "startNewGame", id: "search", gameId: null });
-		expect(started).toBe(1);
+		expect(started).toBe(0);
 		expect(rematches).toBe(0);
 		expect(feed.of("startNewGameResult").map((message) => message.status)).toEqual([
 			"not-ready",
-			"started",
+			"ready",
 			"searching",
 		]);
 	});
@@ -580,7 +623,7 @@ describe("content entry — commands", () => {
 		expect(g?.squares?.a1).toMatchObject({ x: 100, y: 100 + 7 * 66, width: 66, height: 66 });
 		expect(g?.promotion).toBeUndefined();
 	});
-	it("ignores speak (TTS lives in the SW), stores keybinds, and startNewGame clicks the site's button", () => {
+	it("ignores speak (TTS lives in the SW), stores keybinds, and startNewGame only discovers the site's button", () => {
 		const { feed, dom } = boot("chesscom-gameover");
 		dom.layout("button", { x: 200, y: 200, width: 150, height: 40 });
 		const before = feed.posts.length;
@@ -625,9 +668,8 @@ describe("content entry — commands", () => {
 		});
 		feed.command({ kind: "startNewGame", id: "next", gameId: null });
 		expect(feed.posts.length).toBe(before + 1);
-		expect(feed.of("startNewGameResult")).toEqual([
-			{ kind: "startNewGameResult", id: "next", status: "started" },
-		]);
+		expect(feed.of("startNewGameResult")).toHaveLength(1);
+		expect(feed.of("startNewGameResult")[0]?.status).toBe("ready");
 	});
 	it("never touches page storage while booting and feeding", async () => {
 		const dom = loadFixture("chesscom-live");

@@ -2,7 +2,6 @@ import { describe, expect, it } from "bun:test";
 import { TIMINGS } from "@core/constants/timings";
 import { createRng } from "@core/rng";
 import { AutoQueue, type AutoQueueOptions } from "@service/auto-queue";
-import type { ContentLink } from "@service/content-link";
 import { DEFAULT_SETTINGS } from "@typedefs/settings";
 import type { PendingAutoQueues } from "@typedefs/storage";
 
@@ -31,11 +30,9 @@ function harness(
 		now: () => now,
 		rng: { ...createRng("queue-test"), next: () => options.rng ?? 0 },
 		canQueue: () => gate,
-		link: {
-			request: ((tabId: number) => {
-				calls.push({ tabId, at: now });
-				return answer();
-			}) as ContentLink["request"],
+		attempt: (tabId: number) => {
+			calls.push({ tabId, at: now });
+			return answer();
 		},
 		scheduler: {
 			setTimeout(fn, ms) {
@@ -110,7 +107,8 @@ describe("auto queue recovery", () => {
 		await h.queue.observedGame(1, "next");
 		await h.advance(60_000);
 		expect(h.calls).toHaveLength(3);
-		expect(h.saved).toEqual({});
+		expect(h.saved["1"]?.dueAt).toBeNull();
+		expect(h.saved["1"]?.session?.gameId).toBe("next");
 		h.queue.dispose();
 	});
 
@@ -126,22 +124,110 @@ describe("auto queue recovery", () => {
 		h.queue.dispose();
 	});
 
-	it.each([0, 0.5, 0.999])("samples a 1–3 minute wait once with rng %s", async (rng) => {
-		const h = harness({ rng });
-		await h.queue.schedule(1, "old", {
+	it.each([0, 0.5, 0.999])(
+		"samples one break after a completed session with rng %s",
+		async (rng) => {
+			const h = harness({ rng });
+			const settings = {
+				...automation,
+				autoQueue: true,
+				autoQueueSessionMinMinutes: 1,
+				autoQueueSessionMaxMinutes: 1,
+				autoQueueBreakMinMinutes: 1,
+				autoQueueBreakMaxMinutes: 3,
+			};
+			await h.queue.observedGame(1, "old", settings);
+			await h.advance(60_000);
+			expect(h.calls).toHaveLength(0);
+			expect(h.queue.isPending(1)).toBe(false);
+			await h.queue.schedule(1, "old", settings);
+			const due = 61_000 + 60_000 + rng * 120_000;
+			expect(h.queue.view(1)?.status).toBe("break");
+			expect(h.queue.view(1)?.dueAt).toBe(due);
+			await h.advance(30_000);
+			await h.queue.schedule(1, "old", automation);
+			expect(h.queue.view(1)?.dueAt).toBe(due);
+			await h.advance(due - 91_000 - 1);
+			expect(h.calls).toHaveLength(0);
+			await h.advance(1);
+			expect(h.calls).toHaveLength(1);
+			h.queue.dispose();
+		}
+	);
+
+	it("queues consecutive games promptly and starts a fresh session only after the break", async () => {
+		const h = harness();
+		const settings = {
 			...automation,
-			autoQueueDelayEnabled: true,
-			autoQueueDelayMaxMinutes: 3,
-		});
-		const due = 1_000 + 60_000 + rng * 120_000;
-		expect(h.queue.view(1)?.dueAt).toBe(due);
+			autoQueue: true,
+			autoQueueSessionMinMinutes: 2,
+			autoQueueSessionMaxMinutes: 2,
+			autoQueueBreakMinMinutes: 1,
+			autoQueueBreakMaxMinutes: 1,
+		};
+		await h.queue.observedGame(1, "first", settings);
+		const firstEnds = h.saved["1"]!.session!.endsAt;
 		await h.advance(30_000);
-		await h.queue.schedule(1, "old", automation);
-		expect(h.queue.view(1)?.dueAt).toBe(due);
-		await h.advance(due - 31_000 - 1);
-		expect(h.calls).toHaveLength(0);
-		await h.advance(1);
+		await h.queue.schedule(1, "first", settings);
+		expect(h.queue.view(1)?.status).toBe("waiting");
+		expect(h.queue.view(1)?.dueAt).toBe(31_900);
+		await h.advance(900);
+		await h.queue.observedGame(1, "second", settings);
+		expect(h.saved["1"]?.session?.endsAt).toBe(firstEnds);
+		expect(h.saved["1"]?.session?.completedGames).toBe(1);
+		await h.advance(100_000);
 		expect(h.calls).toHaveLength(1);
+		await h.queue.schedule(1, "second", settings);
+		expect(h.queue.view(1)?.status).toBe("break");
+		expect(h.saved["1"]?.session?.completedGames).toBe(2);
+		await h.advance(60_000);
+		expect(h.calls).toHaveLength(2);
+		await h.queue.observedGame(1, "third", settings);
+		expect(h.saved["1"]?.session?.completedGames).toBe(0);
+		expect(h.saved["1"]?.session?.breakUntil).toBeNull();
+		expect(h.saved["1"]?.session?.endsAt).toBe(311_900);
+		h.queue.dispose();
+	});
+
+	it("restores active sessions and breaks without resampling either deadline", async () => {
+		const settings = {
+			...automation,
+			autoQueue: true,
+			autoQueueSessionMinMinutes: 1,
+			autoQueueSessionMaxMinutes: 1,
+			autoQueueBreakMinMinutes: 2,
+			autoQueueBreakMaxMinutes: 2,
+		};
+		const first = harness();
+		await first.queue.observedGame(1, "first", settings);
+		const active = structuredClone(first.saved);
+		first.queue.dispose();
+		const second = harness({ persisted: active, rng: 0.999 });
+		await second.queue.observedGame(1, "first", settings);
+		expect(second.saved).toEqual(active);
+		await second.advance(90_000);
+		await second.queue.schedule(1, "first", settings);
+		const pending = structuredClone(second.saved);
+		second.queue.dispose();
+		const third = harness({ persisted: pending, rng: 0.5 });
+		await third.queue.schedule(1, "first", settings);
+		expect(third.saved).toEqual(pending);
+		expect(third.queue.view(1)?.status).toBe("break");
+		await third.advance(pending["1"]!.dueAt! - 1_000 - 1);
+		expect(third.calls).toHaveLength(0);
+		await third.advance(1);
+		expect(third.calls).toHaveLength(1);
+		third.queue.dispose();
+	});
+
+	it("explicit stop clears both the active session and pending break", async () => {
+		const h = harness();
+		await h.queue.observedGame(1, "old", { ...automation, autoQueue: true });
+		expect(h.queue.isTracking(1)).toBe(true);
+		h.queue.cancel(1);
+		await flush();
+		expect(h.saved).toEqual({});
+		expect(h.queue.isTracking(1)).toBe(false);
 		h.queue.dispose();
 	});
 
@@ -229,10 +315,8 @@ describe("auto queue recovery", () => {
 		const queue = new AutoQueue({
 			rng: { ...createRng("queue-test"), next: () => 0 },
 			canQueue: () => "allow",
-			link: {
-				request: (() => {
-					throw new Error("must not request");
-				}) as ContentLink["request"],
+			attempt: async () => {
+				throw new Error("must not request");
 			},
 			persistence: {
 				load: () =>

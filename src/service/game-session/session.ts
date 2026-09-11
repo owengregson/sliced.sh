@@ -600,6 +600,7 @@ export class GameSession implements SessionSource {
 		if (!this.virtualCursorAllowed()) this.hideVirtualCursor();
 		if (!on || !this.deps.getSettings().automation.autoQueue)
 			this.deps.autoQueue.cancel(this.deps.tabId);
+		else if (this.game) this.cancelQueueForNewGame(this.game.gameId);
 		if (!flipped) return;
 		if (on) void this.resumeEnabled();
 		else this.stopDisabled();
@@ -2494,10 +2495,13 @@ export class GameSession implements SessionSource {
 	}
 
 	private cancelQueueForNewGame(gameId: string): void {
-		// A reconnect first replays the finished game's position; preserve its pending deadline.
-		if (this.game !== null && this.game.gameId !== gameId)
-			this.deps.autoQueue.cancel(this.deps.tabId);
-		void this.deps.autoQueue.observedGame(this.deps.tabId, gameId);
+		// Clear only the finished game's queue; the playing session spans consecutive games.
+		const settings = this.deps.getSettings();
+		void this.deps.autoQueue.observedGame(
+			this.deps.tabId,
+			gameId,
+			this.mayAct() && settings.automation.autoQueue ? settings.automation : undefined
+		);
 	}
 
 	// ── executor plumbing ──────────────────────────────────────────────────

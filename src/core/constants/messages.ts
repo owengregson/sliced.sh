@@ -8,7 +8,7 @@ import type { PreparedPointer } from "./cdp";
 
 import type { TOAST_KEYS } from "@core/constants/toasts";
 import type { LogEntry } from "@core/logger";
-import type { Occupancy, Rect } from "@core/motor/types";
+import type { Occupancy, Pt, Rect } from "@core/motor/types";
 import type { EngineStatus, EngineVariant, EvalLine } from "@typedefs/engine";
 import type {
 	ChosenMove,
@@ -28,6 +28,16 @@ import type { Keybinds, LicenseState, LogLevel, Settings } from "@typedefs/setti
 import type { TimingLogEntry, TimingPlan } from "@typedefs/timing";
 
 export type { ChosenMove, EvalLine, PositionSnapshot, Recommendation, TimingPlan };
+
+/** A read-only restart-control snapshot, revalidated before native input. */
+export interface NewGameTarget {
+	targetId: string;
+	rect: Rect;
+	viewport: { width: number; height: number };
+}
+export type NewGameTargetResult =
+	| { status: "ready"; target: NewGameTarget }
+	| { status: "searching" | "not-ready" | "in-game" };
 
 export const MSG = {
 	// panel → SW (request/response)
@@ -150,11 +160,7 @@ export type GamePortMessage =
 	| { kind: "position"; snapshot: PositionSnapshot }
 	| { kind: "gameStarted"; game: GameMeta }
 	| { kind: "gameEnded"; result: GameResult; gameId?: string; eventId?: string; replayed?: boolean }
-	| {
-			kind: "startNewGameResult";
-			id: string;
-			status: "started" | "searching" | "not-ready" | "in-game";
-	  }
+	| ({ kind: "startNewGameResult"; id: string } & NewGameTargetResult)
 	| { kind: "cursor"; x: number; y: number; t: number; real: true }
 	| { kind: "selectorMiss"; selector: string }
 	/** V2 §13.4: every window focus/blur/visibilitychange edge */
@@ -207,7 +213,7 @@ export type GamePortCommand =
 	| { kind: "clearHighlight" }
 	| { kind: "arrow"; lines: Array<{ from: Square; to: Square; weight: number }> }
 	| { kind: "keybinds"; keybinds: Keybinds }
-	| { kind: "startNewGame"; id: string; gameId: string | null }
+	| { kind: "startNewGame"; id: string; gameId: string | null; targetId?: string; point?: Pt }
 	| { kind: "gameEndReceived"; eventId: string }
 	| { kind: "speak"; text: string }
 	/** Settings the content script acts on (`automation.highlightMoves`, §13.3 rule 4); default off until sent. */

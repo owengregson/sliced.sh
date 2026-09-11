@@ -73,6 +73,21 @@ describe("waitingView", () => {
 		expect(status?.getAttribute("aria-live")).toBe("polite");
 	});
 
+	it("labels the break between playing sessions and keeps its absolute countdown", async () => {
+		const snapshot = makeSnapshot({
+			state: "game-over",
+			settings: { automation: { ...DEFAULT_SETTINGS.automation, autoQueue: true } },
+		});
+		snapshot.session.autoQueue = { dueAt: Date.now() + 300_000, attempts: 0, status: "break" };
+		await mountWaiting(snapshot);
+		expect(text(".sl-waiting__status-text")).toBe(COPY.waiting.queueBreak("5:00"));
+		await dom.tick(60_000);
+		store.emit({ ...snapshot });
+		expect(text(".sl-waiting__status-text")).toBe(COPY.waiting.queueBreak("4:00"));
+		await dom.tick(240_000);
+		expect(text(".sl-waiting__status-text")).toBe(COPY.waiting.queueStarting);
+	});
+
 	it("shows matchmaking and retry phases, then removes the countdown when queueing is canceled", async () => {
 		const snapshot = makeSnapshot({
 			state: "game-over",

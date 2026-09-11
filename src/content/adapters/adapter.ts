@@ -15,9 +15,11 @@ import { turnFieldOf } from "@core/chess/fen";
 import type { UciParts } from "@core/chess/san";
 import { EXECUTOR } from "@core/constants/cdp";
 import { LIMITS } from "@core/constants/limits";
+import type { NewGameTargetResult } from "@core/constants/messages";
 import { TIME_CONTROL, TIMINGS } from "@core/constants/timings";
 import { log } from "@core/logger";
 import { rectShiftPx } from "@core/motor/geometry";
+import type { Pt } from "@core/motor/types";
 import { TOKENS } from "@design/tokens.generated";
 import type {
 	ClockState,
@@ -134,7 +136,6 @@ export interface ProbeReport {
 }
 
 export type NewGameMode = "rematch" | "new";
-export type NewGameAttemptStatus = "started" | "searching" | "not-ready" | "in-game";
 
 export interface SiteAdapter {
 	readonly site: Site;
@@ -201,12 +202,13 @@ export interface SiteAdapter {
 	/** Resolves once the page side has answered (or the bridge call timed out / failed). */
 	clearHighlights(): Promise<void>;
 
-	/** Activate one actionable site control, or report why this attempt should wait/stop. */
-	tryStartNewGame(
+	/** Read or revalidate a site control; only the service worker performs native input. */
+	newGameTarget(
 		mode: NewGameMode,
-		beforeStart?: () => void,
-		expectedGameId?: string | null
-	): NewGameAttemptStatus;
+		expectedGameId?: string | null,
+		targetId?: string,
+		point?: Pt
+	): NewGameTargetResult;
 	/** True once the piece lands on `expected.to` (confirmed by the move list), false if it snaps back. */
 	observeMove(expected: UciParts, timeoutMs: number): Promise<boolean>;
 	probe(): ProbeReport;
@@ -503,11 +505,12 @@ export abstract class AdapterBase implements SiteAdapter {
 	abstract getBoardRect(): Rect | null;
 	abstract isFlipped(): boolean;
 	abstract getPromotionTargetRect(dest: Square, piece: PromoPiece): Rect | null;
-	abstract tryStartNewGame(
+	abstract newGameTarget(
 		mode: NewGameMode,
-		beforeStart?: () => void,
-		expectedGameId?: string | null
-	): NewGameAttemptStatus;
+		expectedGameId?: string | null,
+		targetId?: string,
+		point?: Pt
+	): NewGameTargetResult;
 	abstract probe(): ProbeReport;
 
 	// ---- shared behaviour --------------------------------------------------------

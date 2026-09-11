@@ -383,20 +383,26 @@ function bootContent(
 			case "settings":
 				highlights.setEnabled(cmd.highlightMoves);
 				return;
-			case "startNewGame":
-				post({
-					kind: "startNewGameResult",
-					id: cmd.id,
-					status: adapter.tryStartNewGame(
-						"new",
-						() => {
-							virtualCursor.apply({ kind: "cursorHide" });
-							cursor.setVirtualActive(false);
-						},
-						cmd.gameId
-					),
-				});
+			case "startNewGame": {
+				const answer = (reachable: boolean) => {
+					if (disposed) return;
+					post({
+						kind: "startNewGameResult",
+						id: cmd.id,
+						...(reachable
+							? adapter.newGameTarget("new", cmd.gameId, cmd.targetId, cmd.point)
+							: { status: "not-ready" as const }),
+					});
+				};
+				// The virtual pointer shield otherwise wins elementFromPoint. Open only its normal
+				// small hit-test aperture for this read; native input still needs separate admission.
+				if (cmd.point)
+					void virtualCursor
+						.prepare({ type: "mouseMoved", ...cmd.point, buttons: 0, timestampMs: Date.now() })
+						.then(answer);
+				else answer(true);
 				return;
+			}
 			case "speak":
 				relaySpeak(cmd);
 				return;

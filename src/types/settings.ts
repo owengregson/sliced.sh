@@ -53,10 +53,12 @@ export interface Settings {
 		 */
 		autoMove: boolean;
 		autoQueue: boolean;
-		/** Wait a uniformly sampled duration before automatically starting the next game. */
-		autoQueueDelayEnabled: boolean;
-		/** Integer maximum in minutes; the minimum delay is defined by LIMITS. */
-		autoQueueDelayMaxMinutes: number;
+		/** Playing-session duration range. An active game always finishes before a break. */
+		autoQueueSessionMinMinutes: number;
+		autoQueueSessionMaxMinutes: number;
+		/** Break duration range between playing sessions, sampled once per break. */
+		autoQueueBreakMinMinutes: number;
+		autoQueueBreakMaxMinutes: number;
 		/**
 		 * Draws the recommendation on the board. Ships **on** so a fresh install shows
 		 * something; §13.3 rule 4 still holds at runtime — the content script draws
@@ -163,8 +165,10 @@ export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze<Settings>({
 	automation: {
 		autoMove: false,
 		autoQueue: false,
-		autoQueueDelayEnabled: false,
-		autoQueueDelayMaxMinutes: 5,
+		autoQueueSessionMinMinutes: 20,
+		autoQueueSessionMaxMinutes: 60,
+		autoQueueBreakMinMinutes: 5,
+		autoQueueBreakMaxMinutes: 20,
 		highlightMoves: true,
 		highlightStyle: "both",
 	},

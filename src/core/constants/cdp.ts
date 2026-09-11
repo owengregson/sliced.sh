@@ -21,6 +21,13 @@ export const CDP = {
 	mouse: { noButtons: 0, leftButtons: 1, clickCount: 1, modifiers: 0 },
 } as const;
 
+/** Post-game controls share the motor path and input admission used on the board. */
+export const NEW_GAME_INPUT = {
+	entryInsetPx: 4,
+	/** Release outside the page after cancellation so the old button cannot receive a click. */
+	cancelPoint: { x: -1, y: -1 },
+} as const;
+
 /** Chrome's attach error text → the panel's user-facing reason (Appendix G §5). */
 export const DEBUGGER_ATTACH_REASONS = {
 	anotherDebugger: "Another debugger is attached",

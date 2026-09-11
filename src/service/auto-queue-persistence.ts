@@ -4,7 +4,7 @@ import { alarmClear, alarmCreate, alarmGet } from "@core/chrome/alarms";
 import { chromeSessionGet, chromeSessionSet } from "@core/chrome/storage";
 import { ALARM_NAMES } from "@core/constants/alarms";
 import { SESSION_KEYS } from "@core/constants/storage-keys";
-import type { PendingAutoQueues } from "@typedefs/storage";
+import type { PendingAutoQueues, PlayingSession } from "@typedefs/storage";
 
 export type { PendingAutoQueue, PendingAutoQueues } from "@typedefs/storage";
 
@@ -27,6 +27,42 @@ function record(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function deadline(value: unknown): value is number {
+	return (
+		typeof value === "number" &&
+		Number.isFinite(value) &&
+		value >= 0 &&
+		value <= Number.MAX_SAFE_INTEGER
+	);
+}
+
+function gameId(value: unknown): value is string | null {
+	return value === null || typeof value === "string";
+}
+
+function playingSession(value: unknown): PlayingSession | undefined {
+	if (!record(value)) return undefined;
+	if (!gameId(value.gameId) || !gameId(value.lastFinishedGameId)) return undefined;
+	if (!deadline(value.startedAt) || !deadline(value.endsAt) || value.endsAt <= value.startedAt)
+		return undefined;
+	if (
+		typeof value.completedGames !== "number" ||
+		!Number.isSafeInteger(value.completedGames) ||
+		value.completedGames < 0
+	)
+		return undefined;
+	if (value.breakUntil !== null && (!deadline(value.breakUntil) || value.breakUntil < value.endsAt))
+		return undefined;
+	return {
+		gameId: value.gameId,
+		startedAt: value.startedAt,
+		endsAt: value.endsAt,
+		completedGames: value.completedGames,
+		lastFinishedGameId: value.lastFinishedGameId,
+		breakUntil: value.breakUntil,
+	};
+}
+
 /** Only canonical tab ids and finite deadlines are accepted; returned records are detached. */
 function validated(value: unknown): PendingAutoQueues {
 	const valid: PendingAutoQueues = {};
@@ -35,16 +71,12 @@ function validated(value: unknown): PendingAutoQueues {
 		const tabId = Number(tab);
 		if (!Number.isSafeInteger(tabId) || tabId < 0 || String(tabId) !== tab || !record(pending))
 			continue;
-		const { gameId, dueAt } = pending;
-		if (gameId !== null && typeof gameId !== "string") continue;
-		if (
-			typeof dueAt !== "number" ||
-			!Number.isFinite(dueAt) ||
-			dueAt < 0 ||
-			dueAt > Number.MAX_SAFE_INTEGER
-		)
-			continue;
-		valid[tab] = { gameId, dueAt };
+		const { dueAt } = pending;
+		if (!gameId(pending.gameId)) continue;
+		const session = playingSession(pending.session);
+		if (dueAt !== null && !deadline(dueAt)) continue;
+		if (dueAt === null && !session) continue;
+		valid[tab] = { gameId: pending.gameId, dueAt, ...(session ? { session } : {}) };
 	}
 	return valid;
 }
@@ -76,7 +108,9 @@ export function createAutoQueuePersistence(
 		return result;
 	};
 	const reconcileAlarm = async (records: PendingAutoQueues): Promise<void> => {
-		const deadlines = Object.values(records).map((pending) => pending.dueAt);
+		const deadlines = Object.values(records).flatMap((pending) =>
+			pending.dueAt === null ? [] : [pending.dueAt]
+		);
 		if (!deadlines.length) {
 			await deps.clearAlarm();
 			return;

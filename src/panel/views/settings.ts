@@ -450,7 +450,21 @@ export function createSettingsView(overrides: Partial<SettingsViewDeps> = {}): V
 				queue = queue
 					.then(async () => {
 						if (locked || ctx.signal.aborted) return;
-						const next = await deps.setSettings(patch);
+						const automation = patch.automation ? { ...patch.automation } : undefined;
+						if (automation) {
+							for (const [lo, hi] of [
+								["autoQueueSessionMinMinutes", "autoQueueSessionMaxMinutes"],
+								["autoQueueBreakMinMinutes", "autoQueueBreakMaxMinutes"],
+							] as const) {
+								const min = automation[lo];
+								const max = automation[hi];
+								if (min !== undefined && max === undefined && min > settings.automation[hi])
+									automation[hi] = min;
+								if (max !== undefined && min === undefined && max < settings.automation[lo])
+									automation[lo] = max;
+							}
+						}
+						const next = await deps.setSettings(automation ? { ...patch, automation } : patch);
 						if (ctx.signal.aborted) return;
 						settings = next;
 						refreshValues();
@@ -486,10 +500,11 @@ export function createSettingsView(overrides: Partial<SettingsViewDeps> = {}): V
 
 			function disabledFor(path: SettingsLeafPath): boolean {
 				if (locked) return true;
-				if (path === "automation.autoQueueDelayEnabled") return !settings.automation.autoQueue;
-				if (path === "automation.autoQueueDelayMaxMinutes") {
-					return !settings.automation.autoQueue || !settings.automation.autoQueueDelayEnabled;
-				}
+				if (
+					path.startsWith("automation.autoQueueSession") ||
+					path.startsWith("automation.autoQueueBreak")
+				)
+					return !settings.automation.autoQueue;
 				return false;
 			}
 

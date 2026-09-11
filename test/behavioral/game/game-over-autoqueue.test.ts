@@ -99,15 +99,25 @@ it("retries an unanswered request until a new game arrives", async () => {
 	expect(h.session().view().autoQueue).toBeUndefined();
 });
 
-it("waits one minute when the optional maximum is one, then starts", async () => {
+it("finishes the active game before taking the session break, then resumes queueing", async () => {
 	h = await createGameHarness({
 		settings: {
-			automation: { autoQueue: true, autoQueueDelayEnabled: true, autoQueueDelayMaxMinutes: 1 },
+			automation: {
+				autoQueue: true,
+				autoQueueSessionMinMinutes: 1,
+				autoQueueSessionMaxMinutes: 1,
+				autoQueueBreakMinMinutes: 1,
+				autoQueueBreakMaxMinutes: 1,
+			},
 		},
 	});
 	await h.arrive();
+	await h.advance(60_000);
+	expect(newGameCommands()).toBe(0);
+	expect(h.session().view().autoQueue).toBeUndefined();
 	const now = h.sim.now();
 	await h.drive(() => h.site.endGame("1-0"));
+	expect(h.session().view().autoQueue?.status).toBe("break");
 	expect(h.session().view().autoQueue?.dueAt).toBe(now + 60_000);
 	await h.advance(59_999);
 	expect(newGameCommands()).toBe(0);
@@ -118,15 +128,51 @@ it("waits one minute when the optional maximum is one, then starts", async () =>
 it("turning auto queue off cancels an already scheduled wait", async () => {
 	h = await createGameHarness({
 		settings: {
-			automation: { autoQueue: true, autoQueueDelayEnabled: true, autoQueueDelayMaxMinutes: 1 },
+			automation: {
+				autoQueue: true,
+				autoQueueSessionMinMinutes: 1,
+				autoQueueSessionMaxMinutes: 1,
+				autoQueueBreakMinMinutes: 1,
+				autoQueueBreakMaxMinutes: 1,
+			},
 		},
 	});
 	await h.arrive();
+	await h.advance(60_000);
 	await h.drive(() => h.site.endGame("1-0"));
 	await h.patch({ automation: { autoQueue: false } });
 	await h.advance(65_000);
 	expect(newGameCommands()).toBe(0);
 	expect(h.session().view().autoQueue).toBeUndefined();
+});
+
+it("keeps one playing session across consecutive games rather than delaying each game", async () => {
+	h = await createGameHarness({
+		settings: {
+			automation: {
+				autoQueue: true,
+				autoQueueSessionMinMinutes: 1,
+				autoQueueSessionMaxMinutes: 1,
+				autoQueueBreakMinMinutes: 1,
+				autoQueueBreakMaxMinutes: 1,
+			},
+		},
+	});
+	await h.arrive();
+	await h.advance(10_000);
+	const firstEnd = h.sim.now();
+	await h.drive(() => h.site.endGame("1-0"));
+	expect(h.session().view().autoQueue?.status).toBe("waiting");
+	expect(h.session().view().autoQueue!.dueAt - firstEnd).toBeLessThanOrEqual(MAX_DELAY);
+	await h.drive(() => h.site.startGame({ gameId: "session-second" }));
+	await h.advance(60_000);
+	expect(newGameCommands()).toBe(0);
+	await h.drive(() => h.site.endGame("0-1"));
+	expect(h.session().view().autoQueue?.status).toBe("break");
+	await h.advance(59_999);
+	expect(newGameCommands()).toBe(0);
+	await h.advance(1);
+	expect(newGameCommands()).toBe(1);
 });
 
 it("a new game racing game-end persistence cancels the old request", async () => {

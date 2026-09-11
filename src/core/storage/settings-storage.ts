@@ -104,6 +104,18 @@ function threads(v: unknown, d: Settings["engine"]["threads"]): Settings["engine
 	return d;
 }
 
+/** Imported ranges are finite, bounded and ordered, including profiles from earlier versions. */
+function minuteRange(
+	lo: unknown,
+	hi: unknown,
+	defaults: [number, number],
+	max: number
+): [number, number] {
+	const first = intIn(lo, defaults[0], LIMITS.autoQueueMinutesMin, max);
+	const second = intIn(hi, defaults[1], LIMITS.autoQueueMinutesMin, max);
+	return first <= second ? [first, second] : [second, first];
+}
+
 /** Validate an arbitrary value into a complete, fresh (unfrozen) `Settings`. */
 export function normalizeSettings(raw: unknown): Settings {
 	const D = DEFAULT_SETTINGS;
@@ -117,6 +129,18 @@ export function normalizeSettings(raw: unknown): Settings {
 	const display = sec("display");
 	const engine = sec("engine");
 	const advanced = sec("advanced");
+	const [autoQueueSessionMinMinutes, autoQueueSessionMaxMinutes] = minuteRange(
+		automation.autoQueueSessionMinMinutes,
+		automation.autoQueueSessionMaxMinutes,
+		[D.automation.autoQueueSessionMinMinutes, D.automation.autoQueueSessionMaxMinutes],
+		LIMITS.autoQueueSessionMinutesMax
+	);
+	const [autoQueueBreakMinMinutes, autoQueueBreakMaxMinutes] = minuteRange(
+		automation.autoQueueBreakMinMinutes,
+		automation.autoQueueBreakMaxMinutes,
+		[D.automation.autoQueueBreakMinMinutes, D.automation.autoQueueBreakMaxMinutes],
+		LIMITS.autoQueueBreakMinutesMax
+	);
 	return {
 		enabled: bool(r.enabled, D.enabled),
 		strength: {
@@ -158,16 +182,10 @@ export function normalizeSettings(raw: unknown): Settings {
 		automation: {
 			autoMove: bool(automation.autoMove, D.automation.autoMove),
 			autoQueue: bool(automation.autoQueue, D.automation.autoQueue),
-			autoQueueDelayEnabled: bool(
-				automation.autoQueueDelayEnabled,
-				D.automation.autoQueueDelayEnabled
-			),
-			autoQueueDelayMaxMinutes: intIn(
-				automation.autoQueueDelayMaxMinutes,
-				D.automation.autoQueueDelayMaxMinutes,
-				LIMITS.autoQueueDelayMinutesMin,
-				LIMITS.autoQueueDelayMinutesMax
-			),
+			autoQueueSessionMinMinutes,
+			autoQueueSessionMaxMinutes,
+			autoQueueBreakMinMinutes,
+			autoQueueBreakMaxMinutes,
 			highlightMoves: bool(automation.highlightMoves, D.automation.highlightMoves),
 			highlightStyle: oneOf(automation.highlightStyle, D.automation.highlightStyle, HIGHLIGHT_STYLES),
 		},

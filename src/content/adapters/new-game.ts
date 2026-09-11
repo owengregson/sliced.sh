@@ -38,7 +38,7 @@ export function newGameSearchActive(doc: Document, win: Window): boolean {
 	for (const selector of S.queueCancel) {
 		if (queryAllSafe(doc, selector).some((element) => visible(element, win))) return true;
 	}
-	for (const selector of [...S.newGame, ...S.rematch, ...S.queueStatus]) {
+	for (const selector of [...S.newGame, ...S.rematch, ...S.lobbyPlay, ...S.queueStatus]) {
 		if (
 			queryAllSafe(doc, selector).some(
 				(element) => visible(element, win) && labels(element).some((label) => S.queueTextRe.test(label))
@@ -53,9 +53,11 @@ export function newGameControl(
 	doc: Document,
 	win: Window,
 	mode: NewGameMode,
-	computer: boolean
+	computer: boolean,
+	lobby = false
 ): HTMLElement | null {
-	for (const selector of mode === "new" ? S.newGame : S.rematch) {
+	const selectors = mode === "new" ? [...S.newGame, ...(lobby ? S.lobbyPlay : [])] : S.rematch;
+	for (const selector of selectors) {
 		for (const element of queryAllSafe(doc, selector)) {
 			if (
 				!visible(element, win) ||
@@ -72,10 +74,15 @@ export function newGameControl(
 					? text.some((label) => S.rematchTextRe.test(label))
 					: element.matches(S.newGameIdentity) ||
 						text.some(
-							(label) => S.newGameTextRe.test(label) || (computer && S.playAgainTextRe.test(label))
+							(label) =>
+								S.newGameTextRe.test(label) ||
+								(computer && S.playAgainTextRe.test(label)) ||
+								(lobby &&
+									S.lobbyPlay.some((candidate) => candidate === selector) &&
+									S.lobbyPlayTextRe.test(label))
 						);
 			const control = element as HTMLElement;
-			if (positive && typeof control.click === "function") return control;
+			if (positive) return control;
 		}
 	}
 	return null;

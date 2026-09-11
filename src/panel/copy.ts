@@ -72,6 +72,7 @@ export const COPY = {
 		watching: "Connected",
 		reading: "Reading position…",
 		queueDelay: (remaining: string): string => `Next game in ${remaining}`,
+		queueBreak: (remaining: string): string => `Session break · Next session in ${remaining}`,
 		queueStarting: "Starting next game…",
 		queueRetrying: "Retrying…",
 		queueSearching: "Matchmaking…",
@@ -410,7 +411,7 @@ export const COPY = {
 		rating: (rating: number): string => `Rated ${rating}`,
 		ratingUnknown: "opponent rating unknown",
 		target: (elo: number): string => `Target ${elo}`,
-		lastSession: "Last session",
+		lastSession: "Statistics",
 		session: (games: number, moves: number, avg: string): string =>
 			`${games} games · ${moves} moves · ${avg}s avg move`,
 		newGame: "Start a new game",
@@ -525,16 +526,19 @@ export const SETTINGS_COPY = {
 		},
 		"automation.autoQueue": {
 			label: "Auto-queue",
-			help: "Starts the next game when one ends.",
+			help: "Queues consecutive games in playing sessions. Breaks start after the current game ends.",
 		},
-		"automation.autoQueueDelayEnabled": {
-			label: "Random queue delay",
-			help: "Wait a random duration before starting the next automatic game.",
+		"automation.autoQueueSessionMinMinutes": {
+			label: "Minimum session duration",
+			help: "Session duration is sampled once between the minimum and maximum.",
 		},
-		"automation.autoQueueDelayMaxMinutes": {
-			label: "Maximum queue delay",
-			help: `Uniform delay from ${LIMITS.autoQueueDelayMinutesMin} minute to this maximum.`,
+		"automation.autoQueueSessionMaxMinutes": { label: "Maximum session duration" },
+		"automation.autoQueueBreakMinMinutes": {
+			label: "Minimum session break",
+			help:
+				"Break duration is sampled once between sessions. Games within a session queue after a short pause.",
 		},
+		"automation.autoQueueBreakMaxMinutes": { label: "Maximum session break" },
 		"automation.highlightMoves": {
 			label: "Highlight moves",
 			help: "Marks the recommended move on the board.",

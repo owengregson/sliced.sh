@@ -121,6 +121,8 @@ export const SELECTORS = {
 		'[data-cy="game-over-modal-play-again-button"]',
 	],
 	newGameIdentity: NEW_GAME_IDENTITIES.join(","),
+	lobbyPlay: [".play-menu-component button"],
+	lobbyPlayTextRe: /^play(?:\s+online)?$/i,
 	newGameTextRe: /^new\s+(?:game\b|\d)/i,
 	playAgainTextRe: /^play\s+again\b/i,
 	rematchTextRe: /\brematch\b/i,

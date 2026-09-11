@@ -32,30 +32,40 @@ describe("normalizeSettings", () => {
 		expect(normalizeSettings("nope")).toEqual(DEFAULT_SETTINGS);
 		expect(normalizeSettings([])).toEqual(DEFAULT_SETTINGS);
 	});
-	it("migrates old automation settings with random queue delay disabled", () => {
-		const s = normalizeSettings({ automation: { autoQueue: true, autoMove: true } });
-		expect(s.automation.autoQueue).toBe(true);
-		expect(s.automation.autoMove).toBe(true);
-		expect(s.automation.autoQueueDelayEnabled).toBe(false);
-		expect(s.automation.autoQueueDelayMaxMinutes).toBe(5);
+	it("replaces old per-game delay preferences with playing-session defaults", () => {
+		const s = normalizeSettings({
+			automation: {
+				autoQueue: true,
+				autoMove: true,
+				autoQueueDelayEnabled: true,
+				autoQueueDelayMaxMinutes: 3,
+			},
+		});
+		expect(s.automation).toEqual({ ...DEFAULT_SETTINGS.automation, autoQueue: true, autoMove: true });
+		expect("autoQueueDelayEnabled" in s.automation).toBe(false);
+		expect("autoQueueDelayMaxMinutes" in s.automation).toBe(false);
 	});
-	it("normalizes queue delay to a finite integer maximum within its registered range", () => {
-		const max = (value: unknown): number =>
-			normalizeSettings({ automation: { autoQueueDelayMaxMinutes: value } }).automation
-				.autoQueueDelayMaxMinutes;
-		expect(max(-10)).toBe(LIMITS.autoQueueDelayMinutesMin);
-		expect(max(1000)).toBe(LIMITS.autoQueueDelayMinutesMax);
-		expect(max(5.7)).toBe(6);
-		expect(max(1)).toBe(1);
-		expect(max(60)).toBe(60);
-		for (const invalid of [Number.NaN, Number.POSITIVE_INFINITY, "10", null]) {
-			expect(max(invalid)).toBe(DEFAULT_SETTINGS.automation.autoQueueDelayMaxMinutes);
+	it.each(["Session", "Break"] as const)(
+		"normalizes the %s minute range to finite ordered integers",
+		(kind) => {
+			const lo = `autoQueue${kind}MinMinutes` as const;
+			const hi = `autoQueue${kind}MaxMinutes` as const;
+			const maxLimit =
+				kind === "Session" ? LIMITS.autoQueueSessionMinutesMax : LIMITS.autoQueueBreakMinutesMax;
+			const range = (min: unknown, max: unknown) =>
+				normalizeSettings({ automation: { [lo]: min, [hi]: max } }).automation;
+			expect(range(-10, 1000)[lo]).toBe(LIMITS.autoQueueMinutesMin);
+			expect(range(-10, 1000)[hi]).toBe(maxLimit);
+			expect(range(5.7, 8.2)[lo]).toBe(6);
+			expect(range(5.7, 8.2)[hi]).toBe(8);
+			expect(range(20, 5)[lo]).toBe(5);
+			expect(range(20, 5)[hi]).toBe(20);
+			for (const invalid of [Number.NaN, Number.POSITIVE_INFINITY, "10", null]) {
+				expect(range(invalid, invalid)[lo]).toBe(DEFAULT_SETTINGS.automation[lo]);
+				expect(range(invalid, invalid)[hi]).toBe(DEFAULT_SETTINGS.automation[hi]);
+			}
 		}
-		expect(
-			normalizeSettings({ automation: { autoQueueDelayEnabled: "true" } }).automation
-				.autoQueueDelayEnabled
-		).toBe(false);
-	});
+	);
 	it("drops unknown keys at every level", () => {
 		const s = normalizeSettings({
 			bogus: 1,
@@ -159,15 +169,15 @@ describe("normalizeSettings", () => {
 });
 
 describe("setSettings / onSettingsChanged", () => {
-	it("preserves queue delay preferences through partial writes and disabling auto-queue", async () => {
-		await setSettings({ automation: { autoQueue: true, autoQueueDelayEnabled: true } });
-		await setSettings({ automation: { autoQueueDelayMaxMinutes: 12 } });
+	it("preserves playing-session preferences through partial writes and disabling auto-queue", async () => {
+		await setSettings({ automation: { autoQueue: true, autoQueueSessionMinMinutes: 30 } });
+		await setSettings({ automation: { autoQueueBreakMaxMinutes: 12 } });
 		await setSettings({ automation: { autoQueue: false } });
 		expect((await getSettings()).automation).toEqual({
 			...DEFAULT_SETTINGS.automation,
 			autoQueue: false,
-			autoQueueDelayEnabled: true,
-			autoQueueDelayMaxMinutes: 12,
+			autoQueueSessionMinMinutes: 30,
+			autoQueueBreakMaxMinutes: 12,
 		});
 	});
 	it("read-merge-writes so unrelated sections survive", async () => {

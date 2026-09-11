@@ -72,6 +72,8 @@ interface Pending {
 
 export class ContentLink implements ContentLinkEvents {
 	private readonly controlledPointers = new Set<number>();
+	private readonly pointerVersions = new Map<number, number>();
+	private pointerSeq = 0;
 	private readonly ports = new Map<number, Entry>();
 	private readonly pending = new Map<string, Pending>();
 	private readonly listeners = new Set<AnyMessageListener>();
@@ -109,8 +111,15 @@ export class ContentLink implements ContentLinkEvents {
 		if (!entry) return false;
 		if (cmd.kind === "cursorTo") this.controlledPointers.add(tabId);
 		else if (cmd.kind === "cursorHide") this.controlledPointers.delete(tabId);
+		if (cmd.kind === "cursorTo" || cmd.kind === "cursorHide")
+			this.pointerVersions.set(tabId, ++this.pointerSeq);
 		entry.port.post(cmd);
 		return true;
+	}
+
+	/** Cleanup from an older gesture must not hide a newer owner's cursor. */
+	pointerVersion(tabId: number): number {
+		return this.pointerVersions.get(tabId) ?? 0;
 	}
 
 	/** Install the page's single-use admission before sending the matching browser event. */
@@ -226,6 +235,7 @@ export class ContentLink implements ContentLinkEvents {
 		for (const entry of this.ports.values()) for (const off of entry.offs) off();
 		this.ports.clear();
 		this.controlledPointers.clear();
+		this.pointerVersions.clear();
 		this.failPending(null, CONTENT_LINK_ERRORS.disposed);
 		this.listeners.clear();
 		this.connectListeners.clear();
@@ -266,6 +276,7 @@ export class ContentLink implements ContentLinkEvents {
 		for (const off of entry.offs) off();
 		this.ports.delete(tabId);
 		this.controlledPointers.delete(tabId);
+		this.pointerVersions.delete(tabId);
 		this.failPending(tabId, CONTENT_LINK_ERRORS.disconnected);
 		log.debug("content-link: port disconnected", { tabId, reason: reason ?? null });
 		for (const cb of [...this.disconnectListeners]) cb(tabId, reason);

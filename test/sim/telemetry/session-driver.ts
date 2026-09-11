@@ -132,7 +132,9 @@ export function createSessionDriver(options: SessionDriverOptions = {}): Session
 	function ensure(sw: TelemetrySw, sim: Simulator, tabId: number): GameSession {
 		if (session) return session;
 		autoQueue = new AutoQueue({
-			link: sw.link,
+			attempt: async () => {
+				throw new Error("telemetry sessions do not auto-queue");
+			},
 			scheduler: defaultScheduler,
 			rng: createRng(`${gameId}:auto-queue`),
 			canQueue: () => "cancel",

@@ -18,8 +18,9 @@ export const LIMITS = {
 	blunderScaleMax: 2,
 	previewSelectScaleMin: 0.5,
 	previewSelectScaleMax: 2,
-	autoQueueDelayMinutesMin: 1,
-	autoQueueDelayMinutesMax: 60,
+	autoQueueMinutesMin: 1,
+	autoQueueSessionMinutesMax: 240,
+	autoQueueBreakMinutesMax: 180,
 	timingLogMax: 200,
 	/** Task 26: SW-side ring of recent `LogEntry`s streamed to the panel (Appendix H.2). */
 	logRingMax: 500,

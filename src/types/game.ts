@@ -145,7 +145,7 @@ export interface GameSessionView {
 	autoQueue?: {
 		dueAt: number;
 		attempts: number;
-		status: "waiting" | "retrying" | "searching";
+		status: "waiting" | "break" | "retrying" | "searching";
 	};
 	/** Latest analysis for the current position, including opponent-turn pondering. Side-to-move POV. */
 	evaluation?: {

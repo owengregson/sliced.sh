@@ -184,11 +184,10 @@ if (state === "queue" || state === "queue-searching" || state === "queue-retryin
 	snapshot.session.state = "game-over";
 	snapshot.settings.enabled = true;
 	snapshot.settings.automation.autoQueue = true;
-	snapshot.settings.automation.autoQueueDelayEnabled = true;
 	snapshot.session.autoQueue = {
 		dueAt: Date.now() + 245_000,
 		attempts: state === "queue" ? 0 : 1,
-		status: state === "queue-searching" ? "searching" : state === "queue-retrying" ? "retrying" : "waiting",
+		status: state === "queue-searching" ? "searching" : state === "queue-retrying" ? "retrying" : "break",
 	};
 }
 if (state === "unsupported") {
