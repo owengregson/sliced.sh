@@ -18,6 +18,7 @@ function setup(binds: Partial<Keybinds> = {}) {
 	win.document.body.innerHTML =
 		'<div id="board"></div><input id="in"><textarea id="ta"></textarea><div id="ce" contenteditable="true"><span id="inner"></span></div>';
 	let now = 1_000;
+	let exclusive = false;
 	const actions: KeybindAction[] = [];
 	const keybinds: Keybinds = { ...DEFAULT_KEYBINDS, global: false, ...binds };
 	const off = installKeybinds(
@@ -26,14 +27,15 @@ function setup(binds: Partial<Keybinds> = {}) {
 		{
 			window: win as unknown as Window,
 			now: () => now,
+			exclusive: () => exclusive,
 		}
 	);
 	cleanups.push(off);
 	const press = (
-		init: Record<string, unknown> & { key: string; code: string },
+		init: Record<string, unknown> & { key: string; code: string; type?: string },
 		target: Target = win.document.body as unknown as Target
 	): boolean => {
-		const ev = new win.KeyboardEvent("keydown", {
+		const ev = new win.KeyboardEvent(init.type ?? "keydown", {
 			bubbles: true,
 			cancelable: true,
 			...init,
@@ -44,6 +46,9 @@ function setup(binds: Partial<Keybinds> = {}) {
 		win,
 		actions,
 		keybinds,
+		setExclusive: (value: boolean) => {
+			exclusive = value;
+		},
 		press,
 		advance: (ms: number) => {
 			now += ms;
@@ -53,6 +58,56 @@ function setup(binds: Partial<Keybinds> = {}) {
 }
 
 describe("installKeybinds", () => {
+	it("isolates all page key phases while owned, including editable/composing/repeated input, but dispatches bot shortcuts", () => {
+		const { win, actions, press, setExclusive } = setup();
+		const seen: string[] = [];
+		for (const type of ["keydown", "keypress", "keyup"])
+			for (const target of [win, win.document, win.document.body])
+				target.addEventListener(type, () => seen.push(type), true);
+		setExclusive(true);
+		for (const id of ["board", "in", "ta", "ce", "inner"]) {
+			for (const type of ["keydown", "keypress", "keyup"])
+				expect(
+					press({ type, key: "q", code: "KeyQ" }, win.document.getElementById(id) as unknown as Target)
+				).toBe(false);
+		}
+		expect(press({ key: "Process", code: "KeyQ", isComposing: true })).toBe(false);
+		expect(press({ key: "q", code: "KeyQ", repeat: true })).toBe(false);
+		expect(
+			press({ key: " ", code: "Space" }, win.document.getElementById("in") as unknown as Target)
+		).toBe(false);
+		expect(press({ key: " ", code: "Space", repeat: true })).toBe(false);
+		expect(actions).toEqual(["playMove"]);
+		expect(seen).toEqual([]);
+	});
+	it("consumes a held key's remaining phases after ownership ends and restores subsequent editing", () => {
+		const { win, actions, press, setExclusive, off } = setup();
+		const seen: string[] = [];
+		for (const type of ["keydown", "keypress", "keyup"])
+			win.addEventListener(type, () => seen.push(type), true);
+		setExclusive(true);
+		expect(press({ key: "X", code: "KeyX", shiftKey: true })).toBe(false);
+		setExclusive(false);
+		expect(press({ type: "keypress", key: "X", code: "KeyX", shiftKey: true })).toBe(false);
+		expect(press({ type: "keyup", key: "X", code: "KeyX", shiftKey: true })).toBe(false);
+		expect(actions).toEqual(["disable"]);
+		expect(seen).toEqual([]);
+		const input = win.document.getElementById("in") as unknown as Target;
+		for (const type of ["keydown", "keypress", "keyup"])
+			expect(press({ type, key: "x", code: "KeyX" }, input)).toBe(true);
+		expect(seen).toEqual(["keydown", "keypress", "keyup"]);
+		setExclusive(true);
+		off();
+		expect(press({ key: "q", code: "KeyQ" })).toBe(true);
+	});
+	it("preserves global shortcut routing while exclusively consuming page keys", () => {
+		const { actions, press, setExclusive } = setup({ global: true });
+		setExclusive(true);
+		expect(press({ key: "X", code: "KeyX", shiftKey: true })).toBe(false);
+		expect(press({ key: "q", code: "KeyQ" })).toBe(false);
+		expect(press({ key: " ", code: "Space" })).toBe(false);
+		expect(actions).toEqual(["playMove"]);
+	});
 	it("Space plays, Shift+X disables, Shift+A arms/disarms, W speaks — and the default is prevented", () => {
 		const { actions, press, advance } = setup();
 		expect(press({ key: " ", code: "Space" })).toBe(false);

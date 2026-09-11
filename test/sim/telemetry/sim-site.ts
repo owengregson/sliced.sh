@@ -153,6 +153,7 @@ export async function createSimulatedSite(
 	let tracker: CursorTracker | null = null;
 	let removeFocusEdges: () => void = () => {};
 	let removeKeybinds: () => void = () => {};
+	let inputOwned = false;
 	const keybindActions: KeybindAction[] = [];
 	const pending: Array<{
 		id: string;
@@ -178,7 +179,9 @@ export async function createSimulatedSite(
 		received.push(cmd);
 		options.onCommand?.(cmd);
 		if (!port) return;
-		if (cmd.kind === "cursorPrepare") {
+		if (cmd.kind === "inputOwnership") {
+			inputOwned = cmd.owned;
+		} else if (cmd.kind === "cursorPrepare") {
 			port.post({ kind: "cursorPrepared", id: cmd.id });
 		} else if (cmd.kind === "cursorDelivery") {
 			port.post({ kind: "cursorDelivered", id: cmd.id, delivered: true });
@@ -242,7 +245,7 @@ export async function createSimulatedSite(
 					// The real content script forwards the action to the service worker (Task 21).
 					sendTyped({ type: MSG.CONTENT_KEYBIND, action }).catch(() => {});
 				},
-				{ window: win, now: sim.now }
+				{ window: win, now: sim.now, exclusive: () => inputOwned }
 			);
 			// No fabricated initial `focus` post here: the real `installFocusEdges` above reports the
 			// current state once at install, exactly as the content script does. Inventing the message

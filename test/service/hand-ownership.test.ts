@@ -1,6 +1,7 @@
 // test/service/hand-ownership.test.ts — §13.5 hand ownership (real input counted, never used).
 import { beforeEach, describe, expect, it } from "bun:test";
 import { EXECUTOR } from "@core/constants";
+import type { GamePortCommand } from "@core/constants/messages";
 import { HandOwnership } from "@service/hand-ownership";
 import { fakeLink } from "./fakes";
 
@@ -16,6 +17,37 @@ beforeEach(() => {
 });
 
 describe("HandOwnership", () => {
+	it("publishes real ownership initially, on arm/release, and across content reconnects", () => {
+		hand.dispose();
+		const posts: Array<{ tabId: number; cmd: GamePortCommand }> = [];
+		const connects = new Set<(tabId: number) => void>();
+		hand = new HandOwnership({
+			...link,
+			tabs: () => [7],
+			post: (tabId, cmd) => {
+				posts.push({ tabId, cmd });
+				return true;
+			},
+			onConnect: (cb) => {
+				connects.add(cb);
+				return () => void connects.delete(cb);
+			},
+		});
+		expect(posts.at(-1)).toEqual({ tabId: 7, cmd: { kind: "inputOwnership", owned: false } });
+		hand.armed(7);
+		expect(posts.at(-1)?.cmd).toEqual({ kind: "inputOwnership", owned: true });
+		for (const cb of connects) cb(7);
+		expect(posts.at(-1)?.cmd).toEqual({ kind: "inputOwnership", owned: true });
+		link.emit(7, { kind: "hello", site: "chesscom", pageKind: "live-game", adapterVersion: "test" });
+		expect(posts.at(-1)?.cmd).toEqual({ kind: "inputOwnership", owned: true });
+		hand.released(7);
+		expect(posts.at(-1)?.cmd).toEqual({ kind: "inputOwnership", owned: false });
+		hand.armed(7);
+		hand.dispose();
+		expect(posts.at(-1)?.cmd).toEqual({ kind: "inputOwnership", owned: false });
+		expect(connects.size).toBe(0);
+		expect(link.listeners()).toBe(0);
+	});
 	it("arming transfers the pointer to the hand at the start point; released drops ownership", () => {
 		expect(hand.isArmed(7)).toBe(false);
 		expect(hand.position(7)).toBeNull();

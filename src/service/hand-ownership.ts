@@ -13,7 +13,9 @@ import { EXECUTOR } from "@core/constants/cdp";
 import type { GamePortMessage } from "@core/constants/messages";
 import type { Pt } from "@core/motor/types";
 import { defaultNow } from "@core/util/scheduler";
-import type { ContentLinkEvents } from "@service/content-link";
+import type { ContentLink, ContentLinkEvents } from "@service/content-link";
+
+type OwnershipLink = ContentLinkEvents & Partial<Pick<ContentLink, "post" | "onConnect" | "tabs">>;
 
 interface TabHand {
 	armed: boolean;
@@ -36,11 +38,19 @@ const fresh = (): TabHand => ({
 export class HandOwnership {
 	private readonly tabs = new Map<number, TabHand>();
 	private readonly now: () => number;
-	private off: () => void;
+	private readonly offs: Array<() => void> = [];
 
-	constructor(link?: ContentLinkEvents, options: { now?: () => number } = {}) {
+	constructor(
+		private readonly link?: OwnershipLink,
+		options: { now?: () => number } = {}
+	) {
 		this.now = options.now ?? defaultNow;
-		this.off = link ? link.onMessage("*", (tabId, msg) => this.onPortMessage(tabId, msg)) : () => {};
+		if (link) {
+			this.offs.push(link.onMessage("*", (tabId, msg) => this.onPortMessage(tabId, msg)));
+			const off = link.onConnect?.((tabId) => this.publish(tabId, this.isArmed(tabId)));
+			if (off) this.offs.push(off);
+			for (const tabId of link.tabs?.() ?? []) this.publish(tabId, this.isArmed(tabId));
+		}
 	}
 
 	/**
@@ -54,12 +64,14 @@ export class HandOwnership {
 		if (startPoint) s.position = { x: Math.round(startPoint.x), y: Math.round(startPoint.y) };
 		s.realCount = 0;
 		s.lastRealAt = null;
+		this.publish(tabId, true);
 	}
 
 	/** The user stopped the hand; the last position survives as the next rest point. */
 	released(tabId: number): void {
 		const s = this.tabs.get(tabId);
 		if (s) s.armed = false;
+		this.publish(tabId, false);
 	}
 
 	isArmed(tabId: number): boolean {
@@ -105,9 +117,13 @@ export class HandOwnership {
 	}
 
 	dispose(): void {
-		this.off();
-		this.off = () => {};
+		for (const off of this.offs.splice(0)) off();
+		for (const tabId of this.tabs.keys()) this.publish(tabId, false);
 		this.tabs.clear();
+	}
+
+	private publish(tabId: number, owned: boolean): void {
+		this.link?.post?.(tabId, { kind: "inputOwnership", owned });
 	}
 
 	private state(tabId: number): TabHand {
@@ -120,6 +136,10 @@ export class HandOwnership {
 	}
 
 	private onPortMessage(tabId: number, msg: GamePortMessage): void {
+		if (msg.kind === "hello") {
+			this.publish(tabId, this.isArmed(tabId));
+			return;
+		}
 		if (msg.kind !== "cursor") return;
 		const s = this.state(tabId);
 		if (s.armed) {

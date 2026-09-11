@@ -86,8 +86,10 @@ export function createPointerControl(win: Window, now: () => number): PointerCon
 		},
 		filter(event) {
 			const mouse = event as MouseEvent;
-			// Keyboard and accessibility activation has no pointing device; keep page shortcuts usable.
+			// Idle keyboard/accessibility activation has no pointing device. During ownership
+			// it must obey the same page isolation as a physical mouse click.
 			if (
+				!active &&
 				event.isTrusted &&
 				event.type === "click" &&
 				mouse.detail === 0 &&

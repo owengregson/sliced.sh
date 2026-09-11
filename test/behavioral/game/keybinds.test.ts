@@ -25,6 +25,38 @@ const presses = (): unknown[] =>
 	);
 
 describe("game session: in-page keybinds (Step 2e)", () => {
+	it("blocks real page keys through hidden-cursor ownership while Space and stop remain available", async () => {
+		h = await createGameHarness({
+			sendKeybinds: true,
+			settings: { automation: { autoMove: true }, display: { virtualCursor: false } },
+			head: {
+				id: "v1-parametric",
+				median: () => 12,
+				sample: () => ({ tSec: 12, mode: "normal", why: [] }),
+			},
+		});
+		const pageKeys: string[] = [];
+		const win = h.sim.getTabDom(h.tabId)!.window;
+		win.addEventListener(
+			"keydown",
+			(event) => pageKeys.push((event as unknown as KeyboardEvent).key),
+			true
+		);
+		await h.arrive();
+		expect(await h.until(() => h.executor()?.handState() === "orientation", 10_000)).toBe(true);
+		expect(h.commands()).toContainEqual({ kind: "inputOwnership", owned: true });
+		expect(h.commands().some((cmd) => cmd.kind === "cursorTo")).toBe(false);
+		await h.pressKey({ key: "ArrowLeft", code: "ArrowLeft" });
+		await h.pressKey({ key: "q", code: "KeyQ" });
+		await press(DEFAULT_KEYBINDS.playMove);
+		expect(await h.until(() => h.site.board.lastMove() !== null, 2000)).toBe(true);
+		expect(pageKeys).toEqual([]);
+		await press(DEFAULT_KEYBINDS.disable);
+		expect(await h.until(() => !h.executor()?.isArmed(), 2000)).toBe(true);
+		expect(h.commands()).toContainEqual({ kind: "inputOwnership", owned: false });
+		await h.pressKey({ key: "z", code: "KeyZ" });
+		expect(pageKeys).toEqual(["z"]);
+	});
 	it("the sidebar shortcut route interrupts the same active think and keeps one committed move", async () => {
 		h = await createGameHarness({
 			settings: { automation: { autoMove: true } },

@@ -100,6 +100,8 @@ interface CursorBinding {
 	tracker: CursorTracker;
 	onSample?: (sample: CursorSample) => void;
 	keybinds: Keybinds;
+	exclusiveKeyboard: boolean;
+	inputOwned: boolean;
 	removeKeybinds: () => void;
 }
 
@@ -115,6 +117,8 @@ export function startContent(options: ContentOptions = {}): ContentHandle | null
 	const cursor: CursorBinding = {
 		tracker: createCursorTracker({ window: win, onSample: (sample) => cursor.onSample?.(sample) }),
 		keybinds: { ...DEFAULT_KEYBINDS, global: false },
+		exclusiveKeyboard: false,
+		inputOwned: false,
 		removeKeybinds: () => {},
 	};
 	// Register keyboard capture before body/adapter initialization, just like pointer capture.
@@ -126,7 +130,7 @@ export function startContent(options: ContentOptions = {}): ContentHandle | null
 				log.debug("content: keybind not delivered", error);
 			});
 		},
-		{ window: win }
+		{ window: win, exclusive: () => cursor.exclusiveKeyboard }
 	);
 	if (doc.body) return bootContent(site, win, doc, options, cursor);
 	return deferUntilBody(site, win, doc, options, cursor);
@@ -186,7 +190,10 @@ function bootContent(
 	const highlights = createHighlights(adapter, false);
 	// Fix D: the mirror of the hand's own pointer. Drawn by the MAIN-world bridge (§13.3), driven
 	// only by what the service worker dispatched — never by a pointer event read here.
-	const virtualCursor = createVirtualCursor(bridge, (shown) => cursor.setVirtualActive(shown));
+	const virtualCursor = createVirtualCursor(bridge, (shown) => {
+		cursorBinding.exclusiveKeyboard = shown || cursorBinding.inputOwned;
+		cursor.setVirtualActive(cursorBinding.exclusiveKeyboard);
+	});
 	let pageKind = adapter.detectPageKind();
 	let sessionGameId: string | null = null;
 	let disposed = false;
@@ -387,6 +394,11 @@ function bootContent(
 		if (highlights.apply(cmd)) return;
 		if (virtualCursor.apply(cmd)) return;
 		switch (cmd.kind) {
+			case "inputOwnership":
+				cursorBinding.inputOwned = cmd.owned;
+				cursorBinding.exclusiveKeyboard = cmd.owned || virtualCursor.shown();
+				cursor.setVirtualActive(cursorBinding.exclusiveKeyboard);
+				return;
 			case "cursorDelivery":
 				post({
 					kind: "cursorDelivered",
@@ -455,7 +467,9 @@ function bootContent(
 		: createFeedPort({
 				onCommand: handleCommand,
 				onDisconnect: () => {
+					cursorBinding.inputOwned = false;
 					virtualCursor.apply({ kind: "cursorHide" });
+					cursorBinding.exclusiveKeyboard = false;
 					cursor.setVirtualActive(false);
 				},
 			});

@@ -676,7 +676,7 @@ describe("content entry — commands", () => {
 });
 
 describe("content entry — document_start (no <body> yet)", () => {
-	it("captures shortcuts before page listeners registered during body loading, including with virtual input active", async () => {
+	it("captures page keys before body-loading listeners while owned, including when the mirror is hidden", async () => {
 		const dom = createTabDom("https://www.chess.com/game/live/173765478164");
 		cleanups.push(installWindowGlobals(dom.window));
 		dom.document.documentElement.innerHTML = "<head></head>";
@@ -692,33 +692,46 @@ describe("content entry — document_start (no <body> yet)", () => {
 		});
 		cleanups.push(() => handle?.dispose());
 		let pageKeys = 0;
-		dom.window.addEventListener(
-			"keydown",
-			(event) => {
-				pageKeys++;
-				event.stopImmediatePropagation();
-			},
-			true
-		);
+		for (const type of ["keydown", "keypress", "keyup"])
+			dom.window.addEventListener(
+				type,
+				(event) => {
+					pageKeys++;
+					event.stopImmediatePropagation();
+				},
+				true
+			);
 		loadFixtureInto(dom, "chesscom-live");
 		installPollingObserver(dom);
 		fire(dom, "document", "DOMContentLoaded");
-		feed.command({ kind: "cursorTo", x: 50, y: 60, down: false });
-		const press = () => {
-			const event = new dom.window.KeyboardEvent("keydown", {
-				key: " ",
-				code: "Space",
+		const press = (type = "keydown", key = " ", code = "Space") => {
+			const event = new dom.window.KeyboardEvent(type, {
+				key,
+				code,
 				bubbles: true,
 				cancelable: true,
 			});
 			dom.document.body.dispatchEvent(event);
 			return event;
 		};
+		feed.command({ kind: "inputOwnership", owned: true });
+		for (const type of ["keydown", "keypress", "keyup"])
+			expect(press(type, "ArrowLeft", "ArrowLeft").defaultPrevented).toBe(true);
+		feed.command({ kind: "cursorTo", x: 50, y: 60, down: false });
+		feed.command({ kind: "cursorHide" });
+		expect(press("keydown", "q", "KeyQ").defaultPrevented).toBe(true);
 		expect(press().defaultPrevented).toBe(true);
 		expect(pageKeys).toBe(0);
+		feed.command({ kind: "inputOwnership", owned: false });
+		// The already-suppressed held keys finish silently after release.
+		expect(press("keyup", "q", "KeyQ").defaultPrevented).toBe(true);
+		expect(press("keyup").defaultPrevented).toBe(true);
+		expect(press("keydown", "q", "KeyQ").defaultPrevented).toBe(false);
+		expect(pageKeys).toBe(1);
+		feed.command({ kind: "inputOwnership", owned: true });
 		handle?.dispose();
 		expect(press().defaultPrevented).toBe(false);
-		expect(pageKeys).toBe(1);
+		expect(pageKeys).toBe(2);
 	});
 	it("boots without throwing on a body-less document, defers the adapter, and completes once the body appears", async () => {
 		const dom = createTabDom("https://www.chess.com/game/live/173765478164");

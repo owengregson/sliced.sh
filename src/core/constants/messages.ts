@@ -247,6 +247,8 @@ export type GamePortCommand =
 	 */
 	| { kind: "cursorTo"; x: number; y: number; down: boolean }
 	| { kind: "cursorHide" }
+	/** Physical page input is exclusive to the hand, independent of cursor display. */
+	| { kind: "inputOwnership"; owned: boolean }
 	| { kind: "cursorPrepare"; id: string; pointer: PreparedPointer }
 	| { kind: "cursorDelivery"; id: string; pointer: PreparedPointer };
 

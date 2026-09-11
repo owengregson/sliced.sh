@@ -210,12 +210,13 @@ describe("virtual page pointer ownership", () => {
 		expect(fire("pointermove").defaultPrevented).toBe(true);
 	});
 
-	it("preserves keyboard events and keyboard-generated activation, and restores mouse input on disposal", () => {
+	it("leaves key capture to the shortcut listener, blocks keyboard activation while owned, and restores input on disposal", () => {
 		const { tracker, fire, seen } = setup();
 		tracker.setVirtualActive(true);
 		expect(fire("keydown").defaultPrevented).toBe(false);
-		expect(fire("click", { detail: 0, pointerType: "" }).defaultPrevented).toBe(false);
+		expect(fire("click", { detail: 0, pointerType: "" }).defaultPrevented).toBe(true);
 		tracker.dispose();
+		expect(fire("click", { detail: 0, pointerType: "" }).defaultPrevented).toBe(false);
 		expect(fire("pointerdown").defaultPrevented).toBe(false);
 		expect(seen).toEqual(["keydown", "click", "pointerdown"]);
 	});
