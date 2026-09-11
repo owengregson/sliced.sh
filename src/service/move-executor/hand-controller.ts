@@ -128,6 +128,8 @@ export interface HandControllerDeps {
 	now?: () => number;
 	scheduler?: Scheduler;
 	onState?: (state: HandState) => void;
+	/** Runs after the final admission guard, immediately before the committed mouse-down. */
+	onCommittedPress?: () => void;
 }
 
 /** The §8.4b phase window of a plan (Task 16's `MoveWindowBudget`). */
@@ -287,6 +289,7 @@ export class HandController {
 	private readonly now: () => number;
 	private readonly scheduler: Scheduler;
 	private readonly onState: ((state: HandState) => void) | null;
+	private readonly onCommittedPress: (() => void) | null;
 	private readonly planner = new ExplorationPlanner();
 	private current: HandState = "rest";
 	private tabId = -1;
@@ -310,6 +313,7 @@ export class HandController {
 		this.now = deps.now ?? defaultNow;
 		this.scheduler = deps.scheduler ?? defaultScheduler;
 		this.onState = deps.onState ?? null;
+		this.onCommittedPress = deps.onCommittedPress ?? null;
 	}
 
 	state(): HandState {
@@ -1056,6 +1060,7 @@ export class HandController {
 		await this.backend.press(p, this.now(), this.signal ?? undefined, () => {
 			this.gate();
 			guard?.();
+			if (committed) this.onCommittedPress?.();
 		});
 		this.pressedAny = true;
 		if (committed) this.pressedCommitted = true;

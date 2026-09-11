@@ -428,6 +428,39 @@ describe("ChessComAdapter — highlights via the bridge", () => {
 });
 
 describe("ChessComAdapter — observeMove", () => {
+	it("verifies a move that was already completed before the request using its original FEN", async () => {
+		const { dom, adapter } = boot("chesscom-live");
+		playD4(dom);
+		expect(await adapter.observeMove({ from: "d2", to: "d4", beforeFen: LIVE_FEN }, 100)).toBe(true);
+	});
+	it("complete current history proves the move even after a fast opponent recapture", async () => {
+		const { dom, adapter } = boot("chesscom-live");
+		playD4(dom);
+		dom.query(".piece.wp.square-44").remove();
+		dom.query(".piece.bp.square-55").setAttribute("class", "piece bp square-44");
+		for (const h of dom.document.querySelectorAll(".highlight")) h.remove();
+		dom
+			.query("wc-chess-board")
+			.insertAdjacentHTML(
+				"afterbegin",
+				'<div class="highlight square-55"></div><div class="highlight square-44"></div>'
+			);
+		dom.document.querySelector(".node-highlight-content.selected")?.classList.remove("selected");
+		dom
+			.query('[data-whole-move-number="4"]')
+			.insertAdjacentHTML(
+				"beforeend",
+				'<div data-node="0-7" class="node black-move main-line-ply"><span class="node-highlight-content selected">exd4</span></div>'
+			);
+		expect(await adapter.observeMove({ from: "d2", to: "d4", beforeFen: LIVE_FEN }, 100)).toBe(true);
+	});
+	it("rejects an unrelated successor and stale history that disagrees with the board", async () => {
+		const { dom, adapter } = boot("chesscom-live");
+		playD4(dom);
+		expect(await adapter.observeMove({ from: "d2", to: "d3", beforeFen: LIVE_FEN }, 30)).toBe(false);
+		dom.query(".piece.wp.square-12").remove();
+		expect(await adapter.observeMove({ from: "d2", to: "d4", beforeFen: LIVE_FEN }, 30)).toBe(false);
+	});
 	it("resolves true when the piece lands and the move list confirms", async () => {
 		const { dom, adapter } = boot("chesscom-live");
 		const p = adapter.observeMove({ from: "d2", to: "d4" }, 800);

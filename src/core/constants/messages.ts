@@ -130,6 +130,8 @@ export interface ExpectedMove {
 	from: Square;
 	to: Square;
 	promotion?: PromoPiece;
+	/** Position the recommendation was made for, used to verify an already completed move. */
+	beforeFen?: string;
 }
 
 export type ToastLevel = "info" | "warn" | "error";

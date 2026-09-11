@@ -191,4 +191,25 @@ describe("PanelRouter", () => {
 		expect(mounts).toBe(2);
 		router.dispose();
 	});
+
+	it("recovers live routing after an after-mount hook throws instead of leaving the panel stuck", async () => {
+		const { PanelRouter } = await import("@panel/router");
+		const mounted: ViewName[] = [];
+		const view: View = { mount: () => () => {} };
+		const router = new PanelRouter(
+			document.createElement("div"),
+			{ waiting: view, live: view },
+			{
+				onMounted(name) {
+					mounted.push(name);
+					if (name === "waiting") throw new Error("shell hook failed");
+				},
+			}
+		);
+		await expect(router.resolve(makeSnapshot(), ui())).rejects.toThrow("shell hook failed");
+		await router.resolve(makeSnapshot({ state: "live:my-turn:executing" }), ui());
+		expect(router.current).toBe("live");
+		expect(mounted).toEqual(["waiting", "live"]);
+		router.dispose();
+	});
 });

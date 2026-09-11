@@ -483,6 +483,7 @@ export class GameSession implements SessionSource {
 			sideToMove: s?.sideToMove ?? null,
 			ply: s?.ply ?? 0,
 			clocks: s?.clocks ?? null,
+			canPlayNow: this.hasPlayableMove(),
 			...(s ? { clocksAt: s.capturedAt } : {}),
 		};
 		const tc = s?.timeControl ?? this.game?.timeControl;
@@ -1622,7 +1623,14 @@ export class GameSession implements SessionSource {
 		const executor = this.executorHandle;
 		if (!executor || !this.mayAct() || !executor.isArmed() || !isMyTurnState(this.state))
 			return false;
-		return executor.pendingMove() !== null || this.rec !== null;
+		const pending = executor.pendingMove();
+		if (pending && pending.rec === this.premoveEntry?.rec) return false;
+		return (
+			executor.canFastForward() &&
+			(pending !== null ||
+				this.rec !== null ||
+				(this.pipelineAc !== null && !this.pipelineAc.signal.aborted))
+		);
 	}
 
 	/**
@@ -1632,9 +1640,9 @@ export class GameSession implements SessionSource {
 	 * The run is started and deliberately **not** awaited: the panel's reply must not wait for the
 	 * hand (the outcome reaches it through the broadcaster), which is the shape the handler had.
 	 * `playNow()` is synchronous up to its own `await`, so the §3.3 transition and the notify have
-	 * both happened by the time this resolves. `false` means there was nothing to play — and unlike
-	 * the keybind path it does not queue `playWhenReady`, because a command the panel is waiting on
-	 * answers now or says why not.
+	 * both happened by the time this resolves. `false` means no current move can be fast-forwarded.
+	 * An active analysis can also be fast-forwarded: its result is handed to the mouse as soon as
+	 * the search finishes, through the same `playWhenReady` path as the keyboard command.
 	 */
 	playNowRequested(): Promise<boolean> {
 		if (!this.hasPlayableMove()) return Promise.resolve(false);
@@ -2363,6 +2371,7 @@ export class GameSession implements SessionSource {
 			});
 			return;
 		}
+		if (!executor.canFastForward()) return;
 		const pending = executor.pendingMove();
 		// Fix F: the only thing pending during the opponent's turn is a premove waiting for its
 		// human moment. "Play the best move" is about *our* move, so it neither commits that premove
@@ -2591,11 +2600,14 @@ export class GameSession implements SessionSource {
 		// mark that outlives its own action, and it outlives it by design.
 		if (this.settlePremoveDrag(report)) return;
 		if (report.rec.chosen.source === "premove") this.premoveAttempts.reset();
-		this.apply("executed");
+		const current = report.rec === this.rec;
+		// The position feed can reach us before the confirmation. It already opened
+		// the next window, which this older receipt must not transition or clear.
+		if (current) this.apply("executed");
 		// The move is on the board: the prediction has been spent, and the site's own last-move
 		// marking is what belongs there now.
-		this.clearBoardMarks();
-		this.recordMove(report);
+		if (current) this.clearBoardMarks();
+		this.recordMove(report, current);
 		this.deps.notify();
 	}
 
@@ -2636,9 +2648,11 @@ export class GameSession implements SessionSource {
 	 */
 	private onNotExecuted(report: ExecutionReport, outcome: "aborted" | "skipped" | "failed"): void {
 		if (this.settlePremoveDrag(report)) return;
-		this.apply("failed");
-		this.window.discard();
-		if (report.rec === this.rec) this.clearBoardMarks();
+		if (report.rec === this.rec) {
+			this.apply("failed");
+			this.window.discard();
+			this.clearBoardMarks();
+		}
 		log.debug("game-session: move did not land", {
 			tabId: this.deps.tabId,
 			outcome,
@@ -2650,17 +2664,24 @@ export class GameSession implements SessionSource {
 	}
 
 	/** §8.6 + §13.2: the realised think time and the move's telemetry record. */
-	private recordMove(report: ExecutionReport): void {
+	private recordMove(report: ExecutionReport, current = true): void {
 		const { rec, result } = report;
 		const snapshot = this.snapshot;
 		const timing = this.timing;
 		// §13.2: a premove the site dropped leaves its press inside the window the *site* closes with
 		// this move, so it is one of the pieces it saw selected (Fix F).
-		const alsoPressed = this.droppedPremoveFrom;
-		this.droppedPremoveFrom = null;
+		const alsoPressed = current ? this.droppedPremoveFrom : null;
+		if (current) this.droppedPremoveFrom = null;
 		if (timing) timing.observe(result.elapsedMs, rec.plan);
 		this.myThinkMs.push(result.elapsedMs);
-		if (snapshot && this.game) {
+		// A late confirmation belongs to its original ply, never the new position's open
+		// telemetry window. Keep its timing/statistics without closing the newer window.
+		if (!current && this.game) {
+			const original = parseFen(rec.fen);
+			if (original)
+				this.deps.timingLog.markActual(this.game.gameId, plyOf(original), result.elapsedMs);
+		}
+		if (current && snapshot && this.game) {
 			this.deps.timingLog.markActual(this.game.gameId, snapshot.ply, result.elapsedMs);
 			const record = this.window.close({
 				elapsedMs: result.elapsedMs,

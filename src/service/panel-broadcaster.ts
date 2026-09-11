@@ -26,7 +26,8 @@
  */
 
 import { chromeLocalGet, onStorageChanged } from "@core/chrome/storage";
-import { tabsQuery } from "@core/chrome/tabs";
+import { onTabActivated, onTabRemoved, tabsQuery } from "@core/chrome/tabs";
+import { onWindowFocusChanged } from "@core/chrome/windows";
 import { EXECUTOR } from "@core/constants/cdp";
 import { DEFAULT_ENGINE_STATUS } from "@core/constants/defaults";
 import type {
@@ -233,6 +234,12 @@ export class PanelBroadcaster {
 		this.now = options.now ?? defaultNow;
 		this.minIntervalMs = options.minIntervalMs ?? TIMINGS.panelSnapshotMinIntervalMs;
 		this.offs.push(
+			// The panel follows its window's selected tab even when neither tab has a new
+			// position to publish. A previous lobby/unsupported snapshot must not persist
+			// over an already-running game until its next engine or board event.
+			onTabActivated(() => this.notify()),
+			onTabRemoved(() => this.notify()),
+			onWindowFocusChanged(() => this.notify()),
 			acceptPorts<PanelPortMessage, PanelPortCommand>(PORT_NAMES.panel, (port) => this.accept(port)),
 			onStorageChanged("local", (changes) => {
 				if (WATCHED_KEYS.some((key) => key in changes)) this.notify();

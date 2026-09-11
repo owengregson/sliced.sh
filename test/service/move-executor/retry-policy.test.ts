@@ -96,6 +96,45 @@ describe("retry policy tables", () => {
 });
 
 describe("runWithRetry", () => {
+	it("rechecks a dropped move when its position update cancels verification, without redispatching", async () => {
+		const execution = new AbortController();
+		const h = harness([], [{ outcome: "ok" }], dispatched, execution.signal);
+		h.onCheck = (check) => {
+			if (h.checks.length !== 1) return;
+			execution.abort();
+			check.abort();
+		};
+		expect(await h.run()).toMatchObject({ ok: true, outcome: "executed", attempts: 1 });
+		expect(h.attempts).toEqual([0]);
+		expect(h.rechecks).toBe(1);
+		expect(h.checks[1]?.signal.aborted).toBe(false);
+		expect(h.delays).toEqual([]);
+	});
+
+	it("a cancelled verification recheck must prove success, and remains bounded when cancelled again", async () => {
+		for (const recheck of [
+			{ outcome: "rejected" },
+			{ outcome: "unavailable", reason: "disconnected" },
+			{ outcome: "unavailable", reason: "aborted" },
+		] as VerifyResult[]) {
+			const execution = new AbortController();
+			const h = harness([], [recheck], dispatched, execution.signal);
+			h.onCheck = (check) => {
+				if (h.checks.length === 1) {
+					execution.abort();
+					check.abort();
+				} else if (recheck.reason === "aborted") check.abort();
+			};
+			const result = await h.run();
+			expect(result.ok).toBe(false);
+			expect(result.outcome).toBe(recheck.outcome === "rejected" ? "aborted" : "failed");
+			expect(h.attempts).toEqual([0]);
+			expect(h.rechecks).toBe(1);
+			expect(h.checks).toHaveLength(2);
+			expect(h.delays).toEqual([]);
+		}
+	});
+
 	it("checks the final rejected delivery and recognizes a move that landed without a third attempt", async () => {
 		const h = harness([], [{ outcome: "rejected" }, { outcome: "ok" }], () => ({
 			...dispatched(),

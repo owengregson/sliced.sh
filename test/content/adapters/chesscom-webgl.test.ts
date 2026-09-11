@@ -18,6 +18,7 @@ import type { AdapterPositionSnapshot, SiteAdapter } from "@content/adapters/ada
 import { createChesscomAdapter } from "@content/adapters/chesscom";
 import { occupancyOf } from "@content/board-state";
 import { TIMINGS } from "@core/constants";
+import { CHESS_START_FEN } from "@core/constants/chess";
 import { installWindowGlobals, type LayoutRect, type TabDom } from "@test/sim/dom/tab-dom";
 import type { Color } from "@typedefs/game";
 import { FakeBridge, loadFixture, pageDocument, pageWindow, sleep, waitFor } from "./helpers";
@@ -179,6 +180,60 @@ describe("ChessComAdapter — WebGL canvas board (no DOM pieces)", () => {
 		pushDxe4(dom);
 		expect(await landed).toBe(true);
 	});
+	it("a fresh verification confirms an already completed capture from the current move list", async () => {
+		let fen = WEBGL_FEN;
+		const { dom, adapter } = boot(() => ({ fen, mode: "playing", playingAs: 1 }));
+		await waitFor(() => adapter.getFen() === WEBGL_FEN);
+		pushDxe4(dom);
+		fen = AFTER_DXE4;
+		expect(await adapter.observeMove({ from: "d3", to: "e4", beforeFen: WEBGL_FEN }, 100)).toBe(true);
+	});
+	it("rejects a prior game's stale move list and cached position when a fresh canvas reading says the move never happened", async () => {
+		const afterE4 = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
+		let fen = afterE4;
+		const { dom, adapter, bridge } = boot(() => ({ fen, mode: "playing", playingAs: 1 }));
+		dom.query(".timestamps-with-base-time").innerHTML =
+			'<div class="main-line-row move-list-row" data-whole-move-number="1"><div data-node="0-0" class="node white-move main-line-ply"><span class="node-highlight-content selected">e4</span></div></div>';
+		await waitFor(() => adapter.getFen() === afterE4);
+		fen = CHESS_START_FEN;
+		const reads = bridge.calls.filter((c) => c.kind === "getState").length;
+		expect(await adapter.observeMove({ from: "e2", to: "e4", beforeFen: CHESS_START_FEN }, 100)).toBe(
+			false
+		);
+		expect(bridge.calls.filter((c) => c.kind === "getState").length).toBeGreaterThan(reads);
+	});
+	it.each([
+		{ label: "prior-game", fen: CHESS_START_FEN, accepted: false },
+		{
+			label: "current",
+			fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 4 3",
+			accepted: true,
+		},
+	])(
+		"compares full fresh FEN against $label knight-repetition history",
+		async ({ fen, accepted }) => {
+			const { dom, adapter } = boot(() => ({ fen, mode: "playing", playingAs: 1 }));
+			dom.query(".timestamps-with-base-time").innerHTML =
+				'<div class="main-line-row move-list-row" data-whole-move-number="1"><div data-node="0-0" class="node white-move main-line-ply"><span class="node-highlight-content">Nf3</span></div><div data-node="0-1" class="node black-move main-line-ply"><span class="node-highlight-content">Nf6</span></div></div><div class="main-line-row move-list-row" data-whole-move-number="2"><div data-node="0-2" class="node white-move main-line-ply"><span class="node-highlight-content">Ng1</span></div><div data-node="0-3" class="node black-move main-line-ply"><span class="node-highlight-content selected">Ng8</span></div></div>';
+			await waitFor(() => adapter.getFen() === fen);
+			expect(
+				await adapter.observeMove({ from: "g1", to: "f3", beforeFen: CHESS_START_FEN }, 100)
+			).toBe(accepted);
+		}
+	);
+	it.each(["empty", "missing"])(
+		"refreshes canvas bridge state to confirm an already completed move with a %s move list",
+		async (list) => {
+			let fen = WEBGL_FEN;
+			const { dom, adapter } = boot(() => ({ fen, mode: "playing", playingAs: 1 }));
+			dom.query(list === "empty" ? ".timestamps-with-base-time" : "wc-simple-move-list").remove();
+			await waitFor(() => adapter.getFen() === WEBGL_FEN);
+			fen = AFTER_DXE4;
+			expect(await adapter.observeMove({ from: "d3", to: "e4", beforeFen: WEBGL_FEN }, 200)).toBe(
+				true
+			);
+		}
+	);
 });
 
 interface OrientationCase {

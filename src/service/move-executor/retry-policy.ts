@@ -18,7 +18,9 @@
  * when it does not, and its own outcome with `verification-unavailable` in
  * `error` only when the re-check itself was unavailable. A drop that was fully
  * dispatched before a cancel (during the post-drop rest) is verified with the
- * short budget instead of the full one and never retried.
+ * short budget instead of the full one and never retried. When cancellation
+ * instead interrupts that verification, one fresh bounded re-check handles
+ * the accepted position arriving before its verification reply.
  */
 
 import { EXECUTOR, POINTER_CONTROL } from "@core/constants/cdp";
@@ -130,16 +132,25 @@ export async function runWithRetry(o: RetryRunnerOptions): Promise<ExecutionResu
 		}
 		// A cancel that arrived after the drop (post-drop rest) bounds the verification and ends retries.
 		const cancelled = o.signal?.aborted === true;
-		const verdict = await o.verify(
+		const verificationSignal = o.checkSignal();
+		let verdict = await o.verify(
 			cancelled ? EXECUTOR.recheckTimeoutMs : o.verifyTimeoutMs,
-			o.checkSignal()
+			verificationSignal
 		);
 		if (verdict.outcome === "ok") return { ...result, attempts };
+		// The accepted move itself publishes a new position, which cancels this run. If
+		// that arrives while observeMove is answering, ask once more on a fresh signal:
+		// cancellation is not evidence that the drop failed. A second cancellation or an
+		// unavailable page remains terminal, and this path can never dispatch another drag.
+		if (verdict.outcome === "unavailable" && verificationSignal.aborted && o.signal?.aborted) {
+			verdict = await o.recheck(o.checkSignal());
+			if (verdict.outcome === "ok") return { ...result, attempts };
+		}
 		if (verdict.outcome === "unavailable") return unavailable(result, attempts, verdict);
-		log.warn("executor: move not verified", { attempt: i, verdict, cancelled });
-		if (cancelled) {
+		if (o.signal?.aborted) {
 			return { ...result, ok: false, outcome: "aborted", reason: EXECUTOR.reasons.aborted, attempts };
 		}
+		log.warn("executor: move not verified", { attempt: i, verdict, cancelled });
 		last = result;
 	}
 	const base = last as ExecutionResult;

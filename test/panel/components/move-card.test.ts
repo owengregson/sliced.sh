@@ -25,6 +25,23 @@ afterEach(async () => {
 });
 
 describe("createMoveCard play button", () => {
+	it("accepts play-now through preparation and countdown, then locks at committed piece input", () => {
+		let plays = 0;
+		let cancels = 0;
+		card = createMoveCard(document.body, { onPlay: () => plays++, onCancel: () => cancels++ });
+		card.update({ state: "thinking", armed: true, canPlayNow: true });
+		expect(disabled()).toBe(false);
+		click(button());
+		card.update({ state: "your-move", armed: true, canPlayNow: true, phase: "thinking" });
+		card.countdown(2000, 3000);
+		click(button());
+		expect(plays).toBe(2);
+		expect(cancels).toBe(0);
+		card.update({ state: "your-move", armed: true, canPlayNow: false, executing: true });
+		expect(disabled()).toBe(true);
+		click(button());
+		expect(plays).toBe(2);
+	});
 	it("is disabled until the hand is armed, and re-locks when it disarms or the turn passes", () => {
 		const plays: number[] = [];
 		card = createMoveCard(mount(document.createElement("div")), { onPlay: () => plays.push(1) });

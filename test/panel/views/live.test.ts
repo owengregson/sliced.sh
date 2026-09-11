@@ -283,7 +283,7 @@ describe("move card states (§5.6)", () => {
 		expect(h.q(".sl-move__note").textContent).not.toBe(COPY.move.noteUnarmed("Shift+A"));
 	});
 
-	it("play button: disabled until armed → Play move → Auto-playing in 4.2s → hover Cancel this move → Playing…; flash on executed", async () => {
+	it("play button: disabled until armed → Play move → Auto-playing in 4.2s → hover Play now → Playing…; flash on executed", async () => {
 		h = await mountLive(dom.sim, idleSnapshot());
 		// §13.4: the hand plays only once armed (the debugger attaches at arm time, never
 		// mid-game) — until then the button is a label and a keybind hint.
@@ -306,24 +306,22 @@ describe("move card states (§5.6)", () => {
 		await dom.tick(1000);
 		expect(playLabel()).toBe(COPY.move.armed("3.2"));
 		pointer(playButton(), "pointerenter");
-		expect(playLabel()).toBe(COPY.move.cancel);
+		expect(playLabel()).toBe(COPY.workspace.playNow);
 		await dom.tick(500);
-		expect(playLabel()).toBe(COPY.move.cancel); // paused visual while hovering
+		expect(playLabel()).toBe(COPY.workspace.playNow); // play-now stays available while hovering
 		pointer(playButton(), "pointerleave");
 		await dom.tick(100);
 		expect(playLabel()).toBe(COPY.move.armed("2.6"));
 		await dom.tick(2000);
 		expect(playLabel()).toBe(COPY.move.armed("1")); // whole seconds at ≤ 1 s
 
-		// Cancel-on-click skips the move; auto-play stays armed.
+		// Click fast-forwards the pending move; Escape remains the cancel action.
 		pointer(playButton(), "pointerenter");
 		click(playButton());
-		expect(h.store.calls.at(-1)).toEqual({ type: MSG.PANEL_CANCEL_PENDING, tabId: h.tabId });
+		expect(h.store.calls.at(-1)).toEqual({ type: MSG.PANEL_PLAY_NOW, tabId: h.tabId });
 		expect(h.toasts()).toHaveLength(0); // only once the SW confirmed the skip
 		await dom.tick(0);
-		expect(h.toasts()[0]?.querySelector(".sl-toast__text")?.textContent).toBe(
-			COPY.toast.skipped("Nf3")
-		);
+		expect(h.toasts()).toHaveLength(0);
 		pointer(playButton(), "pointerleave");
 
 		// Executing → "Playing…"; executed → card flash + opponent state. The "Played …" toast is

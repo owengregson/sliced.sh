@@ -2,7 +2,7 @@
  * Move section (Appendix F §4.4 items 4–5, §5.6, §6.2, §6.3): the move card as a projection of
  * the snapshot (your-move / opponent-to-move with the expected reply / thinking / armed /
  * disabled / engine-stopped), the play button's label transitions (`Play move` →
- * `Auto-playing in 4.2s` → hover `Cancel this move` → `Playing…`), the countdown driven from
+ * `Auto-playing in 4.2s` → hover `Play now` → `Playing…`), the countdown driven from
  * `autoMove.scheduledAt` (the absolute execution time) against `plan.thinkMs`, and the §6.3
  * "played" flash when `session.lastExecution` reports an executed move (the "Played …"
  * notification is intentionally suppressed).
@@ -69,7 +69,8 @@ export function moveProgressPhase(snapshot: PanelSnapshot): MoveProgressPhase {
 	if (!snapshot.settings.enabled) return "paused";
 	if (snapshot.engine.state === "crashed") return "error";
 	if (snapshot.session.myColor === null) return "reading";
-	if (snapshot.session.state === "live:my-turn:executing") return "executing";
+	if (snapshot.session.state === "live:my-turn:executing" && snapshot.session.canPlayNow !== true)
+		return "executing";
 	const state = moveCardState(snapshot);
 	if (state === "opponent") return "waiting";
 	if (state === "thinking") return "analysing";
@@ -135,7 +136,7 @@ export function createMoveSection(options: MoveSectionOptions): MoveSectionHandl
 			state === "your-move" &&
 			scheduledAt !== undefined &&
 			plan !== undefined &&
-			snapshot.session.state !== "live:my-turn:executing";
+			(snapshot.session.state !== "live:my-turn:executing" || snapshot.session.canPlayNow === true);
 		if (!running) {
 			stopTimer();
 			return;
@@ -157,7 +158,8 @@ export function createMoveSection(options: MoveSectionOptions): MoveSectionHandl
 		const plan = planText(snap);
 		const data: MoveCardData = {
 			phase: moveProgressPhase(snap),
-			executing: snap.session.state === "live:my-turn:executing",
+			executing: snap.session.state === "live:my-turn:executing" && snap.session.canPlayNow !== true,
+			...(snap.session.canPlayNow !== undefined ? { canPlayNow: snap.session.canPlayNow } : {}),
 			state: cardState,
 			color: snap.session.myColor,
 			san: cardState === "opponent" ? reply : (rec?.chosen.san ?? null),

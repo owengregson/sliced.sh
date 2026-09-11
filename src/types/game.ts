@@ -143,6 +143,8 @@ export interface GameSessionView {
 	clocks: PositionSnapshot["clocks"] | null;
 	/** Epoch time at which the site's remaining clock values were captured. */
 	clocksAt?: number;
+	/** An armed move may be fast-forwarded through preparation, until its committed mouse-down. */
+	canPlayNow?: boolean;
 	/** Pending automatic matchmaking. dueAt is the next attempt's epoch time. */
 	autoQueue?: {
 		dueAt: number;

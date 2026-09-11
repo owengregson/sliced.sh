@@ -102,6 +102,21 @@ async function connectPanel(): Promise<PanelSnapshot[]> {
 const currentStore = (): PanelStore | null => store;
 
 describe("panel ↔ service worker: snapshot flow", () => {
+	it("refreshes live progress when returning from another tab without needing a new game event", async () => {
+		session.recommend(makeRecommendation(makePlan(sim.now()), sim.now()), 8);
+		const other = sim.openTab("https://example.com", { active: true }).tabId;
+		await connectPanel();
+		await sim.time.advance(TIMINGS.panelSnapshotMinIntervalMs);
+		expect(store?.snapshot?.session.state).toBe("idle");
+		await sw.run(() => sim.tabs.activate(tabId));
+		await sim.time.advance(TIMINGS.panelSnapshotMinIntervalMs);
+		expect(store?.snapshot?.session.state).toBe("live:my-turn:recommended");
+		expect(store?.snapshot?.session.ply).toBe(8);
+		await sw.run(() => sim.tabs.activate(other));
+		await sim.time.advance(TIMINGS.panelSnapshotMinIntervalMs);
+		expect(store?.snapshot?.site).toBeNull();
+	});
+
 	it("a connecting panel receives a snapshot within one tick, built for the active game tab", async () => {
 		const seen = await connectPanel();
 		await sim.time.advance(0);

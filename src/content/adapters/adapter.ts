@@ -12,10 +12,9 @@
  */
 
 import { turnFieldOf } from "@core/chess/fen";
-import type { UciParts } from "@core/chess/san";
 import { EXECUTOR } from "@core/constants/cdp";
 import { LIMITS } from "@core/constants/limits";
-import type { NewGameTargetResult } from "@core/constants/messages";
+import type { ExpectedMove, NewGameTargetResult } from "@core/constants/messages";
 import { TIME_CONTROL, TIMINGS } from "@core/constants/timings";
 import { log } from "@core/logger";
 import { rectShiftPx } from "@core/motor/geometry";
@@ -33,8 +32,9 @@ import type {
 	Square,
 	TimeControl,
 } from "@typedefs/game";
-import { pieceAt } from "./dom-fen";
+import { pieceAt, placementOf } from "./dom-fen";
 import { pointToSquare as pointToSquareGeom, squareRect as squareRectGeom } from "./geometry";
+import { createMoveProof } from "./move-proof";
 import { checkGeometry } from "./self-check";
 
 const MOVE_CONFIRM_MS = TIMINGS.adapterMoveConfirmMs;
@@ -198,7 +198,7 @@ export interface SiteAdapter {
 
 	/** Draw the recommendation; only when asked — the adapter never draws on its own (§13.3). */
 	highlight(from: Square, to: Square, style: HighlightStyle, options?: DrawOptions): void;
-	arrows(lines: ArrowLine[]): void;
+	arrows(lines: ArrowLine[], options?: DrawOptions): void;
 	/** Resolves once the page side has answered (or the bridge call timed out / failed). */
 	clearHighlights(): Promise<void>;
 
@@ -210,7 +210,7 @@ export interface SiteAdapter {
 		point?: Pt
 	): NewGameTargetResult;
 	/** True once the piece lands on `expected.to` (confirmed by the move list), false if it snaps back. */
-	observeMove(expected: UciParts, timeoutMs: number): Promise<boolean>;
+	observeMove(expected: ExpectedMove, timeoutMs: number): Promise<boolean>;
 	probe(): ProbeReport;
 	destroy(): void;
 }
@@ -382,8 +382,14 @@ export interface AdapterReading {
 /** Progress of one `observeMove` watch, as the site adapter sees the board. */
 export interface MoveWatch {
 	placement: string | null;
+	/** False when the placement was reconstructed from the same move list under verification. */
+	independentPlacement?: boolean;
 	moveCount: number;
 	lastMoveSquares: Square[];
+	/** Authoritative bridge/replay position; never a heuristic DOM reconstruction. */
+	fen?: string;
+	/** Complete SAN history through the currently displayed position. */
+	history?: readonly string[];
 }
 
 /** Shared adapter runtime: listeners, debounced evaluation, bridge cache, highlight keys, self-check timer. */
@@ -599,7 +605,7 @@ export abstract class AdapterBase implements SiteAdapter {
 		this.draw(highlights, arrows, options);
 	}
 
-	arrows(lines: ArrowLine[]): void {
+	arrows(lines: ArrowLine[], options: DrawOptions = {}): void {
 		const colors = this.colors();
 		const palette = [colors.hlArrow, colors.hlArrow2, colors.hlArrow3];
 		const ordered = [...lines].sort((a, b) => b.weight - a.weight);
@@ -609,7 +615,8 @@ export abstract class AdapterBase implements SiteAdapter {
 				from: l.from,
 				to: l.to,
 				color: palette[Math.min(i, palette.length - 1)] ?? colors.hlArrow,
-			}))
+			})),
+			options
 		);
 	}
 
@@ -626,21 +633,27 @@ export abstract class AdapterBase implements SiteAdapter {
 			});
 	}
 
-	observeMove(expected: UciParts, timeoutMs: number): Promise<boolean> {
+	observeMove(expected: ExpectedMove, timeoutMs: number): Promise<boolean> {
 		return new Promise<boolean>((resolve) => {
 			const initial = this.watchMove();
+			const proof = createMoveProof(expected);
+			if (initial.independentPlacement !== false && proof?.(initial)) {
+				resolve(true);
+				return;
+			}
 			const mover = initial.placement ? pieceAt(initial.placement, expected.from) : null;
-			if (!mover) {
+			if (!mover && !proof) {
 				resolve(false);
 				return;
 			}
 			const wantAtDest = expected.promotion
-				? mover === mover.toUpperCase()
+				? mover === mover?.toUpperCase()
 					? expected.promotion.toUpperCase()
 					: expected.promotion
 				: mover;
 			let landed = false;
 			let done = false;
+			let checkingBridge = false;
 			let confirmTimer: ReturnType<typeof setTimeout> | null = null;
 			const Observer = this.observerCtor();
 			const observer = new Observer(() => check());
@@ -656,6 +669,32 @@ export abstract class AdapterBase implements SiteAdapter {
 			const check = (): void => {
 				if (done) return;
 				const now = this.watchMove();
+				if (proof) {
+					if (now.independentPlacement === false) {
+						if (checkingBridge) return;
+						checkingBridge = true;
+						void this.refreshBridgeState().then((state) => {
+							checkingBridge = false;
+							if (done) return;
+							const latest = this.watchMove();
+							if (latest.independentPlacement !== false) {
+								if (proof(latest)) finish(true);
+								return;
+							}
+							// A canvas move list cannot corroborate its own replay. Use only the FEN
+							// returned by this fresh request, never an older value merged into the cache.
+							const fen = state?.fen;
+							if (
+								typeof fen === "string" &&
+								proof({ ...latest, fen, placement: placementOf(fen), independentPlacement: true })
+							)
+								finish(true);
+						});
+						return;
+					}
+					if (proof(now)) finish(true);
+					return;
+				}
 				if (!now.placement) return;
 				const atFrom = pieceAt(now.placement, expected.from);
 				const atTo = pieceAt(now.placement, expected.to);
@@ -688,6 +727,8 @@ export abstract class AdapterBase implements SiteAdapter {
 				attributeFilter: ["class", "style"],
 			});
 			check();
+			// Canvas-only state can advance without another DOM mutation while this watch is open.
+			if (proof && initial.independentPlacement !== false) void this.refreshBridgeState().then(check);
 		});
 	}
 
@@ -943,16 +984,19 @@ export abstract class AdapterBase implements SiteAdapter {
 	}
 
 	/** Ask the page for its state (no-op until the bridge is ready); resolves once the cache is updated. */
-	protected refreshBridgeState(): Promise<void> {
+	protected refreshBridgeState(): Promise<BridgeState | null> {
 		const bridge = this.readyBridge();
-		if (!bridge) return Promise.resolve();
+		if (!bridge) return Promise.resolve(null);
 		return bridge
 			.call<BridgeState>(BRIDGE_KINDS.getState, undefined, BRIDGE_CALL_TIMEOUT_MS)
 			.then((state) => {
-				if (state && typeof state === "object") this.bridgeState = { ...this.bridgeState, ...state };
+				if (!state || typeof state !== "object") return null;
+				this.bridgeState = { ...this.bridgeState, ...state };
+				return state;
 			})
 			.catch(() => {
 				// page side absent or slow: DOM readers carry on
+				return null;
 			});
 	}
 

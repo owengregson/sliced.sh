@@ -168,6 +168,9 @@ interface Running {
 	rec: Recommendation;
 	/** The plan the hand is actually working through (an instant plan for `playNow`/retries). */
 	timing: TimingPlan;
+	ctx: MoveContext;
+	/** The committed mouse-down has entered dispatch, including its acknowledgement wait. */
+	committed: boolean;
 	ac: AbortController;
 	done: Promise<ExecutionResult>;
 }
@@ -284,6 +287,11 @@ export class MoveExecutor {
 	private readonly listeners = new Map<ExecutorEvent, Set<(payload: never) => void>>();
 	private pending: Pending | null = null;
 	private running: Running | null = null;
+	private fastForward: {
+		rec: Recommendation;
+		version: number;
+		done: Promise<ExecutionResult | null>;
+	} | null = null;
 	/** A replacement waiting for a cancelled run to wind down (`cancel()`/`disarm()` drop it). */
 	private parked: { rec: Recommendation; ac: AbortController } | null = null;
 	/** The current board check's controller (a cancel arriving during the check aborts it). */
@@ -466,6 +474,11 @@ export class MoveExecutor {
 		return this.running !== null;
 	}
 
+	/** Hovering, previews, decision pauses and approach remain interruptible until mouse-down. */
+	canFastForward(): boolean {
+		return this.running?.committed !== true;
+	}
+
 	/**
 	 * The move the hand is working through right now and the plan it is running —
 	 * which is what the panel's countdown reads once the move has left `pendingMove()`
@@ -625,7 +638,7 @@ export class MoveExecutor {
 	}
 
 	/** Execute the pending move (or `rec`) right away with an instant plan. */
-	async playNow(
+	playNow(
 		rec?: Recommendation,
 		plan?: TimingPlan,
 		ctx?: MoveContext
@@ -635,18 +648,30 @@ export class MoveExecutor {
 		this.clearPending();
 		const target = rec ?? pending?.rec ?? running?.rec;
 		const base = plan ?? pending?.timing ?? running?.timing;
-		if (!target || !base) return null;
+		if (!target || !base) return Promise.resolve(null);
+		const forwarding = this.fastForward;
+		if (
+			forwarding &&
+			forwarding.version === this.inputVersion &&
+			forwarding.rec.fen === target.fen &&
+			forwarding.rec.chosen.uci === target.chosen.uci
+		)
+			return forwarding.done;
 		if (running && !running.ac.signal.aborted) {
-			// A scheduled run owns its entire thinking window. Interrupt its look/hover now,
-			// then use the existing verified replacement path. Once the committed approach
-			// starts, let it finish: another Space must never drop a held piece or double-move.
-			if (this.hand !== "rest" && this.hand !== "orientation" && this.hand !== "exploring")
-				return running.done;
+			// Preparation includes the approach and pre-grab pause. After the admitted mouse-down,
+			// a shortcut must never abort the held piece or re-enter the move during verification.
+			if (running.committed) return running.done;
 			running.ac.abort();
 		}
 		const instant = instantTiming(base);
 		instant.deadlineMs = this.now() + instant.thinkMs;
-		return this.execute(target, instant, ctx ?? pending?.ctx ?? {});
+		const done = this.execute(target, instant, ctx ?? pending?.ctx ?? running?.ctx ?? {}).finally(
+			() => {
+				if (this.fastForward?.done === done) this.fastForward = null;
+			}
+		);
+		this.fastForward = { rec: target, version: this.inputVersion, done };
+		return done;
 	}
 
 	/**
@@ -733,7 +758,7 @@ export class MoveExecutor {
 		if (this.disposed) return this.droppedReplacement(rec);
 		const ac = new AbortController();
 		const done = this.runOne(rec, timing, ctx, ac.signal, replacement);
-		this.running = { rec, timing, ac, done };
+		this.running = { rec, timing, ctx, committed: false, ac, done };
 		try {
 			return await done;
 		} finally {
@@ -865,7 +890,11 @@ export class MoveExecutor {
 	): Promise<ExecutionResult> {
 		const config = { ...this.config };
 		const readAt = this.now();
-		const expected: ExpectedMove = { from: rec.chosen.from, to: rec.chosen.to };
+		const expected: ExpectedMove = {
+			from: rec.chosen.from,
+			to: rec.chosen.to,
+			beforeFen: rec.fen,
+		};
 		if (rec.chosen.promotion) expected.promotion = rec.chosen.promotion;
 		// Fix F: a premove sent during the opponent's turn (`MoveContext.queuedPremove`).
 		const queued = ctx.queuedPremove === true;
@@ -913,6 +942,14 @@ export class MoveExecutor {
 			now: this.now,
 			scheduler: this.scheduler,
 			onState: (s) => this.setHand(s),
+			onCommittedPress: () => {
+				const running = this.running;
+				if (!running || running.ac.signal !== signal || running.committed) return;
+				running.committed = true;
+				// The hand was already `grabbing` during the pre-grab pause. Publish the exact
+				// availability boundary even though its display phase has not changed.
+				this.emit("hand", this.hand);
+			},
 		});
 		const plan: ExecutionPlan = {
 			tabId: this.tabId,
@@ -946,10 +983,10 @@ export class MoveExecutor {
 			},
 		};
 		if (rec.chosen.promotion) plan.promotion = rec.chosen.promotion;
+		// Optional normal verification never disables the evidence check after a failed
+		// or interrupted press: even a preview release might have submitted a move.
 		const check = (timeoutMs: number, checkSignal: AbortSignal): Promise<VerifyResult> =>
-			config.verifyMoves
-				? verifyMove(this.link, this.tabId, expected, timeoutMs, checkSignal)
-				: Promise.resolve({ outcome: "ok" });
+			verifyMove(this.link, this.tabId, expected, timeoutMs, checkSignal);
 		try {
 			// Setup and replacement verification consume the original move window too.
 			const readyTiming = fitTiming(timing, timing.deadlineMs - this.now());
@@ -958,7 +995,8 @@ export class MoveExecutor {
 			return await runWithRetry({
 				attempt: (index) =>
 					controller.execute(plan, index === 0 ? readyTiming : instantTiming(readyTiming), signal),
-				verify: check,
+				verify: (timeoutMs, checkSignal) =>
+					config.verifyMoves ? check(timeoutMs, checkSignal) : Promise.resolve({ outcome: "ok" }),
 				recheck: (checkSignal) => check(EXECUTOR.recheckTimeoutMs, checkSignal),
 				checkSignal: () => this.freshCheckSignal(),
 				delay: (ms) => sleep(ms, this.scheduler, signal),

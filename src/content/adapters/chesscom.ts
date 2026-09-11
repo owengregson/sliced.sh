@@ -519,16 +519,21 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 	protected watchMove(): MoveWatch {
 		const list = readMoveList(this.doc);
 		const dom = this.getPlacement();
+		const info = this.positionInfoFor(dom, list);
 		return {
 			placement: dom ?? this.placementWithoutPieces(list),
+			independentPlacement: dom !== null,
 			moveCount: list.sans.length,
 			lastMoveSquares: this.highlightSquares(),
+			...(info && !info.approximate ? { fen: info.fen } : {}),
+			...(this.hasMoveList() ? { history: list.sans.slice(0, plyOf(list)) } : {}),
 		};
 	}
 
 	/** Placement of a board that renders no pieces: the move list's replay, else the bridge FEN. */
 	private placementWithoutPieces(list: MoveList): string | null {
-		const replay = this.hasMoveList() ? replayMoves(list.sans.slice(0, plyOf(list))) : null;
+		const sans = list.sans.slice(0, plyOf(list));
+		const replay = this.hasMoveList() && sans.length > 0 ? replayMoves(sans) : null;
 		if (replay) return placementOf(replay.fen);
 		const fen = this.bridgeFen();
 		return fen === null ? null : placementOf(fen);

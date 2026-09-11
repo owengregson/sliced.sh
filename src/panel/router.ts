@@ -97,7 +97,11 @@ export class PanelRouter implements Router {
 
 	switch(name: ViewName, options: { transition?: Transition } = {}): Promise<void> {
 		// Serialise switches so a burst of snapshots never interleaves mounts.
-		this.switching = this.switching.then(() => this.doSwitch(name, options));
+		// A shell hook/cleanup failure must not poison every later switch: the engine
+		// keeps running independently, so recovery on the next snapshot is essential.
+		this.switching = this.switching
+			.catch((error: unknown) => log.warn("panel router: recovering after failed switch", { error }))
+			.then(() => this.doSwitch(name, options));
 		return this.switching;
 	}
 

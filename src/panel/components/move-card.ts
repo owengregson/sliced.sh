@@ -51,6 +51,8 @@ export interface MoveCardData {
 	handsOff?: boolean;
 	phase?: MoveProgressPhase;
 	executing?: boolean;
+	/** Service-owned availability through preparation, ending at committed piece input. */
+	canPlayNow?: boolean;
 }
 
 export interface MoveCardOptions {
@@ -113,18 +115,13 @@ export function createMoveCard(
 		size: "lg",
 		block: true,
 		icon: "action.play",
-		onClick: () => {
-			if (counting) options.onCancel?.();
-			else options.onPlay?.();
-		},
+		onClick: () => options.onPlay?.(),
 	});
 
 	const onEnter = (): void => {
 		hovering = true;
 		if (counting) {
-			button.update({ label: COPY.move.cancel, icon: "action.cancel" });
-			button.ring.pause();
-			ring.pause();
+			button.update({ label: COPY.workspace.playNow, icon: "action.play" });
 		}
 	};
 	const onLeave = (): void => {
@@ -170,19 +167,17 @@ export function createMoveCard(
 	}
 
 	function renderButton(): void {
-		const armed = data.armed === true && data.state === "your-move" && !data.executing;
+		const canPlayNow =
+			data.canPlayNow ?? (data.armed === true && data.state === "your-move" && !data.executing);
+		const armed = canPlayNow;
 		if (!armed || (data.phase !== undefined && data.phase !== "thinking")) stopCounting();
 		button.update({
 			loading: data.executing ? COPY.move.executing : null,
 			armed,
 			kbd: data.kbd ?? null,
 			// §13.4: the hand plays only once armed (the debugger attaches at arm time, never mid-game).
-			disabled:
-				data.handsOff === true ||
-				data.state !== "your-move" ||
-				data.armed !== true ||
-				data.executing === true,
-			icon: counting && hovering ? "action.cancel" : "action.play",
+			disabled: data.handsOff === true || !canPlayNow,
+			icon: "action.play",
 			// A running countdown owns the label and the spoken aria-label (§6.2).
 			...(counting
 				? {}
@@ -265,7 +260,7 @@ export function createMoveCard(
 		update,
 		countdown,
 		executing() {
-			data = { ...data, executing: true };
+			data = { ...data, executing: true, canPlayNow: false };
 			stopCounting();
 			renderButton();
 			renderProgress();

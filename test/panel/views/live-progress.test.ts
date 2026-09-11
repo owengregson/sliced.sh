@@ -86,6 +86,32 @@ it("preserves executing state across repeated snapshots and clears it on the nex
 	expect(h.q(".sl-move__progress-value").textContent).toBe(COPY.move.progress.waiting.value);
 });
 
+it("keeps play-now available through execution preparation and locks when the piece is committed", async () => {
+	const preparing = liveSnapshot({ state: "live:my-turn:executing", autoMove: { armed: true } });
+	preparing.session.canPlayNow = true;
+	h = await mountLive(dom.sim, preparing);
+	const button = h.q(".sl-move__action .sl-button");
+	expect(button.getAttribute("aria-disabled")).toBeNull();
+	expect(button.getAttribute("aria-busy")).toBe("false");
+	expect(h.root.dataset.phase).toBe("ready");
+	const hovering = liveSnapshot({
+		state: "live:my-turn:executing",
+		autoMove: { armed: true, scheduledAt: Date.now() + THINK_MS, plan: makeRecommendation().plan },
+	});
+	hovering.session.canPlayNow = true;
+	h.store.emit(hovering);
+	expect(h.root.dataset.phase).toBe("thinking");
+	expect(h.q(".sl-move__progress-track").hidden).toBe(false);
+	expect(h.q(".sl-move__progress-value").textContent).toBe("4.2s");
+	expect(button.getAttribute("aria-disabled")).toBeNull();
+	const dragging = liveSnapshot({ state: "live:my-turn:executing", autoMove: { armed: true } });
+	dragging.session.canPlayNow = false;
+	h.store.emit(dragging);
+	expect(button.getAttribute("aria-disabled")).toBe("true");
+	expect(button.getAttribute("aria-busy")).toBe("true");
+	expect(h.root.dataset.phase).toBe("executing");
+});
+
 it("mirrors the running player clock between snapshots and switches on a new site reading", async () => {
 	const snapshot = liveSnapshot();
 	snapshot.session.clocksAt = Date.now();
