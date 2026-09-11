@@ -163,6 +163,8 @@ action and whether the counters moved.
 | 6r | Debugger **attach** (arm auto-play) | no blur; infobar appears; note the **layout shift in px** and whether the board moves | | | |
 | 6r′ | Debugger **detach** (disarm) | no blur; infobar disappears; layout shifts back | | | |
 | 8/9 | Switch tab / focus another window and return | blur then focus — the user's own toggle. Confirm the extension never causes one | | | |
+| 10r | **Move one after a refocus** (the owner's 2026-09-10 ruling). Arm from the waiting view, then click into the **side panel** and stay there while the game starts, so the first position arrives with the page unfocused and no blur inside its window. Then click once into the board. | The first move is played shortly after the click. Record the game's `fps` record for move one: expect `DidFocusOnMyTurn` set and **`DidToggle` clear, `BlurCount` 0** — a focus edge with no blur inside the window | | | |
+| 10r′ | Same, but click the side panel **during** the first move's think window, then click back into the board | The move is **not** played; it waits for the next position (§13.4 unchanged). If it plays, the `blurSeenThisMove` guard has failed — that is a regression, not a ruling | | | |
 
 **Row 6r matters twice.** The event side is asserted by the simulator; what is unknown is
 whether the infobar's appearance disturbs page focus at all, and how much it shifts the layout.
@@ -173,6 +175,16 @@ board rect would put clicks on the wrong squares.
 and 2 show that a panel button click does *not* blur the page, §4's decision note explains the
 relaxation of hands-off that becomes available — propose it with the probe log as evidence
 rather than making it silently.
+
+**Rows 10r / 10r′ are the owner's ruling of 2026-09-10 being checked on a real board** (§4 of
+`docs/qa/focus-discipline.md` records the decision and its scope). 10r is "did the first move
+finally happen"; 10r′ is the guard that keeps the relaxation to the case he allowed. **What it looks
+like if it goes wrong:** a per-move focus count where move one carries `DidToggle` (a blur *and* a
+focus inside one window) or `BlurCount ≥ 1`, where a human's first move is typically 0 — or, on
+10r′, a move that plays after the refocus when it should have waited. Either is a withdrawal case,
+not a tuning case. The `BlurCount` / `DidToggle` fields are in the `fps` record the §13.2 telemetry
+export already names, and the panel's telemetry pill ("blur seen") is the live read of the same
+flag.
 
 | # | Do | Expect | Observed |
 |---|---|---|---|

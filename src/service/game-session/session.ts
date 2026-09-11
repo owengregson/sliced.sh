@@ -133,6 +133,13 @@ function isScoredMove(chosen: ChosenMove): boolean {
 	return chosen.source !== "premove" && chosen.rankInLines >= TOP_LINE_RANK;
 }
 
+/**
+ * The game's first move: ply 0 playing white, ply 1 playing black. The scope of the owner's
+ * 2026-09-10 §13.4 ruling (`docs/qa/focus-discipline.md` §4) and the only move where no later
+ * position can arrive to carry a second chance — as white the board cannot change until we play.
+ */
+const FIRST_MOVE_LAST_PLY = 1;
+
 /** `t_premove ~ U(0, maxS)` — §7.4 / Appendix D §3a.5 (120 ms). */
 const PREMOVE_WINDOW_MS = TIMING_CONSTANTS.premove.maxS * MS_PER_S;
 
@@ -1128,6 +1135,34 @@ export class GameSession implements SessionSource {
 		return this.reconsiderGuarded("the hand was armed");
 	}
 
+	/** Is there a move to play right now — the scheduled one, or the standing recommendation? */
+	private hasPlayableMove(): boolean {
+		const executor = this.executorHandle;
+		return executor !== null && (executor.pendingMove() !== null || this.rec !== null);
+	}
+
+	/**
+	 * `SessionSource`: the panel's `PANEL_PLAY_NOW`. Same reason as `handArmed()` — the
+	 * `MoveContext` and the §8.5 re-plan are the session's, and the handler used to pass neither.
+	 *
+	 * The run is started and deliberately **not** awaited: the panel's reply must not wait for the
+	 * hand (the outcome reaches it through the broadcaster), which is the shape the handler had.
+	 * `playNow()` is synchronous up to its own `await`, so the §3.3 transition and the notify have
+	 * both happened by the time this resolves. `false` means there was nothing to play — and unlike
+	 * the keybind path it does not queue `playWhenReady`, because a command the panel is waiting on
+	 * answers now or says why not.
+	 */
+	playNowRequested(): Promise<boolean> {
+		if (!this.hasPlayableMove()) return Promise.resolve(false);
+		void this.playNow().catch((error: unknown) =>
+			log.warn("game-session: playNow failed", {
+				tabId: this.deps.tabId,
+				error: errorMessage(error),
+			})
+		);
+		return Promise.resolve(true);
+	}
+
 	/**
 	 * Arm the one re-delivery above, `TIMINGS.sessionRetryMs` from now. The budget
 	 * (`TIMINGS.sessionRetryMax`) is per position — `cancelInFlight` resets it — and when it is
@@ -1619,7 +1654,10 @@ export class GameSession implements SessionSource {
 	 */
 	private onFocusEdge(hasFocus: boolean, at: number): void {
 		this.window.edge(hasFocus, at);
-		if (hasFocus) return;
+		if (hasFocus) {
+			this.onFocusRegained();
+			return;
+		}
 		const executor = this.executorHandle;
 		const pending = executor?.pendingMove() ?? null;
 		if (!executor || (!pending && !executor.isRunning())) {
@@ -1636,6 +1674,49 @@ export class GameSession implements SessionSource {
 		const ctx = rec && timing ? this.timingContextFor(rec) : null;
 		if (rec && timing && ctx) timing.replan(rec.plan, ctx, "blur");
 		this.deps.notify();
+	}
+
+	/**
+	 * Is this the game's first move? The scope of the relaxation below, named rather than compared
+	 * inline so that the ruling's boundary is visible at the call site and cannot quietly widen to
+	 * every move — which is the version the owner explicitly did not choose.
+	 */
+	private isGameFirstMove(snapshot: PositionSnapshot): boolean {
+		return snapshot.ply <= FIRST_MOVE_LAST_PLY;
+	}
+
+	/**
+	 * The page got focus back (the owner clicked into the board). §13.4's rule is that a move which
+	 * could not run because the page was not focused *waits for the next position* — and at the
+	 * game's first move there is no next position, so it waits for ever (owner's report, 2026-09-10:
+	 * "it sometimes doesnt make the first move (if youre on white)").
+	 *
+	 * The owner ruled on 2026-09-10 that the first move may be played when focus comes back, and
+	 * **only** the first move: a real player's first move usually does carry a focus change, because
+	 * they have just clicked to start the game, so spending the focus-discipline margin there is
+	 * defensible in a way that spending it on every move is not. He explicitly did not take the
+	 * every-move relaxation. `docs/qa/focus-discipline.md` §4 records the decision, its scope and the
+	 * evidence that would change it.
+	 *
+	 * Two conditions, neither optional:
+	 *   - `isGameFirstMove` — the whole scope of the ruling;
+	 *   - no blur landed *inside* this move's window. That is `FocusGate`'s own per-window
+	 *     bookkeeping (`blurSeen`, set on the blur and cleared only by `positionArrived`), and it is
+	 *     exactly what chess.com counts against the move: a blur followed by a focus inside one
+	 *     window is §13.2's `DidToggle`, the strongest client signal the corpus documents. Such a
+	 *     move is spent, and its second chance is the next position, not this click.
+	 *
+	 * This is a reaction to the owner's own focus change, never a focus change of ours: §13.4's
+	 * absolute rule — nothing here raises a notification, activates a tab or calls
+	 * `Page.bringToFront` — is untouched. The hand still asks `FocusGate.canExecute` for itself when
+	 * the re-delivered move is dispatched, so this only gives the move a second chance; it does not
+	 * grant it permission.
+	 */
+	private onFocusRegained(): void {
+		const snapshot = this.snapshot;
+		if (!snapshot || !this.isGameFirstMove(snapshot)) return;
+		if (this.deps.focus.snapshot(this.deps.tabId).blurSeenThisMove) return;
+		void this.reconsiderGuarded("the page regained focus on the game's first move");
 	}
 
 	// ── helpers ────────────────────────────────────────────────────────────

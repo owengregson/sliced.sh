@@ -6,21 +6,27 @@
 // fresh position and the whole §3.2 pipeline runs again — which is exactly why the owner only ever
 // saw the *first* move go missing ("it sometimes doesnt make the first move (if youre on white)").
 //
-// Two holds reach the first position, and both are fixed by one mechanism (`GameSession.reconsider`,
-// one re-delivery of the position the session is still sitting on):
+// Three holds reach the first position, and one mechanism covers them — `GameSession.reconsider`,
+// one re-delivery of the position the session is still sitting on:
 //
 //   1. the automatic arm races it. `arm()` attaches `chrome.debugger`, which is slow; the manual
 //      arm (Shift+A) re-checks the standing recommendation afterwards, the automatic one used to be
 //      fire-and-forget, so `actOnRecommendation` read `!executor.isArmed()`, took the panel-only
 //      branch and nothing ever reconsidered;
 //   2. the engine answers nothing. `runPipeline` logs "no recommendation for this position" and
-//      returns, and nothing retries.
+//      returns, and nothing retries;
+//   3. the page was not focused when the move was due, so §13.4's hand skipped it and waited for a
+//      position that never comes. Released on the owner's own refocus — his ruling of 2026-09-10,
+//      scoped to move one, guarded so a blur *inside* the window still cancels
+//      (`docs/qa/focus-discipline.md` §4).
 //
-// The other two tests are the double-move guard: the re-check must go through the same "is a move
-// already pending" gate the manual arm uses, and it must not act at all once the §3.3 machine says
-// no move is owed for the position the session is holding.
+// The rest of the file is the double-move gate and the scope of that ruling. Every re-delivery goes
+// through the same "is a move already pending" check the manual arm uses and the same §3.3 answer to
+// "is a move still owed", and every call site into it — the automatic arm, Shift+A, the panel's
+// auto-move toggle and the panel's play-now — is covered here, because the gate having three
+// hand-written copies is what made the bug class possible in the first place.
 import { afterEach, describe, expect, it } from "bun:test";
-import { CDP } from "@core/constants/cdp";
+import { CDP, PANEL_COMMAND_ERRORS } from "@core/constants/cdp";
 import { MSG } from "@core/constants/messages";
 import { TIMINGS } from "@core/constants/timings";
 import {
@@ -90,6 +96,11 @@ function gaveUp(warnings: readonly LogEntry[]): boolean {
 /** `PANEL_SET_AUTO_MOVE` as the side panel sends it, through the installed router. */
 function setAutoMove(armed: boolean): Promise<unknown> | undefined {
 	return h.router._dispatch({ type: MSG.PANEL_SET_AUTO_MOVE, tabId: h.tabId, armed }, {});
+}
+
+/** `PANEL_PLAY_NOW` as the side panel sends it, through the installed router. */
+function playNow(): Promise<unknown> | undefined {
+	return h.router._dispatch({ type: MSG.PANEL_PLAY_NOW, tabId: h.tabId }, {});
 }
 
 /** Own-move searches the client issued (`go infinite` is a ponder, not one of ours). */
@@ -360,6 +371,169 @@ describe("game session: the first move as white (Fix G)", () => {
 		expect(ctx?.myClockMs).toBeGreaterThan(0);
 		expect(await h.until(() => h.site.board.lastMove() !== null, 60_000)).toBe(true);
 		expect(h.site.board.chess.history()).toHaveLength(1);
+	});
+
+	it("the page was not focused when the first position arrived: the move plays when the owner clicks back in", async () => {
+		// §13.4 makes the hand skip a move the page was not focused for and wait for a fresh position
+		// — and at the game's first move there is no fresh position. The owner ruled on 2026-09-10
+		// that move one may be played when focus comes back (and only move one): his first move
+		// usually does carry a focus change, because he has just clicked to start the game.
+		h = await createGameHarness({
+			manualStart: true,
+			settings: { automation: { autoMove: true } },
+		});
+		await h.drive(() => {
+			h.site.hello();
+			h.site.startGame();
+		});
+		const session = h.session();
+		expect(await h.until(() => h.executor()?.isArmed() === true, 5_000)).toBe(true);
+
+		// Focus leaves the page *before* the position arrives — the owner is in the side panel, so the
+		// move window opens with no focus and no blur inside it.
+		await h.drive(() => h.site.panelClick());
+		await h.arrive();
+		expect(await h.until(() => session.recommendation() !== null, 5_000)).toBe(true);
+		// The hand refuses before its first dispatch (`FocusGate.canExecute` → `unfocused`).
+		expect(await h.until(() => h.executor()?.pendingMove() === null, 60_000)).toBe(true);
+		await h.advance(5_000);
+		expect(presses()).toHaveLength(0);
+		expect(h.site.board.lastMove()).toBeNull();
+
+		// The owner clicks back into the board. Nothing else will ever deliver this position.
+		await h.drive(() => h.site.clickIntoBoard());
+		expect(await h.until(() => h.site.board.lastMove() !== null, 60_000)).toBe(true);
+		expect(h.site.board.lastMove()?.byMe).toBe(true);
+		expect(h.site.board.chess.history()).toHaveLength(1);
+	});
+
+	it("a blur inside the first move's window still cancels it: clicking back in does not play it", async () => {
+		// The half of the ruling that is not a relaxation. A blur that actually lands in the window is
+		// what chess.com counts against the move (§13.2 `DidToggle`): that move is spent, and its
+		// second chance is the next position, not this click.
+		h = await createGameHarness({
+			manualStart: true,
+			settings: { automation: { autoMove: true } },
+		});
+		await h.drive(() => {
+			h.site.hello();
+			h.site.startGame();
+		});
+		const session = h.session();
+		const executor = h.executor();
+		if (!executor) throw new Error("first-move: the session has no executor");
+		expect(await h.until(() => executor.isArmed(), 5_000)).toBe(true);
+		let schedules = 0;
+		const realSchedule = executor.schedule.bind(executor);
+		executor.schedule = (rec, plan, ctx): void => {
+			schedules += 1;
+			realSchedule(rec, plan, ctx);
+		};
+
+		// The position arrives with the page focused, so the window opens clean…
+		await h.arrive();
+		expect(await h.until(() => session.recommendation() !== null, 5_000)).toBe(true);
+		expect(schedules).toBe(1);
+		// …and the owner then clicks the side panel *inside* the window.
+		await h.drive(() => h.site.panelClick());
+		expect(executor.pendingMove()).toBeNull();
+
+		await h.drive(() => h.site.clickIntoBoard());
+		await h.advance(60_000);
+		expect(schedules).toBe(1); // not re-scheduled: the blur is inside this move's window
+		expect(h.site.board.lastMove()).toBeNull();
+	});
+
+	it("a later move is not released by focus: only move one is", async () => {
+		// The scope of the ruling. This is §13.4's unchanged behaviour for every move but the first,
+		// and it is what `isGameFirstMove` exists to keep.
+		h = await createGameHarness({
+			manualStart: true,
+			settings: { automation: { autoMove: true } },
+		});
+		await h.drive(() => {
+			h.site.hello();
+			h.site.startGame();
+		});
+		const session = h.session();
+		expect(await h.until(() => h.executor()?.isArmed() === true, 5_000)).toBe(true);
+
+		// Move one plays normally, with focus throughout.
+		await h.arrive();
+		expect(await h.until(() => h.site.board.chess.history().length === 1, 60_000)).toBe(true);
+		const afterMoveOne = [...h.site.board.chess.history()];
+
+		// The opponent replies while the owner is in the side panel: our *second* move's window opens
+		// with no focus and no blur inside it — the same shape as the first test.
+		await h.drive(() => h.site.panelClick());
+		await h.arrive("e7e5");
+		expect(await h.until(() => session.recommendation() !== null, 5_000)).toBe(true);
+		expect(await h.until(() => h.executor()?.pendingMove() === null, 60_000)).toBe(true);
+
+		// Clicking back in must not play it: §13.4 says it waits for a fresh position.
+		await h.drive(() => h.site.clickIntoBoard());
+		await h.advance(60_000);
+		expect(h.site.board.chess.history()).toEqual([...afterMoveOne, "e5"]);
+	});
+
+	it("the panel's play-now goes through the session, with the move context", async () => {
+		// The same defect as the auto-move toggle's, one call site over: `PANEL_PLAY_NOW` called
+		// `executor.playNow(rec, rec.plan)` itself — no `MoveContext`, so the hand had no candidates,
+		// no legal destinations and no clock, and no `TimingModel.replan` either.
+		h = await createGameHarness({
+			manualStart: true,
+			settings: { automation: { autoMove: true } },
+		});
+		await h.drive(() => {
+			h.site.hello();
+			h.site.startGame();
+		});
+		const session = h.session();
+		const executor = h.executor();
+		if (!executor) throw new Error("first-move: the session has no executor");
+		expect(await h.until(() => executor.isArmed(), 5_000)).toBe(true);
+		const contexts: Array<MoveContext | undefined> = [];
+		const realPlayNow = executor.playNow.bind(executor);
+		executor.playNow = (rec, plan, ctx) => {
+			contexts.push(ctx);
+			return realPlayNow(rec, plan, ctx);
+		};
+
+		await h.arrive();
+		expect(await h.until(() => session.recommendation() !== null, 5_000)).toBe(true);
+
+		await h.drive(() => void playNow());
+		expect(contexts).toHaveLength(1);
+		const ctx = contexts[0];
+		expect(ctx).toBeDefined();
+		expect(ctx?.candidates?.length ?? 0).toBeGreaterThan(0);
+		expect(typeof ctx?.legalDestinations).toBe("function");
+		expect(ctx?.myClockMs).toBeGreaterThan(0);
+	});
+
+	it("the panel's play-now with nothing to play is refused, and queues nothing", async () => {
+		// The other half of `playNowRequested`: `false` means "there was nothing to play", which the
+		// handler turns into `noRecommendation`. Unlike the keybind path it must not queue
+		// `playWhenReady` — a command the panel is waiting on answers now or says why not.
+		h = await createGameHarness({
+			manualStart: true,
+			settings: { automation: { autoMove: true } },
+		});
+		await h.drive(() => {
+			h.site.hello();
+			h.site.startGame();
+		});
+		const session = h.session();
+		expect(await h.until(() => h.executor()?.isArmed() === true, 5_000)).toBe(true);
+		// Armed in the waiting view, no position yet: nothing is pending and nothing is recommended.
+		expect(session.recommendation()).toBeNull();
+		expect(h.executor()?.pendingMove()).toBeNull();
+
+		const reply = (await h.drive(() => playNow())) as { success: boolean; error?: string };
+		expect(reply.success).toBe(false);
+		expect(reply.error).toContain(PANEL_COMMAND_ERRORS.noRecommendation);
+		await h.advance(5_000);
+		expect(presses()).toHaveLength(0);
 	});
 
 	it("the owner played the first move by hand while the arm was in flight: nothing is dispatched", async () => {

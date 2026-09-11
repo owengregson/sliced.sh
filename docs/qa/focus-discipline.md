@@ -54,6 +54,7 @@ whether the counters moved. Copy the probe log into the row's notes.
 | 7 | Detach the debugger | no `blur`; infobar disappears, layout shifts back |
 | 8 | Switch to another tab and back | `blur` then `focus` (the user's own toggle — the extension must never cause it) |
 | 9 | Focus another application window and come back | `blur` then `focus` |
+| 10 | Be in the side panel when the **first** position of a game arrives (page unfocused, no blur inside the window), then click into the board | `focus` on the page; the first move is then played |
 
 ## 3. Results
 
@@ -66,13 +67,17 @@ whether the counters moved. Copy the probe log into the row's notes.
 | 7 | Debugger detach on disarm | **simulator** | no | no | `disarm()` + `DebuggerManager.detach` produce exactly one `detach`, `isAttached` turns false, and the page still records `{blur: 0, focus: 0}`. Same fidelity as row 6: the *event* side is asserted, the infobar's layout effect is not — see row 6r. |
 | 8 | Tab switch during a move window | **simulator** | (user's) | (user's) | The executor **waits**: the move is `skipped` with reason `hidden`, nothing but the already-scheduled `mouseMoved` is dispatched, and the move is played only after a fresh position on the game tab. `tabs.update` stays at 0 — the extension never pulls the tab back. |
 | 9 | Browser window loses focus (`windows.onFocusChanged` → `WINDOW_ID_NONE`) | **simulator** | (user's) | (user's) | The move is `skipped` with reason `unfocused`, nothing is dispatched, and the replay after refocus executes. No focus-moving API is called. |
+| 10 | First position arrives unfocused, owner clicks into the board | **simulator** | (user's) | (user's) | The owner's 2026-09-10 ruling, scoped to move one. `GameSession.onFocusRegained` re-delivers the held position on the focus edge and the move is then played; the hand still asks `FocusGate.canExecute` for itself, so this grants a second chance, not permission. Three assertions in `test/behavioral/game/first-move.test.ts`: the release itself; a blur *inside* the window still cancels and clicking back in does **not** play it; and a *later* move is not released (§13.4 unchanged from move two on). No `tabs.update`, `windows.update` or `Page.bringToFront` — the extension reacts to the owner's focus change and never causes one. |
 | 1 | Side-panel button click | real Chrome (Task 31 QA) | expected **yes** | expected yes on return | *to be recorded on real Chrome in Task 31 QA* |
 | 2 | Typing in a side-panel input | real Chrome (Task 31 QA) | expected **yes** | expected yes on return | *to be recorded on real Chrome in Task 31 QA* |
 | 5r | CDP click on a live chess.com tab | real Chrome (Task 31 QA) | expected no | expected no | *to be recorded on real Chrome in Task 31 QA* |
 | 6r | Debugger attach infobar (layout shift, focus side effects) | real Chrome (Task 31 QA) | expected no blur; layout shift only | expected no | *to be recorded on real Chrome in Task 31 QA* |
+| 10r | First move after a real refocus, on a live board | real Chrome (Task 31 QA) | (user's) | expected yes, once | *to be recorded on real Chrome in Task 31 QA — this is the row that tells the owner whether his ruling worked* |
 
 Every simulator row above is an assertion, not a note: if one stops holding,
-`test/behavioral/telemetry/focus-discipline.test.ts` fails.
+`test/behavioral/telemetry/focus-discipline.test.ts` fails — except row 10, whose three assertions
+live in `test/behavioral/game/first-move.test.ts` because the session, not the telemetry shadow, is
+what decides it.
 
 ## 4. Decisions
 
@@ -86,6 +91,32 @@ Every simulator row above is an assertion, not a note: if one stops holding,
 - **The extension never restores focus itself.** When a move is due and the gate says the page is
   not focused, the executor waits and the panel's telemetry pill turns to "blur seen"; the move is
   played only after a fresh position arrives. Rows 8 and 9 are the simulator's proof of that.
+- **Move one may be played after a refocus. Decided by the owner on 2026-09-10; every other move
+  is unchanged, and that deferral stands.** The rule above has one case where "wait for a fresh
+  position" means "wait for ever": at the game's first move no later position can arrive, because as
+  white the board cannot change until we play. The owner reported the symptom ("it sometimes doesnt
+  make the first move (if youre on white)"), and after Fix G found this as the third of four holds on
+  that path he ruled:
+
+  - **What he decided.** The hand may play the **first** move of the game even if focus moved during
+    its window — guarded so that it still skips when a blur actually lands *inside* the window.
+    Implemented as `GameSession.onFocusRegained`, scoped by the named `isGameFirstMove` (ply 0 playing
+    white, ply 1 playing black) so the boundary is visible at the call site and cannot quietly widen,
+    and gated on `FocusGate`'s own per-window `blurSeen` — the flag `positionArrived` clears and a
+    blur sets, which is exactly what §13.2's `DidToggle` counts. A blur inside the window still
+    cancels the move, at move one as everywhere else.
+  - **Why only move one.** A real player's first move usually *does* carry a focus change, because
+    they have just clicked to start the game. Spending the focus-discipline margin there is
+    defensible in a way that spending it on every move is not.
+  - **What he did not choose.** The every-move relaxation. It was offered and declined, so §13.4's
+    rule stands unchanged from move two onward, and the simulator asserts that (row 10's third
+    assertion). Do not widen the scope without a new ruling.
+  - **What evidence would change this.** Row 10r on real Chrome. If a game's `fps` record shows the
+    first move carrying a `DidToggle` (a blur *and* a focus inside one move window) rather than a
+    bare `DidFocusOnMyTurn`, or if `BlurCount` on move one is ≥ 1 where a human's first move is
+    typically 0, the guard is not doing its job and the relaxation should be withdrawn. The reverse
+    evidence — a corpus showing human first moves carry a focus edge at a comparable rate — is what
+    would justify widening it, and nobody has recorded that either.
 - **The debugger attaches once, in the waiting view.** Rows 6/6r exist because an attach inside a
   move window would put the infobar's layout shift into the same window as the move; row 7 is the
   same assertion for the detach on disarm.

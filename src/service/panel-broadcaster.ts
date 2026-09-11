@@ -85,6 +85,17 @@ export interface SessionSource {
 	 * must not tell the panel the arm failed.
 	 */
 	handArmed(): Promise<void>;
+	/**
+	 * The panel asked for the move to play at once (`PANEL_PLAY_NOW`, §8.5's manual path). Resolves
+	 * `true` when there was a move — the scheduled one, else the standing recommendation — and it was
+	 * handed to the hand; `false` when there was nothing to play, which is the caller's cue to report
+	 * that. It does **not** wait for the hand: the outcome reaches the panel through the broadcaster.
+	 *
+	 * Here for the same reason as `handArmed()`: only the session can re-plan the move for an instant
+	 * play (`TimingModel.replan`) and build the `MoveContext` the hand's §13.2 exploration reads, so a
+	 * caller that played it for itself would hand the hand an empty context. Never rejects.
+	 */
+	playNowRequested(): Promise<boolean>;
 }
 
 /** The per-tab executor surface the panel handlers and the broadcaster use. */

@@ -1,7 +1,6 @@
 // test/behavioral/panel/harness.ts — fakes for the panel ↔ SW behavioural tests (Task 28).
 // `GameSessionRegistry` does not exist yet (Task 30); these drive the broadcaster's
 // `SnapshotSources` read interfaces by hand.
-import type { MoveExecutor } from "@service/move-executor";
 import type {
 	ExecutorHandle,
 	HandSources,
@@ -23,11 +22,12 @@ export class FakeSession implements SessionSource {
 	rec: Recommendation | null = null;
 	opp: OpponentView | null = null;
 	/**
-	 * The hand this stand-in schedules on. `handArmed()` is the session's half of
-	 * `PANEL_SET_AUTO_MOVE` (the handler stopped doing it itself so that the gate and the
-	 * `MoveContext` live in one place), so a fake session has to play that part too.
+	 * The hand this stand-in schedules on. `handArmed()` and `playNowRequested()` are the session's
+	 * halves of `PANEL_SET_AUTO_MOVE` and `PANEL_PLAY_NOW` (both handlers stopped doing it themselves,
+	 * so that the double-move gate, the §8.5 re-plan and the `MoveContext` live in one place), so a
+	 * fake session has to play those parts too.
 	 */
-	hand: Pick<MoveExecutor, "schedule" | "pendingMove" | "isRunning"> | null = null;
+	hand: ExecutorHandle | null = null;
 
 	constructor(site: Site) {
 		this.game = {
@@ -66,17 +66,22 @@ export class FakeSession implements SessionSource {
 	opponent(): OpponentView | null {
 		return this.opp;
 	}
+	/** What the real `GameSession.playNowRequested()` does, with this fake's own state. */
+	playNowRequested(): Promise<boolean> {
+		const hand = this.hand;
+		if (!hand) return Promise.resolve(false);
+		// `pendingMove()` may be a replacement parked behind a cancelled run, which the no-arg
+		// `playNow()` ignores: play the reported move explicitly.
+		const rec = hand.pendingMove()?.rec ?? this.rec;
+		if (!rec) return Promise.resolve(false);
+		void hand.playNow(rec, rec.plan);
+		return Promise.resolve(true);
+	}
 	/** What the real `GameSession.handArmed()` does, with this fake's own state. */
 	handArmed(): Promise<void> {
 		const rec = this.rec;
 		const hand = this.hand;
-		if (
-			rec &&
-			hand &&
-			this.game.state === "live:my-turn:recommended" &&
-			hand.pendingMove() === null &&
-			!hand.isRunning()
-		)
+		if (rec && hand && this.game.state === "live:my-turn:recommended" && hand.pendingMove() === null)
 			hand.schedule(rec, rec.plan);
 		return Promise.resolve();
 	}
