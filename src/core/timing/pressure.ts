@@ -48,6 +48,9 @@ export function urgencyFactor(f: Features): number {
 	if (f.tc === "untimed") return 1;
 	const U = C.urgency;
 	const u = clamp(U.floor + ((1 - U.floor) * relativeClock(f)) / U.kneeFraction, U.floor, 1);
+	// NB the clock threshold is `compression`'s, not `urgency`'s: there is one "an increment stops this
+	// being a panic" clock in the model and C1 wants it defined once. Anyone tuning `urgency` should
+	// know that this one condition is read from the block above.
 	if (f.inc_s >= U.incFloorIncS && f.clock_s > C.compression.incFloorClockS)
 		return Math.max(u, U.incFloor);
 	return u;
@@ -90,7 +93,14 @@ export function jitteredCap(valueSec: number, capSec: number, rng: Rng): number 
 	return capSec * uniform(rng, TIMING_CONSTANTS.caps.jitterMin, 1);
 }
 
-/** Multiplicative compression then the (jittered) hard caps (Appendix D §3a.3). */
+/**
+ * Multiplicative compression then the (jittered) hard caps (Appendix D §3a.3).
+ *
+ * **Not the production path.** `TimingModel.planMove` applies `paceFactor` (the `min` of this
+ * compression and `urgencyFactor`) and `boundByCap`, never this helper; its only callers are
+ * `test/core/timing/v1-head.test.ts`, where it is deliberately the §3a.3 reference so those
+ * assertions keep describing compression alone rather than the combined factor.
+ */
 export function applyPressureAndCaps(tSec: number, f: Features, rng: Rng): CappedTime {
 	const comp = compressionFactor(f);
 	const capSec = hardCapSec(f);

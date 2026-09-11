@@ -53,8 +53,21 @@ export const SELECTION_CONSTANTS = deepFreeze({
 		] as const,
 		/**
 		 * `f_clock = 1 + clockGain·clamp((clockPressureMs − clock)/clockPressureMs, 0, 1)` — an
-		 * **absolute** 20 s, so the injected-error rate is flat from 3:00 down to 0:20 of a 3+0 game
-		 * and only moves in the last seconds. 20 s is a third of a 1+0 game and 3 % of a 10+0.
+		 * **absolute** 20 s, so on its own the injected-error rate is flat from 3:00 down to 0:20 of a
+		 * 3+0 game and only moves in the last seconds. 20 s is a third of a 1+0 game and 3 % of a 10+0,
+		 * which is why `clockPressureFraction` below exists.
+		 *
+		 * NOT dead, and worth saying because `clockPressureFraction` dominates it in the common case.
+		 * `clockFactor` takes the larger of the two, and the absolute term is the binding one in exactly
+		 * two regimes (measured):
+		 *
+		 *   1. **no base clock is known** — an untimed game, or the §4.3 window before the page answers
+		 *      `timeControl.get()`. The relative term is 0 there and this is the whole curve;
+		 *   2. **ultrabullet**, where `clockPressureFraction · base < clockPressureMs`. At base ≤ 20 s
+		 *      the absolute term is larger at 8–9 of 10 clock points (base 10 s: 9/10; 15 s: 9/10;
+		 *      20 s: 8/10; 25 s and above: 0/10).
+		 *
+		 * Both are pinned in `test/core/strength/blunder-clock.test.ts`.
 		 */
 		clockPressureMs: 20_000,
 		clockGain: 1.5,

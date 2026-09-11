@@ -128,6 +128,36 @@ describe("f_clock across the whole clock (fix C step 4)", () => {
 		}
 	});
 
+	it("the absolute term is still the binding one in ultrabullet — `clockPressureMs` is not dead", () => {
+		// Round 5, concern 4. Review M6 read the absolute ramp as dead on the production path, because
+		// `clockPressureFraction · base > clockPressureMs` for every control with `base > 25 s`. It is not
+		// dead: where the base clock is short enough that 0.8·base falls under 20 s, the absolute term is
+		// the larger of the two and `clockFactor`'s `max` picks it. Measured: it wins at 9/10 sweep points
+		// at base 10 s, 9/10 at 15 s, 8/10 at 20 s and 0/10 from 25 s up. Pinned so that a later reader
+		// does not delete a live constant as dead — and a 10+0-second or 15+1 ultrabullet is a real
+		// chess.com control, classified `bullet` by `tcClass`.
+		const ULTRA_BASE_MS = 15_000;
+		const clockMs = 9_000; // 0.6 of base: inside the relative knee, well under the absolute one
+		const relativeOnly =
+			1 +
+			B.clockGain *
+				Math.min(
+					1,
+					Math.max(0, (B.clockPressureFraction - clockMs / ULTRA_BASE_MS) / B.clockPressureFraction)
+				);
+		const absoluteOnly =
+			1 + B.clockGain * Math.min(1, Math.max(0, (B.clockPressureMs - clockMs) / B.clockPressureMs));
+		expect(absoluteOnly).toBeGreaterThan(relativeOnly);
+		// the combined factor takes the absolute one, so removing it would lower the error rate here
+		expect(terms(clockMs, ULTRA_BASE_MS).fClock).toBeCloseTo(absoluteOnly, 12);
+		expect(terms(clockMs, ULTRA_BASE_MS).fClock).toBeGreaterThan(relativeOnly);
+		// and from 25 s of base up it is the relative term that binds, which is the common case
+		expect(terms(0.6 * 180_000, 180_000).fClock).toBeGreaterThan(
+			1 +
+				B.clockGain * Math.min(1, Math.max(0, (B.clockPressureMs - 0.6 * 180_000) / B.clockPressureMs))
+		);
+	});
+
 	it("the owner's own game: at 1:00 of a 3+0 the injected-error rate is visibly higher than at 3:00", () => {
 		const full = terms(180_000, 180_000).b;
 		const minute = terms(60_000, 180_000).b;
