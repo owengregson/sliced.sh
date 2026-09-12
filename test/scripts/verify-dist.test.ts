@@ -10,16 +10,24 @@ import path from "node:path";
 import {
 	BUNDLE_BUDGETS,
 	BUNDLES,
+	checkEngineDir,
+	checkJunkFiles,
 	checkManifest,
+	checkPackagedModels,
 	checkReferenceGraph,
 	checkWebAccessibleResources,
 	cssRefs,
 	globToRegExp,
 	htmlRefs,
 	isExternalRef,
+	JUNK_FILE_RE,
 	LICENSE_BUNDLE,
 	licenseHost,
+	MODEL_PART_RE,
 	manifestPaths,
+	type PackagedModel,
+	packagedEngineFiles,
+	packagedModels,
 	readRegistry,
 	registryHosts,
 	resolveRef,
@@ -27,10 +35,22 @@ import {
 	unclassifiedHosts,
 	verifyDist,
 } from "../../scripts/verify-dist";
+import {
+	BUNDLED_NNUE,
+	ENGINE_DIR,
+	ENGINE_LICENSE_FILE,
+	ENGINE_PROGRAM_FILES,
+} from "../../src/core/constants/engine-files";
+
+/** A stand-in for the registry's Maia-3 models: rule 8 needs a whole file at a known size. */
+const MODELS: readonly PackagedModel[] = [{ path: "assets/models/maia3/maia3-79m.onnx", bytes: 4 }];
+
+/** A stand-in for the engine registry: rule 10 wants `assets/engine/` to be exactly this. */
+const ENGINE: readonly string[] = ["assets/engine/sf_18_relaxed-simd.wasm"];
 
 const MANIFEST = {
 	manifest_version: 3,
-	name: "sliced.gg",
+	name: "sliced.sh",
 	version: "2.0.0",
 	key: "AAAA",
 	icons: { "128": "assets/images/sliced_128.png" },
@@ -55,7 +75,7 @@ const MANIFEST_WITH_WAR = {
 const CLEAN_FILES = [
 	"manifest.json",
 	"assets/images/sliced_128.png",
-	"assets/engine/sf_18.wasm",
+	"assets/engine/sf_18_relaxed-simd.wasm",
 	"pages/panel.html",
 	"js/service-worker.js",
 	"js/content.js",
@@ -111,7 +131,7 @@ describe("checkManifest", () => {
 
 	it("reports a missing file and an unmatched resource pattern", () => {
 		const files = CLEAN_FILES.filter(
-			(f) => f !== "js/content.js" && f !== "assets/engine/sf_18.wasm"
+			(f) => f !== "js/content.js" && f !== "assets/engine/sf_18_relaxed-simd.wasm"
 		);
 		const problems = checkManifest(MANIFEST_WITH_WAR, files, "2.0.0");
 		expect(problems).toHaveLength(2);
@@ -329,6 +349,56 @@ describe("scanBundle", () => {
 	});
 });
 
+describe("checkPackagedModels (rule 8: whole Maia-3 models, no split part)", () => {
+	const sizes: Record<string, number> = { "assets/models/maia3/maia3-79m.onnx": 4 };
+	const sizeOf = (f: string): number => sizes[f] ?? 0;
+
+	it("passes when every model is present at its registered size", () => {
+		expect(checkPackagedModels(Object.keys(sizes), sizeOf, MODELS)).toEqual([]);
+	});
+
+	it("reports a missing model and a model of the wrong size", () => {
+		expect(checkPackagedModels([], sizeOf, MODELS)[0]).toContain("missing from dist/");
+		const wrong = checkPackagedModels(Object.keys(sizes), () => 3, MODELS);
+		expect(wrong).toHaveLength(1);
+		expect(wrong[0]).toContain("3 bytes, the registry says 4");
+	});
+
+	it("reports a shipped split part even when the whole file is present", () => {
+		const files = [...Object.keys(sizes), "assets/models/maia3/maia3-79m.onnx.part0"];
+		const problems = checkPackagedModels(files, sizeOf, MODELS);
+		expect(problems).toHaveLength(1);
+		expect(problems[0]).toContain("split source part shipped");
+		expect(MODEL_PART_RE.test("maia3-79m.onnx.part1")).toBe(true);
+		expect(MODEL_PART_RE.test("maia3-79m.onnx")).toBe(false);
+		expect(MODEL_PART_RE.test("maia3-79m.onnx.partial")).toBe(false);
+	});
+
+	it("reports a model the registry does not name under the models dir (a stale export), and only there", () => {
+		// 2026-09-13: the 5M / 23M exports left the registry; a leftover file must not ship silently.
+		const stale = [...Object.keys(sizes), "assets/models/maia3/maia3-5m.onnx"];
+		const problems = checkPackagedModels(stale, sizeOf, MODELS);
+		expect(problems).toHaveLength(1);
+		expect(problems[0]).toContain("maia3-5m.onnx: a model the registry does not name shipped");
+		// Side files and models elsewhere are not the rule's business.
+		const fine = [...Object.keys(sizes), "assets/models/maia3/models.json", "assets/models/x.onnx"];
+		expect(checkPackagedModels(fine, sizeOf, MODELS)).toEqual([]);
+	});
+
+	it("derives packed package expectations for Maia 79M and all six timing bands", () => {
+		const models = packagedModels();
+		expect(models).toHaveLength(7);
+		expect(models.filter((m) => m.path.includes("/maia3/")).map((m) => m.path)).toEqual([
+			"assets/models/maia3/maia3-79m.onnx.pack.gz",
+		]);
+		for (const m of models) {
+			expect(m.bytes).toBeGreaterThan(0);
+			expect(m.packed).toBe(true);
+			expect(m.sha256).toMatch(/^[0-9a-f]{64}$/);
+		}
+	});
+});
+
 describe("the shipped manifest", () => {
 	const source = JSON.parse(
 		readFileSync(path.resolve(import.meta.dir, "../../manifest.json"), "utf8")
@@ -341,6 +411,53 @@ describe("the shipped manifest", () => {
 
 	it("still pins the key, so the id stays stable across the v1 upgrade", () => {
 		expect(typeof source.key).toBe("string");
+	});
+});
+
+describe("rule 9: junk files", () => {
+	it("recognises Finder, Explorer and AppleDouble droppings by base name only", () => {
+		for (const name of [".DS_Store", "Thumbs.db", "desktop.ini", "._Geist-Variable.woff2"])
+			expect(JUNK_FILE_RE.test(name)).toBe(true);
+		for (const name of ["DS_Store.md", "manifest.json", "sounds.db", "_x.txt", ".gitkeep"])
+			expect(JUNK_FILE_RE.test(name)).toBe(false);
+	});
+
+	it("reports every junk file in the tree and nothing else", () => {
+		expect(checkJunkFiles(["manifest.json", "assets/sounds/make_move.wav"])).toEqual([]);
+		const problems = checkJunkFiles(["assets/.DS_Store", "assets/models/.DS_Store", "js/panel.js"]);
+		expect(problems).toHaveLength(2);
+		expect(problems[0]).toContain("assets/.DS_Store");
+		expect(problems[1]).toContain("assets/models/.DS_Store");
+	});
+});
+
+describe("rule 10: the engine directory is exactly the registry", () => {
+	it("derives the packaged list from ENGINE_FILES: relaxed-SIMD programs, licence, nets", () => {
+		const files = packagedEngineFiles();
+		expect(files).toEqual(
+			[...ENGINE_PROGRAM_FILES, ENGINE_LICENSE_FILE, ...BUNDLED_NNUE].map((n) => ENGINE_DIR + n)
+		);
+		// The plain-SIMD builds stopped shipping on 2026-09-13.
+		for (const dropped of ["sf_18.js", "sf_18.wasm", "sf_18_smallnet.js", "sf_18_smallnet.wasm"])
+			expect(files).not.toContain(ENGINE_DIR + dropped);
+		expect(files.some((f) => f.endsWith(".nnue.gz"))).toBe(false);
+	});
+
+	it("passes when the directory matches, and only then", () => {
+		const expected = ["assets/engine/a.js", "assets/engine/a.wasm", "assets/engine/LICENSE"];
+		const others = ["manifest.json", "assets/sounds/x.wav"];
+		expect(checkEngineDir([...others, ...expected], expected)).toEqual([]);
+		const missing = checkEngineDir([...others, "assets/engine/a.js"], expected);
+		expect(missing).toHaveLength(2);
+		expect(missing[0]).toContain("assets/engine/a.wasm is missing");
+		const extra = checkEngineDir(
+			[...others, ...expected, "assets/engine/sf_18.wasm", "assets/engine/nn-x.nnue.gz"],
+			expected
+		);
+		expect(extra).toHaveLength(2);
+		expect(extra[0]).toContain("assets/engine/sf_18.wasm");
+		expect(extra[0]).toContain("dead weight");
+		expect(extra[1]).toContain("assets/engine/nn-x.nnue.gz");
 	});
 });
 
@@ -363,7 +480,8 @@ describe("verifyDist over a built tree", () => {
 	const clean = (): Record<string, string> => ({
 		"manifest.json": JSON.stringify(MANIFEST),
 		"assets/images/sliced_128.png": "png",
-		"assets/engine/sf_18.wasm": "wasm",
+		"assets/engine/sf_18_relaxed-simd.wasm": "wasm",
+		"assets/models/maia3/maia3-79m.onnx": "onnx",
 		"pages/panel.html": `<script type="module" src="../js/panel.js"></script>`,
 		"js/panel.js": "export {};",
 		"js/service-worker.js": `fetch("https://phantom.ac/slicedgg/index.php");`,
@@ -372,7 +490,11 @@ describe("verifyDist over a built tree", () => {
 	});
 
 	it("passes a clean tree and reports every bundle's size", () => {
-		const report = verifyDist(build(clean()), { version: "2.0.0" });
+		const report = verifyDist(build(clean()), {
+			version: "2.0.0",
+			models: MODELS,
+			engineFiles: ENGINE,
+		});
 		expect(report.problems).toEqual([]);
 		expect(report.sizes.map((s) => s.file)).toEqual([
 			"js/content.js",
@@ -389,16 +511,56 @@ describe("verifyDist over a built tree", () => {
 		expect(report.totalBytes).toBeGreaterThan(0);
 	});
 
+	it("fails on a junk file and on an engine file the registry does not name", () => {
+		const files = clean();
+		files["assets/.DS_Store"] = "finder";
+		files["assets/engine/sf_18.wasm"] = "stale plain-SIMD build";
+		expect(() =>
+			verifyDist(build(files), { version: "2.0.0", models: MODELS, engineFiles: ENGINE })
+		).toThrow(/2 problem/);
+	});
+
+	it("fails when a registered engine file did not ship", () => {
+		const files = clean();
+		delete files["assets/engine/sf_18_relaxed-simd.wasm"];
+		expect(() =>
+			verifyDist(build(files), { version: "2.0.0", models: MODELS, engineFiles: ENGINE })
+		).toThrow(/sf_18_relaxed-simd\.wasm is missing/);
+	});
+
 	it("fails when the manifest was never stamped", () => {
 		const files = clean();
 		delete files["manifest.json"];
-		expect(() => verifyDist(build(files), { version: "2.0.0" })).toThrow(/manifest\.json is missing/);
+		expect(() =>
+			verifyDist(build(files), { version: "2.0.0", models: MODELS, engineFiles: ENGINE })
+		).toThrow(/manifest\.json is missing/);
 	});
 
 	it("fails on a bundle over its §11.2 budget rather than rounding it away", () => {
 		const files = clean();
 		files["js/panel.js"] = "x".repeat((BUNDLE_BUDGETS["js/panel.js"] ?? 0) + 1);
-		expect(() => verifyDist(build(files), { version: "2.0.0" })).toThrow(/1 problem/);
+		expect(() =>
+			verifyDist(build(files), { version: "2.0.0", models: MODELS, engineFiles: ENGINE })
+		).toThrow(/1 problem/);
+	});
+
+	it("reports the same bundle in a dev build instead of failing it — §11.2 budgets shipped bytes", () => {
+		// A `--dev` bundle is not minified (the panel is 246.5 KiB released and 430.9 KiB dev), so a
+		// budget written for the shipped artefact cannot be applied to it without silently becoming a
+		// much tighter one. Enforcing it there broke `bun run build --dev`, which is the build the
+		// extension is loaded unpacked from. The size and its budget are still reported.
+		const files = clean();
+		const over = (BUNDLE_BUDGETS["js/panel.js"] ?? 0) + 1;
+		files["js/panel.js"] = "x".repeat(over);
+		const report = verifyDist(build(files), {
+			version: "2.0.0",
+			models: MODELS,
+			engineFiles: ENGINE,
+			dev: true,
+		});
+		const row = report.sizes.find((s) => s.file === "js/panel.js");
+		expect(row?.bytes).toBe(over);
+		expect(row?.budget).toBe(BUNDLE_BUDGETS["js/panel.js"]);
 	});
 
 	it("fails on a stray console call, a leaked licence host and a broken HTML reference", () => {
@@ -406,26 +568,56 @@ describe("verifyDist over a built tree", () => {
 		files["js/panel.js"] = "console.log(1)";
 		files["js/content.js"] = `const u="https://phantom.ac/x";`;
 		files["pages/panel.html"] = `<script src="../js/gone.js"></script>`;
-		expect(() => verifyDist(build(files), { version: "2.0.0" })).toThrow(/3 problem/);
+		expect(() =>
+			verifyDist(build(files), { version: "2.0.0", models: MODELS, engineFiles: ENGINE })
+		).toThrow(/3 problem/);
 	});
 
 	it("fails when a budgeted bundle was never built at all", () => {
 		const files = clean();
 		delete files["js/content.js"];
 		// Missing from the manifest's content_scripts *and* from the budget list.
-		expect(() => verifyDist(build(files), { version: "2.0.0" })).toThrow(/was not built/);
+		expect(() =>
+			verifyDist(build(files), { version: "2.0.0", models: MODELS, engineFiles: ENGINE })
+		).toThrow(/was not built/);
 	});
 
 	it("fails a release build that still carries a source map, and allows one in dev", () => {
 		const files = clean();
 		files["js/panel.js.map"] = '{"version":3,"sourcesContent":["…"]}';
-		expect(() => verifyDist(build(files), { version: "2.0.0" })).toThrow(/must ship no source map/);
-		expect(verifyDist(build(files), { version: "2.0.0", dev: true }).problems).toEqual([]);
+		expect(() =>
+			verifyDist(build(files), { version: "2.0.0", models: MODELS, engineFiles: ENGINE })
+		).toThrow(/must ship no source map/);
+		expect(
+			verifyDist(build(files), { version: "2.0.0", models: MODELS, engineFiles: ENGINE, dev: true })
+				.problems
+		).toEqual([]);
+	});
+
+	it("fails when a model is missing, undersized, or shipped as a split part", () => {
+		const missing = clean();
+		delete missing["assets/models/maia3/maia3-79m.onnx"];
+		expect(() =>
+			verifyDist(build(missing), { version: "2.0.0", models: MODELS, engineFiles: ENGINE })
+		).toThrow(/missing from dist/);
+		const short = clean();
+		short["assets/models/maia3/maia3-79m.onnx"] = "onn";
+		expect(() =>
+			verifyDist(build(short), { version: "2.0.0", models: MODELS, engineFiles: ENGINE })
+		).toThrow(/registry says 4/);
+		const split = clean();
+		split["assets/models/maia3/maia3-79m.onnx.part0"] = "x";
+		expect(() =>
+			verifyDist(build(split), { version: "2.0.0", models: MODELS, engineFiles: ENGINE })
+		).toThrow(/split source part shipped/);
 	});
 
 	it("keeps console out of the failure set for a dev build", () => {
 		const files = clean();
 		files["js/panel.js"] = "console.log(1)";
-		expect(verifyDist(build(files), { version: "2.0.0", dev: true }).problems).toEqual([]);
+		expect(
+			verifyDist(build(files), { version: "2.0.0", models: MODELS, engineFiles: ENGINE, dev: true })
+				.problems
+		).toEqual([]);
 	});
 });

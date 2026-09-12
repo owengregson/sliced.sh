@@ -3,7 +3,7 @@
  * Real onnxruntime-web (the vendored `assets/vendor/onnxruntime/` files, wasm backend, one
  * thread — the pthread worker path does not run under Bun) driving the shipped ChessMimic
  * bands through `createTimingInference`, exactly as the offscreen document does. Every fifth
- * reference position (200 of 1 000, all three bands) must reproduce the torch fp32
+ * reference position (200 of 1 000, all six bands) must reproduce the torch fp32
  * probabilities within `fixtureProbTolerance`; the per-query latency is printed and its p50
  * must stay inside the 100 ms budget. Skipped, with the reason, when the runtime cannot start
  * in this Bun.
@@ -14,14 +14,16 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { chessMimicBandFile, MODELS_DIR } from "@core/constants/models";
 import { TIMING_CONSTANTS } from "@core/timing/constants";
+import { ModelStore } from "@offscreen/model-store";
 import { createOrtRuntime } from "@offscreen/ort-loader";
 import { createTimingInference, type TimingInference } from "@offscreen/timing-inference";
 import reference from "../fixtures/chessmimic-reference.json";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
+const PACKAGED_ROOT = process.env.SLICED_PACKAGED_ROOT;
 const CM = TIMING_CONSTANTS.chessmimic;
 const STRIDE = 5;
-/** 200 queries plus three cold session loads; generous so a slow machine reports rather than fails. */
+/** 200 queries plus model session loads; generous so a slow machine reports rather than fails. */
 const PARITY_TIMEOUT_MS = 600_000;
 
 let skipReason: string | undefined;
@@ -34,10 +36,20 @@ try {
 				getUrl: (p) => pathToFileURL(path.join(ROOT, p)).href,
 				threads: 1,
 			}),
-		store: {
-			get: async (name) =>
-				new Uint8Array(await Bun.file(path.join(ROOT, MODELS_DIR, name)).arrayBuffer()),
-		},
+		store: PACKAGED_ROOT
+			? new ModelStore({
+					post: () => {
+						throw new Error("packaged models must never require a download");
+					},
+					getUrl: (file) => path.join(PACKAGED_ROOT, file),
+					fetch: async (file) => new Response(Bun.file(file)),
+					opfs: null,
+					indexedDb: null,
+				})
+			: {
+					get: async (name) =>
+						new Uint8Array(await Bun.file(path.join(ROOT, MODELS_DIR, name)).arrayBuffer()),
+				},
 	});
 	const probe = await inference.handle({
 		kind: "timing",
@@ -52,8 +64,12 @@ try {
 			incrementS: 0,
 		},
 	});
-	if (!probe.probs) skipReason = `onnxruntime-web could not start: ${probe.error}`;
+	if (!probe.probs) {
+		if (PACKAGED_ROOT) throw new Error(`packaged inference failed: ${probe.error}`);
+		skipReason = `onnxruntime-web could not start: ${probe.error}`;
+	}
 } catch (error) {
+	if (PACKAGED_ROOT) throw error;
 	skipReason = `onnxruntime-web could not start: ${error instanceof Error ? error.message : String(error)}`;
 }
 

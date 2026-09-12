@@ -11,6 +11,14 @@ css/tokens.css
 # Python bytecode from tools/data
 __pycache__/
 
-# Task 34: ChessMimic export scratch (upstream clone, LFS checkpoints, venv)
+# Model export environments and upstream checkpoints
 tools/data/upstream/
 tools/data/.venv/
+
+# Maia-3: the split model is stored as .part<i> slices; a joined whole next to them is a build artefact
+assets/models/maia3/maia3-79m.onnx
+
+# Local experiments and owner-provided source documents
+.scratch/
+/*.pgn
+/*.docx

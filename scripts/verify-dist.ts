@@ -24,15 +24,35 @@
 //      quietly inlining an object literal into `content.js` (§13.3 rule 2);
 //   7. a production build ships no `.js.map`. Dev maps embed `sourcesContent`, i.e. the original
 //      TypeScript including comments that name the licence endpoint, so they are checked for
-//      absence rather than scanned — see `SOURCE_MAP_RE` below.
+//      absence rather than scanned — see `SOURCE_MAP_RE` below;
+//   8. **packaged models**: every registered Maia and ChessMimic asset is present, restores
+//      the canonical ONNX hash, and has no raw duplicate or source part in the package;
+//   9. **no junk files**: a `.DS_Store` / `Thumbs.db` / AppleDouble `._*` anywhere in the tree
+//      fails (three `.DS_Store`s shipped in the 2026-09-13 zip);
+//  10. **the engine directory is exactly the registry**: `assets/engine/` holds every file in
+//      `PACKAGED_ENGINE_FILES` and nothing else — a stale program (the plain-SIMD builds dropped
+//      on 2026-09-13) or a stray net is dead weight nobody loads.
 //
 // Everything below the `verifyDist` entry point is a pure function over strings so
 // `test/scripts/verify-dist.test.ts` can exercise the rules without a real build.
+
+// The registry reads bundler defines at module scope; this must be evaluated before it.
+import "./registry-defines";
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import config from "../build.config.json" with { type: "json" };
 import pkg from "../package.json" with { type: "json" };
+import { ENGINE_DIR, PACKAGED_ENGINE_FILES } from "../src/core/constants/engine-files";
+import { MAIA_DIR, MAIA_FILES, MAIA_MODEL_FILES, MAIA_SIZES } from "../src/core/constants/maia";
+import { MODEL_PACKING, packagedModelName } from "../src/core/constants/model-packing";
+import {
+	CHESSMIMIC_BAND_FILES,
+	CHESSMIMIC_BANDS,
+	chessMimicBandFile,
+	MODELS_DIR,
+} from "../src/core/constants/models";
+import { verifyPackedModel } from "./model-packing";
 
 const KIB = 1024;
 
@@ -81,6 +101,10 @@ export const HOST_OWNERS: Readonly<Record<string, readonly string[]>> = {
 	"raw.githubusercontent.com": SW_AND_PANEL,
 	"polyformproject.org": SW_AND_PANEL,
 	"1e4.ai": SW_AND_PANEL,
+	// Maia-3 provenance (`MAIA_UPSTREAM`): licence text, paper and model hub — notices, never fetched.
+	"www.gnu.org": SW_AND_PANEL,
+	"arxiv.org": SW_AND_PANEL,
+	"huggingface.co": SW_AND_PANEL,
 };
 
 /** Registry sources scanned for hosts (repo-relative). */
@@ -101,6 +125,105 @@ export interface VerifyOptions {
 	licenseUrl?: string;
 	/** Hosts to police (default: derived from `REGISTRY_DIR` + `licenseUrl`); injectable for tests. */
 	hosts?: readonly string[];
+	/** Whole model files the package must carry (default: `packagedModels()`); injectable for tests. */
+	models?: readonly PackagedModel[];
+	/**
+	 * Exactly what `assets/engine/` must hold, dist-relative (default: `packagedEngineFiles()`);
+	 * injectable for tests.
+	 */
+	engineFiles?: readonly string[];
+}
+
+/** Finder / Explorer / AppleDouble droppings — never part of a package (rule 9; also the copy filter). */
+export const JUNK_FILE_RE = /^(?:\.DS_Store|Thumbs\.db|desktop\.ini|\._.+)$/;
+
+/** Rule 9: junk files anywhere in the tree. */
+export function checkJunkFiles(files: readonly string[]): string[] {
+	return files
+		.filter((file) => JUNK_FILE_RE.test(path.posix.basename(file)))
+		.map((file) => `${file}: a junk file shipped — the copy step must drop it`);
+}
+
+/** The engine directory's contents as the registry says the built package carries them. */
+export function packagedEngineFiles(): string[] {
+	return PACKAGED_ENGINE_FILES.map((name) => `${ENGINE_DIR}${name}`);
+}
+
+/**
+ * Rule 10: `assets/engine/` is exactly `expected` — every registered file present, and no file
+ * the registry does not name (a program that stopped shipping, a stray net or gzip source).
+ */
+export function checkEngineDir(files: readonly string[], expected: readonly string[]): string[] {
+	const problems: string[] = [];
+	const present = new Set(files);
+	const wanted = new Set(expected);
+	for (const file of expected)
+		if (!present.has(file)) problems.push(`${file} is missing from dist/ (ENGINE_FILES names it)`);
+	for (const file of files)
+		if (file.startsWith(ENGINE_DIR) && !wanted.has(file))
+			problems.push(`${file}: not in the engine registry — dead weight the loader never reads`);
+	return problems;
+}
+
+/** Package path plus canonical ONNX metadata, before optional lossless compression. */
+export interface PackagedModel {
+	path: string;
+	bytes: number;
+	packed?: boolean;
+	sha256?: string;
+}
+
+/** Every model the built extension loads from its own package. */
+export function packagedModels(): PackagedModel[] {
+	return [
+		...MAIA_SIZES.map((size) => ({
+			...MAIA_MODEL_FILES[size],
+			path: MAIA_DIR + packagedModelName(MAIA_MODEL_FILES[size].file, MAIA_MODEL_FILES[size].packed),
+		})),
+		...CHESSMIMIC_BANDS.filter((band) => CHESSMIMIC_BAND_FILES[band].bundled).map((band) => ({
+			...CHESSMIMIC_BAND_FILES[band],
+			path:
+				MODELS_DIR + packagedModelName(chessMimicBandFile(band), CHESSMIMIC_BAND_FILES[band].packed),
+		})),
+	];
+}
+
+/** `<file>.part<i>` — a slice of the repository's split, which must never ship. */
+export const MODEL_PART_RE = new RegExp(
+	`${MAIA_FILES.partSuffix.replace(/[.+?^${}()|[\]\\]/g, "\\$&")}\\d+$`
+);
+
+/** Check package presence and reject unregistered model copies; verifyDist also checks hashes. */
+export function checkPackagedModels(
+	files: readonly string[],
+	sizeOf: (file: string) => number,
+	models: readonly PackagedModel[]
+): string[] {
+	const problems: string[] = [];
+	const present = new Set(files);
+	const registered = new Set(models.map((m) => m.path));
+	for (const model of models) {
+		if (!present.has(model.path)) {
+			problems.push(`${model.path} is missing from dist/ (the copy step did not join or verify it)`);
+			continue;
+		}
+		const bytes = sizeOf(model.path);
+		if (model.packed ? bytes <= 0 || bytes >= model.bytes : bytes !== model.bytes)
+			problems.push(
+				`${model.path} is ${bytes} bytes, the registry says ${model.bytes}${model.packed ? " before packing (packed file must be smaller)" : ""}`
+			);
+	}
+	for (const file of files) {
+		if (MODEL_PART_RE.test(file))
+			problems.push(`${file}: a split source part shipped — the build must join parts, not copy them`);
+		else if (
+			(file.startsWith(MAIA_DIR) || file.startsWith(MODELS_DIR)) &&
+			(file.endsWith(".onnx") || file.endsWith(MODEL_PACKING.suffix)) &&
+			!registered.has(file)
+		)
+			problems.push(`${file}: a model the registry does not name shipped`);
+	}
+	return problems;
 }
 
 export interface SizeRow {
@@ -495,11 +618,19 @@ export function verifyDist(dist: string, options: VerifyOptions = {}): VerifyRep
 		bytes: statSync(path.join(dist, file)).size,
 		budget: BUNDLE_BUDGETS[file] ?? null,
 	}));
-	for (const row of sizes)
-		if (row.budget !== null && row.bytes > row.budget)
-			problems.push(
-				`${row.file} is ${formatBytes(row.bytes)}, over its ${formatBytes(row.budget)} budget (§11.2)`
-			);
+	// §11.2 budgets the bytes that **ship**, so they are enforced on the release build and reported
+	// only on a `--dev` one. A dev bundle is not minified — the panel is 246.5 KiB released and
+	// 430.9 KiB dev, a fixed ~1.75× — so a 400 KiB cap applied to it is really a 229 KiB cap on the
+	// shipped bundle, a number nobody chose. The same reasoning already excludes source maps one
+	// line above, and `dev` already relaxes the `console.` scan and the manifest checks below.
+	// Enforcing it here instead made `bun run build --dev` fail outright, which is the build the
+	// extension is loaded unpacked from (`CLAUDE.md` § Commands).
+	if (!dev)
+		for (const row of sizes)
+			if (row.budget !== null && row.bytes > row.budget)
+				problems.push(
+					`${row.file} is ${formatBytes(row.bytes)}, over its ${formatBytes(row.budget)} budget (§11.2)`
+				);
 	for (const budgeted of Object.keys(BUNDLE_BUDGETS))
 		if (!present.has(budgeted)) problems.push(`${budgeted} was not built`);
 
@@ -518,6 +649,25 @@ export function verifyDist(dist: string, options: VerifyOptions = {}): VerifyRep
 	if (!dev)
 		for (const file of files.filter((f) => SOURCE_MAP_RE.test(f)))
 			problems.push(`${file}: a production build must ship no source map`);
+
+	// 8. Verify package decoding against the canonical ONNX hashes before shipping.
+	const models = options.models ?? packagedModels();
+	problems.push(
+		...checkPackagedModels(files, (file) => statSync(path.join(dist, file)).size, models)
+	);
+	for (const model of models) {
+		if (!model.packed || !files.includes(model.path)) continue;
+		try {
+			if (!model.sha256) throw new Error("missing canonical SHA-256");
+			verifyPackedModel(readFileSync(path.join(dist, model.path)), model.bytes, model.sha256);
+		} catch (error) {
+			problems.push(`${model.path}: ${error instanceof Error ? error.message : String(error)}`);
+		}
+	}
+
+	// 9–10. no junk files; the engine directory is exactly the registry.
+	problems.push(...checkJunkFiles(files));
+	problems.push(...checkEngineDir(files, options.engineFiles ?? packagedEngineFiles()));
 
 	const totalBytes = files.reduce((sum, f) => sum + statSync(path.join(dist, f)).size, 0);
 	const width = Math.max(...sizes.map((r) => r.file.length), 20);

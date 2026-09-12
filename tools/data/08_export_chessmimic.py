@@ -1,48 +1,29 @@
 #!/usr/bin/env python3
-"""08_export_chessmimic.py — export the ChessMimic clock model to ONNX for the timing head
-(Task 34; Part I §8.4b item 6, Appendix J §B).
+"""Export six ChessMimic clock bands with the pinned upstream checkpoint and tokenizer.
 
-Upstream: https://github.com/thomasj02/1e4_ai (PolyForm Noncommercial 1.0.0; the notice lives in
-docs/third-party.md). The repository is cloned at PINNED_COMMIT into --upstream (git-ignored) with
-Git LFS smudging disabled; the Lightning checkpoints are fetched through the Git LFS batch API and
-verified against the pointer's SHA-256 (the LFS object id), so no `git-lfs` binary is needed.
+Each band produces an ONNX graph (opset 14), its own rating/clock scalers and 30-bin
+clock distribution. The 0_1000 band uses wider clock buckets than the other bands;
+consumers must decode with the returned band's metadata.
 
-Per shipped band:
-  - `backend/models/clock_model/<band>_brier/model.ckpt` → `state_dict` only, prefixes stripped,
-    loaded strictly into a plain-torch transcription of `Training/ClockTrainer.py`'s
-    `ClockPatzerModel` (same parameter names; 8,950,558 parameters);
-  - `torch.onnx.export` (TorchScript exporter, opset 14, `do_constant_folding`), inputs
-    `input_ids` int32 [batch, 90] (12 move tokens + 78 FEN tokens), `scaled_rating` float32
-    [batch], `clock_features` float32 [batch, 3]; output `probs` float32 [batch, 30] (softmax is
-    inside the graph); batch is dynamic;
-  - fp16 weights: every float initializer with ≥ FP16_MIN_ELEMENTS elements is stored as float16
-    behind a `Cast` to float32 (onnxruntime constant-folds the casts at session load, so the
-    arithmetic stays fp32 — the WebAssembly CPU provider has no fp16 kernels — while the file
-    halves); `--precision int8` runs onnxruntime's dynamic quantisation instead;
-  - `scalers.pkl` → scalers.json (mean/std per feature), `clock_buckets.json` → buckets.json
-    (`Infinity` edge written as null), and the fp16 file is checked against torch fp32 in Python
-    onnxruntime (max |Δprob| recorded in models.json).
+Most large weights are stored in fp16 behind Cast to fp32. For 1500_1600, attention
+output projections retain their original fp32 precision because the six-band
+fixture otherwise exceeds the runtime's 0.002 probability tolerance. The default
+export fails instead of registering a file above that tolerance. Dynamic int8 is
+available for experiments but does not satisfy the shipping precision gate.
 
-Shared: vocab.json (the searchless_chess FEN characters, class/pad ids, the 1 968-move UCI
-vocabulary in `_compute_all_possible_actions` order — taken from the upstream `Training/tokenizer.py`
-module, not re-derived), models.json (provenance, per-band size/SHA-256, export metadata) and the
-reference fixture test/fixtures/chessmimic-reference.json: --positions seeded positions with the
-exact model inputs (tokens from the upstream tokeniser, left-padded move window as in the C++
-binding, rating clamped to the band range then standardised, standardised log clocks) and the
-torch fp32 bucket probabilities. Measured on the shipped bands: fp16 weights move at most
-1.458e-3 of probability mass in a bucket relative to torch fp32 (worst band 1500_1600; see
-models.json), which is why the extension's conformance tolerance is 2e-3 rather than 1e-3.
-Partial-fp32 layouts were measured on that band (max |dprob| vs torch fp32, bytes per band):
-all-fp16 1.458e-3 / 18,200,481; fp32 embeddings 1.371e-3 / 19,224,760; fp32 attention out_proj
-1.108e-3 / 19,247,529; fp32 embeddings + attention out_proj 9.542e-4 / 20,271,808; fp16 only for
-initializers >= 262,144 elements 1.469e-3 / 22,471,558; full fp32 3.994e-6 / 36,059,775. A
-partial layout does reach <1e-3, but only with ~5 % margin and +2.1 MB per band, so the shipped
-export stays all-fp16 and the tolerance is set at 2e-3.
+The fixture uses the upstream tokenizer and fp32 checkpoint probabilities, with
+containing-range then fitted-rating-mean band selection. Package compression is a
+separate, lossless build step in scripts/model-packing.ts; canonical ONNX hashes
+refer to the outputs of this script, not the compressed extension assets.
 
-Run (from the repository root; the venv is git-ignored):
+Upstream: https://github.com/thomasj02/1e4_ai, PolyForm Noncommercial 1.0.0.
+The clone and verified LFS checkpoint cache are git-ignored under tools/data/upstream.
+Run from the repository root:
     uv venv --python 3.12 tools/data/.venv
     VIRTUAL_ENV=tools/data/.venv uv pip install torch onnx onnxruntime numpy chess
     tools/data/.venv/bin/python tools/data/08_export_chessmimic.py
+
+Provenance, measured precision, packaging and runtime checks: docs/models.md.
 """
 from __future__ import annotations
 
@@ -66,7 +47,7 @@ PINNED_COMMIT = "8fcca2319e828b9d14b8def5c3ee9bc8bf1e3f12"
 UPSTREAM_LICENSE = "PolyForm-Noncommercial-1.0.0"
 LFS_BATCH_URL = f"{UPSTREAM_REPO}.git/info/lfs/objects/batch"
 CLOCK_MODEL_DIR = "backend/models/clock_model"
-DEFAULT_BANDS = ["1200_1300", "1500_1600", "1800_1900"]
+DEFAULT_BANDS = ["0_1000", "1200_1300", "1500_1600", "1800_1900", "2000_2100", "2200_3500"]
 
 # Architecture (Training/ClockTrainer.py, backend/clock_inference.py).
 RECENT_MOVES = 12
@@ -77,6 +58,8 @@ HEADS = 8
 N_BUCKETS = 30
 OPSET = 14
 FP16_MIN_ELEMENTS = 1024
+# The six-band fixture exceeds 0.002 with this band's attention projections in fp16.
+FP32_ATTENTION_BANDS = {"1500_1600"}
 EXPECTED_PARAMS = 8_950_558
 
 SCALER_KEYS = ("rating", "log_player_clock", "log_opponent_clock", "log_increment")
@@ -270,7 +253,7 @@ def export_onnx(torch, model, fen_len: int) -> bytes:
     return buf.getvalue()
 
 
-def to_fp16_weights(onnx, np, model_bytes: bytes) -> tuple[bytes, int]:
+def to_fp16_weights(onnx, np, model_bytes: bytes, keep_attention_fp32: bool = False) -> tuple[bytes, int]:
     from onnx import TensorProto, helper, numpy_helper
 
     model = onnx.load_from_string(model_bytes)
@@ -281,6 +264,8 @@ def to_fp16_weights(onnx, np, model_bytes: bytes) -> tuple[bytes, int]:
             continue
         arr = numpy_helper.to_array(init)
         if arr.size < FP16_MIN_ELEMENTS:
+            continue
+        if keep_attention_fp32 and ".self_attention.out_proj.weight" in init.name:
             continue
         if float(np.abs(arr).max()) > 65504.0:
             raise SystemExit(f"{init.name}: |w| exceeds the float16 range")
@@ -343,11 +328,16 @@ def band_range(band: str) -> tuple[float, float]:
     return float(lo), float(hi)
 
 
-def select_band(rating: float, bands: list[str]) -> str:
-    """Nearest band centre; ties → the lower band (mirrors `selectBand` in chessmimic-head.ts)."""
+def select_band(rating: float, bands: list[str], scalers: dict | None = None) -> str:
+    """Containing training range first, then nearest fitted rating mean for gaps."""
+    for band in bands:
+        lo, hi = band_range(band)
+        if lo <= rating <= hi:
+            return band
     best, best_d = bands[0], float("inf")
     for band in bands:
-        d = abs(rating - band_centre(band))
+        centre = scalers[band]["rating"]["mean"] if scalers and band in scalers else band_centre(band)
+        d = abs(rating - centre)
         if d < best_d:
             best, best_d = band, d
     return best
@@ -380,11 +370,24 @@ def random_game(chess, rng: random.Random, max_plies: int) -> tuple[list[str], o
     return moves, board
 
 
-def generate_positions(chess, rng: random.Random, n: int, bands: list[str]) -> list[dict]:
+def rating_draw(bands: list[str]) -> tuple[float, float, list[float]]:
+    """Where the fixture's ratings come from, derived from the exported bands so that **every**
+    band gets rows (a band with no row would ship without a
+    torch-fp32 parity reference). The draw runs from a little below the lowest band to a little
+    above the highest band's *centre* — nothing above the top centre can select a different band,
+    and the top band's own range is 1 300 Elo wide. The two returned outliers sit outside every
+    band so `standardise`'s clamp is exercised at both ends."""
+    lo = min(band_range(b)[0] for b in bands) - 100.0
+    hi = max(band_centre(b) for b in bands) + 100.0
+    return lo, hi, [lo - 300.0, max(band_range(b)[1] for b in bands) + 300.0]
+
+
+def generate_positions(chess, rng: random.Random, n: int, bands: list[str], scalers: dict | None = None) -> list[dict]:
     records: list[dict] = []
     # Deterministic edge cases: no history, short windows around the 12-move boundary,
     # three-digit halfmove / fullmove counters, extreme ratings.
     starts = [0, 1, 2, 11, 12, 13, 24]
+    lo_rating, hi_rating, outliers = rating_draw(bands)
     while len(records) < n:
         moves, board = random_game(chess, rng, rng.randint(2, 180))
         if not moves:
@@ -400,9 +403,9 @@ def generate_positions(chess, rng: random.Random, n: int, bands: list[str]) -> l
             board.halfmove_clock = rng.randint(100, 149)
         if k % 50 == 8:
             board.fullmove_number = rng.randint(100, 250)
-        rating = rng.uniform(1100, 2000)
+        rating = rng.uniform(lo_rating, hi_rating)
         if k % 100 == 3:
-            rating = rng.choice([800.0, 2600.0])
+            rating = rng.choice(outliers)
         if k % 20 == 0:
             player, opponent, increment = UNTIMED_VIRTUAL
         else:
@@ -419,7 +422,7 @@ def generate_positions(chess, rng: random.Random, n: int, bands: list[str]) -> l
                 "playerClockS": round(player, 3),
                 "opponentClockS": round(opponent, 3),
                 "incrementS": increment,
-                "band": select_band(rating, bands),
+                "band": select_band(rating, bands, scalers),
             }
         )
     return records
@@ -504,8 +507,10 @@ def main() -> int:
         models[band] = model
         fp32 = export_onnx(torch, model, tok.SEQUENCE_LENGTH)
         if args.precision == "fp16":
-            data, casts = to_fp16_weights(onnx, np, fp32)
+            data, casts = to_fp16_weights(onnx, np, fp32, band in FP32_ATTENTION_BANDS)
             note = f"{casts} float16 initializers behind Cast"
+            if band in FP32_ATTENTION_BANDS:
+                note += "; attention output projections retained in fp32"
         else:
             data = to_int8(fp32, out, band)
             note = "onnxruntime quantize_dynamic QInt8"
@@ -539,7 +544,7 @@ def main() -> int:
 
     if not args.skip_fixture:
         rng = random.Random(args.seed)
-        records = generate_positions(chess, rng, args.positions, bands)
+        records = generate_positions(chess, rng, args.positions, bands, scalers_json)
         by_band: dict[str, list[dict]] = {b: [] for b in bands}
         for r in records:
             r["moveTokens"] = prepare_recent_moves_tokens(r["moves"], tok.MOVE_TO_ACTION, tok.PAD_TOKEN)
@@ -557,6 +562,8 @@ def main() -> int:
             session = ort.InferenceSession(str(out / f"{band}.onnx"), providers=["CPUExecutionProvider"])
             ort_probs = session.run(None, {"input_ids": ids.numpy(), "scaled_rating": rating.numpy(), "clock_features": clocks.numpy()})[0]
             max_diff = float(np.abs(ort_probs - probs).max())
+            if args.precision == "fp16" and max_diff >= 0.002:
+                raise SystemExit(f"{band}: fp16 probability error {max_diff:.6f} exceeds the runtime's 0.002 tolerance")
             models_json["bands"][band]["fixturePositions"] = len(rows)
             models_json["bands"][band]["maxAbsProbDiffOnnxVsTorch"] = max_diff
             print(f"{band}: {len(rows)} fixture positions, max |Δprob| onnxruntime vs torch fp32 = {max_diff:.2e}")

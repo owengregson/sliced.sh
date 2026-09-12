@@ -265,10 +265,15 @@ export function createTimingInference(deps: TimingInferenceDeps): TimingInferenc
 	}
 
 	/**
-	 * `requested` first, then the registered bands nearest to `rating` (an already loaded band
-	 * wins a tie, so a substitute never costs a second session); bands still inside their retry
-	 * cooldown are skipped. If every band is in cooldown the list is empty and `resolve` reports
-	 * `TIMING_NO_BAND` rather than hammering a runtime that is failing.
+	 * `requested` first, then the registered bands nearest to `rating`, an already loaded band
+	 * breaking an exact distance tie; bands still inside their retry cooldown are skipped. If every
+	 * band is in cooldown the list is empty and `resolve` reports `TIMING_NO_BAND` rather than
+	 * hammering a runtime that is failing.
+	 *
+	 * Distance wins over residency deliberately: a loaded band that is 1 000 Elo away would answer
+	 * with the wrong player's pace to save a ~100 ms session load, which is the wrong trade. Since
+	 * `bandCentre` became each band's training-population mean (2026-09-13) exact ties are rare, so
+	 * the residency term is close to dead — that is the intended behaviour, not an oversight.
 	 */
 	function candidates(requested: string, rating: number): string[] {
 		const loaded = (b: string): number => (sessions.has(b) ? 0 : 1);

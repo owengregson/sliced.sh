@@ -18,43 +18,66 @@ export const CHESSMIMIC_FILES = {
 	onnxSuffix: ".onnx",
 } as const;
 
-/** Registered bands, nearest-centre selection (`selectBand`); `<lo>_<hi>` names the Elo range. */
-export const CHESSMIMIC_BANDS = ["1200_1300", "1500_1600", "1800_1900"] as const;
+/** Exported training bands; selection and rating clamping live in chessmimic-scalers.ts. */
+export const CHESSMIMIC_BANDS = [
+	"0_1000",
+	"1200_1300",
+	"1500_1600",
+	"1800_1900",
+	"2000_2100",
+	"2200_3500",
+] as const;
 export type ChessMimicBand = (typeof CHESSMIMIC_BANDS)[number];
 
-/**
- * The band the offscreen document warms as soon as the service worker connects, before it knows
- * the user's target Elo (that lives in the SW's settings). Loading a band's session costs
- * ~200 ms cold and blocks the first query for it, which is well past the head's 100 ms budget —
- * so without this the first move of a session always falls back to v1. The middle band is the
- * best single guess and, more importantly, it pays the one-off wasm instantiation, so a
- * different band later costs only its own ~100 ms.
- */
+/** Warm the default rating before settings arrive; game startup then warms its selected band. */
 export const CHESSMIMIC_DEFAULT_BAND: ChessMimicBand = "1500_1600";
 
 export interface ChessMimicBandFile {
 	bytes: number;
 	sha256: string;
+	/** Lossless compression in the built extension only. */
+	packed?: boolean;
 	/** Shipped in the package (`MODELS_DIR`); otherwise downloaded on demand and cached in OPFS. */
 	bundled: boolean;
 }
 
 /** `<band>.onnx` size and SHA-256 as exported (`models.json`; checked by `test/scripts`). */
 export const CHESSMIMIC_BAND_FILES: Readonly<Record<ChessMimicBand, ChessMimicBandFile>> = {
+	"0_1000": {
+		packed: true,
+		bytes: 18_200_481,
+		sha256: "758533f588397e99be0a2ddfdb05bdb4729482269efdb90d9527a7f4ebb82470",
+		bundled: true,
+	},
 	"1200_1300": {
 		bytes: 18_200_481,
 		sha256: "623b2489d2909734d1b5f6d6b5c45c97043fedd5d659429f4868ec706d614991",
 		bundled: true,
+		packed: true,
 	},
 	"1500_1600": {
-		bytes: 18_200_481,
-		sha256: "5ea34ab9598ff67c9e94ff1658bc3aa9bfc9a62965514f0531a4cbc8adcd7e9b",
+		bytes: 19_247_529,
+		sha256: "09ffcd130d46b3273f2186c38ffcf49aedc5dc17c1499f1bf04714599dd99bc8",
 		bundled: true,
+		packed: true,
 	},
 	"1800_1900": {
 		bytes: 18_200_481,
 		sha256: "121bc7a7fa7920f9b0cf55dfe642f1e32e33a82dea23831bfbc018fa8d8f6f22",
 		bundled: true,
+		packed: true,
+	},
+	"2000_2100": {
+		bytes: 18_200_481,
+		sha256: "f50058cdab70d1f21d987faf0c11ed3059d30ad57c6e095cf3472bceb51f3eb9",
+		bundled: true,
+		packed: true,
+	},
+	"2200_3500": {
+		bytes: 18_200_481,
+		sha256: "5e7d1175e4b44dc180068e6b72782a425953ed76848063e037eafc7d0e4203f7",
+		bundled: true,
+		packed: true,
 	},
 };
 

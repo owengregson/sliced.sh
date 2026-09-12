@@ -3,7 +3,12 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { gzipSync } from "node:zlib";
-import { encodeNnueSource, sha256Hex, writeBundledNnue } from "../../scripts/nnue-assets";
+import {
+	bundledAssetFilter,
+	encodeNnueSource,
+	sha256Hex,
+	writeBundledNnue,
+} from "../../scripts/nnue-assets";
 
 const temporary: string[] = [];
 
@@ -20,6 +25,45 @@ async function fixture() {
 	const dist = path.join(dir, "dist");
 	return { dir, dist, data, spec };
 }
+
+describe("bundledAssetFilter", () => {
+	const root = "/repo/assets";
+	const engineDir = `${root}/engine/`;
+	const filter = bundledAssetFilter({
+		sources: new Set([`${root}/engine/nn-c288c895ea92.nnue.gz`, `${root}/models/maia3/x.part0`]),
+		engineDir,
+		engineFiles: new Set(["sf_18_relaxed-simd.js", "sf_18_relaxed-simd.wasm", "LICENSE"]),
+	});
+
+	it("copies ordinary files and every directory", () => {
+		expect(filter(`${root}/sounds/make_move.wav`)).toBe(true);
+		expect(filter(`${root}/sounds`)).toBe(true);
+		expect(filter(`${root}/engine`)).toBe(true);
+		expect(filter(root)).toBe(true);
+	});
+
+	it("drops Finder and Explorer droppings anywhere", () => {
+		expect(filter(`${root}/.DS_Store`)).toBe(false);
+		expect(filter(`${root}/models/.DS_Store`)).toBe(false);
+		expect(filter(`${root}/vendor/Thumbs.db`)).toBe(false);
+		expect(filter(`${root}/fonts/._Geist-Variable.woff2`)).toBe(false);
+	});
+
+	it("drops the sources the build materialises itself", () => {
+		expect(filter(`${root}/engine/nn-c288c895ea92.nnue.gz`)).toBe(false);
+		expect(filter(`${root}/models/maia3/x.part0`)).toBe(false);
+	});
+
+	it("copies the engine directory by allowlist, so a stale program never ships", () => {
+		expect(filter(`${root}/engine/sf_18_relaxed-simd.js`)).toBe(true);
+		expect(filter(`${root}/engine/sf_18_relaxed-simd.wasm`)).toBe(true);
+		expect(filter(`${root}/engine/LICENSE`)).toBe(true);
+		expect(filter(`${root}/engine/sf_18.js`)).toBe(false);
+		expect(filter(`${root}/engine/sf_18.wasm`)).toBe(false);
+		expect(filter(`${root}/engine/nn-4ca89e4b3abf.nnue`)).toBe(false); // written by writeBundledNnue
+		expect(filter(`${root}/engine/nn-unknown.nnue`)).toBe(false);
+	});
+});
 
 describe("packaged NNUE assets", () => {
 	it("writes verified raw bytes and leaves the compressed source out of the package", async () => {

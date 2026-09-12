@@ -52,6 +52,7 @@ export interface OpfsDirectory {
 
 export interface AssetFetchResponse {
 	ok: boolean;
+	body?: ReadableStream<Uint8Array> | null;
 	arrayBuffer(): Promise<ArrayBuffer>;
 }
 
@@ -72,6 +73,8 @@ export interface AssetSpec {
 	accepts(name: string): boolean;
 	/** Extension-relative path when `name` ships in the package; `undefined` otherwise. */
 	bundledPath(name: string): string | undefined;
+	/** Optional package decoder. Decoded bytes must match the canonical registry hash. */
+	decodeBundled?(name: string, response: AssetFetchResponse): Promise<Uint8Array>;
 	/** Expected SHA-256 hex (full digest, or a prefix) `name` must hash to. */
 	expectedHash(name: string): string | undefined;
 	/** The port message asking the service worker to download `name`. */
@@ -325,6 +328,11 @@ export class AssetStore {
 		try {
 			const res = await this.fetchFn(this.getUrl(path));
 			if (!res.ok) return undefined;
+			if (this.spec.decodeBundled) {
+				const data = await this.spec.decodeBundled(name, res);
+				if (!(await this.verify(data, name))) throw new Error(this.spec.checksumError);
+				return data;
+			}
 			return new Uint8Array(await res.arrayBuffer());
 		} catch (error) {
 			log.warn(`${this.spec.label}: bundled fetch failed`, { name, error: errorMessage(error) });

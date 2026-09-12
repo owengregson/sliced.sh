@@ -1,0 +1,78 @@
+{
+ "upstream": {
+  "name": "Maia-3",
+  "repo": "https://github.com/CSSLab/maia3",
+  "commit": "1e13597c42d4858b7cfd7cfdae01e297263364b2",
+  "license": "AGPL-3.0-or-later",
+  "paper": "https://arxiv.org/abs/2605.19091",
+  "hub": "https://huggingface.co/collections/MaiaChess/maia3"
+ },
+ "export": {
+  "script": "tools/data/09_export_maia3.py",
+  "opset": 17,
+  "precision": "fp16",
+  "fp16MinElements": 1024,
+  "torch": "2.14.0",
+  "onnx": "1.22.0",
+  "onnxruntime": "1.30.0",
+  "inputs": {
+   "tokens": "float32 [batch, 64, 96]",
+   "self_elo": "float32 [batch]",
+   "oppo_elo": "float32 [batch]"
+  },
+  "outputs": {
+   "move_logits": "float32 [batch, 4352]",
+   "value_logits": "float32 [batch, 3]"
+  },
+  "input": {
+   "history": 8,
+   "planes": 12,
+   "tokenDim": 96,
+   "squares": 64,
+   "moveVocab": 4352,
+   "fromTo": 4096,
+   "promotionPieces": [
+    "q",
+    "r",
+    "b",
+    "n"
+   ],
+   "eloScale": 5000,
+   "eloMin": 0,
+   "eloMax": 5000
+  }
+ },
+ "split": {
+  "partSuffix": ".part",
+  "partBytes": 95000000
+ },
+ "models": {
+  "79m": {
+   "file": "maia3-79m.onnx",
+   "bytes": 156212736,
+   "sha256": "37fe2f32cd44f2733ce5cafd90d9aa4c444340da8661df36420ae4e65ebd6a88",
+   "parts": 2,
+   "sourceFiles": [
+    "maia3-79m.onnx.part0",
+    "maia3-79m.onnx.part1"
+   ],
+   "params": 78899716,
+   "dModel": 1024,
+   "heads": 32,
+   "upstream": {
+    "repo": "UofTCSSLab/Maia3-79M",
+    "revision": "a107d6ceb7b298cb04ae1da4edffe2939858b894",
+    "checkpoint": "maia3-79m.pt",
+    "bytes": 315651851,
+    "sha256": "3fc6181d5db789b45a15305732148757ae74efa3e0028e81ba335b462dac45c2"
+   },
+   "fp32Bytes": 311886570,
+   "fp32Sha256": "3d241bb0c838e825c98a16359baa9108914fc1ed92f596b713b55c21910f5cd8",
+   "weights": "125 float16 initializers behind Cast",
+   "fixturePositions": 60,
+   "maxAbsProbDiffOnnxVsTorch": 0.000606149435043335,
+   "maxAbsValueLogitDiffOnnxVsTorch": 0.007027149200439453,
+   "argmaxAgree": "60/60"
+  }
+ }
+}

@@ -3,6 +3,10 @@ import { cp, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { gunzip, gzip } from "node:zlib";
+import { packagedModelName } from "../src/core/constants/model-packing";
+import { maiaSourceFiles, writeBundledMaia } from "./maia-assets";
+import { packModel, verifyPackedModel } from "./model-packing";
+import { JUNK_FILE_RE } from "./verify-dist";
 
 const decompress = promisify(gunzip);
 const compress = promisify(gzip);
@@ -54,18 +58,77 @@ export async function writeBundledNnue(
 	}
 }
 
-/** Copy assets once, excluding network source files which are verified and materialized below. */
+export interface BundledAssetFilterOptions {
+	/** Absolute paths of source files the build materialises itself (never copied verbatim). */
+	sources: ReadonlySet<string>;
+	/** Absolute path of the engine directory; only `engineFiles` are copied out of it. */
+	engineDir: string;
+	/** Bare file names allowed out of `engineDir` (the programs and the licence; nets are written). */
+	engineFiles: ReadonlySet<string>;
+}
+
+/**
+ * The `cp` filter for `assets/` → `dist/assets/`: drops Finder/Explorer droppings (`JUNK_FILE_RE`
+ * — three `.DS_Store`s shipped in the 2026-09-13 zip), the sources the build materialises, and —
+ * by allowlist — anything in `assets/engine/` the registry does not ship, so a build that stopped
+ * being vendored (the plain-SIMD programs) cannot ride along just because it is still on disk.
+ * Directories pass; `cp` recurses into them and filters their files one by one.
+ */
+export function bundledAssetFilter(
+	options: BundledAssetFilterOptions
+): (source: string) => boolean {
+	const engineDir = path.resolve(options.engineDir);
+	return (source) => {
+		const name = path.basename(source);
+		if (JUNK_FILE_RE.test(name)) return false;
+		if (options.sources.has(source)) return false;
+		if (path.dirname(path.resolve(source)) === engineDir) return options.engineFiles.has(name);
+		return true;
+	};
+}
+
+/** Copy ordinary assets and write verified NNUE/model packages from canonical source files. */
 export async function copyBundledAssets(root: string, dist: string): Promise<void> {
 	// Plain Bun build scripts do not have bundler defines until their dynamic registry import.
 	const g = globalThis as Record<string, unknown>;
 	g.__SL_LICENSE_ENFORCE__ ??= false;
 	g.__SL_LICENSE_URL__ ??= "";
-	const { ENGINE_DIR, ENGINE_NNUE_SOURCES } = await import("../src/core/constants/engine-files");
+	const [
+		{ ENGINE_DIR, ENGINE_LICENSE_FILE, ENGINE_NNUE_SOURCES, ENGINE_PROGRAM_FILES },
+		{ MAIA_DIR, MAIA_FILES, MAIA_MODEL_FILES, MAIA_SIZES },
+		{ MODELS_DIR, CHESSMIMIC_BAND_FILES, CHESSMIMIC_BANDS, chessMimicBandFile },
+	] = await Promise.all([
+		import("../src/core/constants/engine-files"),
+		import("../src/core/constants/maia"),
+		import("../src/core/constants/models"),
+	]);
 	const engineDir = path.join(root, ENGINE_DIR);
-	const sources = new Set(ENGINE_NNUE_SOURCES.map((spec) => path.join(engineDir, spec.source)));
+	const maiaDir = path.join(root, MAIA_DIR);
+	const maiaSpecs = MAIA_SIZES.map((size) => MAIA_MODEL_FILES[size]);
+	const timingSpecs = CHESSMIMIC_BANDS.filter((band) => CHESSMIMIC_BAND_FILES[band].bundled).map(
+		(band) => ({ ...CHESSMIMIC_BAND_FILES[band], file: chessMimicBandFile(band) })
+	);
+	const sources = new Set([
+		...ENGINE_NNUE_SOURCES.map((spec) => path.join(engineDir, spec.source)),
+		...maiaSourceFiles(maiaSpecs, MAIA_FILES).map((name) => path.join(maiaDir, name)),
+		...timingSpecs.map((spec) => path.join(root, MODELS_DIR, spec.file)),
+	]);
 	await cp(path.join(root, "assets"), path.join(dist, "assets"), {
 		recursive: true,
-		filter: (source) => !sources.has(source),
+		filter: bundledAssetFilter({
+			sources,
+			engineDir,
+			engineFiles: new Set([...ENGINE_PROGRAM_FILES, ENGINE_LICENSE_FILE]),
+		}),
 	});
 	await writeBundledNnue(engineDir, path.join(dist, ENGINE_DIR), ENGINE_NNUE_SOURCES);
+	await writeBundledMaia(maiaDir, path.join(dist, MAIA_DIR), maiaSpecs, MAIA_FILES);
+	for (const spec of timingSpecs) {
+		const data = await readFile(path.join(root, MODELS_DIR, spec.file));
+		if (data.length !== spec.bytes || sha256Hex(data) !== spec.sha256)
+			throw new Error(`${spec.file}: source model checksum mismatch`);
+		const bundled = spec.packed ? packModel(data) : data;
+		if (spec.packed) verifyPackedModel(bundled, spec.bytes, spec.sha256);
+		await writeFile(path.join(dist, MODELS_DIR, packagedModelName(spec.file, spec.packed)), bundled);
+	}
 }

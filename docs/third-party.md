@@ -4,8 +4,8 @@
 
 ## Stockfish 18 — `@lichess-org/stockfish-web` 0.4.4
 
-sliced.gg bundles a WebAssembly build of the Stockfish chess engine under `assets/engine/` and
-drives it over UCI from an offscreen document. The engine is a separate program: sliced.gg's own
+sliced.sh bundles a WebAssembly build of the Stockfish chess engine under `assets/engine/` and
+drives it over UCI from an offscreen document. The engine is a separate program: sliced.sh's own
 code is not derived from Stockfish and talks to it only through the package's public API
 (`uci`, `setNnueBuffer`, `listen`, `onError`).
 
@@ -17,8 +17,11 @@ code is not derived from Stockfish and talks to it only through the package's pu
 | NNUE network `nn-c288c895ea92.nnue` (full-build big weights) | — | distributed by the Stockfish project | https://tests.stockfishchess.org/api/nn/nn-c288c895ea92.nnue |
 | NNUE network `nn-37f18f62d772.nnue` (full-build small weights) | — | distributed by the Stockfish project | https://tests.stockfishchess.org/api/nn/nn-37f18f62d772.nnue |
 
-Targets vendored: `sf_18_smallnet` (Stockfish 18 with the sscg13/threat-small patch, plus the
-`_relaxed-simd` variant) and `sf_18` (the dual-net full build). The full build's networks
+Targets vendored: `sf_18_smallnet_relaxed-simd` (Stockfish 18 with the sscg13/threat-small
+patch) and `sf_18_relaxed-simd` (the dual-net full build). Only the relaxed-SIMD variants ship:
+relaxed SIMD has been in Chrome since 114 and the manifest's `minimum_chrome_version` is 128,
+so the package's plain-SIMD `sf_18` / `sf_18_smallnet` programs are not vendored (2026-09-13).
+The full build's networks
 `nn-c288c895ea92.nnue` (big) and `nn-37f18f62d772.nnue` (small) are bundled alongside the smallnet. Switching to full
 strength loads installed extension bytes without downloading networks. The repository stores
 the big net as `nn-c288c895ea92.nnue.gz` using deterministic gzip (level 9, no timestamp or filename) to stay
@@ -34,8 +37,10 @@ network bytes come from the Stockfish project's mirror above. The complete corre
 - the Stockfish sources at https://github.com/official-stockfish/Stockfish/commit/cb3d4ee9b47d0c5aae855b12379378ea1439675c (tag `sf_18`).
 
 The full AGPL-3.0 text ships with the extension as `assets/engine/LICENSE`. On request,
-the sliced.gg maintainers will also provide these sources on a durable medium, as required by
-GPL-3.0 §6 / AGPL-3.0 §6; contact details are at https://sliced.sh.
+the sliced.sh maintainers will also provide these sources on a durable medium, as required by
+GPL-3.0 §6 / AGPL-3.0 §6; contact details are at https://sliced.sh. The same written offer covers the
+corresponding source of every other GPL/AGPL component in this document — the Maia-3 models in
+their own section below included.
 
 ### Network integrity
 
@@ -56,12 +61,10 @@ when the checked-in sources are present.
 
 | File | Bytes | SHA-256 |
 |---|---|---|
-| `sf_18_smallnet.js` | 28,643 | `ecf8b6468994ac1855f791a8fb576b20870271f72a94c1ecd81a2f210acd1118` |
-| `sf_18_smallnet.wasm` | 596,140 | `b8181b501392c0a7c813dc80ef089c9b3cbbbd461abad0c6f583f6f4f0627bbe` |
 | `sf_18_smallnet_relaxed-simd.js` | 28,734 | `ba1f4a76bd98e069c58f7d4b09ec3ee64dfaa461bce6177437a81d033fa2c0c5` |
 | `sf_18_smallnet_relaxed-simd.wasm` | 596,271 | `5900818add3e73e6a99abec32e708ec816dd1a60e77641d84495489260bc2d23` |
-| `sf_18.js` | 28,580 | `136084f2b127e8a7cd073013347f3cccdfc3165a18d340cae1821c5b250324f3` |
-| `sf_18.wasm` | 601,688 | `bce890e12af049c1a4e80d13b7742ccd281d907b4c78f48a997f715d2de3d22b` |
+| `sf_18_relaxed-simd.js` | 28,671 | `a9806faaba46f724f992418f09ff694ef302f82790e603b9143a650c051c35b0` |
+| `sf_18_relaxed-simd.wasm` | 602,013 | `3ad688e4c67d7f049d65465a1f83f0f04ff8951b7e6c2ce4d18965d5fd133ae9` |
 | `LICENSE` | 35,149 | `3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986` |
 | `nn-4ca89e4b3abf.nnue` | 15,054,352 | `4ca89e4b3abfbe9df13e4f3db2acb64dc6ddc7a9becb2ac1cf388f4d66b3bd94` |
 | `nn-c288c895ea92.nnue.gz` | 72,754,416 | `e21863de1e721111d2a9548d9bea7d80537ac541963f5036e27fe64b429ce48e` |
@@ -72,37 +75,95 @@ Types only (not shipped): `src/types/stockfish-web.d.ts` copied from the package
 
 ## ChessMimic timing model — `assets/models/chessmimic/`
 
-sliced.gg's human move-timing head is the clock model of **ChessMimic** (Thomas Johnson, 2026;
+sliced.sh's human move-timing head is the clock model of **ChessMimic** (Thomas Johnson, 2026;
 the engine behind https://1e4.ai), exported from the checkpoints published at https://github.com/thomasj02/1e4_ai (commit
 `8fcca2319e828b9d14b8def5c3ee9bc8bf1e3f12`). Required Notice: Copyright 2026 Thomas Johnson (https://github.com/thomasj02/1e4_ai). The source code **and the trained weights** are licensed
 under the **PolyForm Noncommercial License 1.0.0** (https://polyformproject.org/licenses/noncommercial/1.0.0; SPDX `PolyForm-Noncommercial-1.0.0`) — the weights may
-only be used for non-commercial purposes, which is what sliced.gg is. The ONNX files below are
+only be used for non-commercial purposes, which is what sliced.sh is. The ONNX files below are
 derived works of those weights (same parameters, stored as float16, opset 14) and are
 distributed under the same licence; the PolyForm text is reproduced in the upstream `LICENSE`.
 The searchless_chess FEN tokeniser ChessMimic builds on is Apache-2.0 (google-deepmind); the
 extension's TypeScript transcription of it lives in `src/core/timing/chessmimic-tokeniser.ts`.
 
 Export: `tools/data/08_export_chessmimic.py` (torch 2.14.0, onnx 1.22.0,
-onnxruntime 1.29.0; details, latency and the reference fixture in `docs/models.md`).
+onnxruntime 1.30.0; details, latency and the reference fixture in `docs/models.md`).
 
 | Band (Elo) | File | Checkpoint (LFS oid) | Bytes | max \|Δprob\| vs torch fp32 |
 |---|---|---|---|---|
-| 1200–1300 | `1200_1300.onnx` | `15bc91e5cdce` | 18,200,481 | 9.39e-4 |
-| 1500–1600 | `1500_1600.onnx` | `03a421db3e47` | 18,200,481 | 1.46e-3 |
-| 1800–1900 | `1800_1900.onnx` | `f7b6c7772cb3` | 18,200,481 | 1.02e-3 |
+| 0–1000 | `0_1000.onnx` | `b1556ecb9d3a` | 18,200,481 | 4.84e-4 |
+| 1200–1300 | `1200_1300.onnx` | `15bc91e5cdce` | 18,200,481 | 8.63e-4 |
+| 1500–1600 | `1500_1600.onnx` | `03a421db3e47` | 19,247,529 | 1.51e-3 |
+| 1800–1900 | `1800_1900.onnx` | `f7b6c7772cb3` | 18,200,481 | 8.02e-4 |
+| 2000–2100 | `2000_2100.onnx` | `759cd045c01b` | 18,200,481 | 5.42e-4 |
+| 2200–3500 | `2200_3500.onnx` | `051714117cba` | 18,200,481 | 1.09e-3 |
 
 Bands that are registered but not bundled would download from `https://sliced.sh/models/chessmimic/` and
 are verified against the SHA-256 in `src/core/constants/models.ts` before use.
 
 | File | Bytes | SHA-256 |
 |---|---|---|
+| `0_1000.onnx` | 18,200,481 | `758533f588397e99be0a2ddfdb05bdb4729482269efdb90d9527a7f4ebb82470` |
 | `1200_1300.onnx` | 18,200,481 | `623b2489d2909734d1b5f6d6b5c45c97043fedd5d659429f4868ec706d614991` |
-| `1500_1600.onnx` | 18,200,481 | `5ea34ab9598ff67c9e94ff1658bc3aa9bfc9a62965514f0531a4cbc8adcd7e9b` |
+| `1500_1600.onnx` | 19,247,529 | `09ffcd130d46b3273f2186c38ffcf49aedc5dc17c1499f1bf04714599dd99bc8` |
 | `1800_1900.onnx` | 18,200,481 | `121bc7a7fa7920f9b0cf55dfe642f1e32e33a82dea23831bfbc018fa8d8f6f22` |
-| `scalers.json` | 1,067 | `e0f24142f672e2b7d9681b96cda44537e334b3b5e981bf1cea8607924dc2eb11` |
-| `buckets.json` | 7,337 | `a7889d1f0f5c343eafaa301083db960de1edad6ffda9eef7164fd61b393cd361` |
+| `2000_2100.onnx` | 18,200,481 | `f50058cdab70d1f21d987faf0c11ed3059d30ad57c6e095cf3472bceb51f3eb9` |
+| `2200_3500.onnx` | 18,200,481 | `5e7d1175e4b44dc180068e6b72782a425953ed76848063e037eafc7d0e4203f7` |
+| `scalers.json` | 2,127 | `d4ee707edff08deb7bbb8f9fa48832bc80890b1c3232df6a451d9f15cde51f93` |
+| `buckets.json` | 14,917 | `871f0e06bc560d0f5fc40d466cf254587aed8a5127c8bb5104263d8290ed3377` |
 | `vocab.json` | 14,193 | `3756cc02bbf66dce1796f18f4334ea4ae27107e4b9ad4e003609656f925d5f19` |
-| `models.json` | 2,090 | `319c99a5f57828e807badd58efe8fb710d3dcc31f3d48a5c3809a27f11ffa868` |
+| `models.json` | 3,669 | `3c22f42015ff26ffdcc416e72a5f1d4a29b8de4147ceeca6cfa8c214f4115424` |
+
+## Maia-3 human move-policy models — `assets/models/maia3/`
+
+sliced.sh's move *selection* below the Elite band draws on **Maia-3** (CSSLab, University of
+Toronto; Monroe, Eilender, Chalmers, Tang and Anderson, *Chessformer: A Unified Architecture for Chess Modeling (ICLR 2026)*, https://arxiv.org/abs/2605.19091), the
+human move-prediction transformer published at https://github.com/CSSLab/maia3 (code commit
+`1e13597c42d4858b7cfd7cfdae01e297263364b2`) with its checkpoints on the Hugging Face hub (https://huggingface.co/collections/MaiaChess/maia3).
+Required notice: Copyright 2026 CSSLab, University of Toronto (https://github.com/CSSLab/maia3). The repository is licensed under the **GNU Affero General Public License v3.0 or later**
+(https://www.gnu.org/licenses/agpl-3.0.html; SPDX `AGPL-3.0-or-later`); the model cards state no separate weight licence and
+point to the repository for it, so the weights are distributed under the same licence by that
+pointer. The ONNX files below are derived works of those weights (the same parameters, stored as
+float16 behind `Cast`, opset 17, exported by `tools/data/09_export_maia3.py`) and are
+distributed under the same licence; the AGPL text ships with the extension as `assets/models/maia3/LICENSE`.
+Nothing in sliced.sh's own source is derived from the Maia-3 code: the model runs through
+onnxruntime-web, and the extension's input encoder is written from the paper's description.
+AGPL §13 (network interaction) does not arise — the model runs on the user's machine and serves
+nobody over a network.
+
+Export: `tools/data/09_export_maia3.py` (torch 2.14.0, onnx 1.22.0,
+onnxruntime 1.30.0; the input layout, parity and latency are in `docs/models.md`).
+Each size is one checkpoint, pinned by Hugging Face revision and SHA-256:
+
+| Size | File | Params | HF repo | Revision | Checkpoint | Checkpoint SHA-256 | max \|Δprob\| vs torch fp32 |
+|---|---|---|---|---|---|---|---|
+| 79M | `maia3-79m.onnx` | 78,899,716 | `UofTCSSLab/Maia3-79M` | `a107d6ceb7b2` | `maia3-79m.pt` (315,651,851 B) | `3fc6181d5db789b45a15305732148757ae74efa3e0028e81ba335b462dac45c2` | 6.06e-4 |
+
+### Source offer
+
+The complete corresponding source of these models is the Maia-3 repository at
+https://github.com/CSSLab/maia3/commit/1e13597c42d4858b7cfd7cfdae01e297263364b2 together with the checkpoints at the Hugging Face
+revisions in the table above; the export tool that produced the ONNX files is in this repository.
+The written offer in the Stockfish section (a durable medium on request, as AGPL-3.0 §6
+requires; contact details at https://sliced.sh) covers them as well.
+
+### Repository layout
+
+`maia3-79m.onnx` (156,212,736 B) is over the Git host's 100 MB per-file cap, so the repository stores it as 2 consecutive slices — `maia3-79m.onnx.part<i>`, each but the last exactly 95,000,000 bytes. The build (`scripts/maia-assets.ts`) joins them, checks the joined bytes against the registry and ships one whole file; `verify-dist` fails the build if a slice ships.
+
+Shipped in the extension (whole files, as the build writes them):
+
+| File | Bytes | SHA-256 |
+|---|---|---|
+| `maia3-79m.onnx` | 156,212,736 | `37fe2f32cd44f2733ce5cafd90d9aa4c444340da8661df36420ae4e65ebd6a88` |
+
+Stored in the repository:
+
+| File | Bytes | SHA-256 |
+|---|---|---|
+| `maia3-79m.onnx.part0` | 95,000,000 | `ef3808c541096797489d2447134396e2eb53e9d858c8aef83ed14560aa00a0ca` |
+| `maia3-79m.onnx.part1` | 61,212,736 | `2feaa628992a0864ba44217ae5c7136f60af7b503daecbed7f4f16e78c967cfd` |
+| `models.json` | 1,934 | `7076cf9fcfb21731edda9e9f87f8a5fff489b4835dc1fc77a93f43a8e86ce7c7` |
+| `LICENSE` | 34,523 | `0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0` |
 
 ## ONNX Runtime Web — `onnxruntime-web` 1.29.0
 

@@ -16,12 +16,17 @@
 //    the exported ChessMimic bands in `assets/models/chessmimic/` against the registry
 //    (`CHESSMIMIC_BAND_FILES`) and renders both notices (PolyForm Noncommercial 1.0.0 beside the
 //    Stockfish AGPL notice; MIT for onnxruntime-web).
+// 5. Maia-3 (2026-09-11): checks the exported policy models in `assets/models/maia3/` against
+//    the registry (`MAIA_MODEL_FILES`; the 79M file is joined from its `.part<i>` slices first)
+//    and renders the AGPL-3.0-or-later notice with the per-size Hugging Face provenance and the
+//    source offer (`renderMaiaSection`).
 //
 // Run: `bun run vendor:engine` (re-runnable; idempotent when nothing changed).
 
 import { existsSync } from "node:fs";
-import { copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { maiaSourceNames, readMaiaSource } from "./maia-assets";
 import {
 	encodeNnueSource,
 	type NnueSource,
@@ -87,30 +92,80 @@ interface ModelsRegistry {
 	onnxruntimeRaw: string;
 }
 
+/** `src/core/constants/maia.ts`, the parts the notice needs. */
+interface MaiaRegistry {
+	MAIA_DIR: string;
+	MAIA_SIZES: readonly string[];
+	MAIA_MODEL_FILES: Readonly<
+		Record<
+			string,
+			{
+				file: string;
+				bytes: number;
+				sha256: string;
+				parts: number;
+				upstream: {
+					repo: string;
+					revision: string;
+					checkpoint: string;
+					bytes: number;
+					sha256: string;
+				};
+				params: number;
+				dModel: number;
+				heads: number;
+			}
+		>
+	>;
+	MAIA_FILES: { manifest: string; license: string; partSuffix: string; partBytes: number };
+	MAIA_UPSTREAM: {
+		name: string;
+		repo: string;
+		license: string;
+		licenseName: string;
+		licenseUrl: string;
+		copyright: string;
+		paper: string;
+		paperTitle: string;
+		hub: string;
+	};
+}
+
 interface EngineRegistry extends ModelsRegistry {
+	maia: MaiaRegistry;
 	BOOKS: BookRegistry;
 	ENGINE_DIR: string;
 	ENGINE_NNUE_SOURCES: readonly NnueSource[];
 	ENGINE_FILES: {
-		smallnet: { js: string; wasm: string; relaxedJs: string; relaxedWasm: string; nnue: string };
+		smallnet: { js: string; wasm: string; nnue: string };
 		full: { js: string; wasm: string; nnue: readonly [string, string] };
 	};
 	nnueMirror: string;
 	website: string;
 }
 
-/** Package files copied verbatim into `ENGINE_DIR` (everything but the nets). */
+/**
+ * Package files copied verbatim into `ENGINE_DIR` (everything but the nets): the relaxed-SIMD
+ * programs only (2026-09-13; `ENGINE_PROGRAM_FILES` lists the same four) and the AGPL text.
+ */
 export function packageFiles(files: EngineRegistry["ENGINE_FILES"]): string[] {
 	const { smallnet, full } = files;
-	return [
-		smallnet.js,
-		smallnet.wasm,
-		smallnet.relaxedJs,
-		smallnet.relaxedWasm,
-		full.js,
-		full.wasm,
-		LICENSE_FILE,
-	];
+	return [smallnet.js, smallnet.wasm, full.js, full.wasm, LICENSE_FILE];
+}
+
+/**
+ * Files in `ENGINE_DIR` that neither the registry's programs, its net sources nor the licence
+ * account for — a build that stopped shipping (the plain-SIMD `sf_18*.js/.wasm`, 2026-09-13) or
+ * a stray download. They never reach the package (`copyBundledAssets` copies by allowlist), but
+ * they sit in the repository; the vendor step names them so they get deleted.
+ */
+export function staleEngineFiles(
+	onDisk: readonly string[],
+	files: EngineRegistry["ENGINE_FILES"],
+	sources: readonly NnueSource[]
+): string[] {
+	const keep = new Set([...packageFiles(files), ...sources.map((spec) => spec.source)]);
+	return onDisk.filter((name) => !keep.has(name) && !name.startsWith(".")).sort();
 }
 
 /**
@@ -121,14 +176,22 @@ async function loadRegistry(): Promise<EngineRegistry> {
 	const g = globalThis as Record<string, unknown>;
 	g.__SL_LICENSE_ENFORCE__ ??= false;
 	g.__SL_LICENSE_URL__ ??= "";
-	const [{ ENGINE_DIR, ENGINE_FILES, ENGINE_NNUE_SOURCES }, { URLS }, { BOOKS }, models] =
+	const [{ ENGINE_DIR, ENGINE_FILES, ENGINE_NNUE_SOURCES }, { URLS }, { BOOKS }, models, maia] =
 		await Promise.all([
 			import("../src/core/constants/engine-files"),
 			import("../src/core/constants/urls"),
 			import("../src/core/constants/books"),
 			import("../src/core/constants/models"),
+			import("../src/core/constants/maia"),
 		]);
 	return {
+		maia: {
+			MAIA_DIR: maia.MAIA_DIR,
+			MAIA_SIZES: maia.MAIA_SIZES,
+			MAIA_MODEL_FILES: maia.MAIA_MODEL_FILES,
+			MAIA_FILES: maia.MAIA_FILES,
+			MAIA_UPSTREAM: maia.MAIA_UPSTREAM,
+		},
 		BOOKS,
 		ENGINE_DIR,
 		ENGINE_FILES,
@@ -245,6 +308,44 @@ export interface ThirdPartyNotice {
 	models?: ModelsNotice;
 	/** Task 34: the vendored onnxruntime-web files (`vendorOnnxRuntime()`); omitted → no section. */
 	onnxruntime?: VendoredFile[];
+	/** Maia-3: the exported policy models (`describeMaia()`); omitted → no section. */
+	maia?: MaiaNotice;
+}
+
+/** `models.json` as written by `tools/data/09_export_maia3.py`. */
+export interface MaiaManifest {
+	upstream: { name: string; repo: string; commit: string; license: string };
+	export: {
+		script: string;
+		opset: number;
+		precision: string;
+		torch: string;
+		onnx: string;
+		onnxruntime: string;
+	};
+	split: { partSuffix: string; partBytes: number };
+	models: Record<
+		string,
+		{
+			file: string;
+			bytes: number;
+			sha256: string;
+			parts: number;
+			params: number;
+			upstream: { repo: string; revision: string; checkpoint: string; bytes: number; sha256: string };
+			fixturePositions?: number;
+			maxAbsProbDiffOnnxVsTorch?: number;
+		}
+	>;
+}
+
+export interface MaiaNotice {
+	manifest: MaiaManifest;
+	/** The whole files as the build ships them (joined from parts where the registry says so). */
+	models: VendoredFile[];
+	/** What the repository actually stores: whole files, or the `.part<i>` slices. */
+	sources: VendoredFile[];
+	sideFiles: VendoredFile[];
 }
 
 /** `models.json` as written by `tools/data/08_export_chessmimic.py`. */
@@ -336,8 +437,8 @@ export function renderThirdParty(n: ThirdPartyNotice): string {
 
 ## Stockfish 18 — \`${PACKAGE_NAME}\` ${n.version}
 
-sliced.gg bundles a WebAssembly build of the Stockfish chess engine under \`${ENGINE_DIR}\` and
-drives it over UCI from an offscreen document. The engine is a separate program: sliced.gg's own
+sliced.sh bundles a WebAssembly build of the Stockfish chess engine under \`${ENGINE_DIR}\` and
+drives it over UCI from an offscreen document. The engine is a separate program: sliced.sh's own
 code is not derived from Stockfish and talks to it only through the package's public API
 (\`uci\`, \`setNnueBuffer\`, \`listen\`, \`onError\`).
 
@@ -349,8 +450,11 @@ code is not derived from Stockfish and talks to it only through the package's pu
 | NNUE network \`${big}\` (full-build big weights) | — | distributed by the Stockfish project | ${nnueMirror}${big} |
 | NNUE network \`${small}\` (full-build small weights) | — | distributed by the Stockfish project | ${nnueMirror}${small} |
 
-Targets vendored: \`sf_18_smallnet\` (Stockfish 18 with the sscg13/threat-small patch, plus the
-\`_relaxed-simd\` variant) and \`sf_18\` (the dual-net full build). The full build's networks
+Targets vendored: \`sf_18_smallnet_relaxed-simd\` (Stockfish 18 with the sscg13/threat-small
+patch) and \`sf_18_relaxed-simd\` (the dual-net full build). Only the relaxed-SIMD variants ship:
+relaxed SIMD has been in Chrome since 114 and the manifest's \`minimum_chrome_version\` is 128,
+so the package's plain-SIMD \`sf_18\` / \`sf_18_smallnet\` programs are not vendored (2026-09-13).
+The full build's networks
 \`${big}\` (big) and \`${small}\` (small) are bundled alongside the smallnet. Switching to full
 strength loads installed extension bytes without downloading networks. The repository stores
 the big net as \`${big}.gz\` using deterministic gzip (level 9, no timestamp or filename) to stay
@@ -366,8 +470,10 @@ network bytes come from the Stockfish project's mirror above. The complete corre
 - the Stockfish sources at ${STOCKFISH_REPO}/commit/${STOCKFISH_BASE_COMMIT} (tag \`${STOCKFISH_TAG}\`).
 
 The full AGPL-3.0 text ships with the extension as \`${ENGINE_DIR}${LICENSE_FILE}\`. On request,
-the sliced.gg maintainers will also provide these sources on a durable medium, as required by
-GPL-3.0 §6 / AGPL-3.0 §6; contact details are at ${website}.
+the sliced.sh maintainers will also provide these sources on a durable medium, as required by
+GPL-3.0 §6 / AGPL-3.0 §6; contact details are at ${website}. The same written offer covers the
+corresponding source of every other GPL/AGPL component in this document — the Maia-3 models in
+their own section below included.
 
 ### Network integrity
 
@@ -390,7 +496,7 @@ ${n.engineFiles.map(row).join("\n")}
 
 Types only (not shipped): \`src/types/stockfish-web.d.ts\` copied from the package's
 \`${TYPES_FILE}\` (${n.typesFile.bytes} bytes, SHA-256 \`${n.typesFile.sha256}\`).
-${n.models ? `\n${renderModelsSection(n.registry, n.models)}\n` : ""}${n.onnxruntime ? `\n${renderOnnxRuntimeSection(n.registry, n.onnxruntime)}\n` : ""}
+${n.models ? `\n${renderModelsSection(n.registry, n.models)}\n` : ""}${n.maia ? `\n${renderMaiaSection(n.registry.maia, n.maia, website)}\n` : ""}${n.onnxruntime ? `\n${renderOnnxRuntimeSection(n.registry, n.onnxruntime)}\n` : ""}
 ## Opening books — \`${n.registry.BOOKS.dir}\`
 
 Both Polyglot books are generated by \`scripts/build-club-book.py\` from games in the Lichess open
@@ -511,11 +617,11 @@ export function renderModelsSection(registry: ModelsRegistry, m: ModelsNotice): 
 	};
 	return `## ChessMimic timing model — \`${registry.MODELS_DIR}\`
 
-sliced.gg's human move-timing head is the clock model of **${up.name}** (Thomas Johnson, 2026;
+sliced.sh's human move-timing head is the clock model of **${up.name}** (Thomas Johnson, 2026;
 the engine behind ${up.site}), exported from the checkpoints published at ${up.repo} (commit
 \`${up.commit}\`). Required Notice: ${up.copyright}. The source code **and the trained weights** are licensed
 under the **${up.licenseName}** (${up.licenseUrl}; SPDX \`${up.license}\`) — the weights may
-only be used for non-commercial purposes, which is what sliced.gg is. The ONNX files below are
+only be used for non-commercial purposes, which is what sliced.sh is. The ONNX files below are
 derived works of those weights (same parameters, stored as float16, opset ${m.manifest.export.opset}) and are
 distributed under the same licence; the PolyForm text is reproduced in the upstream \`LICENSE\`.
 The searchless_chess FEN tokeniser ChessMimic builds on is Apache-2.0 (google-deepmind); the
@@ -534,6 +640,121 @@ are verified against the SHA-256 in \`src/core/constants/models.ts\` before use.
 | File | Bytes | SHA-256 |
 |---|---|---|
 ${[...m.bands, ...m.sideFiles].map(row).join("\n")}`;
+}
+
+// ── Maia-3 policy models (`assets/models/maia3/`) ────────────────────────────────────────────
+
+/**
+ * Sizes + hashes of the exported Maia-3 models as shipped (joined) and as stored, checked
+ * against the registry and the export manifest.
+ */
+export async function describeMaia(registry: MaiaRegistry): Promise<MaiaNotice> {
+	const dir = path.join(ROOT, registry.MAIA_DIR);
+	const manifestPath = path.join(dir, registry.MAIA_FILES.manifest);
+	if (!existsSync(manifestPath))
+		throw new Error(`${registry.MAIA_FILES.manifest} missing (run 09_export_maia3.py)`);
+	const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as MaiaManifest;
+	if (manifest.upstream.repo !== registry.MAIA_UPSTREAM.repo)
+		throw new Error(
+			`maia3 models.json repo ${manifest.upstream.repo} != registry ${registry.MAIA_UPSTREAM.repo}`
+		);
+	if (manifest.upstream.license !== registry.MAIA_UPSTREAM.license)
+		throw new Error(
+			`maia3 models.json license ${manifest.upstream.license} != registry ${registry.MAIA_UPSTREAM.license}`
+		);
+	const models: VendoredFile[] = [];
+	const sourceNames: string[] = [];
+	for (const size of registry.MAIA_SIZES) {
+		const reg = registry.MAIA_MODEL_FILES[size];
+		const man = manifest.models[size];
+		if (!reg || !man) throw new Error(`maia3 ${size}: missing in registry or manifest`);
+		// Reads the whole file or joins its parts; throws unless bytes and SHA-256 match the registry.
+		const data = await readMaiaSource(dir, reg, registry.MAIA_FILES);
+		const file = { name: reg.file, bytes: data.length, sha256: sha256Hex(data) };
+		if (man.sha256 !== file.sha256 || man.bytes !== file.bytes || man.parts !== reg.parts)
+			throw new Error(`maia3 ${size}: manifest ${man.sha256} != file ${file.sha256}`);
+		models.push(file);
+		sourceNames.push(...maiaSourceNames(reg, registry.MAIA_FILES));
+	}
+	const licenseText = await readFile(path.join(dir, registry.MAIA_FILES.license), "utf8");
+	if (!licenseText.includes("GNU AFFERO GENERAL PUBLIC LICENSE"))
+		throw new Error(`${registry.MAIA_DIR}${registry.MAIA_FILES.license} is not the AGPL-3.0 text`);
+	const sources = await describe(dir, sourceNames);
+	const sideFiles = await describe(dir, [registry.MAIA_FILES.manifest, registry.MAIA_FILES.license]);
+	return { manifest, models, sources, sideFiles };
+}
+
+export function renderMaiaSection(registry: MaiaRegistry, m: MaiaNotice, website: string): string {
+	const up = registry.MAIA_UPSTREAM;
+	const dir = registry.MAIA_DIR;
+	const row = (f: VendoredFile) =>
+		`| \`${f.name}\` | ${f.bytes.toLocaleString("en-US")} | \`${f.sha256}\` |`;
+	const sizeRow = (size: string) => {
+		const reg = registry.MAIA_MODEL_FILES[size];
+		const man = m.manifest.models[size];
+		if (!reg || !man) return "";
+		const diff =
+			man.maxAbsProbDiffOnnxVsTorch === undefined
+				? "—"
+				: man.maxAbsProbDiffOnnxVsTorch.toExponential(2);
+		return `| ${size.toUpperCase()} | \`${reg.file}\` | ${reg.params.toLocaleString("en-US")} | \`${reg.upstream.repo}\` | \`${reg.upstream.revision.slice(0, 12)}\` | \`${reg.upstream.checkpoint}\` (${reg.upstream.bytes.toLocaleString("en-US")} B) | \`${reg.upstream.sha256}\` | ${diff} |`;
+	};
+	const split = registry.MAIA_SIZES.filter((s) => (registry.MAIA_MODEL_FILES[s]?.parts ?? 1) > 1);
+	const splitNote = split
+		.map((s) => {
+			const reg = registry.MAIA_MODEL_FILES[s];
+			if (!reg) return "";
+			return `\`${reg.file}\` (${reg.bytes.toLocaleString("en-US")} B) is over the Git host's 100 MB per-file cap, so the repository stores it as ${reg.parts} consecutive slices — \`${reg.file}${registry.MAIA_FILES.partSuffix}<i>\`, each but the last exactly ${registry.MAIA_FILES.partBytes.toLocaleString("en-US")} bytes. The build (\`scripts/maia-assets.ts\`) joins them, checks the joined bytes against the registry and ships one whole file; \`verify-dist\` fails the build if a slice ships.`;
+		})
+		.join(" ");
+	return `## Maia-3 human move-policy models — \`${dir}\`
+
+sliced.sh's move *selection* below the Elite band draws on **${up.name}** (CSSLab, University of
+Toronto; Monroe, Eilender, Chalmers, Tang and Anderson, *${up.paperTitle}*, ${up.paper}), the
+human move-prediction transformer published at ${up.repo} (code commit
+\`${m.manifest.upstream.commit}\`) with its checkpoints on the Hugging Face hub (${up.hub}).
+Required notice: ${up.copyright}. The repository is licensed under the **${up.licenseName}**
+(${up.licenseUrl}; SPDX \`${up.license}\`); the model cards state no separate weight licence and
+point to the repository for it, so the weights are distributed under the same licence by that
+pointer. The ONNX files below are derived works of those weights (the same parameters, stored as
+float16 behind \`Cast\`, opset ${m.manifest.export.opset}, exported by \`${m.manifest.export.script}\`) and are
+distributed under the same licence; the AGPL text ships with the extension as \`${dir}${registry.MAIA_FILES.license}\`.
+Nothing in sliced.sh's own source is derived from the Maia-3 code: the model runs through
+onnxruntime-web, and the extension's input encoder is written from the paper's description.
+AGPL §13 (network interaction) does not arise — the model runs on the user's machine and serves
+nobody over a network.
+
+Export: \`${m.manifest.export.script}\` (torch ${m.manifest.export.torch}, onnx ${m.manifest.export.onnx},
+onnxruntime ${m.manifest.export.onnxruntime}; the input layout, parity and latency are in \`docs/models.md\`).
+Each size is one checkpoint, pinned by Hugging Face revision and SHA-256:
+
+| Size | File | Params | HF repo | Revision | Checkpoint | Checkpoint SHA-256 | max \\|Δprob\\| vs torch fp32 |
+|---|---|---|---|---|---|---|---|
+${registry.MAIA_SIZES.map(sizeRow).filter(Boolean).join("\n")}
+
+### Source offer
+
+The complete corresponding source of these models is the Maia-3 repository at
+${up.repo}/commit/${m.manifest.upstream.commit} together with the checkpoints at the Hugging Face
+revisions in the table above; the export tool that produced the ONNX files is in this repository.
+The written offer in the Stockfish section (a durable medium on request, as AGPL-3.0 §6
+requires; contact details at ${website}) covers them as well.
+
+### Repository layout
+
+${splitNote}
+
+Shipped in the extension (whole files, as the build writes them):
+
+| File | Bytes | SHA-256 |
+|---|---|---|
+${m.models.map(row).join("\n")}
+
+Stored in the repository:
+
+| File | Bytes | SHA-256 |
+|---|---|---|
+${[...m.sources, ...m.sideFiles].map(row).join("\n")}`;
 }
 
 export function renderOnnxRuntimeSection(
@@ -693,6 +914,11 @@ export async function vendorEngine(): Promise<void> {
 		...copied,
 		...ENGINE_NNUE_SOURCES.map((spec) => spec.source),
 	]);
+	const stale = staleEngineFiles(await readdir(destDir), ENGINE_FILES, ENGINE_NNUE_SOURCES);
+	if (stale.length > 0)
+		console.warn(
+			`${ENGINE_DIR}: ${stale.length} file(s) the registry no longer ships — delete them:\n  - ${stale.join("\n  - ")}`
+		);
 	const [typesFile] = await describe(path.dirname(TYPES_DEST), [path.basename(TYPES_DEST)]);
 	if (!typesFile) throw new Error("types file missing after copy");
 	const { BOOKS } = registry;
@@ -700,6 +926,7 @@ export async function vendorEngine(): Promise<void> {
 	const fonts = await describeFonts();
 	const onnxruntime = await vendorOnnxRuntime(registry);
 	const models = await describeModels(registry);
+	const maia = await describeMaia(registry.maia);
 	await writeFile(
 		DOCS_DEST,
 		renderThirdParty({
@@ -712,6 +939,7 @@ export async function vendorEngine(): Promise<void> {
 			fonts,
 			models,
 			onnxruntime,
+			maia,
 		})
 	);
 	console.log(`wrote ${path.relative(ROOT, DOCS_DEST)}`);

@@ -7,6 +7,7 @@
  */
 
 import type { ModelChunk } from "@core/constants/messages";
+import { packagedModelName } from "@core/constants/model-packing";
 import {
 	CHESSMIMIC_BAND_FILES,
 	CHESSMIMIC_FILES,
@@ -15,6 +16,7 @@ import {
 } from "@core/constants/models";
 import { MODEL_DB } from "@core/constants/storage-keys";
 import { type AssetSpec, AssetStore, type AssetStoreDeps } from "./asset-store";
+import { unpackModelResponse } from "./model-unpack";
 
 export const MODEL_CHECKSUM_ERROR = "model checksum mismatch";
 export const MODEL_NAME_ERROR = "unknown model";
@@ -41,7 +43,16 @@ function modelSpec(files: Readonly<Record<string, ChessMimicBandFile>>): AssetSp
 		nameError: MODEL_NAME_ERROR,
 		checksumError: MODEL_CHECKSUM_ERROR,
 		accepts: (name) => entryFor(name, files) !== undefined,
-		bundledPath: (name) => (entryFor(name, files)?.bundled ? MODELS_DIR + name : undefined),
+		bundledPath: (name) => {
+			const entry = entryFor(name, files);
+			return entry?.bundled ? MODELS_DIR + packagedModelName(name, entry.packed) : undefined;
+		},
+		decodeBundled: async (name, response) => {
+			const entry = entryFor(name, files);
+			return entry?.packed
+				? unpackModelResponse(response, entry.bytes)
+				: new Uint8Array(await response.arrayBuffer());
+		},
 		expectedHash: (name) => entryFor(name, files)?.sha256,
 		request: (name) => ({ kind: "model-request", name }),
 		db: MODEL_DB,

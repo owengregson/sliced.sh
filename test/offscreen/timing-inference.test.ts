@@ -158,7 +158,7 @@ describe("createTimingInference", () => {
 		expect(a.band).toBe("1500_1600");
 		expect(a.error).toBeUndefined();
 		expect(a.probs).toHaveLength(CM.nBuckets);
-		expect(a.probs?.[1]).toBeCloseTo(0.5, 6);
+		expect(a.probs?.[CHESSMIMIC_BANDS.indexOf("1500_1600")]).toBeCloseTo(0.5, 6);
 		expect(typeof a.ms).toBe("number");
 		// warm-up run + the real run
 		expect(ort.runs).toHaveLength(2);
@@ -200,10 +200,11 @@ describe("createTimingInference", () => {
 			runtime: async () => ort.runtime,
 			store: fakeStore(["1200_1300", "1800_1900"]).store,
 		});
+		// Nearest by population mean (`bandCentre`): 1690 is 439 from 1252 and 159 from 1849.
 		const r = await inf.handle(command({ band: "1500_1600", rating: 1690 }));
 		expect(r.probs).not.toBeNull();
 		expect(r.band).toBe("1800_1900");
-		expect(r.probs?.[2]).toBeCloseTo(0.5, 6);
+		expect(r.probs?.[CHESSMIMIC_BANDS.indexOf("1800_1900")]).toBeCloseTo(0.5, 6);
 		// standardised with the substituted band's scalers (rating clamped into 1800–1900)
 		const feeds = ort.runs[ort.runs.length - 1]?.feeds;
 		expect(feeds?.scaled_rating?.data[0]).toBeCloseTo(
@@ -216,8 +217,10 @@ describe("createTimingInference", () => {
 			}).scaledRating,
 			5
 		);
-		// the failed band is not retried on every query
-		await inf.handle(command({ band: "1500_1600" }, "q2"));
+		// The failed band is not retried on every query: the same query again reuses the substitute's
+		// session rather than attempting `1500_1600` a second time. Same rating as above, so the
+		// substitute is the same band — the subject here is the retry cooldown, not band arithmetic.
+		await inf.handle(command({ band: "1500_1600", rating: 1690 }, "q2"));
 		expect(ort.created).toHaveLength(1);
 	});
 	it("reports an error when no band can be loaded, and when the runtime cannot initialise", async () => {
@@ -429,9 +432,12 @@ describe("createTimingInference", () => {
 		await inf.handle(command({ band: "1500_1600" }, "b"));
 		await inf.handle(command({ band: "1200_1300" }, "c")); // 1200 most recent
 		await inf.handle(command({ band: "1800_1900" }, "d")); // evicts 1500
-		expect(ort.released).toEqual([1]);
+		expect(ort.released).toEqual([CHESSMIMIC_BANDS.indexOf("1500_1600")]);
 		await inf.handle(command({ band: "1500_1600" }, "e")); // reloads 1500, evicts 1200
-		expect(ort.released).toEqual([1, 0]);
+		expect(ort.released).toEqual([
+			CHESSMIMIC_BANDS.indexOf("1500_1600"),
+			CHESSMIMIC_BANDS.indexOf("1200_1300"),
+		]);
 		expect(ort.created).toHaveLength(4);
 	});
 	it("shares one session creation between concurrent queries for the same band", async () => {
@@ -453,7 +459,7 @@ describe("createTimingInference", () => {
 		});
 		await inf.handle(command());
 		inf.dispose();
-		expect(ort.released).toEqual([1]);
+		expect(ort.released).toEqual([CHESSMIMIC_BANDS.indexOf("1500_1600")]);
 		const r = await inf.handle(command({}, "after"));
 		expect(r.probs).toBeNull();
 		expect(r.error).toBeDefined();

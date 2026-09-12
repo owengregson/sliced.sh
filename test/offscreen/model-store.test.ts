@@ -19,6 +19,7 @@ import {
 } from "@offscreen/model-store";
 import type { OpfsDirectory, OpfsFileHandle } from "@offscreen/nnue-store";
 import { attachModelDownload, encodeModelChunks } from "@service/handlers/engine/model-download";
+import { packModel } from "../../scripts/model-packing";
 
 const ROOT = "chrome-extension://test/";
 
@@ -152,7 +153,8 @@ async function until(cond: () => boolean, tries = 500): Promise<void> {
 }
 
 describe("ModelStore", () => {
-	it("the shipped registry names the three bundled bands with 64-hex hashes", () => {
+	it("the shipped registry includes the novice band and verifies every bundled model", () => {
+		expect(CHESSMIMIC_BAND_FILES["0_1000"]).toBeDefined();
 		for (const [band, f] of Object.entries(CHESSMIMIC_BAND_FILES)) {
 			expect(f.bundled).toBe(true);
 			expect(f.sha256).toMatch(/^[0-9a-f]{64}$/);
@@ -166,6 +168,20 @@ describe("ModelStore", () => {
 		const h = setup({ files, bundledData: { "1500_1600.onnx": data } });
 		expect(await h.store.get("1500_1600.onnx")).toEqual(data);
 		expect(h.fetched).toEqual([`${ROOT}${MODELS_DIR}1500_1600.onnx`]);
+		expect(h.requests).toEqual([]);
+	});
+	it("restores and verifies a packed bundled band without reading cache or downloading", async () => {
+		const data = bytes(8, 10_003);
+		const files = await registryFor({ "1500_1600": { data, bundled: true } });
+		const entry = files["1500_1600"];
+		if (!entry) throw new Error("missing fixture entry");
+		entry.packed = true;
+		const h = setup({
+			files,
+			bundledData: { "1500_1600.onnx.pack.gz": Uint8Array.from(packModel(data)) },
+		});
+		expect(await h.store.get("1500_1600.onnx")).toEqual(data);
+		expect(h.fetched).toEqual([`${ROOT}${MODELS_DIR}1500_1600.onnx.pack.gz`]);
 		expect(h.requests).toEqual([]);
 	});
 	it("returns a verified OPFS copy of an on-demand band without downloading", async () => {
