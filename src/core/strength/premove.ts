@@ -8,6 +8,12 @@
  * only when every legal opponent reply preserves its legality. The engine
  * searches are injected (`analyseAfter`). Safe queued trades have a separate, higher attempt
  * propensity, but require the same prediction confidence and a plausible material exchange.
+ *
+ * H8 (2026-09-13): Maia is the premove **gate**, never the chooser. When the caller already holds
+ * the human policy's answer for the predicted position `m r` (`PremoveContext.policy`, the H7.3
+ * pre-inference), a candidate `q` is armed only if `p_maia(q | m r) ≥ PREMOVE.maiaMinProb`
+ * (`maiaPremoveGate`) — a human premoves a move they would have played anyway. The session
+ * applies the same gate after the fact when the answer arrives later than the arm.
  */
 
 import { loadPosition } from "@core/chess/fen";
@@ -17,6 +23,7 @@ import { classifyMove } from "@core/chess/move-classify";
 import { phase } from "@core/chess/phase";
 import { applyMoves, legalMoves, parseUci } from "@core/chess/san";
 import { PREMOVE } from "@core/constants/books";
+import type { PolicyResult } from "@core/policy/types";
 import type { Rng } from "@core/rng";
 import { tcClass } from "@core/timing/features";
 import { clockRacePolicy } from "@core/timing/opponent-pressure";
@@ -45,6 +52,38 @@ export interface PremoveContext {
 	historyAfterMove?: PositionHistory;
 	ownClockMs?: number;
 	opponentClockMs?: number;
+	/**
+	 * H8: the human policy's answer for one predicted position (`fen` = the board after `m r`).
+	 * Gates a candidate in that position through `maiaPremoveGate`; a candidate in any other
+	 * position is not gated (the answer is for the wrong board).
+	 */
+	policy?: PredictedPolicy | undefined;
+}
+
+/** A Maia answer bound to the position it was asked about. */
+export interface PredictedPolicy {
+	fen: string;
+	result: PolicyResult;
+}
+
+/** Placement + side to move + castling + en passant: the position, not its move counters. */
+function positionOf(fen: string): string {
+	return fen.split(" ").slice(0, 4).join(" ");
+}
+
+/**
+ * H8: `true` when `premove` may be armed in `fen` given `policy` — either there is no answer for
+ * that position (no gate), or Maia gives the move at least `PREMOVE.maiaMinProb` there.
+ */
+export function maiaPremoveGate(
+	fen: string,
+	premove: string,
+	policy: PredictedPolicy | undefined
+): boolean {
+	if (!policy || positionOf(policy.fen) !== positionOf(fen)) return true;
+	let p = 0;
+	for (const [uci, prob] of policy.result.moves) if (uci === premove) p = Math.max(p, prob);
+	return p >= PREMOVE.maiaMinProb;
 }
 
 export interface AnalyseOptions {
@@ -357,6 +396,9 @@ export async function premoveCandidate(
 		if (!reason) continue;
 		if (reason === "recapture" && legalReplies.length > 1 && !plausibleExchange(afterMove, reply, q))
 			continue;
+		// H8: a human premoves a move they would have played anyway — the model's word, when it has
+		// already answered for this very position.
+		if (!maiaPremoveGate(afterReply, q, ctx.policy)) continue;
 		const parts = parseUci(q);
 		if (!parts) continue;
 		const candidate: PremoveCandidate = {

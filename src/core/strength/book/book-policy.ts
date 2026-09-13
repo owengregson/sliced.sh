@@ -10,19 +10,26 @@
  *
  * The bundled books are the only book source: there is no network request on
  * this path (§13.3 — one fewer outbound signal).
+ *
+ * H14.1 (2026-09-13): the *sampler's* draw is seeded from the persisted per-profile repertoire
+ * keys (`repertoire.ts`) rather than from the per-game `rng`, so the same position draws the
+ * same book move game after game — a repertoire — while the weak-target early exit keeps its
+ * per-game draw. Without keys (no storage, a failed read) the per-game `rng` decides as before.
  */
 
 import { legalMoves, parseUci, uciToSan } from "@core/chess/san";
 import { runtimeGetURL } from "@core/chrome/runtime";
 import { BOOK, BOOKS, type BookName } from "@core/constants/books";
 import { log } from "@core/logger";
-import type { Rng } from "@core/rng";
+import { createRng, type Rng } from "@core/rng";
+import { loadRepertoireKeys } from "@core/storage/repertoire-storage";
 import { clamp } from "@core/util/clamp";
 import type { EvalLine } from "@typedefs/engine";
 import type { ChosenMove } from "@typedefs/game";
 import { cpEffective, winProb } from "../elo-map";
 import { moveQuality, rankedLines } from "../quality";
 import { type BookMove, loadBook, type PolyglotBook } from "./polyglot";
+import { type RepertoireKeys, repertoireSeed } from "./repertoire";
 
 /** `γ(E) = 0.75 + 0.25·clamp((E − 1200)/1200, 0, 1)`: weaker targets sample flatter. */
 export function gammaFor(E: number): number {
@@ -71,10 +78,17 @@ export interface BookContext {
 export interface BookPolicyDeps {
 	/** Bytes of the bundled book `name`; defaults to `fetch(runtimeGetURL(BOOKS.dir + name))`. */
 	loadBook?: (name: string) => Promise<Uint8Array | null>;
+	/**
+	 * H14.1: the profile's repertoire keys; defaults to `loadRepertoireKeys` (created once in
+	 * `chrome.storage.local`). `null` → the per-game `rng` seeds the sampler, as before H14.1.
+	 */
+	repertoire?: () => Promise<RepertoireKeys | null>;
 }
 
 export interface BookPolicy {
 	bookMove(ctx: BookContext): Promise<ChosenMove | null>;
+	/** H14.1: read (or create) the repertoire keys ahead of the first move; idempotent. */
+	prepare?(): Promise<void>;
 	dispose(): void;
 }
 
@@ -148,9 +162,31 @@ function fmt(n: number): string {
 
 export function createBookPolicy(deps: BookPolicyDeps = {}): BookPolicy {
 	const load = deps.loadBook ?? fetchBundledBook;
+	const loadRepertoire = deps.repertoire ?? (() => loadRepertoireKeys());
 	/** Loaded books (or `null` after a failed load, so it is not retried every move). */
 	const books = new Map<BookName, Promise<PolyglotBook | null>>();
+	/** The repertoire keys, read once per policy (a failed read is `null` and not retried). */
+	let repertoire: Promise<RepertoireKeys | null> | null = null;
 	let disposed = false;
+
+	function repertoireKeys(): Promise<RepertoireKeys | null> {
+		if (!repertoire) {
+			repertoire = loadRepertoire().catch((err: unknown) => {
+				log.warn("book: repertoire keys unavailable", err);
+				return null;
+			});
+		}
+		return repertoire;
+	}
+
+	/**
+	 * H14.1: the sampler's rng — seeded from the repertoire key and the position when the keys
+	 * exist and the FEN names a side to move, else the caller's per-game `rng`.
+	 */
+	function samplerRng(ctx: BookContext, keys: RepertoireKeys | null): Rng {
+		const seed = keys ? repertoireSeed(keys, ctx.fen) : null;
+		return seed === null ? ctx.rng : createRng(seed);
+	}
 
 	function bookFor(name: BookName): Promise<PolyglotBook | null> {
 		let pending = books.get(name);
@@ -212,16 +248,17 @@ export function createBookPolicy(deps: BookPolicyDeps = {}): BookPolicy {
 			return null;
 		}
 		const name = bookNameFor(E);
-		const book = await bookFor(name);
+		const [book, keys] = await Promise.all([bookFor(name), repertoireKeys()]);
 		if (!book || disposed) return null;
 		const entries = book.lookup(ctx.fen);
 		if (entries.length === 0) return null;
+		const rng = samplerRng(ctx, keys);
 		const pick = sampleByFrequency<BookMove>(
 			entries,
 			(m) => m.weight,
 			(w, total) => w >= BOOK.minWeightShare * total,
 			E,
-			ctx.rng
+			rng
 		);
 		if (!pick) return null;
 		const facts = lineFacts(pick.uci, ctx.lines);
@@ -230,13 +267,20 @@ export function createBookPolicy(deps: BookPolicyDeps = {}): BookPolicy {
 			return null;
 		}
 		const total = entries.reduce((sum, m) => sum + m.weight, 0);
-		return finish(pick.uci, ctx, facts, [`polyglot ${BOOKS[name]}: weight ${pick.weight}/${total}`]);
+		const source = rng === ctx.rng ? "" : " · repertoire";
+		return finish(pick.uci, ctx, facts, [
+			`polyglot ${BOOKS[name]}: weight ${pick.weight}/${total}${source}`,
+		]);
 	}
 
 	return {
 		async bookMove(ctx) {
 			if (disposed || !ctx.useOpeningBook || ctx.ply > BOOK.maxPly) return null;
 			return fromPolyglot(ctx);
+		},
+		async prepare() {
+			if (disposed) return;
+			await repertoireKeys();
 		},
 		dispose() {
 			disposed = true;

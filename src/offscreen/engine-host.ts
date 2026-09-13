@@ -26,10 +26,13 @@
  * state survives a service-worker restart. Only the newest accepted port is
  * routed; its disconnect aborts pending NNUE downloads. The first `configure`
  * carrying `warmTiming` pre-warms the timing head's default band (Task 34);
- * without it nothing is loaded, so a v1 user pays nothing.
+ * without it nothing is loaded, so a v1 user pays nothing. Likewise `warmPolicy`
+ * pre-loads that Maia-3 size (2026-09-11), and `policy` / `policy-warm` route to
+ * the policy host; a served document without one answers `not-available`.
  */
 
 import { DEFAULT_ENGINE_STATUS } from "@core/constants/defaults";
+import type { MaiaSize } from "@core/constants/maia";
 import type {
 	EnginePortCommand,
 	EnginePortMessage,
@@ -44,6 +47,7 @@ import { type AcceptedPort, acceptPorts } from "@core/messaging/ports";
 import { DEFAULT_SCHEDULER, type TimerScheduler } from "@core/util/scheduler";
 import type StockfishWeb from "@lichess-org/stockfish-web";
 import type { EngineStatus, EngineVariant } from "@typedefs/engine";
+import { POLICY_NOT_AVAILABLE, type PolicyInference } from "./policy-inference";
 import type { BootedEngine, NnueSource } from "./stockfish-loader";
 import { TIMING_NOT_AVAILABLE, type TimingInference } from "./timing-inference";
 
@@ -91,6 +95,13 @@ export class EngineHost {
 	private queued: string[] = [];
 	private pendingNnue: string[] | undefined;
 	private attempt = 0;
+	/**
+	 * The variant the service worker asked for while the host runs the small-net build in its
+	 * place: the full build crashed twice in a row (2026-09-12, pthread worker faults on the
+	 * owner's machine), and a game with no engine is worse than a game on the small net. An
+	 * explicit `restart` (the panel's button) tries the requested build again.
+	 */
+	private fallbackFrom: EngineVariant | undefined;
 	private rebootTimer: unknown;
 	private readonly pendingInfo = new Map<number, string>();
 	private flushTimer: unknown;
@@ -115,7 +126,7 @@ export class EngineHost {
 				this.uci(cmd.line);
 				return;
 			case "restart":
-				this.restart();
+				this.restartRequested();
 				return;
 			case "loadNnue":
 				this.loadNnue(cmd.names);
@@ -146,8 +157,16 @@ export class EngineHost {
 			this.startBoot();
 			return;
 		}
-		if (variant !== this.st.variant) {
-			this.st.variant = variant;
+		if (this.fallbackFrom !== undefined && variant === this.st.variant) {
+			// The SW now asks for the build the host fell back *to*: the fallback is simply the
+			// configuration, nothing to remember any more.
+			this.clearFallback();
+		}
+		// A request for the build that crashed is answered by the fallback already running.
+		const effective = variant === this.fallbackFrom ? this.st.variant : variant;
+		if (effective !== this.st.variant) {
+			this.clearFallback();
+			this.st.variant = effective;
 			this.restart();
 			return;
 		}
@@ -191,6 +210,42 @@ export class EngineHost {
 		this.attempt = 0;
 		this.teardownEngine();
 		this.startBoot();
+	}
+
+	/** The panel's Restart: also the one way back from the small-net fallback to the requested build. */
+	private restartRequested(): void {
+		if (this.fallbackFrom !== undefined) {
+			log.info("engine-host: restart requested; trying the requested build again", {
+				variant: this.fallbackFrom,
+			});
+			this.st.variant = this.fallbackFrom;
+			this.clearFallback();
+		}
+		this.restart();
+	}
+
+	private clearFallback(): void {
+		this.fallbackFrom = undefined;
+		delete this.st.fallbackFrom;
+	}
+
+	/**
+	 * A second consecutive crash of the full build: reboot as the small-net build instead of
+	 * burning the remaining backoff steps on the same fault. The status carries `fallbackFrom` so
+	 * the service worker's configuration wait accepts the substitute and the panel can say so.
+	 */
+	private fallBackIfRepeated(): boolean {
+		if (this.st.variant !== "full" || this.fallbackFrom !== undefined || this.attempt < 1)
+			return false;
+		log.warn("engine-host: the full build crashed again; running the small-net build instead", {
+			attempt: this.attempt,
+		});
+		this.fallbackFrom = "full";
+		this.st.fallbackFrom = "full";
+		this.st.variant = "smallnet";
+		this.st.nnue = [];
+		this.attempt = 0;
+		return true;
 	}
 
 	private loadNnue(names: string[]): void {
@@ -285,6 +340,7 @@ export class EngineHost {
 		this.clearFlush();
 		this.pendingInfo.clear();
 		if (message.startsWith(BAD_NNUE_PREFIX)) this.evictNets();
+		this.fallBackIfRepeated();
 		this.setState("crashed", message);
 		const steps = TIMINGS.engineRestartBackoffMs;
 		if (this.attempt >= steps.length) {
@@ -416,11 +472,16 @@ export interface ServeEngineDeps<
 	createModelStore?(post: (msg: EnginePortMessage) => void): M;
 	/** Task 34: the timing head, built over the model store; absent → `timing` answers not-available. */
 	createTiming?(store: M): TimingInference;
+	/**
+	 * 2026-09-11: the Maia-3 policy host (it owns its own bundled-only store, so nothing routes
+	 * to it but the queries); absent → `policy` / `policy-warm` answer not-available.
+	 */
+	createPolicy?(): PolicyInference;
 }
 
 export interface ServedEngine {
 	host: EngineHost;
-	/** Stop accepting connections, dispose the host and the timing head. */
+	/** Stop accepting connections, dispose the host, the timing head and the policy host. */
 	stop(): void;
 }
 
@@ -438,8 +499,11 @@ export function serveEnginePort<S extends NnueStoreLike, M extends ModelStoreLik
 	const host = deps.createHost(post, store);
 	const modelStore = deps.createModelStore?.(post);
 	const timing = modelStore && deps.createTiming ? deps.createTiming(modelStore) : undefined;
+	const policy = deps.createPolicy?.();
 	/** The default band is warmed once, on the first `configure` that asks for it. */
 	let preWarmed = false;
+	/** The Maia size the last `configure.warmPolicy` asked for; a repeat is not warmed again. */
+	let preWarmedPolicy: MaiaSize | undefined;
 
 	/**
 	 * Load and warm `CHESSMIMIC_DEFAULT_BAND` before the first move needs it. A band's session is
@@ -452,6 +516,18 @@ export function serveEnginePort<S extends NnueStoreLike, M extends ModelStoreLik
 		if (!timing || preWarmed) return;
 		preWarmed = true;
 		void timing.warm(CHESSMIMIC_DEFAULT_BAND);
+	};
+
+	/**
+	 * Same idea for Maia-3: `configure.warmPolicy` names the size to have resident before the
+	 * first move (`MAIA.defaultSize` on connect, the target's size once it is known). One
+	 * session is resident at a time, so a different size evicts the last; the same size again
+	 * — every reconnect re-sends `configure` — is a no-op here as well as in the host.
+	 */
+	const preWarmPolicy = (size: MaiaSize): void => {
+		if (!policy || preWarmedPolicy === size) return;
+		preWarmedPolicy = size;
+		void policy.warm(size).then(post);
 	};
 
 	const route = (cmd: EnginePortCommand): void => {
@@ -470,8 +546,17 @@ export function serveEnginePort<S extends NnueStoreLike, M extends ModelStoreLik
 			case "timing-warm":
 				void timing?.warm(cmd.band);
 				return;
+			case "policy":
+				if (policy) void policy.handle(cmd).then(post);
+				else post({ kind: "policy-result", id: cmd.id, moves: null, error: POLICY_NOT_AVAILABLE });
+				return;
+			case "policy-warm":
+				if (policy) void policy.warm(cmd.size).then(post);
+				else post({ kind: "policy-status", size: null, error: POLICY_NOT_AVAILABLE });
+				return;
 			case "configure":
 				if (cmd.warmTiming) preWarm();
+				if (cmd.warmPolicy) preWarmPolicy(cmd.warmPolicy);
 				host.handle(cmd);
 				return;
 			default:
@@ -512,6 +597,7 @@ export function serveEnginePort<S extends NnueStoreLike, M extends ModelStoreLik
 			store.abortAll(NO_PORT_DROP_REASON);
 			modelStore?.abortAll(NO_PORT_DROP_REASON);
 			timing?.dispose();
+			policy?.dispose();
 			host.dispose();
 		},
 	};

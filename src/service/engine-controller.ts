@@ -11,12 +11,16 @@
  * controller ruling: nothing here is instantiated yet.
  */
 
+import { LIMITS } from "@core/constants/limits";
 import { SEARCH_BUDGET } from "@core/constants/search";
+import { TIMINGS } from "@core/constants/timings";
 import type { AnalysisCache } from "@core/engine/analysis-cache";
+import { automaticDepthForElo } from "@core/engine/depth-policy";
 import {
 	type EngineOptions,
 	type OptionsEnv,
 	optionsForSettings,
+	requestEloForTarget,
 	variantForSettings,
 } from "@core/engine/options";
 import type {
@@ -43,8 +47,8 @@ export interface EngineControllerDeps {
 	now?: () => number;
 	/**
 	 * Minimum `final.depth` for a cache hit on a depth-less, non-infinite request
-	 * (default `FEATURE_DEPTH`, the timing model's `D_f`). Infinite requests need
-	 * `settings.engine.depthCap`; `limit.depth` requests need that depth.
+	 * (default `FEATURE_DEPTH`, the timing model's `D_f`). Explicit depth ceilings
+	 * remain authoritative even when lower than the feature depth.
 	 */
 	cacheMinDepth?: number;
 	/** Resolves only when the requested variant and its verified networks are loaded. */
@@ -171,14 +175,21 @@ export class EngineController {
 		return handle;
 	}
 
-	/** `go infinite` at the current strength as a `ponder` request (cached like any other). */
-	ponder(fen: string, moves: string[], multiPv: number): AnalysisHandle {
+	/** Bounded ponder; session callers pass their active target instead of the stored fixed rating. */
+	ponder(
+		fen: string,
+		moves: string[],
+		multiPv: number,
+		targetElo = this.settings?.strength.targetElo ?? LIMITS.eloMax
+	): AnalysisHandle {
+		const elo = requestEloForTarget(targetElo);
 		return this.analyse({
 			id: newId(),
 			fen,
 			moves,
 			multiPv,
-			limit: { infinite: true },
+			limit: { depth: automaticDepthForElo(targetElo), movetimeMs: TIMINGS.ponderMaxMs },
+			...(elo === undefined ? {} : { elo }),
 			priority: "ponder",
 		});
 	}
@@ -422,18 +433,33 @@ export class EngineController {
 	 * the point — an own-move request carries `depth: depthCap` as a *stop* condition on a
 	 * `movetime` search, so a cached result is essentially never exactly that deep and requiring it
 	 * made the cache unreachable for the one path it exists for (a position already analysed during
-	 * the opponent's turn). Never below `cacheMinDepth`: the timing features need `D_f`.
+	 * the opponent's turn). Low explicit ceilings remain valid below feature depth `D_f`.
 	 */
 	private minDepthFor(req: AnalysisRequest): number {
-		if (req.limit.infinite) return this.settings?.engine.depthCap ?? this.cacheMinDepth;
 		const depth = req.limit.depth;
-		if (depth === undefined) return this.cacheMinDepth;
-		return Math.max(this.cacheMinDepth, depth - SEARCH_BUDGET.cacheDepthSlack);
+		if (depth === undefined)
+			return req.limit.infinite ? automaticDepthForElo(req.elo ?? LIMITS.eloMax) : this.cacheMinDepth;
+		return Math.min(depth, Math.max(this.cacheMinDepth, depth - SEARCH_BUDGET.cacheDepthSlack));
 	}
 
 	private lookup(req: AnalysisRequest): AnalysisResult | undefined {
-		if (!this.cache || req.searchmoves?.length) return undefined;
-		return this.cache.get(req.fen, req.multiPv, this.minDepthFor(req), req.elo, req.moves);
+		if (!this.cache) return undefined;
+		// A restricted search is answered from the cache only when it is a Maia-shaped own-move
+		// search (H10): its root set is part of the identity, and the pre-analysis of the predicted
+		// position asks for exactly the same set. The extra referee search is never answered.
+		if (req.searchmoves?.length && req.shaped !== true) return undefined;
+		// The human frame is part of the identity (H4): a hit must carry the frame this request asks
+		// for, which is why the Maia-mode pre-analysis has to ask for the same `featureDepth`.
+		return this.cache.get(
+			req.fen,
+			req.multiPv,
+			this.minDepthFor(req),
+			req.elo,
+			req.moves,
+			req.limit.depth,
+			req.featureDepth,
+			req.searchmoves
+		);
 	}
 
 	/** Keep the search history: the same board can have a different repetition outcome. */

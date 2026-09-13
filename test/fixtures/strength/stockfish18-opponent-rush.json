@@ -1,0 +1,2446 @@
+{
+	"provenance": {
+		"engine": "Stockfish18 smallnet",
+		"threads": 1,
+		"hashMb": 32,
+		"clock": "3+0 own90s opponent1s",
+		"sampleN": 300,
+		"seed": "pressure-comparison",
+		"date": "2026-09-11",
+		"note": "Actual completed short native searches; depths3-6 are shallow evidence, not playing-rating calibration."
+	},
+	"positions": [
+		{
+			"name": "start",
+			"fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+			"E": 1650,
+			"budget": {
+				"movetimeMs": 33,
+				"depthCap": 16,
+				"multiPv": 20
+			},
+			"complete": true,
+			"depth": 3,
+			"bestmove": "b2b3",
+			"lines": [
+				{
+					"multipv": 1,
+					"score": {
+						"cp": 26
+					},
+					"depth": 3,
+					"pvUci": [
+						"e2e4",
+						"c7c6"
+					],
+					"pvSan": [
+						"e4",
+						"c6"
+					],
+					"seldepth": 4,
+					"wdl": [
+						55,
+						937,
+						8
+					]
+				},
+				{
+					"multipv": 2,
+					"score": {
+						"cp": 24
+					},
+					"depth": 3,
+					"pvUci": [
+						"g2g3"
+					],
+					"pvSan": [
+						"g3"
+					],
+					"seldepth": 5,
+					"wdl": [
+						51,
+						941,
+						8
+					]
+				},
+				{
+					"multipv": 3,
+					"score": {
+						"cp": 24
+					},
+					"depth": 3,
+					"pvUci": [
+						"d2d4"
+					],
+					"pvSan": [
+						"d4"
+					],
+					"seldepth": 4,
+					"wdl": [
+						51,
+						940,
+						9
+					]
+				},
+				{
+					"multipv": 4,
+					"score": {
+						"cp": 17
+					},
+					"depth": 3,
+					"pvUci": [
+						"c2c3"
+					],
+					"pvSan": [
+						"c3"
+					],
+					"seldepth": 4,
+					"wdl": [
+						40,
+						949,
+						11
+					]
+				},
+				{
+					"multipv": 5,
+					"score": {
+						"cp": 15
+					},
+					"depth": 3,
+					"pvUci": [
+						"c2c4"
+					],
+					"pvSan": [
+						"c4"
+					],
+					"seldepth": 4,
+					"wdl": [
+						38,
+						950,
+						12
+					]
+				},
+				{
+					"multipv": 6,
+					"score": {
+						"cp": 15
+					},
+					"depth": 3,
+					"pvUci": [
+						"b1c3"
+					],
+					"pvSan": [
+						"Nc3"
+					],
+					"seldepth": 4,
+					"wdl": [
+						38,
+						950,
+						12
+					]
+				},
+				{
+					"multipv": 7,
+					"score": {
+						"cp": 14
+					},
+					"depth": 3,
+					"pvUci": [
+						"a2a4"
+					],
+					"pvSan": [
+						"a4"
+					],
+					"seldepth": 4,
+					"wdl": [
+						36,
+						952,
+						12
+					]
+				},
+				{
+					"multipv": 8,
+					"score": {
+						"cp": 14
+					},
+					"depth": 3,
+					"pvUci": [
+						"h2h4"
+					],
+					"pvSan": [
+						"h4"
+					],
+					"seldepth": 4,
+					"wdl": [
+						36,
+						952,
+						12
+					]
+				},
+				{
+					"multipv": 9,
+					"score": {
+						"cp": 8
+					},
+					"depth": 3,
+					"pvUci": [
+						"h2h3"
+					],
+					"pvSan": [
+						"h3"
+					],
+					"seldepth": 4,
+					"wdl": [
+						28,
+						956,
+						16
+					]
+				},
+				{
+					"multipv": 10,
+					"score": {
+						"cp": 8
+					},
+					"depth": 3,
+					"pvUci": [
+						"b2b3"
+					],
+					"pvSan": [
+						"b3"
+					],
+					"seldepth": 4,
+					"wdl": [
+						28,
+						956,
+						16
+					]
+				},
+				{
+					"multipv": 11,
+					"score": {
+						"cp": 4
+					},
+					"depth": 3,
+					"pvUci": [
+						"e2e3"
+					],
+					"pvSan": [
+						"e3"
+					],
+					"seldepth": 7,
+					"wdl": [
+						24,
+						958,
+						18
+					]
+				},
+				{
+					"multipv": 12,
+					"score": {
+						"cp": 2
+					},
+					"depth": 3,
+					"pvUci": [
+						"a2a3",
+						"d7d5",
+						"g1f3"
+					],
+					"pvSan": [
+						"a3",
+						"d5",
+						"Nf3"
+					],
+					"seldepth": 4,
+					"wdl": [
+						23,
+						957,
+						20
+					]
+				},
+				{
+					"multipv": 13,
+					"score": {
+						"cp": 0
+					},
+					"depth": 3,
+					"pvUci": [
+						"g1f3"
+					],
+					"pvSan": [
+						"Nf3"
+					],
+					"seldepth": 4,
+					"wdl": [
+						21,
+						958,
+						21
+					]
+				},
+				{
+					"multipv": 14,
+					"score": {
+						"cp": -19
+					},
+					"depth": 3,
+					"pvUci": [
+						"b1a3",
+						"d7d5",
+						"h2h3"
+					],
+					"pvSan": [
+						"Na3",
+						"d5",
+						"h3"
+					],
+					"seldepth": 4,
+					"wdl": [
+						10,
+						948,
+						42
+					]
+				},
+				{
+					"multipv": 15,
+					"score": {
+						"cp": -41
+					},
+					"depth": 3,
+					"pvUci": [
+						"d2d3",
+						"e7e5"
+					],
+					"pvSan": [
+						"d3",
+						"e5"
+					],
+					"seldepth": 7,
+					"wdl": [
+						4,
+						902,
+						94
+					]
+				},
+				{
+					"multipv": 16,
+					"score": {
+						"cp": -42
+					},
+					"depth": 3,
+					"pvUci": [
+						"g2g4"
+					],
+					"pvSan": [
+						"g4"
+					],
+					"seldepth": 4,
+					"wdl": [
+						4,
+						897,
+						99
+					]
+				},
+				{
+					"multipv": 17,
+					"score": {
+						"cp": -46
+					},
+					"depth": 3,
+					"pvUci": [
+						"f2f3",
+						"e7e5",
+						"e2e4"
+					],
+					"pvSan": [
+						"f3",
+						"e5",
+						"e4"
+					],
+					"seldepth": 5,
+					"wdl": [
+						4,
+						885,
+						111
+					]
+				},
+				{
+					"multipv": 18,
+					"score": {
+						"cp": -49
+					},
+					"depth": 3,
+					"pvUci": [
+						"f2f4"
+					],
+					"pvSan": [
+						"f4"
+					],
+					"seldepth": 7,
+					"wdl": [
+						3,
+						872,
+						125
+					]
+				},
+				{
+					"multipv": 19,
+					"score": {
+						"cp": -54
+					},
+					"depth": 3,
+					"pvUci": [
+						"b2b4",
+						"e7e5"
+					],
+					"pvSan": [
+						"b4",
+						"e5"
+					],
+					"seldepth": 5,
+					"wdl": [
+						3,
+						850,
+						147
+					]
+				},
+				{
+					"multipv": 20,
+					"score": {
+						"cp": -57
+					},
+					"depth": 3,
+					"pvUci": [
+						"g1h3"
+					],
+					"pvSan": [
+						"Nh3"
+					],
+					"seldepth": 4,
+					"wdl": [
+						2,
+						835,
+						163
+					]
+				}
+			]
+		},
+		{
+			"name": "start",
+			"fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+			"E": 2800,
+			"budget": {
+				"movetimeMs": 33,
+				"depthCap": 25,
+				"multiPv": 12
+			},
+			"complete": true,
+			"depth": 5,
+			"bestmove": "d2d4",
+			"lines": [
+				{
+					"multipv": 1,
+					"score": {
+						"cp": 26
+					},
+					"depth": 5,
+					"pvUci": [
+						"d2d4",
+						"d7d5",
+						"c1f4",
+						"g8f6"
+					],
+					"pvSan": [
+						"d4",
+						"d5",
+						"Bf4",
+						"Nf6"
+					],
+					"seldepth": 9,
+					"wdl": [
+						56,
+						936,
+						8
+					]
+				},
+				{
+					"multipv": 2,
+					"score": {
+						"cp": 25
+					},
+					"depth": 5,
+					"pvUci": [
+						"g1f3",
+						"g8f6",
+						"d2d4",
+						"d7d5"
+					],
+					"pvSan": [
+						"Nf3",
+						"Nf6",
+						"d4",
+						"d5"
+					],
+					"seldepth": 8,
+					"wdl": [
+						54,
+						938,
+						8
+					]
+				},
+				{
+					"multipv": 3,
+					"score": {
+						"cp": 16
+					},
+					"depth": 5,
+					"pvUci": [
+						"c2c3",
+						"d7d5",
+						"d2d4",
+						"g8f6",
+						"c1f4"
+					],
+					"pvSan": [
+						"c3",
+						"d5",
+						"d4",
+						"Nf6",
+						"Bf4"
+					],
+					"seldepth": 8,
+					"wdl": [
+						38,
+						950,
+						12
+					]
+				},
+				{
+					"multipv": 4,
+					"score": {
+						"cp": 14
+					},
+					"depth": 5,
+					"pvUci": [
+						"e2e3",
+						"e7e5",
+						"d2d4",
+						"e5d4",
+						"e3d4",
+						"d7d5"
+					],
+					"pvSan": [
+						"e3",
+						"e5",
+						"d4",
+						"exd4",
+						"exd4",
+						"d5"
+					],
+					"seldepth": 7,
+					"wdl": [
+						36,
+						952,
+						12
+					]
+				},
+				{
+					"multipv": 5,
+					"score": {
+						"cp": 5
+					},
+					"depth": 5,
+					"pvUci": [
+						"e2e4",
+						"e7e5"
+					],
+					"pvSan": [
+						"e4",
+						"e5"
+					],
+					"seldepth": 9,
+					"wdl": [
+						25,
+						957,
+						18
+					]
+				},
+				{
+					"multipv": 6,
+					"score": {
+						"cp": -9
+					},
+					"depth": 5,
+					"pvUci": [
+						"b1c3",
+						"d7d5",
+						"e2e3",
+						"g8f6"
+					],
+					"pvSan": [
+						"Nc3",
+						"d5",
+						"e3",
+						"Nf6"
+					],
+					"seldepth": 7,
+					"wdl": [
+						15,
+						956,
+						29
+					]
+				},
+				{
+					"multipv": 7,
+					"score": {
+						"cp": -19
+					},
+					"depth": 5,
+					"pvUci": [
+						"c2c4",
+						"e7e5",
+						"g1f3",
+						"b8c6",
+						"d2d4",
+						"e5d4",
+						"f3d4",
+						"c6d4",
+						"d1d4"
+					],
+					"pvSan": [
+						"c4",
+						"e5",
+						"Nf3",
+						"Nc6",
+						"d4",
+						"exd4",
+						"Nxd4",
+						"Nxd4",
+						"Qxd4"
+					],
+					"seldepth": 10,
+					"wdl": [
+						10,
+						948,
+						42
+					]
+				},
+				{
+					"multipv": 8,
+					"score": {
+						"cp": -21
+					},
+					"depth": 5,
+					"pvUci": [
+						"a2a3",
+						"c7c6",
+						"g1f3",
+						"g8f6"
+					],
+					"pvSan": [
+						"a3",
+						"c6",
+						"Nf3",
+						"Nf6"
+					],
+					"seldepth": 10,
+					"wdl": [
+						9,
+						944,
+						47
+					]
+				},
+				{
+					"multipv": 9,
+					"score": {
+						"cp": -25
+					},
+					"depth": 5,
+					"pvUci": [
+						"g2g3",
+						"g8f6",
+						"c2c4",
+						"d7d5"
+					],
+					"pvSan": [
+						"g3",
+						"Nf6",
+						"c4",
+						"d5"
+					],
+					"seldepth": 10,
+					"wdl": [
+						8,
+						940,
+						52
+					]
+				},
+				{
+					"multipv": 10,
+					"score": {
+						"cp": -28
+					},
+					"depth": 5,
+					"pvUci": [
+						"h2h4",
+						"e7e5",
+						"e2e4",
+						"b8c6"
+					],
+					"pvSan": [
+						"h4",
+						"e5",
+						"e4",
+						"Nc6"
+					],
+					"seldepth": 8,
+					"wdl": [
+						7,
+						934,
+						59
+					]
+				},
+				{
+					"multipv": 11,
+					"score": {
+						"cp": -34
+					},
+					"depth": 5,
+					"pvUci": [
+						"h2h3",
+						"e7e5",
+						"e2e4",
+						"b8c6"
+					],
+					"pvSan": [
+						"h3",
+						"e5",
+						"e4",
+						"Nc6"
+					],
+					"seldepth": 8,
+					"wdl": [
+						6,
+						920,
+						74
+					]
+				},
+				{
+					"multipv": 12,
+					"score": {
+						"cp": -36
+					},
+					"depth": 5,
+					"pvUci": [
+						"b2b3",
+						"b8c6",
+						"e2e4",
+						"g8f6",
+						"b1c3",
+						"d7d5",
+						"e4d5",
+						"f6d5"
+					],
+					"pvSan": [
+						"b3",
+						"Nc6",
+						"e4",
+						"Nf6",
+						"Nc3",
+						"d5",
+						"exd5",
+						"Nxd5"
+					],
+					"seldepth": 10,
+					"wdl": [
+						5,
+						916,
+						79
+					]
+				}
+			]
+		},
+		{
+			"name": "ruy",
+			"fen": "r1bq1rk1/2p1bppp/p1np1n2/1p2p3/4P3/1BP2N2/PP1P1PPP/RNBQR1K1 w - - 1 9",
+			"E": 1650,
+			"budget": {
+				"movetimeMs": 33,
+				"depthCap": 16,
+				"multiPv": 20
+			},
+			"complete": true,
+			"depth": 6,
+			"bestmove": "b1a3",
+			"lines": [
+				{
+					"multipv": 1,
+					"score": {
+						"cp": 31
+					},
+					"depth": 6,
+					"pvUci": [
+						"h2h3",
+						"c6a5"
+					],
+					"pvSan": [
+						"h3",
+						"Na5"
+					],
+					"seldepth": 8,
+					"wdl": [
+						66,
+						927,
+						7
+					]
+				},
+				{
+					"multipv": 2,
+					"score": {
+						"cp": 27
+					},
+					"depth": 6,
+					"pvUci": [
+						"d2d4"
+					],
+					"pvSan": [
+						"d4"
+					],
+					"seldepth": 11,
+					"wdl": [
+						58,
+						935,
+						7
+					]
+				},
+				{
+					"multipv": 3,
+					"score": {
+						"cp": 5
+					},
+					"depth": 6,
+					"pvUci": [
+						"a2a4",
+						"c6a5",
+						"b3c2",
+						"c7c5",
+						"d2d4",
+						"c5d4",
+						"c3d4"
+					],
+					"pvSan": [
+						"a4",
+						"Na5",
+						"Bc2",
+						"c5",
+						"d4",
+						"cxd4",
+						"cxd4"
+					],
+					"seldepth": 9,
+					"wdl": [
+						25,
+						957,
+						18
+					]
+				},
+				{
+					"multipv": 4,
+					"score": {
+						"cp": 0
+					},
+					"depth": 6,
+					"pvUci": [
+						"b3c2",
+						"d6d5",
+						"e4d5",
+						"d8d5",
+						"d2d3",
+						"f8d8"
+					],
+					"pvSan": [
+						"Bc2",
+						"d5",
+						"exd5",
+						"Qxd5",
+						"d3",
+						"Rd8"
+					],
+					"seldepth": 7,
+					"wdl": [
+						21,
+						958,
+						21
+					]
+				},
+				{
+					"multipv": 5,
+					"score": {
+						"cp": -3
+					},
+					"depth": 6,
+					"pvUci": [
+						"d2d3",
+						"c6a5",
+						"b3c2",
+						"c7c5",
+						"h2h3"
+					],
+					"pvSan": [
+						"d3",
+						"Na5",
+						"Bc2",
+						"c5",
+						"h3"
+					],
+					"seldepth": 6,
+					"wdl": [
+						19,
+						958,
+						23
+					]
+				},
+				{
+					"multipv": 6,
+					"score": {
+						"cp": -12
+					},
+					"depth": 6,
+					"pvUci": [
+						"d1e2",
+						"c6a5",
+						"d2d4",
+						"a5b3",
+						"a2b3",
+						"c7c5",
+						"d4c5",
+						"d6c5"
+					],
+					"pvSan": [
+						"Qe2",
+						"Na5",
+						"d4",
+						"Nxb3",
+						"axb3",
+						"c5",
+						"dxc5",
+						"dxc5"
+					],
+					"seldepth": 9,
+					"wdl": [
+						13,
+						954,
+						33
+					]
+				},
+				{
+					"multipv": 7,
+					"score": {
+						"cp": -14
+					},
+					"depth": 6,
+					"pvUci": [
+						"b1a3",
+						"c6a5",
+						"d2d4",
+						"a5b3",
+						"a2b3"
+					],
+					"pvSan": [
+						"Na3",
+						"Na5",
+						"d4",
+						"Nxb3",
+						"axb3"
+					],
+					"seldepth": 9,
+					"wdl": [
+						13,
+						952,
+						35
+					]
+				},
+				{
+					"multipv": 8,
+					"score": {
+						"cp": -32
+					},
+					"depth": 6,
+					"pvUci": [
+						"e1e2",
+						"c6a5",
+						"d2d4",
+						"a5b3"
+					],
+					"pvSan": [
+						"Re2",
+						"Na5",
+						"d4",
+						"Nxb3"
+					],
+					"seldepth": 7,
+					"wdl": [
+						6,
+						925,
+						69
+					]
+				},
+				{
+					"multipv": 9,
+					"score": {
+						"cp": -32
+					},
+					"depth": 6,
+					"pvUci": [
+						"b3d5",
+						"f6d5",
+						"e4d5",
+						"c6a5",
+						"d2d4"
+					],
+					"pvSan": [
+						"Bd5",
+						"Nxd5",
+						"exd5",
+						"Na5",
+						"d4"
+					],
+					"seldepth": 7,
+					"wdl": [
+						6,
+						924,
+						70
+					]
+				},
+				{
+					"multipv": 10,
+					"score": {
+						"cp": -36
+					},
+					"depth": 6,
+					"pvUci": [
+						"a2a3",
+						"c6a5",
+						"d2d4",
+						"a5b3",
+						"d1b3"
+					],
+					"pvSan": [
+						"a3",
+						"Na5",
+						"d4",
+						"Nxb3",
+						"Qxb3"
+					],
+					"seldepth": 8,
+					"wdl": [
+						5,
+						916,
+						79
+					]
+				},
+				{
+					"multipv": 11,
+					"score": {
+						"cp": -52
+					},
+					"depth": 6,
+					"pvUci": [
+						"d1c2",
+						"c8g4",
+						"d2d3",
+						"g4f3",
+						"g2f3",
+						"d6d5",
+						"e4d5",
+						"f6d5"
+					],
+					"pvSan": [
+						"Qc2",
+						"Bg4",
+						"d3",
+						"Bxf3",
+						"gxf3",
+						"d5",
+						"exd5",
+						"Nxd5"
+					],
+					"seldepth": 10,
+					"wdl": [
+						3,
+						862,
+						135
+					]
+				},
+				{
+					"multipv": 12,
+					"score": {
+						"cp": -52
+					},
+					"depth": 6,
+					"pvUci": [
+						"c3c4",
+						"c6a5",
+						"d2d3",
+						"b5c4",
+						"d3c4",
+						"a5b3",
+						"a2b3"
+					],
+					"pvSan": [
+						"c4",
+						"Na5",
+						"d3",
+						"bxc4",
+						"dxc4",
+						"Nxb3",
+						"axb3"
+					],
+					"seldepth": 8,
+					"wdl": [
+						3,
+						861,
+						136
+					]
+				},
+				{
+					"multipv": 13,
+					"score": {
+						"cp": -53
+					},
+					"depth": 6,
+					"pvUci": [
+						"f3g5",
+						"c6a5",
+						"d2d4",
+						"c7c5"
+					],
+					"pvSan": [
+						"Ng5",
+						"Na5",
+						"d4",
+						"c5"
+					],
+					"seldepth": 7,
+					"wdl": [
+						3,
+						856,
+						141
+					]
+				},
+				{
+					"multipv": 14,
+					"score": {
+						"cp": -54
+					},
+					"depth": 6,
+					"pvUci": [
+						"h2h4",
+						"c6a5",
+						"d2d4",
+						"a5b3"
+					],
+					"pvSan": [
+						"h4",
+						"Na5",
+						"d4",
+						"Nxb3"
+					],
+					"seldepth": 7,
+					"wdl": [
+						3,
+						853,
+						144
+					]
+				},
+				{
+					"multipv": 15,
+					"score": {
+						"cp": -54
+					},
+					"depth": 6,
+					"pvUci": [
+						"g1h1",
+						"c6a5",
+						"d2d4",
+						"a5b3",
+						"a2b3"
+					],
+					"pvSan": [
+						"Kh1",
+						"Na5",
+						"d4",
+						"Nxb3",
+						"axb3"
+					],
+					"seldepth": 7,
+					"wdl": [
+						3,
+						850,
+						147
+					]
+				},
+				{
+					"multipv": 16,
+					"score": {
+						"cp": -59
+					},
+					"depth": 6,
+					"pvUci": [
+						"g1f1",
+						"c6a5",
+						"d2d4",
+						"a5b3",
+						"a2b3"
+					],
+					"pvSan": [
+						"Kf1",
+						"Na5",
+						"d4",
+						"Nxb3",
+						"axb3"
+					],
+					"seldepth": 9,
+					"wdl": [
+						2,
+						827,
+						171
+					]
+				},
+				{
+					"multipv": 17,
+					"score": {
+						"cp": -62
+					},
+					"depth": 6,
+					"pvUci": [
+						"e1e3",
+						"c6a5",
+						"d2d4",
+						"c7c5",
+						"e3e1"
+					],
+					"pvSan": [
+						"Re3",
+						"Na5",
+						"d4",
+						"c5",
+						"Re1"
+					],
+					"seldepth": 11,
+					"wdl": [
+						2,
+						809,
+						189
+					]
+				},
+				{
+					"multipv": 18,
+					"score": {
+						"cp": -96
+					},
+					"depth": 6,
+					"pvUci": [
+						"g2g3",
+						"c8g4",
+						"d2d4",
+						"e5d4",
+						"c3d4"
+					],
+					"pvSan": [
+						"g3",
+						"Bg4",
+						"d4",
+						"exd4",
+						"cxd4"
+					],
+					"seldepth": 9,
+					"wdl": [
+						1,
+						537,
+						462
+					]
+				},
+				{
+					"multipv": 19,
+					"score": {
+						"cp": -112
+					},
+					"depth": 6,
+					"pvUci": [
+						"e1f1",
+						"f6e4",
+						"d2d4",
+						"e5d4"
+					],
+					"pvSan": [
+						"Rf1",
+						"Nxe4",
+						"d4",
+						"exd4"
+					],
+					"seldepth": 8,
+					"wdl": [
+						0,
+						390,
+						610
+					]
+				},
+				{
+					"multipv": 20,
+					"score": {
+						"cp": -179
+					},
+					"depth": 6,
+					"pvUci": [
+						"f3h4",
+						"f6e4",
+						"h4f3",
+						"e4c5",
+						"d2d4",
+						"c5b3",
+						"a2b3"
+					],
+					"pvSan": [
+						"Nh4",
+						"Nxe4",
+						"Nf3",
+						"Nc5",
+						"d4",
+						"Nxb3",
+						"axb3"
+					],
+					"seldepth": 9,
+					"wdl": [
+						0,
+						45,
+						955
+					]
+				}
+			]
+		},
+		{
+			"name": "ruy",
+			"fen": "r1bq1rk1/2p1bppp/p1np1n2/1p2p3/4P3/1BP2N2/PP1P1PPP/RNBQR1K1 w - - 1 9",
+			"E": 2800,
+			"budget": {
+				"movetimeMs": 33,
+				"depthCap": 25,
+				"multiPv": 12
+			},
+			"complete": true,
+			"depth": 4,
+			"bestmove": "h2h3",
+			"lines": [
+				{
+					"multipv": 1,
+					"score": {
+						"cp": 37
+					},
+					"depth": 4,
+					"pvUci": [
+						"d2d4"
+					],
+					"pvSan": [
+						"d4"
+					],
+					"seldepth": 5,
+					"wdl": [
+						83,
+						912,
+						5
+					]
+				},
+				{
+					"multipv": 2,
+					"score": {
+						"cp": 32
+					},
+					"depth": 4,
+					"pvUci": [
+						"d2d3"
+					],
+					"pvSan": [
+						"d3"
+					],
+					"seldepth": 5,
+					"wdl": [
+						69,
+						925,
+						6
+					]
+				},
+				{
+					"multipv": 3,
+					"score": {
+						"cp": 18
+					},
+					"depth": 4,
+					"pvUci": [
+						"h2h3",
+						"c6a5"
+					],
+					"pvSan": [
+						"h3",
+						"Na5"
+					],
+					"seldepth": 7,
+					"wdl": [
+						41,
+						948,
+						11
+					]
+				},
+				{
+					"multipv": 4,
+					"score": {
+						"cp": 1
+					},
+					"depth": 4,
+					"pvUci": [
+						"a2a4",
+						"c6a5",
+						"b3a2",
+						"c7c5"
+					],
+					"pvSan": [
+						"a4",
+						"Na5",
+						"Ba2",
+						"c5"
+					],
+					"seldepth": 6,
+					"wdl": [
+						22,
+						958,
+						20
+					]
+				},
+				{
+					"multipv": 5,
+					"score": {
+						"cp": -7
+					},
+					"depth": 4,
+					"pvUci": [
+						"d1e2",
+						"c6a5",
+						"b3c2",
+						"c7c5",
+						"d2d4"
+					],
+					"pvSan": [
+						"Qe2",
+						"Na5",
+						"Bc2",
+						"c5",
+						"d4"
+					],
+					"seldepth": 10,
+					"wdl": [
+						16,
+						957,
+						27
+					]
+				},
+				{
+					"multipv": 6,
+					"score": {
+						"cp": -7
+					},
+					"depth": 4,
+					"pvUci": [
+						"b3c2",
+						"c8g4"
+					],
+					"pvSan": [
+						"Bc2",
+						"Bg4"
+					],
+					"seldepth": 6,
+					"wdl": [
+						16,
+						957,
+						27
+					]
+				},
+				{
+					"multipv": 7,
+					"score": {
+						"cp": -12
+					},
+					"depth": 4,
+					"pvUci": [
+						"a2a3",
+						"c6a5",
+						"b3a2",
+						"c7c5"
+					],
+					"pvSan": [
+						"a3",
+						"Na5",
+						"Ba2",
+						"c5"
+					],
+					"seldepth": 5,
+					"wdl": [
+						13,
+						954,
+						33
+					]
+				},
+				{
+					"multipv": 8,
+					"score": {
+						"cp": -13
+					},
+					"depth": 4,
+					"pvUci": [
+						"b1a3"
+					],
+					"pvSan": [
+						"Na3"
+					],
+					"seldepth": 5,
+					"wdl": [
+						13,
+						953,
+						34
+					]
+				},
+				{
+					"multipv": 9,
+					"score": {
+						"cp": -28
+					},
+					"depth": 4,
+					"pvUci": [
+						"e1e2",
+						"c6a5"
+					],
+					"pvSan": [
+						"Re2",
+						"Na5"
+					],
+					"seldepth": 11,
+					"wdl": [
+						7,
+						934,
+						59
+					]
+				},
+				{
+					"multipv": 10,
+					"score": {
+						"cp": -35
+					},
+					"depth": 4,
+					"pvUci": [
+						"d1c2",
+						"c8g4",
+						"d2d4",
+						"g4f3"
+					],
+					"pvSan": [
+						"Qc2",
+						"Bg4",
+						"d4",
+						"Bxf3"
+					],
+					"seldepth": 9,
+					"wdl": [
+						6,
+						918,
+						76
+					]
+				},
+				{
+					"multipv": 11,
+					"score": {
+						"cp": -47
+					},
+					"depth": 4,
+					"pvUci": [
+						"g1h1",
+						"c6a5",
+						"b3c2",
+						"c7c5",
+						"d2d4"
+					],
+					"pvSan": [
+						"Kh1",
+						"Na5",
+						"Bc2",
+						"c5",
+						"d4"
+					],
+					"seldepth": 9,
+					"wdl": [
+						3,
+						880,
+						117
+					]
+				},
+				{
+					"multipv": 12,
+					"score": {
+						"cp": -55
+					},
+					"depth": 4,
+					"pvUci": [
+						"g1f1",
+						"c6a5",
+						"b3c2",
+						"c7c5",
+						"d2d3"
+					],
+					"pvSan": [
+						"Kf1",
+						"Na5",
+						"Bc2",
+						"c5",
+						"d3"
+					],
+					"seldepth": 8,
+					"wdl": [
+						3,
+						846,
+						151
+					]
+				}
+			]
+		},
+		{
+			"name": "kiwipete",
+			"fen": "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+			"E": 1650,
+			"budget": {
+				"movetimeMs": 33,
+				"depthCap": 16,
+				"multiPv": 20
+			},
+			"complete": true,
+			"depth": 3,
+			"bestmove": "e5f7",
+			"lines": [
+				{
+					"multipv": 1,
+					"score": {
+						"cp": -69
+					},
+					"depth": 3,
+					"pvUci": [
+						"e2a6",
+						"b4c3",
+						"d2c3",
+						"e6d5"
+					],
+					"pvSan": [
+						"Bxa6",
+						"bxc3",
+						"Bxc3",
+						"exd5"
+					],
+					"seldepth": 8,
+					"wdl": [
+						2,
+						768,
+						230
+					]
+				},
+				{
+					"multipv": 2,
+					"score": {
+						"cp": -120
+					},
+					"depth": 3,
+					"pvUci": [
+						"d5e6",
+						"e7e6",
+						"e2a6",
+						"e6e5"
+					],
+					"pvSan": [
+						"dxe6",
+						"Qxe6",
+						"Bxa6",
+						"Qxe5"
+					],
+					"seldepth": 6,
+					"wdl": [
+						0,
+						315,
+						685
+					]
+				},
+				{
+					"multipv": 3,
+					"score": {
+						"cp": -167
+					},
+					"depth": 3,
+					"pvUci": [
+						"d5d6",
+						"c7d6",
+						"e2a6",
+						"d6e5"
+					],
+					"pvSan": [
+						"d6",
+						"cxd6",
+						"Bxa6",
+						"dxe5"
+					],
+					"seldepth": 5,
+					"wdl": [
+						0,
+						72,
+						928
+					]
+				},
+				{
+					"multipv": 4,
+					"score": {
+						"cp": -177
+					},
+					"depth": 3,
+					"pvUci": [
+						"d2g5",
+						"b4c3",
+						"e2a6",
+						"e6d5"
+					],
+					"pvSan": [
+						"Bg5",
+						"bxc3",
+						"Bxa6",
+						"exd5"
+					],
+					"seldepth": 8,
+					"wdl": [
+						0,
+						49,
+						951
+					]
+				},
+				{
+					"multipv": 5,
+					"score": {
+						"cp": -226
+					},
+					"depth": 3,
+					"pvUci": [
+						"c3b5",
+						"a6b5",
+						"e2b5",
+						"e6d5"
+					],
+					"pvSan": [
+						"Nb5",
+						"Bxb5",
+						"Bxb5",
+						"exd5"
+					],
+					"seldepth": 8,
+					"wdl": [
+						0,
+						8,
+						992
+					]
+				},
+				{
+					"multipv": 6,
+					"score": {
+						"cp": -239
+					},
+					"depth": 3,
+					"pvUci": [
+						"c3a4",
+						"e6d5",
+						"e2a6",
+						"e7e5"
+					],
+					"pvSan": [
+						"Na4",
+						"exd5",
+						"Bxa6",
+						"Qxe5"
+					],
+					"seldepth": 8,
+					"wdl": [
+						0,
+						5,
+						995
+					]
+				},
+				{
+					"multipv": 7,
+					"score": {
+						"cp": -244
+					},
+					"depth": 3,
+					"pvUci": [
+						"d2f4",
+						"h3g2",
+						"f3g2",
+						"b4c3",
+						"e2a6",
+						"e6d5"
+					],
+					"pvSan": [
+						"Bf4",
+						"hxg2",
+						"Qxg2",
+						"bxc3",
+						"Bxa6",
+						"exd5"
+					],
+					"seldepth": 8,
+					"wdl": [
+						0,
+						4,
+						996
+					]
+				},
+				{
+					"multipv": 8,
+					"score": {
+						"cp": -252
+					},
+					"depth": 3,
+					"pvUci": [
+						"d2e3",
+						"b4c3",
+						"e2a6",
+						"e6d5"
+					],
+					"pvSan": [
+						"Be3",
+						"bxc3",
+						"Bxa6",
+						"exd5"
+					],
+					"seldepth": 6,
+					"wdl": [
+						0,
+						3,
+						997
+					]
+				},
+				{
+					"multipv": 9,
+					"score": {
+						"cp": -261
+					},
+					"depth": 3,
+					"pvUci": [
+						"c3d1",
+						"h3g2",
+						"f3g2",
+						"e6d5",
+						"e2a6",
+						"e7e5"
+					],
+					"pvSan": [
+						"Nd1",
+						"hxg2",
+						"Qxg2",
+						"exd5",
+						"Bxa6",
+						"Qxe5"
+					],
+					"seldepth": 8,
+					"wdl": [
+						0,
+						2,
+						998
+					]
+				},
+				{
+					"multipv": 10,
+					"score": {
+						"cp": -266
+					},
+					"depth": 3,
+					"pvUci": [
+						"e5f7",
+						"e7f7"
+					],
+					"pvSan": [
+						"Nxf7",
+						"Qxf7"
+					],
+					"seldepth": 8,
+					"wdl": [
+						0,
+						2,
+						998
+					]
+				},
+				{
+					"multipv": 11,
+					"score": {
+						"cp": -267
+					},
+					"depth": 3,
+					"pvUci": [
+						"e5c6",
+						"d7c6",
+						"e2a6",
+						"b4c3"
+					],
+					"pvSan": [
+						"Nc6",
+						"dxc6",
+						"Bxa6",
+						"bxc3"
+					],
+					"seldepth": 6,
+					"wdl": [
+						0,
+						2,
+						998
+					]
+				},
+				{
+					"multipv": 12,
+					"score": {
+						"cp": -269
+					},
+					"depth": 3,
+					"pvUci": [
+						"e5g6",
+						"f7g6",
+						"e2a6",
+						"b4c3"
+					],
+					"pvSan": [
+						"Nxg6",
+						"fxg6",
+						"Bxa6",
+						"bxc3"
+					],
+					"seldepth": 6,
+					"wdl": [
+						0,
+						2,
+						998
+					]
+				},
+				{
+					"multipv": 13,
+					"score": {
+						"cp": -270
+					},
+					"depth": 3,
+					"pvUci": [
+						"d2c1",
+						"h3g2",
+						"f3g2",
+						"e6d5",
+						"e2a6",
+						"b4c3"
+					],
+					"pvSan": [
+						"Bc1",
+						"hxg2",
+						"Qxg2",
+						"exd5",
+						"Bxa6",
+						"bxc3"
+					],
+					"seldepth": 13,
+					"wdl": [
+						0,
+						1,
+						999
+					]
+				},
+				{
+					"multipv": 14,
+					"score": {
+						"cp": -293
+					},
+					"depth": 3,
+					"pvUci": [
+						"c3b1",
+						"h3g2"
+					],
+					"pvSan": [
+						"Nb1",
+						"hxg2"
+					],
+					"seldepth": 8,
+					"wdl": [
+						0,
+						1,
+						999
+					]
+				},
+				{
+					"multipv": 15,
+					"score": {
+						"cp": -296
+					},
+					"depth": 3,
+					"pvUci": [
+						"e5d7",
+						"b4c3",
+						"d2c3"
+					],
+					"pvSan": [
+						"Nxd7",
+						"bxc3",
+						"Bxc3"
+					],
+					"seldepth": 8,
+					"wdl": [
+						0,
+						1,
+						999
+					]
+				},
+				{
+					"multipv": 16,
+					"score": {
+						"cp": -309
+					},
+					"depth": 3,
+					"pvUci": [
+						"g2g4",
+						"b4c3",
+						"d2c3",
+						"a6e2"
+					],
+					"pvSan": [
+						"g4",
+						"bxc3",
+						"Bxc3",
+						"Bxe2"
+					],
+					"seldepth": 6,
+					"wdl": [
+						0,
+						0,
+						1000
+					]
+				},
+				{
+					"multipv": 17,
+					"score": {
+						"cp": -319
+					},
+					"depth": 3,
+					"pvUci": [
+						"e2f1",
+						"h3g2",
+						"f3g2",
+						"b4c3"
+					],
+					"pvSan": [
+						"Bf1",
+						"hxg2",
+						"Qxg2",
+						"bxc3"
+					],
+					"seldepth": 6,
+					"wdl": [
+						0,
+						0,
+						1000
+					]
+				},
+				{
+					"multipv": 18,
+					"score": {
+						"cp": -321
+					},
+					"depth": 3,
+					"pvUci": [
+						"e1g1",
+						"b4c3"
+					],
+					"pvSan": [
+						"O-O",
+						"bxc3"
+					],
+					"seldepth": 4,
+					"wdl": [
+						0,
+						0,
+						1000
+					]
+				},
+				{
+					"multipv": 19,
+					"score": {
+						"cp": -324
+					},
+					"depth": 3,
+					"pvUci": [
+						"a2a4",
+						"h3g2"
+					],
+					"pvSan": [
+						"a4",
+						"hxg2"
+					],
+					"seldepth": 4,
+					"wdl": [
+						0,
+						0,
+						1000
+					]
+				},
+				{
+					"multipv": 20,
+					"score": {
+						"cp": -325
+					},
+					"depth": 3,
+					"pvUci": [
+						"e1c1",
+						"b4c3"
+					],
+					"pvSan": [
+						"O-O-O",
+						"bxc3"
+					],
+					"seldepth": 4,
+					"wdl": [
+						0,
+						0,
+						1000
+					]
+				}
+			]
+		},
+		{
+			"name": "kiwipete",
+			"fen": "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+			"E": 2800,
+			"budget": {
+				"movetimeMs": 33,
+				"depthCap": 25,
+				"multiPv": 12
+			},
+			"complete": true,
+			"depth": 5,
+			"bestmove": "d5e6",
+			"lines": [
+				{
+					"multipv": 1,
+					"score": {
+						"cp": -121
+					},
+					"depth": 5,
+					"pvUci": [
+						"e2a6",
+						"b4c3",
+						"d2c3",
+						"h3g2",
+						"f3g2",
+						"e6d5"
+					],
+					"pvSan": [
+						"Bxa6",
+						"bxc3",
+						"Bxc3",
+						"hxg2",
+						"Qxg2",
+						"exd5"
+					],
+					"seldepth": 9,
+					"wdl": [
+						0,
+						312,
+						688
+					]
+				},
+				{
+					"multipv": 2,
+					"score": {
+						"cp": -198
+					},
+					"depth": 5,
+					"pvUci": [
+						"d5e6",
+						"e7e6",
+						"e2a6",
+						"e6e5",
+						"c3d1"
+					],
+					"pvSan": [
+						"dxe6",
+						"Qxe6",
+						"Bxa6",
+						"Qxe5",
+						"Nd1"
+					],
+					"seldepth": 12,
+					"wdl": [
+						0,
+						22,
+						978
+					]
+				},
+				{
+					"multipv": 3,
+					"score": {
+						"cp": -225
+					},
+					"depth": 5,
+					"pvUci": [
+						"d5d6",
+						"c7d6",
+						"e2a6",
+						"b4c3"
+					],
+					"pvSan": [
+						"d6",
+						"cxd6",
+						"Bxa6",
+						"bxc3"
+					],
+					"seldepth": 6,
+					"wdl": [
+						0,
+						8,
+						992
+					]
+				},
+				{
+					"multipv": 4,
+					"score": {
+						"cp": -231
+					},
+					"depth": 5,
+					"pvUci": [
+						"d2g5",
+						"h3g2",
+						"h1g1",
+						"b4c3",
+						"e2a6",
+						"e6d5"
+					],
+					"pvSan": [
+						"Bg5",
+						"hxg2",
+						"Rg1",
+						"bxc3",
+						"Bxa6",
+						"exd5"
+					],
+					"seldepth": 9,
+					"wdl": [
+						0,
+						7,
+						993
+					]
+				},
+				{
+					"multipv": 5,
+					"score": {
+						"cp": -240
+					},
+					"depth": 5,
+					"pvUci": [
+						"c3b5",
+						"a6b5",
+						"e2b5",
+						"e6d5"
+					],
+					"pvSan": [
+						"Nb5",
+						"Bxb5",
+						"Bxb5",
+						"exd5"
+					],
+					"seldepth": 6,
+					"wdl": [
+						0,
+						5,
+						995
+					]
+				},
+				{
+					"multipv": 6,
+					"score": {
+						"cp": -263
+					},
+					"depth": 5,
+					"pvUci": [
+						"d2f4",
+						"h3g2",
+						"f3g2",
+						"e6d5",
+						"e2a6",
+						"b4c3"
+					],
+					"pvSan": [
+						"Bf4",
+						"hxg2",
+						"Qxg2",
+						"exd5",
+						"Bxa6",
+						"bxc3"
+					],
+					"seldepth": 9,
+					"wdl": [
+						0,
+						2,
+						998
+					]
+				},
+				{
+					"multipv": 7,
+					"score": {
+						"cp": -265
+					},
+					"depth": 5,
+					"pvUci": [
+						"d2e3",
+						"b4c3",
+						"e2a6",
+						"e6d5"
+					],
+					"pvSan": [
+						"Be3",
+						"bxc3",
+						"Bxa6",
+						"exd5"
+					],
+					"seldepth": 8,
+					"wdl": [
+						0,
+						2,
+						998
+					]
+				},
+				{
+					"multipv": 8,
+					"score": {
+						"cp": -294
+					},
+					"depth": 5,
+					"pvUci": [
+						"c3b1",
+						"h3g2"
+					],
+					"pvSan": [
+						"Nb1",
+						"hxg2"
+					],
+					"seldepth": 11,
+					"wdl": [
+						0,
+						1,
+						999
+					]
+				},
+				{
+					"multipv": 9,
+					"score": {
+						"cp": -301
+					},
+					"depth": 5,
+					"pvUci": [
+						"e5g6",
+						"f7g6",
+						"e2a6",
+						"b4c3"
+					],
+					"pvSan": [
+						"Nxg6",
+						"fxg6",
+						"Bxa6",
+						"bxc3"
+					],
+					"seldepth": 8,
+					"wdl": [
+						0,
+						0,
+						1000
+					]
+				},
+				{
+					"multipv": 10,
+					"score": {
+						"cp": -307
+					},
+					"depth": 5,
+					"pvUci": [
+						"d2c1",
+						"a6e2",
+						"c3e2",
+						"e6d5"
+					],
+					"pvSan": [
+						"Bc1",
+						"Bxe2",
+						"Nxe2",
+						"exd5"
+					],
+					"seldepth": 10,
+					"wdl": [
+						0,
+						0,
+						1000
+					]
+				},
+				{
+					"multipv": 11,
+					"score": {
+						"cp": -309
+					},
+					"depth": 5,
+					"pvUci": [
+						"e5f7",
+						"e7f7",
+						"e2a6",
+						"b4c3"
+					],
+					"pvSan": [
+						"Nxf7",
+						"Qxf7",
+						"Bxa6",
+						"bxc3"
+					],
+					"seldepth": 6,
+					"wdl": [
+						0,
+						0,
+						1000
+					]
+				},
+				{
+					"multipv": 12,
+					"score": {
+						"cp": -341
+					},
+					"depth": 5,
+					"pvUci": [
+						"e5d7",
+						"b4c3",
+						"d7f6",
+						"e7f6",
+						"d2c3",
+						"f6f3"
+					],
+					"pvSan": [
+						"Nxd7",
+						"bxc3",
+						"Nxf6+",
+						"Qxf6",
+						"Bxc3",
+						"Qxf3"
+					],
+					"seldepth": 12,
+					"wdl": [
+						0,
+						0,
+						1000
+					]
+				}
+			]
+		}
+	]
+}

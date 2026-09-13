@@ -16,6 +16,12 @@ export interface EngineStatus {
 	version: string;
 	/** Set on `crashed` (and on a failed `loadNnue`) with the engine's or loader's message. */
 	error?: string;
+	/**
+	 * The variant the service worker asked for when the host is running another one instead: the
+	 * full build crashed twice in a row, so the host booted the small-net build to keep the game
+	 * playable (2026-09-12). Cleared by an explicit `restart`.
+	 */
+	fallbackFrom?: EngineVariant;
 }
 
 /** A UCI score: centipawns or mate-in-N (sign from the side to move). */

@@ -11,12 +11,11 @@
 
 import { describe, expect, it } from "bun:test";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { ENGINE_DIR } from "@core/constants/engine-files";
 import { LIMITS } from "@core/constants/limits";
 import { bootEngine, type StockfishFactory } from "@offscreen/stockfish-loader";
+import { BUN_WASM_VALIDATE, bunEngineUrl, ROOT } from "./engine-under-bun";
 
-const ROOT = path.resolve(import.meta.dir, "../..");
 const BESTMOVE_TIMEOUT_MS = 10_000;
 
 interface Booted {
@@ -49,7 +48,9 @@ if (typeof SharedArrayBuffer === "undefined") {
 	try {
 		const sf = await bootEngine("smallnet", {
 			crossOriginIsolated: true,
-			getUrl: (p) => pathToFileURL(path.join(ROOT, p)).href,
+			// Bun cannot run the shipped relaxed-SIMD build; see `engine-under-bun.ts`.
+			getUrl: (p) => bunEngineUrl(ROOT, p),
+			wasmValidate: BUN_WASM_VALIDATE,
 			importModule: (url) => import(url) as Promise<{ default: StockfishFactory }>,
 			nnueStore: {
 				get: async (name) =>

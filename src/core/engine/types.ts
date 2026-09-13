@@ -39,6 +39,19 @@ export interface AnalysisRequest {
 	/** `UCI_Elo`; undefined = full strength. */
 	elo?: number;
 	priority?: AnalysisPriority;
+	/**
+	 * H4 (2026-09-13): the depth of the side frame the client captures as `atFeatureDepth` — the
+	 * first complete MultiPV iteration at or past it. Absent = `LIMITS.featureDepth` (the timing
+	 * model's `D_f`); Maia mode asks for `humanDepth(E)`. Part of the cache identity.
+	 */
+	featureDepth?: number;
+	/**
+	 * H10 (2026-09-13): a Maia-shaped own-move search — `searchmoves` is the full root set the
+	 * pipeline chose (Maia's top-k plus the engine's known best), `multiPv` its size. Only such a
+	 * restricted result is cached and answered from the cache, keyed on the sorted roots; any other
+	 * `searchmoves` request keeps today's never-cached rule.
+	 */
+	shaped?: true;
 }
 
 export interface AnalysisUpdate {
@@ -64,7 +77,11 @@ export interface AnalysisResult {
 	final: AnalysisUpdate;
 	engineElo?: number;
 	status: AnalysisStatus;
-	/** The last complete `FEATURE_DEPTH` iteration (§6.5), if one was reached. */
+	/**
+	 * The complete iteration at the request's `featureDepth` (§6.5; default `FEATURE_DEPTH`), if
+	 * one was reached: the first complete frame at or past that depth — re-captured while the
+	 * frame at that same depth is re-emitted, never replaced by a deeper one (2026-09-13, H4).
+	 */
 	atFeatureDepth?: AnalysisUpdate;
 	/** The request this result answers (the cache keys on it). */
 	request: AnalysisRequest;

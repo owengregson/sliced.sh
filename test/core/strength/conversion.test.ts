@@ -91,7 +91,7 @@ describe("winning-position conversion", () => {
 });
 
 describe("clock-race strength", () => {
-	it("slightly varies near-best moves even at max strength, never large losses or forced losses", () => {
+	it("own-clock emergencies retain the tight near-best cap, never large losses or forced losses", () => {
 		const lines = [
 			line(START, "e2e4", { cp: 50 }, 1),
 			line(START, "d2d4", { cp: 20 }, 2),
@@ -102,7 +102,7 @@ describe("clock-race strength", () => {
 		for (let seed = 0; seed < 100; seed++) {
 			const chosen = selectMove(
 				lines,
-				ctx({ ...race, targetElo: 3800, rng: createRng(seed), blunderScale: 100 })
+				ctx({ ...race, myClockMs: 1000, targetElo: 3800, rng: createRng(seed), blunderScale: 100 })
 			);
 			picks.add(chosen.uci);
 			expect(chosen.cpLoss ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(60);

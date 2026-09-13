@@ -2,7 +2,6 @@ import { describe, expect, it } from "bun:test";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { createInterface } from "node:readline";
-import { pathToFileURL } from "node:url";
 import { legalMoves } from "@core/chess/san";
 import { DEFAULT_SETTINGS } from "@core/constants/defaults";
 import { ENGINE_DIR } from "@core/constants/engine-files";
@@ -19,6 +18,7 @@ import { EngineController } from "@service/engine-controller";
 import { RecommendationPipeline } from "@service/game-session/recommendation";
 import { createTimingInferPort, type TimingInferPort } from "@service/handlers/engine/timing-infer";
 import corpus from "../fixtures/strength/stockfish18-blitz.json";
+import { BUN_WASM_VALIDATE, bunEngineUrl } from "./engine-under-bun";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 
@@ -88,7 +88,9 @@ describe("native Stockfish through the strength pipeline", () => {
 			const errors: string[] = [];
 			const sf = await bootEngine("smallnet", {
 				crossOriginIsolated: true,
-				getUrl: (file) => pathToFileURL(path.join(ROOT, file)).href,
+				// Bun cannot run the shipped relaxed-SIMD build; see `engine-under-bun.ts`.
+				getUrl: (file) => bunEngineUrl(ROOT, file),
+				wasmValidate: BUN_WASM_VALIDATE,
 				importModule: (url) => import(url) as Promise<{ default: StockfishFactory }>,
 				nnueStore: {
 					get: async (name) =>
@@ -165,6 +167,14 @@ describe("native Stockfish through the strength pipeline", () => {
 					});
 					expect(result?.analysis?.request.elo).toBe(1650);
 					expect(result?.budget.movetimeMs).toBe(600);
+					expect(result?.budget.depthCap).toBe(16);
+					// Preparation has already spent part of the class's 600 ms ceiling.
+					expect(result?.analysis?.request.limit.depth).toBe(16);
+					expect(result?.analysis?.request.limit.movetimeMs).toBeGreaterThan(0);
+					expect(result?.analysis?.request.limit.movetimeMs).toBeLessThanOrEqual(
+						result?.budget.movetimeMs ?? 0
+					);
+					expect(result?.analysis?.final.depth).toBeLessThanOrEqual(16);
 					expect(result?.analysis?.request.multiPv).toBe(20);
 					expect(result?.analysis?.final.complete).toBe(true);
 					expect(result?.rec.lines).toHaveLength(20);

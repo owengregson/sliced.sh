@@ -44,7 +44,7 @@ describe("rating-sensitive safeguards", () => {
 		expect(strong.moves.has("e2e3")).toBe(false);
 	});
 
-	it("opponent time trouble modestly lowers accuracy without erasing the selected rating", () => {
+	it("ordinary opponent pressure modestly lowers accuracy without erasing the selected rating", () => {
 		const lines = [
 			line(START, "e2e4", { cp: 50 }, 1),
 			line(START, "d2d4", { cp: 20 }, 2),
@@ -53,7 +53,7 @@ describe("rating-sensitive safeguards", () => {
 			line(START, "f2f3", { cp: -250 }, 5),
 			line(START, "a2a3", { cp: -400 }, 6),
 		];
-		const clocks = { baseMs: 180000, incrementMs: 0, myClockMs: 90000, oppClockMs: 1000 };
+		const clocks = { baseMs: 180000, incrementMs: 0, myClockMs: 90000, oppClockMs: 12000 };
 		const ordinary = sample(lines, { ...clocks, targetElo: 1650, oppClockMs: 90000 }, 3000);
 		const pressured = sample(lines, { ...clocks, targetElo: 1650 }, 3000);
 		const strong = sample(lines, { ...clocks, targetElo: 2400 }, 3000);

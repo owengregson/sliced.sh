@@ -124,6 +124,36 @@ describe("RemoteEngine over the simulator", () => {
 		engine.dispose();
 	});
 
+	it("accepts the host's small-net fallback as the answer to a full configuration", async () => {
+		const side = await bootOffscreen();
+		const engine = await (sw as SwContext).run(async () => {
+			const e = new RemoteEngine({ variant: "smallnet", threads: 1 });
+			await e.ready;
+			await settle();
+			await e.configureAndWait("full", 2);
+			return e;
+		});
+		expect(engine.status().variant).toBe("full");
+		// The full build crashes twice in a row: the host reboots as the small net instead.
+		for (let i = 0; i < 2; i++) {
+			side.current().fail("worker sent an error! table index is out of bounds");
+			await settle();
+			await sim.time.advance(TIMINGS.engineRestartBackoffMs[0] as number);
+			await settle();
+		}
+		expect(engine.status()).toMatchObject({
+			state: "ready",
+			variant: "smallnet",
+			fallbackFrom: "full",
+		});
+		// A fresh full configuration (a reconnect, a settings write) is satisfied by the fallback.
+		await (sw as SwContext).run(async () => {
+			await engine.configureAndWait("full", 2);
+		});
+		expect(engine.status()).toMatchObject({ variant: "smallnet", fallbackFrom: "full" });
+		engine.dispose();
+	});
+
 	it("does not apply the short UCI timeout to a network download and cancels cleanly", async () => {
 		const side = await bootOffscreen();
 		const engine = await (sw as SwContext).run(async () => {

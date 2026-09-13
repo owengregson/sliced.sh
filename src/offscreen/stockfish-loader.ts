@@ -4,8 +4,9 @@
  *
  *   1. assert `crossOriginIsolated` (COOP/COEP manifest keys) — pthreads need a
  *      shared `WebAssembly.Memory`;
- *   2. pick the relaxed-simd module when `WebAssembly.validate` accepts a
- *      relaxed-simd probe, else the plain SIMD build;
+ *   2. assert `WebAssembly.validate` accepts a relaxed-simd probe — only the
+ *      relaxed-simd builds ship (`ENGINE_FILES`; Chrome ≥ 114, the manifest
+ *      requires 128), so there is nothing to fall back to;
  *   3. `import()` the ES-module factory from its extension URL and instantiate
  *      it with a shared memory, shrinking the initial size on failure
  *      (`LIMITS.engineMemoryInitialPages`: 2560 → 1536 → 1024 pages);
@@ -25,6 +26,9 @@ import type { EngineVariant } from "@typedefs/engine";
 
 /** Status error when the document is not cross-origin isolated (no `SharedArrayBuffer`). */
 export const CROSS_ORIGIN_ISOLATION_ERROR = "cross-origin isolation missing";
+
+/** Status error when the runtime rejects relaxed SIMD: the only engine builds shipped need it. */
+export const RELAXED_SIMD_ERROR = "relaxed SIMD unsupported (Chrome 114 or newer is required)";
 
 /**
  * Smallest module exercising a relaxed-simd instruction: one function
@@ -122,10 +126,9 @@ export function supportsRelaxedSimd(validate: (bytes: Uint8Array) => boolean): b
 	}
 }
 
-/** The `.js` file for `variant` (`full` has no relaxed-simd build vendored). */
-export function chooseModule(variant: EngineVariant, relaxedSimd: boolean): string {
-	if (variant === "full") return ENGINE_FILES.full.js;
-	return relaxedSimd ? ENGINE_FILES.smallnet.relaxedJs : ENGINE_FILES.smallnet.js;
+/** The `.js` file for `variant` (always the relaxed-simd build — the only one shipped). */
+export function chooseModule(variant: EngineVariant): string {
+	return (variant === "full" ? ENGINE_FILES.full : ENGINE_FILES.smallnet).js;
 }
 
 /** `getRecommendedNnue(0..)` until it returns nothing. */
@@ -154,7 +157,8 @@ export async function bootEngineDetailed(
 	const importModule = deps.importModule ?? defaultImport;
 	const memoryFactory = deps.memoryFactory ?? defaultMemory;
 
-	const module = chooseModule(variant, supportsRelaxedSimd(validate));
+	if (!supportsRelaxedSimd(validate)) throw new Error(RELAXED_SIMD_ERROR);
+	const module = chooseModule(variant);
 	const url = getUrl(ENGINE_DIR + module);
 	const factory = (await importModule(url)).default;
 	if (typeof factory !== "function") throw new Error(`engine module has no factory: ${module}`);

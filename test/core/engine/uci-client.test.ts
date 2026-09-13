@@ -778,13 +778,85 @@ describe("UciEngine atFeatureDepth (f)", () => {
 		expect(r.atFeatureDepth?.complete).toBe(true);
 		expect(r.atFeatureDepth?.lines.map((l) => l.score.cp)).toEqual([20, 15]);
 	});
-	it("is undefined when depth 10 never completed", async () => {
+	// H4 (2026-09-13): the rule is "the first complete frame at or past the requested depth" — a
+	// depth the engine never completes (an aspiration re-search can skip a MultiPV cycle) is
+	// answered by the next one that does, never by the deepest one that does not exceed it.
+	it("captures the next complete depth when depth 10 itself never completed", async () => {
 		const { t, eng } = await setup();
 		const h = eng.analyse({ id: "r1", fen: START, multiPv: 2, limit: { movetimeMs: 800 } });
+		t.feed(info(9, 1, 10, "e2e4"), info(9, 2, 5, "d2d4"));
 		t.feed(info(10, 1, 20, "e2e4"));
 		t.feed(info(11, 1, 30, "e2e4"), info(11, 2, 25, "d2d4"));
+		t.feed(info(12, 1, 33, "e2e4"), info(12, 2, 31, "d2d4"));
+		t.feed("bestmove e2e4");
+		const r = await h.result;
+		expect(r.atFeatureDepth?.depth).toBe(11);
+		expect(r.atFeatureDepth?.complete).toBe(true);
+		expect(r.atFeatureDepth?.lines.map((l) => l.score.cp)).toEqual([30, 25]);
+	});
+	it("is undefined when nothing at or past depth 10 completed", async () => {
+		const { t, eng } = await setup();
+		const h = eng.analyse({ id: "r1", fen: START, multiPv: 2, limit: { movetimeMs: 800 } });
+		t.feed(info(9, 1, 10, "e2e4"), info(9, 2, 5, "d2d4"));
+		t.feed(info(10, 1, 20, "e2e4"));
+		t.feed(info(11, 1, 30, "e2e4"));
 		t.feed("bestmove e2e4");
 		expect((await h.result).atFeatureDepth).toBeUndefined();
+	});
+	it("honours the request's featureDepth: the first complete frame at or past it", async () => {
+		const { t, eng } = await setup();
+		const h = eng.analyse({
+			id: "r1",
+			fen: START,
+			multiPv: 2,
+			limit: { movetimeMs: 800 },
+			featureDepth: 4,
+		});
+		t.feed(info(3, 1, 8, "e2e4"), info(3, 2, 4, "d2d4"));
+		t.feed(info(4, 1, 12, "e2e4"), info(4, 2, 9, "d2d4"));
+		t.feed(info(5, 1, 14, "e2e4"), info(5, 2, 11, "d2d4"));
+		t.feed(info(FEATURE_DEPTH, 1, 20, "e2e4"), info(FEATURE_DEPTH, 2, 15, "d2d4"));
+		t.feed("bestmove e2e4");
+		const r = await h.result;
+		expect(r.final.depth).toBe(FEATURE_DEPTH);
+		expect(r.atFeatureDepth?.depth).toBe(4);
+		expect(r.atFeatureDepth?.lines.map((l) => l.score.cp)).toEqual([12, 9]);
+		expect(r.request.featureDepth).toBe(4);
+	});
+	it("a requested depth the search skipped is answered by the next complete one", async () => {
+		const { t, eng } = await setup();
+		const h = eng.analyse({
+			id: "r1",
+			fen: START,
+			multiPv: 2,
+			limit: { movetimeMs: 800 },
+			featureDepth: 4,
+		});
+		t.feed(info(3, 1, 8, "e2e4"), info(3, 2, 4, "d2d4"));
+		t.feed(info(4, 1, 12, "e2e4")); // never completes
+		t.feed(info(6, 1, 16, "e2e4"), info(6, 2, 13, "d2d4"));
+		t.feed(info(7, 1, 18, "e2e4"), info(7, 2, 14, "d2d4"));
+		t.feed("bestmove e2e4");
+		const r = await h.result;
+		expect(r.atFeatureDepth?.depth).toBe(6);
+		expect(r.atFeatureDepth?.lines.map((l) => l.score.cp)).toEqual([16, 13]);
+	});
+	it("a re-emitted cycle at the captured depth refreshes it; a deeper one never replaces it", async () => {
+		const { t, eng } = await setup();
+		const h = eng.analyse({
+			id: "r1",
+			fen: START,
+			multiPv: 2,
+			limit: { movetimeMs: 800 },
+			featureDepth: 4,
+		});
+		t.feed(info(4, 1, 12, "e2e4"), info(4, 2, 9, "d2d4"));
+		t.feed(info(4, 1, 13, "e2e4"), info(4, 2, 10, "d2d4"));
+		t.feed(info(5, 1, 14, "e2e4"), info(5, 2, 11, "d2d4"));
+		t.feed("bestmove e2e4");
+		const r = await h.result;
+		expect(r.atFeatureDepth?.depth).toBe(4);
+		expect(r.atFeatureDepth?.lines.map((l) => l.score.cp)).toEqual([13, 10]);
 	});
 });
 

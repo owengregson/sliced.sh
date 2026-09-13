@@ -149,10 +149,17 @@ describe("selectMove — selection modes", () => {
 		for (const engineBestmove of ["e2e5", "a9a8", "0000"]) {
 			expect(selectMove(TWO, ctx({ selectionMode: "engine-elo", engineBestmove })).uci).toBe("e2e4");
 		}
-		const mate = [line(START, "e2e4", { mate: 5 }, 1), TWO[1]!];
+		const mate = [line(START, "e2e4", { mate: 3 }, 1), TWO[1]!];
 		expect(
 			selectMove(mate, ctx({ selectionMode: "engine-elo", engineBestmove: "a2a3" })).source
 		).toBe("mate");
+		// H9 (2026-09-13): a mate deeper than `mateInMax` is the ordinary policy's to find — here the
+		// unscored native move is still refused, the scored mating line is what is left.
+		const deep = [line(START, "e2e4", { mate: 5 }, 1), TWO[1]!];
+		const m = selectMove(deep, ctx({ selectionMode: "engine-elo", engineBestmove: "a2a3" }));
+		expect(m.source).toBe("engine-elo");
+		expect(m.uci).toBe("e2e4");
+		expect(m.rationale.join(" ")).toContain("mate: mate-in-5 is beyond 3, ordinary policy");
 	});
 	it("does not reintroduce a native stalemate, whether unscored or already vetoed", () => {
 		const fen = "7k/5K2/6Q1/8/8/8/8/8 w - - 0 1";
@@ -296,10 +303,10 @@ describe("selectMove — never-play filters (b)(c)", () => {
 		expect(m.uci).toBe("d2d4");
 		expect(m.source).toBe("mate");
 	});
-	it("preserves searched mates at low Elo and in the engine-elo path, including longer mates", () => {
-		const MATE = [line(START, "d2d4", { mate: 8 }, 1), line(START, "e2e4", { cp: 700 }, 2)];
+	it("preserves searched mates within mateInMax from E ≥ mateAlwaysElo in every selection mode", () => {
+		const MATE = [line(START, "d2d4", { mate: 3 }, 1), line(START, "e2e4", { cp: 700 }, 2)];
 		for (const selectionMode of ["persona-sampling", "engine-elo", "hybrid"] as const) {
-			for (const targetElo of [800, 1500, 3800]) {
+			for (const targetElo of [1400, 1500, 3800]) {
 				const m = selectMove(
 					MATE,
 					ctx({ targetElo, selectionMode, engineBestmove: "e2e4", blunderScale: 100 }),
@@ -309,6 +316,32 @@ describe("selectMove — never-play filters (b)(c)", () => {
 				expect(m.source).toBe("mate");
 			}
 		}
+	});
+	it("H9: a mate deeper than mateInMax falls through to the ordinary policy, which the pure-engine path still converts", () => {
+		// §7.2 step 5 restored (2026-09-13): the constants that were dead now gate the guard.
+		const MATE = [line(START, "d2d4", { mate: 8 }, 1), line(START, "e2e4", { cp: 700 }, 2)];
+		const top = selectMove(
+			MATE,
+			ctx({ targetElo: 3800, selectionMode: "engine-elo" }),
+			flatPrior(MATE)
+		);
+		expect(top.uci).toBe("d2d4");
+		expect(top.source).toBe("engine-elo");
+		expect(top.rationale.join(" ")).toContain("mate: mate-in-8 is beyond 3, ordinary policy");
+		expect(top.rationale.join(" ")).toContain("mate: throw-win filter");
+		// At 800 the base policy may prefer +700 to the long mate: the population misses long mates.
+		const rng = createRng("deep-mate-800");
+		let missed = 0;
+		for (let i = 0; i < 500; i++) {
+			const m = selectMove(
+				MATE,
+				ctx({ targetElo: 800, rng, state: createSelectionState() }),
+				flatPrior(MATE)
+			);
+			expect(m.source).not.toBe("mate");
+			if (m.uci === "e2e4") missed++;
+		}
+		expect(missed).toBeGreaterThan(0);
 	});
 	it("never hangs a piece outside the blunder channel (PV shows a capture, loss ≥ 0.25)", () => {
 		const hang = { ...line(START, "g1f3", { cp: -250 }, 2), pvSan: ["Nf3", "Nxf3"] };

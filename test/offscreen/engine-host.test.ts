@@ -1,9 +1,15 @@
 // test/offscreen/engine-host.test.ts
-import { describe, expect, it } from "bun:test";
-import type { EnginePortMessage } from "@core/constants/messages";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { MAIA } from "@core/constants/maia";
+import type { EnginePortCommand, EnginePortMessage } from "@core/constants/messages";
 import { TIMINGS } from "@core/constants/timings";
-import { type BootHooks, EngineHost } from "@offscreen/engine-host";
+import { RemoteEngine } from "@core/engine/remote-engine";
+import { type BootHooks, EngineHost, serveEnginePort } from "@offscreen/engine-host";
+import { POLICY_NOT_AVAILABLE } from "@offscreen/policy-inference";
 import type { BootedEngine } from "@offscreen/stockfish-loader";
+import { createSimulator, type Simulator } from "@test/sim";
+import { bootOffscreenContext, type OffscreenContext } from "@test/sim/contexts/offscreen-context";
+import { bootSwContext, type SwContext } from "@test/sim/contexts/sw-context";
 import type { EngineVariant } from "@typedefs/engine";
 import { FakeScheduler, flush } from "../fakes/engine-transport";
 import { FakeStockfishWeb } from "../fakes/stockfish";
@@ -317,6 +323,71 @@ describe("EngineHost crash recovery", () => {
 		expect(h.bootCalls).toHaveLength(boots + 2);
 	});
 
+	it("a second consecutive crash of the full build reboots as the small net, marked fallbackFrom", async () => {
+		const h = setup();
+		h.host.handle({ kind: "configure", variant: "full", threads: 4 });
+		await flush();
+		let sf = h.boots[h.boots.length - 1] as FakeStockfishWeb;
+		expect(h.bootCalls).toEqual(["full"]);
+		// First crash: the ordinary backoff and a reboot of the same build.
+		sf.fail("worker sent an error! table index is out of bounds");
+		h.sched.advance(TIMINGS.engineRestartBackoffMs[0] as number);
+		await flush();
+		expect(h.bootCalls).toEqual(["full", "full"]);
+		expect(h.host.status().fallbackFrom).toBeUndefined();
+		// Second crash: the small-net build instead, from the first backoff step again.
+		sf = h.boots[h.boots.length - 1] as FakeStockfishWeb;
+		sf.fail("worker sent an error! table index is out of bounds");
+		const crashed = h.posted[h.posted.length - 1];
+		expect(crashed).toMatchObject({
+			kind: "status",
+			status: { state: "crashed", variant: "smallnet", fallbackFrom: "full" },
+		});
+		h.sched.advance(TIMINGS.engineRestartBackoffMs[0] as number);
+		await flush();
+		expect(h.bootCalls).toEqual(["full", "full", "smallnet"]);
+		expect(h.host.status()).toMatchObject({
+			state: "ready",
+			variant: "smallnet",
+			fallbackFrom: "full",
+		});
+		// The SW asking for `full` again (a reconnect's configure) is answered by the fallback.
+		const boots = h.bootCalls.length;
+		h.host.handle({ kind: "configure", variant: "full", threads: 4 });
+		await flush();
+		expect(h.bootCalls).toHaveLength(boots);
+		expect(h.host.status()).toMatchObject({ variant: "smallnet", fallbackFrom: "full" });
+		// An explicit restart is the way back to the requested build.
+		h.host.handle({ kind: "restart" });
+		await flush();
+		expect(h.bootCalls).toEqual(["full", "full", "smallnet", "full"]);
+		expect(h.host.status()).toMatchObject({ state: "ready", variant: "full" });
+		expect(h.host.status().fallbackFrom).toBeUndefined();
+	});
+
+	it("asking for the small net while on the fallback simply keeps it, fallback forgotten", async () => {
+		const h = setup();
+		h.host.handle({ kind: "configure", variant: "full", threads: 4 });
+		await flush();
+		for (let i = 0; i < 2; i++) {
+			(h.boots[h.boots.length - 1] as FakeStockfishWeb).fail("crash");
+			h.sched.advance(TIMINGS.engineRestartBackoffMs[0] as number);
+			await flush();
+		}
+		expect(h.host.status()).toMatchObject({ variant: "smallnet", fallbackFrom: "full" });
+		const boots = h.bootCalls.length;
+		h.host.handle({ kind: "configure", variant: "smallnet", threads: 4 });
+		await flush();
+		expect(h.bootCalls).toHaveLength(boots);
+		expect(h.host.status().variant).toBe("smallnet");
+		expect(h.host.status().fallbackFrom).toBeUndefined();
+		// …and a later request for `full` is a real variant change again.
+		h.host.handle({ kind: "configure", variant: "full", threads: 4 });
+		await flush();
+		expect(h.bootCalls).toHaveLength(boots + 1);
+		expect(h.host.status().variant).toBe("full");
+	});
+
 	it("after giving up, configuring the same variant starts a fresh download attempt", async () => {
 		const h = setup();
 		let sf = await booted(h);
@@ -372,5 +443,183 @@ describe("EngineHost crash recovery", () => {
 		expect(sf.commands).toContain("quit");
 		sf.emit("uciok");
 		expect(h.lines()).toEqual([]);
+	});
+});
+
+// ── serveEnginePort: the Maia-3 policy routes (2026-09-11) ─────────────────────────────────
+// Over the simulator's runtime ports like `test/core/engine/remote-engine.test.ts`: `policy` and
+// `policy-warm` reach a served policy host and its replies come back; `configure.warmPolicy`
+// pre-warms that size once; without a policy host both answer not-available.
+
+describe("serveEnginePort policy routes", () => {
+	let sim: Simulator;
+	let sw: SwContext | undefined;
+	let off: OffscreenContext | undefined;
+	const prevChrome = (globalThis as Record<string, unknown>).chrome;
+	const settle = async (): Promise<void> => {
+		for (let i = 0; i < 8; i++) await sim.time.runMicrotasks();
+	};
+	const query = (id: string): Extract<EnginePortCommand, { kind: "policy" }> => ({
+		kind: "policy",
+		id,
+		inputs: {
+			size: "79m",
+			fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+			historyFens: [],
+			selfElo: 1500,
+			oppoElo: 1500,
+		},
+	});
+	const hostDeps = (post: (m: EnginePortMessage) => void) =>
+		new EngineHost({
+			boot: async () => new Promise<BootedEngine>(() => {}),
+			nnueStore: { get: async () => new Uint8Array(1) },
+			post,
+		});
+
+	beforeEach(async () => {
+		sim = createSimulator();
+		sim.time.install();
+		sw = await bootSwContext(sim);
+	});
+	afterEach(async () => {
+		await off?.teardown();
+		off = undefined;
+		await sw?.teardown();
+		sw = undefined;
+		sim.time.uninstall();
+		(globalThis as Record<string, unknown>).chrome = prevChrome;
+	});
+
+	it("routes policy and policy-warm to the served host and posts its replies back", async () => {
+		const calls: string[] = [];
+		off = await bootOffscreenContext(sim, {
+			entry: () => {
+				serveEnginePort({
+					createStore: () => ({ handleChunk: () => {}, abortAll: () => {} }),
+					createHost: hostDeps,
+					createPolicy: () => ({
+						handle: async (cmd) => {
+							calls.push(`handle:${cmd.id}`);
+							return {
+								kind: "policy-result",
+								id: cmd.id,
+								moves: [["e2e4", 1]],
+								wdl: [0.3, 0.4, 0.3],
+								size: cmd.inputs.size,
+								ms: 9,
+							};
+						},
+						warm: async (size) => {
+							calls.push(`warm:${size}`);
+							return { kind: "policy-status", size, loadMs: 120 };
+						},
+						resident: () => null,
+						dispose: () => {
+							calls.push("dispose");
+						},
+					}),
+				});
+			},
+		});
+		const engine = await (sw as SwContext).run(async () => {
+			const e = new RemoteEngine({ variant: "smallnet", threads: 1 });
+			await e.ready;
+			return e;
+		});
+		const seen: EnginePortMessage[] = [];
+		engine.onMessage((m) => seen.push(m));
+		engine.post({ kind: "policy-warm", size: "79m" });
+		engine.post(query("p2"));
+		await settle();
+		// No `warmPolicy` on this engine, so nothing was pre-warmed on configure.
+		expect(calls).toEqual(["warm:79m", "handle:p2"]);
+		expect(seen).toContainEqual({ kind: "policy-status", size: "79m", loadMs: 120 });
+		expect(seen).toContainEqual({
+			kind: "policy-result",
+			id: "p2",
+			moves: [["e2e4", 1]],
+			wdl: [0.3, 0.4, 0.3],
+			size: "79m",
+			ms: 9,
+		});
+		engine.dispose();
+	});
+
+	it("pre-warms configure.warmPolicy once, not again on later configures, and the stop disposes the policy host", async () => {
+		const calls: string[] = [];
+		let stop: () => void = () => {};
+		off = await bootOffscreenContext(sim, {
+			entry: () => {
+				stop = serveEnginePort({
+					createStore: () => ({ handleChunk: () => {}, abortAll: () => {} }),
+					createHost: hostDeps,
+					createPolicy: () => ({
+						handle: async (cmd) => ({
+							kind: "policy-result",
+							id: cmd.id,
+							moves: null,
+							error: "unused",
+						}),
+						warm: async (size) => {
+							calls.push(`warm:${size}`);
+							return { kind: "policy-status", size, loadMs: 1 };
+						},
+						resident: () => null,
+						dispose: () => {
+							calls.push("dispose");
+						},
+					}),
+				}).stop;
+			},
+		});
+		const engine = await (sw as SwContext).run(async () => {
+			const e = new RemoteEngine({ variant: "smallnet", threads: 1, warmPolicy: MAIA.defaultSize });
+			await e.ready;
+			return e;
+		});
+		await settle();
+		expect(calls).toEqual([`warm:${MAIA.defaultSize}`]);
+		// The same size on every later configure is not warmed again — every reconnect re-sends
+		// `configure`, and the session's `setWarmPolicy` names the same (only) size since 2026-09-13.
+		engine.configure("smallnet", 2);
+		await settle();
+		expect(calls).toEqual([`warm:${MAIA.defaultSize}`]);
+		engine.setWarmPolicy(MAIA.defaultSize);
+		engine.configure("smallnet", 2);
+		await settle();
+		expect(calls).toEqual([`warm:${MAIA.defaultSize}`]);
+		engine.dispose();
+		await (off as OffscreenContext).run(() => stop());
+		expect(calls[calls.length - 1]).toBe("dispose");
+	});
+
+	it("without a policy host, policy and policy-warm answer not-available", async () => {
+		off = await bootOffscreenContext(sim, {
+			entry: () => {
+				serveEnginePort({
+					createStore: () => ({ handleChunk: () => {}, abortAll: () => {} }),
+					createHost: hostDeps,
+				});
+			},
+		});
+		const engine = await (sw as SwContext).run(async () => {
+			const e = new RemoteEngine({ variant: "smallnet", threads: 1, warmPolicy: "79m" });
+			await e.ready;
+			return e;
+		});
+		const seen: EnginePortMessage[] = [];
+		engine.onMessage((m) => seen.push(m));
+		engine.post(query("p1"));
+		engine.post({ kind: "policy-warm", size: "79m" });
+		await settle();
+		expect(seen).toContainEqual({
+			kind: "policy-result",
+			id: "p1",
+			moves: null,
+			error: POLICY_NOT_AVAILABLE,
+		});
+		expect(seen).toContainEqual({ kind: "policy-status", size: null, error: POLICY_NOT_AVAILABLE });
+		engine.dispose();
 	});
 });

@@ -6,6 +6,8 @@ import {
 	isQueueableCandidate,
 	isQueueableReason,
 	isUniversalKingPremove,
+	maiaPremoveGate,
+	type PredictedPolicy,
 	type PremoveContext,
 	type PremoveDeps,
 	type PremoveReason,
@@ -66,12 +68,12 @@ describe("premoveProbability", () => {
 		expect(tradePremoveProbability(1100)).toBeGreaterThan(0.97);
 		expect(tradePremoveProbability(2000, 0)).toBe(0);
 	});
-	it("is 0.35 + 0.5·clamp((E − 1200)/1200, 0, 1), times the optional π_p", () => {
-		expect(premoveProbability(1200)).toBeCloseTo(0.35);
-		expect(premoveProbability(1800)).toBeCloseTo(0.6);
-		expect(premoveProbability(2400)).toBeCloseTo(0.85);
-		expect(premoveProbability(3000)).toBeCloseTo(0.85);
-		expect(premoveProbability(2400, 0.5)).toBeCloseTo(0.425);
+	it("is 0.55 + 0.4·clamp((E − 1200)/1200, 0, 1), times the optional π_p", () => {
+		expect(premoveProbability(1200)).toBeCloseTo(0.55);
+		expect(premoveProbability(1800)).toBeCloseTo(0.75);
+		expect(premoveProbability(2400)).toBeCloseTo(0.95);
+		expect(premoveProbability(3000)).toBeCloseTo(0.95);
+		expect(premoveProbability(2400, 0.5)).toBeCloseTo(0.475);
 		expect(premoveProbability(1000)).toBe(0);
 	});
 });
@@ -88,7 +90,7 @@ describe("replyProbability", () => {
 });
 
 describe("premoveCandidate", () => {
-	it("returns { reply, premove } for a predictable reply and a clear-only move (loss_2nd ≥ 0.25)", async () => {
+	it("returns { reply, premove } for a predictable reply and a clear-only move (loss_2nd ≥ 0.18)", async () => {
 		const a = analysis(OPPONENT_LINES, [line("d2d4", 0, 1), line("d2d3", -400, 2)]);
 		const res = await premoveCandidate(ctx(), a.deps);
 		expect(res).toEqual({
@@ -99,7 +101,7 @@ describe("premoveCandidate", () => {
 			reason: "loss2nd",
 			replyProbability: replyProbability("c6e5", OPPONENT_LINES),
 		});
-		// The opponent search (movetime 150, MultiPV 3) supplies p(r); then the reply analysis
+		// The opponent search (movetime 220, MultiPV 3) supplies p(r); then the reply analysis
 		// (movetime 120, MultiPV 2) after `m r`.
 		expect(a.calls).toEqual([
 			{
@@ -126,7 +128,7 @@ describe("premoveCandidate", () => {
 		expect(res?.reply).toBe("b4c3");
 		expect(res?.premove).toBe("b2c3");
 		expect(res?.reason).toBe("recapture");
-		// Without a ponder move the opponent search (150 ms, MultiPV 3) runs first.
+		// Without a ponder move the opponent search (220 ms, MultiPV 3) runs first.
 		expect(a.calls.map((c) => c.moves)).toEqual([["e1f1"], ["e1f1", "b4c3"]]);
 		expect(a.calls[0]?.movetimeMs).toBe(PREMOVE.ponderMovetimeMs);
 		expect(a.calls[0]?.multiPv).toBe(PREMOVE.ponderMultiPv);
@@ -167,13 +169,13 @@ describe("premoveCandidate", () => {
 		expect(await premoveCandidate(ctx({ fen, move: "d4e5", ponder: "e8c8" }), a.deps)).toBeNull();
 	});
 
-	it("does not premove when the reply is not predictable (p(r) < 0.6)", async () => {
+	it("does not premove when the reply is not predictable (p(r) < 0.55)", async () => {
 		const a = analysis([line("c6e5", 0, 1), line("d7d6", -5, 2), line("a7a6", -8, 3)], []);
 		expect(await premoveCandidate(ctx({ ponder: undefined }), a.deps)).toBeNull();
 		expect(a.calls.length).toBe(1); // the reply analysis never runs
 	});
 
-	it("does not premove a merely-good move (loss_2nd < 0.25, no recapture, not the only move)", async () => {
+	it("does not premove a merely-good move (loss_2nd < 0.18, no recapture, not the only move)", async () => {
 		const a = analysis(OPPONENT_LINES, [line("d2d4", 30, 1), line("d2d3", 10, 2)]);
 		expect(await premoveCandidate(ctx(), a.deps)).toBeNull();
 	});
@@ -406,5 +408,58 @@ describe("safe offers and clock-race queues", () => {
 		expect(res?.premove).toBe("d2d4");
 		expect(a.calls).toHaveLength(2);
 		expect(a.calls.every((c) => c.movetimeMs <= 100)).toBe(true);
+	});
+});
+
+// ── H8 (2026-09-13): Maia as the premove gate ──────────────────────────────────────────────────
+describe("maiaPremoveGate", () => {
+	// The predicted position after m = Nxe5, r = Nxe5 — the one the candidate q = d4 is played in.
+	const PREDICTED = "r1bqkb1r/pppp1ppp/5n2/4n3/4P3/8/PPPP1PPP/RNBQKB1R w KQkq - 0 5";
+	const policy = (p: number): PredictedPolicy => ({
+		fen: PREDICTED,
+		result: {
+			moves: [
+				["d2d4", p],
+				["f2f4", 1 - p],
+			],
+			wdl: [0.3, 0.4, 0.3],
+			size: "79m",
+		},
+	});
+
+	it("passes without an answer, or with an answer for another position", () => {
+		expect(maiaPremoveGate(PREDICTED, "d2d4", undefined)).toBe(true);
+		expect(maiaPremoveGate(FEN, "d2d4", policy(0))).toBe(true);
+	});
+
+	it("requires p ≥ PREMOVE.maiaMinProb in the predicted position, counters and ep aside", () => {
+		expect(maiaPremoveGate(PREDICTED, "d2d4", policy(PREMOVE.maiaMinProb))).toBe(true);
+		expect(maiaPremoveGate(PREDICTED, "d2d4", policy(PREMOVE.maiaMinProb - 0.01))).toBe(false);
+		// A move the model never listed has p = 0.
+		expect(maiaPremoveGate(PREDICTED, "a2a3", policy(0.9))).toBe(false);
+		// The same board with different counters is the same position.
+		const recounted = PREDICTED.replace(/ 0 5$/, " 3 9");
+		expect(maiaPremoveGate(recounted, "d2d4", policy(0.5))).toBe(true);
+		expect(maiaPremoveGate(recounted, "d2d4", policy(0.01))).toBe(false);
+	});
+
+	it("premoveCandidate refuses the clear-only move the model would not play, and keeps it otherwise", async () => {
+		const lines = [line("d2d4", 0, 1), line("d2d3", -400, 2)];
+		const refused = await premoveCandidate(
+			ctx({ policy: policy(0.05) }),
+			analysis(OPPONENT_LINES, lines).deps
+		);
+		expect(refused).toBeNull();
+		const kept = await premoveCandidate(
+			ctx({ policy: policy(0.6) }),
+			analysis(OPPONENT_LINES, lines).deps
+		);
+		expect(kept?.premove).toBe("d2d4");
+		// An answer for a different position gates nothing (behaviour unchanged).
+		const elsewhere = await premoveCandidate(
+			ctx({ policy: { ...policy(0), fen: FEN } }),
+			analysis(OPPONENT_LINES, lines).deps
+		);
+		expect(elsewhere?.premove).toBe("d2d4");
 	});
 });

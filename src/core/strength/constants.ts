@@ -26,6 +26,13 @@ export const SELECTION_CONSTANTS = deepFreeze({
 		min: 0.35,
 		/** Small reduction in discretionary accuracy; never replaces the Elo policy. */
 		eloReduction: 100,
+		/** Opponent-only fast play changes ordinary selection, not deliberate-error frequency. */
+		raceEloReduction: 350,
+		/** Lift the ordinary distribution even above the custom Elo parameter plateau. */
+		raceTauLift: 0.05,
+		raceGapExtraCp: 100,
+		/** Newly admitted ordinary choices cannot exceed this raw loss (older wider pools remain). */
+		raceExpandedLossCp: 200,
 		forcingPrior: 1.15,
 	},
 	/** Preserve searched wins and prefer small, concrete progress over repeated manoeuvring. */

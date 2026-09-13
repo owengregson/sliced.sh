@@ -1,7 +1,10 @@
 // test/service/engine-controller.test.ts
 import { describe, expect, it } from "bun:test";
 import { applyMoves, legalMoves, pvToSan } from "@core/chess/san";
+import { LIMITS } from "@core/constants/limits";
+import { TIMINGS } from "@core/constants/timings";
 import { AnalysisCache } from "@core/engine/analysis-cache";
+import { automaticDepthForElo } from "@core/engine/depth-policy";
 import type { AnalysisHandle, AnalysisRequest } from "@core/engine/types";
 import { FEATURE_DEPTH, UciEngine } from "@core/engine/uci-client";
 import { EngineController, type EngineControllerDeps } from "@service/engine-controller";
@@ -15,7 +18,7 @@ const AFTER_D4 = "rnbqkbnr/pppppppp/8/8/3P4/8/PPP1PPPP/RNBQKBNR b KQkq d3 0 1";
 const AFTER_E4_NORMALISED = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
 
 const REFERENCE_OPTION_LINES = [
-	"setoption name Threads value 4",
+	"setoption name Threads value 8",
 	"setoption name Hash value 32",
 	"setoption name MultiPV value 6",
 	"setoption name UCI_LimitStrength value true",
@@ -229,7 +232,9 @@ describe("EngineController options", () => {
 		await reset;
 		await flush();
 		expect(t.sent.indexOf("ucinewgame")).toBeGreaterThanOrEqual(0);
-		expect(t.sent.indexOf("isready")).toBeLessThan(t.sent.indexOf("go infinite"));
+		expect(t.sent.indexOf("isready")).toBeLessThan(
+			t.sent.indexOf(`go depth ${automaticDepthForElo(1500)} movetime ${TIMINGS.ponderMaxMs}`)
+		);
 		expect(ctrl.status().gameId).toBe("first-game");
 		finish(t, 2, 2);
 		await ponder.result;
@@ -278,7 +283,7 @@ describe("EngineController options", () => {
 		expect(setoptions(t.sent)).toEqual(REFERENCE_OPTION_LINES);
 		expect(t.sent.at(-1)).toBe("isready");
 		expect(ctrl.status().options).toEqual({
-			Threads: 4,
+			Threads: 8,
 			Hash: 32,
 			MultiPV: 6,
 			UCI_LimitStrength: true,
@@ -406,6 +411,133 @@ describe("EngineController analyse / cache", () => {
 		await second.stop();
 		expect(ctrl.status().inFlight).toBe(0);
 	});
+	it("a `searchmoves` request neither reads from nor writes to the cache", async () => {
+		const { t, ctrl, cache } = await setup();
+		// a full analysis of the position is cached and would answer an unrestricted repeat…
+		const full = ctrl.analyse(
+			req({ id: "full", fen: START, multiPv: 3, limit: { movetimeMs: 500 } })
+		);
+		finish(t, 3, FEATURE_DEPTH + 2);
+		await full.result;
+		expect(cache.size).toBe(1);
+		t.sent.length = 0;
+		// …but not a restricted one: the engine is asked, with the restriction
+		const restricted = ctrl.analyse(
+			req({
+				id: "restricted",
+				fen: START,
+				multiPv: 3,
+				limit: { movetimeMs: 200 },
+				searchmoves: ["b1c3", "a2a3", "h2h3"],
+			})
+		);
+		expect(t.sent.some((l) => l.startsWith("go ") && l.includes("searchmoves b1c3 a2a3 h2h3"))).toBe(
+			true
+		);
+		finish(t, 3, FEATURE_DEPTH + 2, "b1c3 e7e5");
+		const r = await restricted.result;
+		expect(r.status).toBe("complete");
+		expect(r.request.id).toBe("restricted");
+		// the restricted answer is not stored, and the full one is still the only entry
+		expect(cache.size).toBe(1);
+		expect(cache.get(START, 3, FEATURE_DEPTH)?.request.id).toBe("full");
+		t.sent.length = 0;
+		// the same restricted request again reaches the engine again
+		const again = ctrl.analyse(
+			req({
+				id: "again",
+				fen: START,
+				multiPv: 3,
+				limit: { movetimeMs: 200 },
+				searchmoves: ["b1c3", "a2a3", "h2h3"],
+			})
+		);
+		expect(t.sent.some((l) => l.startsWith("go "))).toBe(true);
+		finish(t, 3, FEATURE_DEPTH + 2, "b1c3 e7e5");
+		await again.result;
+		expect(cache.size).toBe(1);
+	});
+	// H10 (2026-09-13): the Maia-shaped own-move search is the one restricted search that is cached
+	// — on its root set — so the pre-analysis of the predicted position can answer the own move.
+	it("a `shaped` searchmoves request is cached and answered on its root set; the unflagged one still is not", async () => {
+		const { t, ctrl, cache } = await setup();
+		const roots = ["b1c3", "d2d4", "e2e4"];
+		/** A real engine reports only the restricted roots: complete `depth` over exactly them. */
+		const finishRoots = (depth: number, over: readonly string[] = roots): void => {
+			for (let d = 1; d <= depth; d++)
+				for (let k = 1; k <= over.length; k++) t.feed(infoLine(d, k, 30 - k, over[k - 1] ?? ""));
+			t.feed(`bestmove ${over[0]}`);
+		};
+		const shaped = ctrl.analyse(
+			req({
+				id: "shaped",
+				fen: START,
+				multiPv: 3,
+				limit: { movetimeMs: 500 },
+				searchmoves: roots,
+				shaped: true,
+			})
+		);
+		expect(t.sent.some((l) => l.startsWith("go ") && l.endsWith("searchmoves b1c3 d2d4 e2e4"))).toBe(
+			true
+		);
+		finishRoots(FEATURE_DEPTH + 2);
+		const r1 = await shaped.result;
+		expect(r1.status).toBe("complete");
+		expect(cache.size).toBe(1);
+		t.sent.length = 0;
+		// the same roots in another order: a settled handle, nothing on the wire
+		const hit = ctrl.analyse(
+			req({
+				id: "hit",
+				fen: START,
+				multiPv: 3,
+				limit: { movetimeMs: 500 },
+				searchmoves: ["e2e4", "b1c3", "d2d4"],
+				shaped: true,
+			})
+		);
+		const r2 = await hit.result;
+		expect(t.sent).toEqual([]);
+		expect(r2.id).toBe("hit");
+		expect(r2.bestmove).toBe("b1c3");
+		expect(r2.final.lines.map((l) => l.pvUci[0])).toEqual(roots);
+		// another root set (stored under its own roots), an unrestricted request (stored) and the
+		// unflagged restriction (never stored) all reach the engine
+		t.sent.length = 0;
+		const subset = ctrl.analyse(
+			req({
+				id: "subset",
+				fen: START,
+				multiPv: 2,
+				limit: { movetimeMs: 500 },
+				searchmoves: ["b1c3", "d2d4"],
+				shaped: true,
+			})
+		);
+		expect(t.sent.some((l) => l.startsWith("go ") && l.endsWith("searchmoves b1c3 d2d4"))).toBe(true);
+		finishRoots(FEATURE_DEPTH + 2, ["b1c3", "d2d4"]);
+		await subset.result;
+		expect(cache.size).toBe(2);
+		t.sent.length = 0;
+		const open = ctrl.analyse(
+			req({ id: "open", fen: START, multiPv: 3, limit: { movetimeMs: 500 } })
+		);
+		expect(t.sent.some((l) => l.startsWith("go ") && !l.includes("searchmoves"))).toBe(true);
+		finish(t, 3, FEATURE_DEPTH + 2);
+		await open.result;
+		expect(cache.size).toBe(3);
+		t.sent.length = 0;
+		const unflagged = ctrl.analyse(
+			req({ id: "unflagged", fen: START, multiPv: 3, limit: { movetimeMs: 500 }, searchmoves: roots })
+		);
+		expect(t.sent.some((l) => l.startsWith("go ") && l.endsWith("searchmoves b1c3 d2d4 e2e4"))).toBe(
+			true
+		);
+		finishRoots(FEATURE_DEPTH + 2);
+		await unflagged.result;
+		expect(cache.size).toBe(3);
+	});
 	it("misses the cache when the stored result is too shallow or a different strength", async () => {
 		const { t, ctrl } = await setup();
 		const first = ctrl.analyse(req({ id: "a", fen: START, limit: { movetimeMs: 500 } }));
@@ -481,6 +613,48 @@ describe("EngineController analyse / cache", () => {
 		finish(t, 2, 18);
 		await miss.result;
 	});
+	it("H4: a request for a human frame misses a result captured at the default one, and hits its own", async () => {
+		const { t, ctrl } = await setup();
+		const plain = ctrl.analyse(
+			req({ id: "plain", fen: START, multiPv: 2, limit: { movetimeMs: 500, depth: 14 } })
+		);
+		finish(t, 2, 14);
+		await plain.result;
+		t.sent.length = 0;
+		// the same shape with `featureDepth: 4` is a different identity: the engine is asked
+		const human = ctrl.analyse(
+			req({
+				id: "human",
+				fen: START,
+				multiPv: 2,
+				limit: { movetimeMs: 500, depth: 14 },
+				featureDepth: 4,
+			})
+		);
+		expect(t.sent.some((l) => l.startsWith("go "))).toBe(true);
+		finish(t, 2, 14);
+		const r = await human.result;
+		expect(r.atFeatureDepth?.depth).toBe(4);
+		t.sent.length = 0;
+		// …and answers the next identical request, frame included
+		const again = ctrl.analyse(
+			req({
+				id: "again",
+				fen: START,
+				multiPv: 2,
+				limit: { movetimeMs: 500, depth: 14 },
+				featureDepth: 4,
+			})
+		);
+		expect(t.sent).toEqual([]);
+		expect((await again.result).atFeatureDepth?.depth).toBe(4);
+		// while the plain shape still hits the plain result with the default frame
+		const plainAgain = ctrl.analyse(
+			req({ id: "plain-again", fen: START, multiPv: 2, limit: { movetimeMs: 500, depth: 14 } })
+		);
+		expect(t.sent).toEqual([]);
+		expect((await plainAgain.result).atFeatureDepth?.depth).toBe(FEATURE_DEPTH);
+	});
 	it("does not use the cache for an infinite search below the depth cap", async () => {
 		const { t, ctrl } = await setup();
 		const first = ctrl.analyse(req({ id: "a", fen: START, limit: { movetimeMs: 500 } }));
@@ -489,11 +663,30 @@ describe("EngineController analyse / cache", () => {
 		t.sent.length = 0;
 		const panel = ctrl.analyse(req({ id: "p", fen: START, priority: "panel" }));
 		expect(t.sent.some((l) => l === "go infinite")).toBe(true);
-		finish(t, 2, DEFAULT_SETTINGS.engine.depthCap);
+		finish(t, 2, LIMITS.depthMax);
 		await panel.result;
 		t.sent.length = 0;
 		const again = ctrl.analyse(req({ id: "q", fen: START, priority: "panel" }));
 		await again.result;
+		expect(t.sent).toEqual([]);
+	});
+	it("honors low explicit caps below feature depth and rejects deeper cached analysis", async () => {
+		const { t, ctrl } = await setup();
+		const deep = ctrl.analyse(req({ id: "deep", fen: START, limit: { movetimeMs: 500 } }));
+		finish(t, 2, 20);
+		await deep.result;
+		t.sent.length = 0;
+		const shallow = ctrl.analyse(
+			req({ id: "shallow", fen: START, limit: { depth: 6, movetimeMs: 400 } })
+		);
+		expect(t.sent).toContain("go depth 6 movetime 400");
+		finish(t, 2, 6);
+		await shallow.result;
+		t.sent.length = 0;
+		const reused = ctrl.analyse(
+			req({ id: "reuse", fen: START, limit: { depth: 6, movetimeMs: 400 } })
+		);
+		expect((await reused.result).final.depth).toBe(6);
 		expect(t.sent).toEqual([]);
 	});
 	it("works without a cache", async () => {
@@ -509,6 +702,19 @@ describe("EngineController analyse / cache", () => {
 });
 
 describe("EngineController priorities / ponder / newGame", () => {
+	it("caps convenience pondering by its active target instead of saved Elo or manual depth", async () => {
+		const { t, ctrl } = await setup({
+			settings: settings({ targetElo: 1500, engine: { depthCap: 6 } }),
+		});
+		const p = ctrl.ponder(START, [], 2, 3300);
+		expect(t.sent).toContain(`go depth 30 movetime ${TIMINGS.ponderMaxMs}`);
+		expect(t.sent).not.toContain("go infinite");
+		finish(t, 2, 30);
+		const result = await p.result;
+		expect(result.request.limit).toEqual({ depth: 30, movetimeMs: TIMINGS.ponderMaxMs });
+		expect(result.request.elo).toBeUndefined();
+	});
+
 	it("forwards priorities: ponder runs before panel, a move supersedes a ponder", async () => {
 		const { t, ctrl } = await setup();
 		const move = ctrl.analyse(req({ id: "m", fen: START, priority: "move" }));
@@ -520,7 +726,9 @@ describe("EngineController priorities / ponder / newGame", () => {
 		await move.result;
 		expect(t.sent).toContain(`position fen ${AFTER_E4}`);
 		expect(t.sent).toContain("setoption name MultiPV value 4");
-		expect(t.sent.at(-1)).toBe("go infinite");
+		expect(t.sent.at(-1)).toBe(
+			`go depth ${automaticDepthForElo(1500)} movetime ${TIMINGS.ponderMaxMs}`
+		);
 		expect(t.sent).not.toContain(`position fen ${AFTER_D4}`);
 		t.sent.length = 0;
 		const move2 = ctrl.analyse(req({ id: "m2", fen: START, priority: "move" }));

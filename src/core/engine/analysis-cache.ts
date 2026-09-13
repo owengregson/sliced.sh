@@ -48,14 +48,36 @@ export function limitKey(limit: AnalysisLimit): string {
 	return key === "" ? `t${TIMINGS.analysisDefaultMovetimeMs}` : key;
 }
 
+/** The `sm:` segment of a restricted search's key: its roots sorted, comma-joined. */
+export function searchmovesKey(searchmoves: readonly string[] | undefined): string {
+	return searchmoves?.length ? [...searchmoves].sort().join(",") : "";
+}
+
+/** The same root set (order-insensitive); two unrestricted searches are the same set too. */
+export function sameSearchmoves(
+	a: readonly string[] | undefined,
+	b: readonly string[] | undefined
+): boolean {
+	return searchmovesKey(a) === searchmovesKey(b);
+}
+
+/**
+ * `fen|multiPv|elo|limit`, plus `|f<depth>` when the request asks for a human frame other than
+ * the default `LIMITS.featureDepth` (H4, 2026-09-13) — the default keys exactly as before — and
+ * `|sm:<sorted roots>` for a restricted (`searchmoves`) search (H10, 2026-09-13).
+ */
 export function cacheKey(
 	fen: string,
 	multiPv: number,
 	elo: number | undefined,
 	limit: AnalysisLimit,
-	moves: readonly string[] = []
+	moves: readonly string[] = [],
+	featureDepth: number = LIMITS.featureDepth,
+	searchmoves?: readonly string[]
 ): string {
-	return `${historyKey(fen, moves)}|${multiPv}|${elo ?? "full"}|${limitKey(limit)}`;
+	const frame = featureDepth === LIMITS.featureDepth ? "" : `|f${featureDepth}`;
+	const roots = searchmoves?.length ? `|sm:${searchmovesKey(searchmoves)}` : "";
+	return `${historyKey(fen, moves)}|${multiPv}|${elo ?? "full"}|${limitKey(limit)}${frame}${roots}`;
 }
 
 /**
@@ -83,14 +105,20 @@ export class AnalysisCache {
 	/**
 	 * The deepest cacheable result for `fen` searched with `multiPv` lines or
 	 * more at the same strength (`elo` undefined = full strength) and
-	 * `final.depth >= minDepth`. A hit refreshes recency.
+	 * `minDepth <= final.depth <= maxDepth`, captured with the same human frame (`featureDepth`,
+	 * default `LIMITS.featureDepth`: a result carries only the one frame it was asked for) and over
+	 * the same root set (`searchmoves`, H10: a restricted result answers only the identical
+	 * restriction, and an unrestricted one only an unrestricted request). A hit refreshes recency.
 	 */
 	get(
 		fen: string,
 		multiPv: number,
 		minDepth: number,
 		elo?: number,
-		moves: readonly string[] = []
+		moves: readonly string[] = [],
+		maxDepth = Number.POSITIVE_INFINITY,
+		featureDepth: number = LIMITS.featureDepth,
+		searchmoves?: readonly string[]
 	): AnalysisResult | undefined {
 		const fk = historyKey(fen, moves);
 		if (fk === null) return undefined;
@@ -108,7 +136,10 @@ export class AnalysisCache {
 				!isCacheable(r) ||
 				r.request.multiPv < multiPv ||
 				r.request.elo !== elo ||
-				r.final.depth < minDepth
+				(r.request.featureDepth ?? LIMITS.featureDepth) !== featureDepth ||
+				!sameSearchmoves(r.request.searchmoves, searchmoves) ||
+				r.final.depth < minDepth ||
+				r.final.depth > maxDepth
 			)
 				continue;
 			if (!best || r.final.depth > best.final.depth) {
@@ -121,15 +152,19 @@ export class AnalysisCache {
 		return best;
 	}
 
-	/** Stores only cacheable results (see `isCacheable`). */
+	/**
+	 * Stores only cacheable results (see `isCacheable`). A restricted (`searchmoves`) result is
+	 * stored only when the request is a Maia-shaped own-move search (`shaped`, H10): it is keyed on
+	 * its roots and answers only the identical restriction. Any other restricted search — the extra
+	 * referee search — cannot answer an unrestricted request and is never stored.
+	 */
 	set(result: AnalysisResult): void {
 		if (!isCacheable(result)) return;
-		const { fen, moves, multiPv, elo, limit, searchmoves } = result.request;
-		// A restricted search cannot answer an unrestricted request.
-		if (searchmoves?.length) return;
+		const { fen, moves, multiPv, elo, limit, searchmoves, featureDepth, shaped } = result.request;
+		if (searchmoves?.length && shaped !== true) return;
 		const fk = historyKey(fen, moves);
 		if (fk === null) return;
-		const key = cacheKey(fen, multiPv, elo, limit, moves);
+		const key = cacheKey(fen, multiPv, elo, limit, moves, featureDepth, searchmoves);
 		this.lru.set(key, result);
 		let keys = this.byFen.get(fk);
 		if (!keys) {

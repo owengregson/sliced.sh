@@ -16,15 +16,16 @@ export type { EngineOptions } from "./types";
 const SKILL_LEVEL_MAX = 20;
 /** Stockfish's `Move Overhead` range (ms). */
 const MOVE_OVERHEAD_MAX = 5000;
-/** Auto thread selection leaves cores for the page (Appendix E §4.3). */
-const AUTO_THREADS_MAX = 4;
-const AUTO_THREADS_RESERVE = 2;
 /** `UCI_LimitStrength` runs `MultiPV = max(MultiPV, 4)` internally (§7.1). */
 const MULTI_PV_FLOOR = 4;
 
+/**
+ * Fallbacks for an option `optionsForSettings` did not resolve (it always resolves all of them);
+ * `Threads` / `Hash` are the owner's 2026-09-13 defaults (`LIMITS.threadsDefault`, `hashMbDefault`).
+ */
 export const ENGINE_OPTION_DEFAULTS: Readonly<Required<EngineOptions>> = Object.freeze({
-	Threads: 1,
-	Hash: LIMITS.hashMbMin,
+	Threads: LIMITS.threadsDefault,
+	Hash: LIMITS.hashMbDefault,
 	MultiPV: MULTI_PV_FLOOR,
 	UCI_ShowWDL: true,
 	UCI_LimitStrength: false,
@@ -89,17 +90,28 @@ export function variantForSettings(settings: Settings): EngineVariant {
 }
 
 /**
+ * `auto` threads (owner, 2026-09-13): `min(LIMITS.threadsDefault, hardwareConcurrency)`, at
+ * least 1 — 8 on most devices, every core on a smaller one. The former Appendix E §4.3 formula
+ * (`clamp(cores − 2, 1, 4)`) reserved cores for the page; the owner asked for the engine to have
+ * them. A missing or non-finite core count (no `navigator` in the runtime) counts as 1.
+ */
+export function autoThreads(hardwareConcurrency: number): number {
+	const cores = Number.isFinite(hardwareConcurrency) ? hardwareConcurrency : 1;
+	return clampInt(cores, 1, LIMITS.threadsDefault);
+}
+
+/**
  * Settings → options: full-strength search with the engine's Elo limiter on
  * (§7.1 hybrid), WDL on for the panel, no UCI ponder mode (Appendix E §4.2).
- * Threads (§6.1): `auto` → `clamp(hardwareConcurrency − 2, 1, 4)`; without
- * `SharedArrayBuffer` the single-threaded build runs, so always 1.
+ * Threads (§6.1): `auto` → `autoThreads(hardwareConcurrency)`; an explicit setting is kept
+ * (clamped to `LIMITS.threadsMax`); without `SharedArrayBuffer` the single-threaded build runs,
+ * so always 1.
  */
 export function optionsForSettings(settings: Settings, env: OptionsEnv): EngineOptions {
 	const { engine, strength } = settings;
 	let threads: number;
 	if (!env.sab) threads = 1;
-	else if (engine.threads === "auto")
-		threads = clampInt(env.hardwareConcurrency - AUTO_THREADS_RESERVE, 1, AUTO_THREADS_MAX);
+	else if (engine.threads === "auto") threads = autoThreads(env.hardwareConcurrency);
 	else threads = engine.threads;
 	const clamped = clampEngineOptions({
 		Threads: threads,

@@ -288,7 +288,16 @@ class Pending {
 		);
 		if (complete) {
 			if (captured.depth >= (this.completedFrame?.depth ?? 0)) this.completedFrame = captured;
-			if (captured.depth === FEATURE_DEPTH) this.atFeatureDepth = captured;
+			// H4 (2026-09-13): the *first* complete frame at or past the requested depth, refreshed
+			// only while that same depth is re-emitted. A requested depth may never complete on its
+			// own (a low MultiPV frame can be skipped by an aspiration re-search), in which case the
+			// next depth that does is the human frame — never the deepest one that does not exceed it.
+			const featureDepth = this.req.featureDepth ?? FEATURE_DEPTH;
+			if (
+				captured.depth >= featureDepth &&
+				(this.atFeatureDepth === undefined || this.atFeatureDepth.depth === captured.depth)
+			)
+				this.atFeatureDepth = captured;
 		} else if (
 			!this.partialFrame ||
 			captured.depth > this.partialFrame.depth ||

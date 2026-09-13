@@ -23,6 +23,7 @@
  */
 
 import { DEFAULT_ENGINE_STATUS } from "@core/constants/defaults";
+import type { MaiaSize } from "@core/constants/maia";
 import type { EnginePortCommand, EnginePortMessage } from "@core/constants/messages";
 import { PORT_NAMES } from "@core/constants/ports";
 import { TIMINGS } from "@core/constants/timings";
@@ -46,6 +47,13 @@ export interface RemoteEngineOptions {
 	 * ~200 ms of wasm work and an 18 MB session in the offscreen document. Default off.
 	 */
 	warmTiming?: boolean;
+	/**
+	 * 2026-09-11: ask the offscreen document to pre-load this Maia-3 size with the first
+	 * `configure` (`MAIA.defaultSize` before the target is known). Set it only when the SW's
+	 * pipeline runs the Maia selector — it costs a session of 20–310 MB in the offscreen
+	 * document. Default off.
+	 */
+	warmPolicy?: MaiaSize;
 }
 
 interface RestartWaiter {
@@ -74,6 +82,8 @@ export class RemoteEngine implements EngineTransport {
 	private threads: number | undefined;
 	/** Task 34: pre-warm the timing head in the offscreen document (off unless the SW asks). */
 	private warmTiming = false;
+	/** 2026-09-11: the Maia-3 size to pre-load in the offscreen document (none unless the SW asks). */
+	private warmPolicy: MaiaSize | undefined;
 	private needsConfigure = true;
 	private synced = false;
 	private last: EngineStatus | undefined;
@@ -91,6 +101,7 @@ export class RemoteEngine implements EngineTransport {
 		if (opts.variant !== undefined) this.variant = opts.variant;
 		if (opts.threads !== undefined) this.threads = opts.threads;
 		if (opts.warmTiming !== undefined) this.warmTiming = opts.warmTiming;
+		if (opts.warmPolicy !== undefined) this.warmPolicy = opts.warmPolicy;
 		this.ready = new Promise<void>((resolve) => {
 			this.resolveReady = resolve;
 		});
@@ -183,7 +194,11 @@ export class RemoteEngine implements EngineTransport {
 				TIMINGS.assetDownloadTotalMs
 			);
 			off = this.onMessage((message) => {
-				if (message.kind !== "status" || message.status.variant !== variant) return;
+				if (message.kind !== "status") return;
+				// The host may answer a `full` request with the small-net build after the full build
+				// crashed twice (`fallbackFrom`): that is the engine this configuration gets.
+				const { variant: running, fallbackFrom } = message.status;
+				if (running !== variant && fallbackFrom !== variant) return;
 				const { state, error } = message.status;
 				if (state === "booting" || state === "loading-nnue") transitioned = true;
 				if (state === "ready") finish();
@@ -200,10 +215,21 @@ export class RemoteEngine implements EngineTransport {
 		this.warmTiming = on;
 	}
 
+	/** 2026-09-11: opt the offscreen document into pre-loading a Maia-3 size (`undefined` = none). */
+	setWarmPolicy(size: MaiaSize | undefined): void {
+		this.warmPolicy = size;
+	}
+
+	/** The size every (re)connect's `configure` asks the offscreen document to pre-load. */
+	warmPolicySize(): MaiaSize | undefined {
+		return this.warmPolicy;
+	}
+
 	private configureCommand(variant: EngineVariant, threads: number): EnginePortCommand {
-		return this.warmTiming
-			? { kind: "configure", variant, threads, warmTiming: true }
-			: { kind: "configure", variant, threads };
+		const cmd: EnginePortCommand = { kind: "configure", variant, threads };
+		if (this.warmTiming) cmd.warmTiming = true;
+		if (this.warmPolicy !== undefined) cmd.warmPolicy = this.warmPolicy;
+		return cmd;
 	}
 
 	loadNnue(names: string[]): void {

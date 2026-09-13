@@ -2,6 +2,7 @@
 import { describe, expect, it } from "bun:test";
 import { LIMITS } from "@core/constants/limits";
 import {
+	autoThreads,
 	clampEngineOptions,
 	ENGINE_OPTION_DEFAULTS,
 	formatSetOption,
@@ -40,7 +41,7 @@ describe("optionsForSettings", () => {
 				sab: true,
 			})
 		).toEqual({
-			Threads: 4,
+			Threads: 8,
 			Hash: 32,
 			MultiPV: 6,
 			UCI_LimitStrength: true,
@@ -54,15 +55,39 @@ describe("optionsForSettings", () => {
 		expect(optionsForSettings(settings({}, 800), env).UCI_Elo).toBe(LIMITS.engineEloMin);
 		expect(optionsForSettings(settings({}, 3200), env).UCI_Elo).toBe(LIMITS.engineEloMax);
 	});
-	it("derives threads: auto → clamp(hc − 2, 1, 4); explicit → clamped to threadsMax", () => {
+	it("defaults to 8 threads and 64 MB hash (owner, 2026-09-13)", () => {
+		expect(LIMITS.threadsDefault).toBe(8);
+		expect(LIMITS.hashMbDefault).toBe(64);
+		expect(DEFAULT_SETTINGS.engine.threads).toBe("auto");
+		expect(DEFAULT_SETTINGS.engine.hashMb).toBe(LIMITS.hashMbDefault);
+		expect(ENGINE_OPTION_DEFAULTS.Threads).toBe(LIMITS.threadsDefault);
+		expect(ENGINE_OPTION_DEFAULTS.Hash).toBe(LIMITS.hashMbDefault);
+		// The shipped defaults on a typical 8+ core machine, end to end.
+		const options = optionsForSettings(DEFAULT_SETTINGS, { hardwareConcurrency: 16, sab: true });
+		expect(options.Threads).toBe(8);
+		expect(options.Hash).toBe(64);
+		// The panel offers both defaults: 8 is inside the stepper, 64 is a power of two in range.
+		expect(LIMITS.threadsDefault).toBeLessThanOrEqual(LIMITS.threadsMax);
+		expect(LIMITS.hashMbDefault).toBeGreaterThanOrEqual(LIMITS.hashMbMin);
+		expect(LIMITS.hashMbDefault).toBeLessThanOrEqual(LIMITS.hashMbMax);
+		expect(Math.log2(LIMITS.hashMbDefault / LIMITS.hashMbMin) % 1).toBe(0);
+	});
+	it("derives threads: auto → min(8, cores) ≥ 1; explicit → kept, clamped to threadsMax", () => {
 		const hc = (n: number) => ({ hardwareConcurrency: n, sab: true });
-		expect(optionsForSettings(settings({}), hc(8)).Threads).toBe(4);
-		expect(optionsForSettings(settings({}), hc(4)).Threads).toBe(2);
-		expect(optionsForSettings(settings({}), hc(2)).Threads).toBe(1);
+		expect(autoThreads(4)).toBe(4);
+		expect(autoThreads(16)).toBe(8);
+		expect(autoThreads(0)).toBe(1);
+		expect(autoThreads(Number.NaN)).toBe(1);
+		expect(optionsForSettings(settings({}), hc(16)).Threads).toBe(8);
+		expect(optionsForSettings(settings({}), hc(8)).Threads).toBe(8);
+		expect(optionsForSettings(settings({}), hc(4)).Threads).toBe(4);
+		expect(optionsForSettings(settings({}), hc(2)).Threads).toBe(2);
 		expect(optionsForSettings(settings({}), hc(1)).Threads).toBe(1);
-		expect(optionsForSettings(settings({}), hc(5)).Threads).toBe(3);
-		expect(optionsForSettings(settings({}), hc(32)).Threads).toBe(4);
+		expect(optionsForSettings(settings({}), hc(5)).Threads).toBe(5);
+		expect(optionsForSettings(settings({}), hc(32)).Threads).toBe(8);
+		// A user setting overrides the auto value, in both directions.
 		expect(optionsForSettings(settings({ threads: 6 }), hc(2)).Threads).toBe(6);
+		expect(optionsForSettings(settings({ threads: 2 }), hc(16)).Threads).toBe(2);
 		expect(optionsForSettings(settings({ threads: 99 }), hc(2)).Threads).toBe(LIMITS.threadsMax);
 		expect(optionsForSettings(settings({ threads: 0 }), hc(2)).Threads).toBe(1);
 	});
