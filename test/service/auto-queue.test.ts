@@ -1,22 +1,80 @@
 import { describe, expect, it } from "bun:test";
+import { REMATCH } from "@core/constants/rematch";
 import { TIMINGS } from "@core/constants/timings";
 import { createRng } from "@core/rng";
 import { AutoQueue, type AutoQueueOptions } from "@service/auto-queue";
+import type { RematchResult, RematchRunHooks } from "@service/rematch";
 import { DEFAULT_SETTINGS } from "@typedefs/settings";
 import type { PendingAutoQueues } from "@typedefs/storage";
 
 const automation = DEFAULT_SETTINGS.automation;
+/** The queue on with the rematch step on: what `canQueue` admits in production. */
+const REMATCHING = { ...automation, autoQueue: true, rematchTitled: true };
 const flush = async () => {
 	for (let n = 0; n < 12; n++) await Promise.resolve();
 };
+/** A scripted rematch step: records runs, answers from `outcome`, resolves on `gameStarted`. */
+interface FakeRematchStep {
+	runs: Array<{ tabId: number; gameId: string | null; at: number }>;
+	incomingReads: number;
+	outcome: RematchResult["outcome"] | "wait";
+	incoming: boolean;
+	waiting: boolean;
+}
 function harness(
-	options: { rng?: number; persisted?: PendingAutoQueues; loadFailures?: number } = {}
+	options: {
+		rng?: number;
+		persisted?: PendingAutoQueues;
+		loadFailures?: number;
+		rematch?: boolean;
+		rematchAllowed?: () => boolean;
+	} = {}
 ) {
 	let now = 1_000;
 	let sequence = 0;
 	let gate: "allow" | "hold" | "cancel" = "allow";
 	const timers = new Map<number, { at: number; fn: () => void }>();
 	const calls: Array<{ tabId: number; at: number }> = [];
+	const breaks: number[] = [];
+	let resolveStarted: (() => void) | null = null;
+	const rematch: FakeRematchStep = {
+		runs: [],
+		incomingReads: 0,
+		outcome: "wait",
+		incoming: false,
+		waiting: false,
+	};
+	const step = {
+		incoming: async () => {
+			rematch.incomingReads += 1;
+			return rematch.incoming;
+		},
+		gameStarted: () => resolveStarted?.(),
+		run: (
+			tabId: number,
+			gameId: string | null,
+			signal: AbortSignal,
+			hooks: RematchRunHooks = {}
+		): Promise<RematchResult> => {
+			rematch.runs.push({ tabId, gameId, at: now });
+			if (rematch.outcome !== "wait")
+				return Promise.resolve({
+					outcome: rematch.outcome,
+					clicked: rematch.outcome === "expired",
+				});
+			hooks.onClicked?.();
+			rematch.waiting = true;
+			return new Promise<RematchResult>((resolve) => {
+				const finish = (outcome: RematchResult["outcome"]) => {
+					rematch.waiting = false;
+					resolveStarted = null;
+					resolve({ outcome, clicked: true });
+				};
+				resolveStarted = () => finish("started");
+				signal.addEventListener("abort", () => finish("aborted"), { once: true });
+			});
+		},
+	};
 	let answer: () => Promise<{
 		kind: "startNewGameResult";
 		id: string;
@@ -55,11 +113,19 @@ function harness(
 				writes.push(saved);
 			},
 		},
+		...(options.rematch
+			? {
+					rematch: { step, allowed: options.rematchAllowed ?? (() => true) },
+					onBreak: (tabId: number) => breaks.push(tabId),
+				}
+			: {}),
 	});
 	return {
 		queue,
 		calls,
 		writes,
+		rematch,
+		breaks,
 		get loads() {
 			return loads;
 		},
@@ -306,6 +372,202 @@ describe("auto queue recovery", () => {
 		await h.advance(60_000);
 		expect(h.calls).toHaveLength(1);
 		expect(h.queue.isPending(1)).toBe(false);
+		h.queue.dispose();
+	});
+
+	it("a titled opponent runs the rematch step after the ordinary delay, marks the opponent at the press, and the next game ends it", async () => {
+		const h = harness({ rematch: true });
+		const settings = { ...automation, autoQueue: true, rematchTitled: true };
+		const titled = { name: "fm_player", title: "FM" };
+		await h.queue.schedule(1, "first", settings, titled);
+		expect(h.queue.view(1)?.status).toBe("waiting");
+		expect(h.saved["1"]?.rematch).toBe("fm_player");
+		await h.advance(900);
+		expect(h.rematch.runs).toEqual([{ tabId: 1, gameId: "first", at: 1_900 }]);
+		expect(h.calls).toHaveLength(0);
+		expect(h.queue.view(1)?.status).toBe("rematch");
+		expect(h.queue.view(1)?.dueAt).toBe(1_900 + REMATCH.acceptTimeoutMs);
+		// Marked at the press, persisted, and the pending plan is gone from the record.
+		expect(h.saved["1"]?.session?.rematched).toEqual(["fm_player"]);
+		expect(h.saved["1"]?.rematch).toBeUndefined();
+		await h.advance(5_000);
+		await h.queue.observedGame(1, "rematch-game", settings);
+		expect(h.rematch.waiting).toBe(false);
+		expect(h.queue.isPending(1)).toBe(false);
+		await h.advance(60_000);
+		expect(h.calls).toHaveLength(0);
+		// The same opponent again: no second run, the ordinary click at the ordinary delay.
+		await h.queue.schedule(1, "rematch-game", settings, titled);
+		expect(h.saved["1"]?.rematch).toBeUndefined();
+		await h.advance(900);
+		expect(h.rematch.runs).toHaveLength(1);
+		expect(h.calls).toHaveLength(1);
+		h.queue.dispose();
+	});
+
+	it("an untitled opponent, the setting off, or no rematch step: the ordinary click only", async () => {
+		for (const [h, opponent, settings] of [
+			[harness({ rematch: true }), { name: "amateur" }, { ...automation, rematchTitled: true }],
+			[
+				harness({ rematch: true }),
+				{ name: "gm", title: "GM" },
+				{ ...automation, rematchTitled: false },
+			],
+			[harness(), { name: "gm", title: "GM" }, { ...automation, rematchTitled: true }],
+		] as const) {
+			await h.queue.schedule(1, "first", settings, opponent);
+			await h.advance(900);
+			expect(h.rematch.runs).toHaveLength(0);
+			expect(h.calls).toHaveLength(1);
+			expect(h.saved["1"]?.rematch).toBeUndefined();
+			h.queue.dispose();
+		}
+	});
+
+	it("the setting turned off during the delay skips the step at attempt time", async () => {
+		let allowed = true;
+		const h = harness({ rematch: true, rematchAllowed: () => allowed });
+		await h.queue.schedule(1, "first", REMATCHING, { name: "gm", title: "GM" });
+		allowed = false;
+		await h.advance(900);
+		expect(h.rematch.runs).toHaveLength(0);
+		expect(h.calls).toHaveLength(1);
+		expect(h.saved["1"]?.session?.rematched).toBeUndefined();
+		h.queue.dispose();
+	});
+
+	it("an offer nobody took falls through to the ordinary click at once", async () => {
+		const h = harness({ rematch: true });
+		h.rematch.outcome = "expired";
+		await h.queue.schedule(1, "first", REMATCHING, { name: "gm", title: "GM" });
+		await h.advance(900);
+		expect(h.rematch.runs).toHaveLength(1);
+		expect(h.calls).toEqual([{ tabId: 1, at: 1_900 }]);
+		expect(h.queue.view(1)?.status).toBe("retrying");
+		h.queue.dispose();
+	});
+
+	it("a game already on the board ends the queue like the ordinary click's `in-game`", async () => {
+		const h = harness({ rematch: true });
+		h.rematch.outcome = "in-game";
+		await h.queue.schedule(1, "first", REMATCHING, { name: "gm", title: "GM" });
+		await h.advance(900);
+		expect(h.calls).toHaveLength(0);
+		expect(h.queue.isPending(1)).toBe(false);
+		h.queue.dispose();
+	});
+
+	it("their offer during the delay runs the step early", async () => {
+		const h = harness({ rematch: true, rng: 0.999 });
+		await h.queue.schedule(1, "first", REMATCHING, { name: "gm", title: "GM" });
+		const dueAt = h.queue.view(1)?.dueAt ?? 0;
+		expect(dueAt - 1_000).toBeGreaterThan(REMATCH.incomingPollMs);
+		h.rematch.incoming = true;
+		await h.advance(REMATCH.incomingPollMs);
+		expect(h.rematch.incomingReads).toBe(1);
+		expect(h.rematch.runs).toHaveLength(1);
+		expect(h.rematch.runs[0]?.at).toBeLessThan(dueAt);
+		h.queue.dispose();
+	});
+
+	it("the once-only mark and a pending step survive a reload; a marked opponent is not re-offered", async () => {
+		const settings = REMATCHING;
+		const first = harness({ rematch: true });
+		await first.queue.schedule(1, "first", settings, { name: "gm", title: "GM" });
+		const pending = structuredClone(first.saved);
+		expect(pending["1"]?.rematch).toBe("gm");
+		first.queue.dispose();
+		// Reloaded mid-delay: the step still runs at the persisted deadline.
+		const second = harness({ rematch: true, persisted: pending });
+		await second.queue.schedule(1, "first", settings, { name: "gm", title: "GM" });
+		await second.advance(900);
+		expect(second.rematch.runs).toHaveLength(1);
+		const marked = structuredClone(second.saved);
+		expect(marked["1"]?.session?.rematched).toEqual(["gm"]);
+		second.queue.dispose();
+		// Reloaded after the press: the mark holds, and the same opponent gets the ordinary click.
+		const third = harness({ rematch: true, persisted: marked });
+		await third.queue.observedGame(1, "rematch-game", settings);
+		await third.queue.schedule(1, "rematch-game", settings, { name: "gm", title: "GM" });
+		expect(third.saved["1"]?.rematch).toBeUndefined();
+		await third.advance(900);
+		expect(third.rematch.runs).toHaveLength(0);
+		expect(third.calls).toHaveLength(1);
+		third.queue.dispose();
+	});
+
+	it("a due break waits for the rematch game: the session keeps going and samples a fresh break after it", async () => {
+		const h = harness({ rematch: true });
+		const settings = {
+			...automation,
+			autoQueue: true,
+			rematchTitled: true,
+			autoQueueSessionMinMinutes: 1,
+			autoQueueSessionMaxMinutes: 1,
+			autoQueueBreakMinMinutes: 2,
+			autoQueueBreakMaxMinutes: 2,
+		};
+		await h.queue.observedGame(1, "first", settings);
+		await h.advance(60_000);
+		await h.queue.schedule(1, "first", settings, { name: "gm", title: "GM" });
+		// The break is sampled but not taken: the short delay, then the step.
+		expect(h.saved["1"]?.session?.breakUntil).toBe(61_000 + 120_000);
+		expect(h.queue.view(1)?.status).toBe("waiting");
+		expect(h.queue.view(1)?.dueAt).toBe(61_900);
+		await h.advance(900);
+		expect(h.rematch.runs).toHaveLength(1);
+		await h.queue.observedGame(1, "rematch-game", settings);
+		// Same playing session (the game count carries on), the break deferred.
+		expect(h.saved["1"]?.session?.completedGames).toBe(1);
+		expect(h.saved["1"]?.session?.breakUntil).toBeNull();
+		expect(h.breaks).toEqual([]);
+		await h.advance(30_000);
+		await h.queue.schedule(1, "rematch-game", settings, { name: "gm", title: "GM" });
+		expect(h.queue.view(1)?.status).toBe("break");
+		expect(h.queue.view(1)?.dueAt).toBe(91_900 + 120_000);
+		expect(h.saved["1"]?.session?.completedGames).toBe(2);
+		h.queue.dispose();
+	});
+
+	it("a due break starts after an offer nobody took, and the owner is told", async () => {
+		const h = harness({ rematch: true });
+		h.rematch.outcome = "expired";
+		const settings = {
+			...automation,
+			autoQueue: true,
+			rematchTitled: true,
+			autoQueueSessionMinMinutes: 1,
+			autoQueueSessionMaxMinutes: 1,
+			autoQueueBreakMinMinutes: 2,
+			autoQueueBreakMaxMinutes: 2,
+		};
+		await h.queue.observedGame(1, "first", settings);
+		await h.advance(60_000);
+		await h.queue.schedule(1, "first", settings, { name: "gm", title: "GM" });
+		await h.advance(900);
+		expect(h.rematch.runs).toHaveLength(1);
+		expect(h.calls).toHaveLength(0);
+		expect(h.queue.view(1)?.status).toBe("break");
+		expect(h.queue.view(1)?.dueAt).toBe(181_000);
+		expect(h.breaks).toEqual([1]);
+		await h.advance(181_000 - 61_900 - 1);
+		expect(h.calls).toHaveLength(0);
+		await h.advance(1);
+		expect(h.calls).toHaveLength(1);
+		h.queue.dispose();
+	});
+
+	it("cancellation during the wait aborts the step and clears the entry", async () => {
+		const h = harness({ rematch: true });
+		await h.queue.schedule(1, "first", REMATCHING, { name: "gm", title: "GM" });
+		await h.advance(900);
+		expect(h.rematch.waiting).toBe(true);
+		h.queue.cancel(1);
+		await flush();
+		expect(h.rematch.waiting).toBe(false);
+		expect(h.queue.isPending(1)).toBe(false);
+		await h.advance(60_000);
+		expect(h.calls).toHaveLength(0);
 		h.queue.dispose();
 	});
 

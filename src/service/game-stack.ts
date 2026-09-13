@@ -3,8 +3,9 @@
  * exist once per worker and that every tab's `GameSession` shares — the engine
  * (`UciEngine` over `RemoteEngine` over the offscreen document), its controller
  * and analysis cache, the opening book, the ChessMimic timing head with its v1
- * fallback, the hand stack (debugger / content link / focus gate / hand
- * ownership), the timing log and the session registry.
+ * fallback, the Maia-3 policy port (2026-09-11), the hand stack (debugger /
+ * content link / focus gate / hand ownership), the timing log and the session
+ * registry.
  *
  * Kept out of `service-worker.ts` so the entry point stays a listener list and
  * the whole stack can be built in a test against the simulator.
@@ -12,12 +13,14 @@
 
 import { tabsQuery } from "@core/chrome/tabs";
 import { DEFAULT_SETTINGS } from "@core/constants/defaults";
+import { MAIA } from "@core/constants/maia";
 import { AnalysisCache } from "@core/engine/analysis-cache";
 import type { OptionsEnv } from "@core/engine/options";
 import { RemoteEngine } from "@core/engine/remote-engine";
 import { UciEngine } from "@core/engine/uci-client";
 import { log } from "@core/logger";
 import type { MessageRouter } from "@core/messaging/router";
+import { maiaSizeFor } from "@core/policy/maia-size";
 import { getSettings, onSettingsChanged } from "@core/storage/settings-storage";
 import { createBookPolicy } from "@core/strength/book/book-policy";
 import { ChessMimicHead, selectBand } from "@core/timing/chessmimic-head";
@@ -34,6 +37,7 @@ import { SessionRegistry } from "@service/game-session";
 import { HandOwnership } from "@service/hand-ownership";
 import { registerContentHandlers } from "@service/handlers/content";
 import { registerEngineHandlers } from "@service/handlers/engine";
+import { createPolicyInferPort } from "@service/handlers/engine/policy-infer";
 import { createTimingInferPort } from "@service/handlers/engine/timing-infer";
 import { ensureOffscreen } from "@service/offscreen-manager";
 import type { PanelBroadcaster } from "@service/panel-broadcaster";
@@ -95,6 +99,9 @@ export function createGameStack(options: GameStackOptions): GameStack {
 		// offscreen document is asked to pre-load its default band with the first `configure`.
 		// `setWarmTiming` after that first `configure` has no effect until a reconnect.
 		warmTiming: true,
+		// 2026-09-11: Maia-3 selects below `MAIA.eloMax`; the cheapest size is made resident on
+		// connect, and the session re-warms the target's size once it is known (`warmPolicy`).
+		warmPolicy: MAIA.defaultSize,
 	});
 	const engine = new UciEngine(transport);
 	const cache = new AnalysisCache();
@@ -118,6 +125,7 @@ export function createGameStack(options: GameStackOptions): GameStack {
 	const timingLog = new TimingLogWriter(undefined, (entry) => broadcaster.timingEntry(entry));
 
 	const inferPort = createTimingInferPort(transport);
+	const policyPort = createPolicyInferPort(transport);
 
 	const book = createBookPolicy();
 
@@ -150,6 +158,16 @@ export function createGameStack(options: GameStackOptions): GameStack {
 			}
 		},
 		warmTiming: (targetElo) => inferPort.warm(selectBand(targetElo)),
+		policy: policyPort,
+		// The size the game plays at is also what a *recreated* offscreen document must pre-load:
+		// `configure` is re-sent on every reconnect and carries `warmPolicy`, so without this a
+		// document torn down mid-game would come back warming only the default size while the
+		// session's dedupe still believed the right one was resident.
+		warmPolicy: (targetElo) => {
+			const size = maiaSizeFor(targetElo);
+			transport.setWarmPolicy(size);
+			policyPort.warm(size);
+		},
 		engineHasPendingOptions: () => controller.status().pendingOptions,
 		observeExecutor: (tabId, executor) => broadcaster.observeExecutor(tabId, executor),
 	});
@@ -208,6 +226,7 @@ export function createGameStack(options: GameStackOptions): GameStack {
 				.catch(() => {})
 				.finally(() => timingLog.dispose());
 			inferPort.dispose();
+			policyPort.dispose();
 			book.dispose();
 			focus.dispose();
 			ownership.dispose();

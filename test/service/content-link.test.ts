@@ -190,8 +190,10 @@ describe("ContentLink", () => {
 it("requires pointer admission only while a mirror is active, and releases ownership on hide/disconnect", async () => {
 	const pointer = { type: "mouseMoved" as const, x: 40, y: 50, buttons: 0, timestampMs: sim.now() };
 	expect(await link.preparePointer(tabId, pointer)).toBeUndefined();
+	expect(link.pointerControlled(tabId)).toBe(false);
 	expect(received).toEqual([]);
 	link.post(tabId, { kind: "cursorTo", x: 40, y: 50, down: false });
+	expect(link.pointerControlled(tabId)).toBe(true);
 	const pending = link.preparePointer(tabId, pointer);
 	await sim.time.runMicrotasks();
 	const cmd = received.at(-1);
@@ -202,11 +204,14 @@ it("requires pointer admission only while a mirror is active, and releases owner
 	});
 	expect(await pending).toBe(pointer.timestampMs);
 	link.post(tabId, { kind: "cursorHide" });
+	expect(link.pointerControlled(tabId)).toBe(false);
 	expect(await link.preparePointer(tabId, pointer)).toBeUndefined();
 	link.post(tabId, { kind: "cursorTo", x: 40, y: 50, down: false });
+	expect(link.pointerControlled(tabId)).toBe(true);
 	await content.run(async () => {
 		port.disconnect();
 	});
 	await sim.time.runMicrotasks();
+	expect(link.pointerControlled(tabId)).toBe(false);
 	expect(await link.preparePointer(tabId, pointer)).toBeUndefined();
 });

@@ -19,7 +19,7 @@
  */
 
 import { CDP, POINTER_CONTROL, type PreparedPointer } from "@core/constants/cdp";
-import type { PathPoint, Pt } from "@core/motor/types";
+import type { MouseButton, PathPoint, Pt } from "@core/motor/types";
 import {
 	defaultNow,
 	defaultScheduler,
@@ -41,6 +41,20 @@ export interface CdpMouseOptions {
 }
 
 type MouseEventType = "mousePressed" | "mouseReleased" | "mouseMoved";
+
+/** The `buttons` bit of a button (`CDP.mouse`). */
+const bitOf = (button: MouseButton): number =>
+	button === "right" ? CDP.mouse.rightButtons : CDP.mouse.leftButtons;
+
+/**
+ * The `button` a `mouseMoved` carries: the held button (left wins when both are down, which the
+ * hand never does), `none` when nothing is held — what a real drag reports.
+ */
+function heldButtonName(buttons: number): "left" | "right" | "none" {
+	if ((buttons & CDP.mouse.leftButtons) !== 0) return "left";
+	if ((buttons & CDP.mouse.rightButtons) !== 0) return "right";
+	return "none";
+}
 
 export class CdpMouse {
 	private pos: Pt;
@@ -74,6 +88,11 @@ export class CdpMouse {
 		return (this.buttons & CDP.mouse.leftButtons) !== 0;
 	}
 
+	/** Every button held right now, as the `buttons` bitmask last dispatched. */
+	get pressedButtons(): number {
+		return this.buttons;
+	}
+
 	/** Path length dispatched so far (px) — the `ac` blob's `PointerOffset`. */
 	get travelledPx(): number {
 		return this.travelled;
@@ -92,30 +111,47 @@ export class CdpMouse {
 		await this.dispatch("mouseMoved", p, this.buttons, {}, signal);
 	}
 
-	/** The button state only changes once the renderer acknowledged the press. */
-	async pressAt(p: Pt, atMs: number, signal?: AbortSignal, beforePress?: () => void): Promise<void> {
+	/**
+	 * The button state only changes once the renderer acknowledged the press. `right` is a line
+	 * preview's arrow drag (`mousePressed{button:right,buttons:2,clickCount:1}`); everything else
+	 * the hand does is the left button.
+	 */
+	async pressAt(
+		p: Pt,
+		atMs: number,
+		signal?: AbortSignal,
+		beforePress?: () => void,
+		button: MouseButton = "left"
+	): Promise<void> {
 		await this.waitUntil(atMs, signal);
 		throwIfAborted(signal);
+		const bit = bitOf(button);
 		await this.dispatch(
 			"mousePressed",
 			p,
-			this.buttons | CDP.mouse.leftButtons,
-			{ clickCount: CDP.mouse.clickCount },
+			this.buttons | bit,
+			{ button, clickCount: CDP.mouse.clickCount },
 			signal,
 			beforePress
 		);
 
-		this.buttons |= CDP.mouse.leftButtons;
+		this.buttons |= bit;
 	}
 
 	/** Release never waits on an abort: it is the abort path's own cleanup. */
-	async releaseAt(p: Pt, atMs: number, signal?: AbortSignal): Promise<void> {
+	async releaseAt(
+		p: Pt,
+		atMs: number,
+		signal?: AbortSignal,
+		button: MouseButton = "left"
+	): Promise<void> {
 		await this.waitUntil(atMs, signal);
-		await this.dispatch("mouseReleased", p, this.buttons & ~CDP.mouse.leftButtons, {
-			button: "left",
+		const bit = bitOf(button);
+		await this.dispatch("mouseReleased", p, this.buttons & ~bit, {
+			button,
 			clickCount: CDP.mouse.clickCount,
 		});
-		this.buttons &= ~CDP.mouse.leftButtons;
+		this.buttons &= ~bit;
 	}
 
 	/**
@@ -167,10 +203,18 @@ export class CdpMouse {
 	): Promise<void> {
 		const x = Math.round(p.x);
 		const y = Math.round(p.y);
-		const timestampMs = await this.beforeDispatch?.(
-			{ type, x, y, buttons, timestampMs: this.now() },
-			signal
-		);
+		// A press/release names its button; a move carries the held one. The prepared pointer the
+		// content admission filter matches against says `right` only for a right press/release — the
+		// left wire shape is exactly what it was.
+		const button =
+			typeof extra.button === "string"
+				? (extra.button as MouseButton)
+				: type === "mouseMoved"
+					? heldButtonName(buttons)
+					: "left";
+		const prepared: PreparedPointer = { type, x, y, buttons, timestampMs: this.now() };
+		if (type !== "mouseMoved" && button === "right") prepared.button = "right";
+		const timestampMs = await this.beforeDispatch?.(prepared, signal);
 		throwIfAborted(signal);
 		beforeInput?.();
 		await this.cdp(CDP.inputDispatchMouseEvent, {
@@ -178,7 +222,7 @@ export class CdpMouse {
 			type,
 			x,
 			y,
-			button: (buttons & CDP.mouse.leftButtons) !== 0 || type !== "mouseMoved" ? "left" : "none",
+			button,
 			buttons,
 			modifiers: CDP.mouse.modifiers,
 			...extra,
@@ -190,7 +234,7 @@ export class CdpMouse {
 		this.pos = { x, y };
 		this.onDispatch?.({ x, y, pressed: (buttons & CDP.mouse.leftButtons) !== 0 });
 		if (timestampMs !== undefined && type !== "mouseMoved" && this.afterDispatch) {
-			const delivered = await this.afterDispatch({ type, x, y, buttons, timestampMs });
+			const delivered = await this.afterDispatch({ ...prepared, timestampMs });
 			if (!delivered) throw new Error(POINTER_CONTROL.notDelivered);
 		}
 	}

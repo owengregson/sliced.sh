@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import type { AdapterPositionSnapshot, SiteAdapter } from "@content/adapters/adapter";
 import { createChesscomAdapter } from "@content/adapters/chesscom";
 import { squareToPoint } from "@content/adapters/geometry";
+import { decodeState } from "@content/page-bridge-client";
 import { TIMINGS } from "@core/constants";
 import { TOKENS } from "@design/tokens.generated";
 import { installWindowGlobals, type TabDom } from "@test/sim/dom/tab-dom";
@@ -542,6 +543,85 @@ function pushMove(dom: TabDom, from: string, to: string, san: string, ply: numbe
 }
 
 describe("ChessComAdapter — game start keying (fix round 1)", () => {
+	for (const { opening, setup } of [
+		{ opening: "c4", setup: true },
+		{ opening: "c4", setup: false },
+		{ opening: "e4", setup: false },
+	]) {
+		it(`starts one new computer game after an aborted first move: ${opening}, setup observed=${setup}`, async () => {
+			const dom = loadFixture("chesscom-computer");
+			cleanups.push(installWindowGlobals(dom.window));
+			resetToStart(dom);
+			pushMove(dom, "52", "54", "e4", 1);
+			const afterE4 = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
+			const afterC4 = "rnbqkbnr/pppppppp/8/8/2P5/8/PP1PPPPP/RNBQKBNR b KQkq - 0 1";
+			let state = decodeState({
+				f: afterE4,
+				a: 2,
+				m: "playing",
+				g: false,
+				r: null,
+				c: { baseTime: 180_000, increment: 2_000 },
+			});
+			const bridge = new FakeBridge();
+			bridge.responses.set("getState", () => state);
+			const adapter = createChesscomAdapter({
+				document: pageDocument(dom),
+				window: pageWindow(dom),
+				bridge,
+			});
+			cleanups.push(() => adapter.destroy());
+			await waitFor(() => adapter.getMyColor() === "b");
+			const oldId = adapter.readSnapshot()?.gameId;
+			const starts: number[] = [];
+			const ended: string[] = [];
+			const positions: AdapterPositionSnapshot[] = [];
+			adapter.onGameStart(() => starts.push(1));
+			adapter.onGameEnd((result) => ended.push(result));
+			adapter.onPositionChange((snapshot) => positions.push(snapshot));
+			state = decodeState({ f: afterE4, a: 2, m: "playing", g: true, r: "1-0" });
+			bridge.emit("gameover", state);
+			await waitFor(() => ended.length === 1);
+			bridge.emit("gameover", state);
+			await sleep(SETTLE);
+			expect(starts).toHaveLength(0);
+			expect(ended).toHaveLength(1);
+			expect(adapter.readSnapshot()?.gameId).toBe(oldId);
+			resetToStart(dom);
+			if (setup) {
+				state = decodeState({
+					f: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+					a: 2,
+					m: "playing",
+					g: false,
+					r: null,
+					c: null,
+				});
+				bridge.emit("load", state);
+				await waitFor(() => starts.length === 1);
+				expect(adapter.getTimeControl()).toBeNull();
+			}
+			pushMove(dom, opening === "c4" ? "32" : "52", opening === "c4" ? "34" : "54", opening, 1);
+			state = decodeState({
+				f: opening === "c4" ? afterC4 : afterE4,
+				a: 2,
+				m: "playing",
+				g: false,
+				r: null,
+				c: { baseTime: 180_000, increment: 2_000 },
+			});
+			bridge.emit("move", state);
+			await waitFor(() => positions.at(-1)?.ply === 1 && positions.at(-1)?.gameId !== oldId);
+			expect(starts).toHaveLength(1);
+			expect(adapter.isGameOver()).toBe(false);
+			expect(positions.at(-1)?.sideToMove).toBe("b");
+			expect(positions.at(-1)?.timeControl).toEqual({ baseMs: 180_000, incMs: 2_000 });
+			bridge.emit("move", state);
+			await sleep(SETTLE);
+			expect(starts).toHaveLength(1);
+		});
+	}
+
 	it("fires once per game: not on ply 1→2, once when a fresh board replaces the old one", async () => {
 		const dom = loadFixture("chesscom-computer");
 		cleanups.push(installWindowGlobals(dom.window));

@@ -12,6 +12,23 @@ import { CLICK, MIN_JERK, MOTOR_DEFAULTS, PATH, PROFILE_NOISE } from "@core/moto
 const BOARD = { left: 100, top: 60, size: 640 } as const;
 /** Where the real mouse rested before auto-play was armed (off the board). */
 const REST_POINT = { x: 900, y: 400 } as const;
+/** The simulated site's resign control and its "Resign?" confirmation, below the player panel. */
+const RESIGN_CONTROLS = {
+	resign: { x: 900, y: 720, width: 120, height: 40 },
+	confirm: { x: 1040, y: 720, width: 100, height: 40 },
+} as const;
+/**
+ * The simulated site's post-game controls (2026-09-13): the new-game button and the rematch
+ * offer beside it, the incoming-offer panel's two answers (laid out where the two buttons were,
+ * as chess.com's panel replaces them), and the cancel of a pending outgoing offer.
+ */
+const REMATCH_CONTROLS = {
+	newGame: { x: 800, y: 640, width: 180, height: 45 },
+	rematch: { x: 1000, y: 640, width: 140, height: 45 },
+	accept: { x: 1000, y: 640, width: 140, height: 40 },
+	decline: { x: 800, y: 640, width: 140, height: 40 },
+	cancel: { x: 1000, y: 640, width: 140, height: 45 },
+} as const;
 
 /** Both profile jitters at their upper clamp — the widest a sampled motor range gets. */
 const MAX_PROFILE_STRETCH = (1 + PROFILE_NOISE.perGameOffset) * (1 + PROFILE_NOISE.perMoveClamp);
@@ -64,6 +81,8 @@ export const SIM_TELEMETRY = {
 	/** Furthest two points inside one square can be — the bound on a snapped-back drag's drift. */
 	squareDiagonalPx: SQUARE_PX * Math.SQRT2,
 	restPoint: REST_POINT,
+	resignControls: RESIGN_CONTROLS,
+	rematchControls: REMATCH_CONTROLS,
 	/** Virtual-clock start of every harness run (ms epoch). */
 	startAt: 1_000_000,
 	/** The scripted bot opponent replies after this much think time (uniform, ms). */

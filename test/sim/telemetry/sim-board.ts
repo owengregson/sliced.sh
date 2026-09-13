@@ -67,7 +67,20 @@ export interface SimBoard {
 	fen(): string;
 	ply(): number;
 	isGameOver(): boolean;
+	/**
+	 * The arrows on the board right now, as chess.com keeps them: a **right-button** drag from one
+	 * square to another draws one (a right click on a single square is a highlight and draws no
+	 * arrow); the next **left-button** press on the board clears them all. Modelled from the DOM
+	 * events the page sees, exactly like the shadow — nothing here knows the executor.
+	 */
+	arrows(): Array<{ from: Square; to: Square }>;
+	/** Every arrow drawn and every clear, in order, across the whole game. */
+	annotationLog(): Array<{ kind: "arrow"; from: Square; to: Square } | { kind: "clear" }>;
 }
+
+/** `MouseEvent.button` codes as the DOM defines them. */
+const LEFT_BUTTON = 0;
+const RIGHT_BUTTON = 2;
 
 export function createSimBoard(
 	dom: TabDom,
@@ -94,6 +107,35 @@ export function createSimBoard(
 		const r = squareRect(s);
 		dom.layout(`#${s}`, { x: r.left, y: r.top, width: r.width, height: r.height });
 	}
+
+	// chess.com's annotations, from the page's own events: right drag → arrow, left press → clear.
+	const squareOfTarget = (target: EventTarget | null): Square | null => {
+		const id = (target as { id?: string } | null)?.id ?? "";
+		return SIM_SQUARES.includes(id as Square) ? (id as Square) : null;
+	};
+	const arrows: Array<{ from: Square; to: Square }> = [];
+	const annotationLog: Array<{ kind: "arrow"; from: Square; to: Square } | { kind: "clear" }> = [];
+	let arrowFrom: Square | null = null;
+	const boardEl = dom.query("#board");
+	boardEl.addEventListener("mousedown", (ev) => {
+		const e = ev as unknown as { button: number; target: EventTarget | null };
+		if (e.button === RIGHT_BUTTON) {
+			arrowFrom = squareOfTarget(e.target);
+		} else if (e.button === LEFT_BUTTON && arrows.length > 0) {
+			arrows.length = 0;
+			annotationLog.push({ kind: "clear" });
+		}
+	});
+	boardEl.addEventListener("mouseup", (ev) => {
+		const e = ev as unknown as { button: number; target: EventTarget | null };
+		if (e.button !== RIGHT_BUTTON) return;
+		const to = squareOfTarget(e.target);
+		const from = arrowFrom;
+		arrowFrom = null;
+		if (from === null || to === null || to === from) return;
+		arrows.push({ from, to });
+		annotationLog.push({ kind: "arrow", from, to });
+	});
 
 	function occupancy(s: Square): Occupancy {
 		const piece = chess.get(s);
@@ -180,5 +222,7 @@ export function createSimBoard(
 		fen: () => chess.fen(),
 		ply,
 		isGameOver: () => chess.isGameOver(),
+		arrows: () => arrows.map((a) => ({ ...a })),
+		annotationLog: () => annotationLog.map((a) => ({ ...a })),
 	};
 }

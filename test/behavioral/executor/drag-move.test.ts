@@ -751,6 +751,23 @@ describe("executor: a scheduled drag move end to end", () => {
 		expect(executor.handView()).toBe("resting");
 	});
 
+	it("a required recovery position check remains mandatory when optional move verification is off", async () => {
+		const skipped: ExecutionReport[] = [];
+		await sw.run(async () => {
+			executor.on("skipped", (report) => skipped.push(report));
+			await executor.arm();
+			executor.updateSettings({ persona: "balanced", previewScale: 0, verifyMoves: false });
+			focus.positionArrived(tabId, sim.now());
+			adapter.occupancy.e2 = "empty";
+			const plan = plan1200();
+			executor.schedule(recommendation(plan), plan, { requirePositionCheck: true });
+		});
+		await sw.run(() => sim.time.advanceUntilIdle({ maxAdvanceMs: 5000 }));
+		expect(adapter.boardChecks).toEqual([["e2", "e4"]]);
+		expect(skipped[0]?.result.reason).toBe(EXECUTOR.reasons.positionChanged);
+		expect(commands()).toHaveLength(0);
+	});
+
 	it("cancel() after the drop landed reports `executed`, and a parked replacement for a DIFFERENT move is dropped as position-changed without any board check", async () => {
 		const reports: Array<[string, ExecutionReport]> = [];
 		let plan: TimingPlan = plan1200();

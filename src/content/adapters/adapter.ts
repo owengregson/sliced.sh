@@ -14,7 +14,14 @@
 import { turnFieldOf } from "@core/chess/fen";
 import { EXECUTOR } from "@core/constants/cdp";
 import { LIMITS } from "@core/constants/limits";
-import type { ExpectedMove, NewGameTargetResult } from "@core/constants/messages";
+import type {
+	ExpectedMove,
+	NewGameTargetResult,
+	RematchAction,
+	RematchTargetResult,
+	ResignStep,
+	ResignTargetResult,
+} from "@core/constants/messages";
 import { TIME_CONTROL, TIMINGS } from "@core/constants/timings";
 import { log } from "@core/logger";
 import { rectShiftPx } from "@core/motor/geometry";
@@ -73,6 +80,8 @@ export interface Opponent {
 	isBot: boolean;
 	name: string;
 	ratingEstimate: number | null;
+	/** The card's title ("FM", "GM", …), present only for a titled opponent (2026-09-13). */
+	title?: string;
 }
 
 export interface FocusEdge {
@@ -209,6 +218,20 @@ export interface SiteAdapter {
 		targetId?: string,
 		point?: Pt
 	): NewGameTargetResult;
+	/**
+	 * Read or revalidate the resign control of `step` (2026-09-12) — the same passive discipline
+	 * as `newGameTarget`: a `targetId` + `point` must name the very element the rect was read
+	 * from, under that point, or the answer is `not-ready`. Only the service worker clicks.
+	 */
+	resignTarget(step: ResignStep, targetId?: string, point?: Pt): ResignTargetResult;
+	/**
+	 * Read or revalidate the post-game rematch control of `action` (2026-09-13): our outgoing
+	 * offer, the accept / decline of an incoming one, or the cancel of a pending offer — the same
+	 * passive discipline as `newGameTarget`. Only the service worker clicks.
+	 */
+	rematchTarget(action: RematchAction, targetId?: string, point?: Pt): RematchTargetResult;
+	/** Whether the opponent's own rematch offer is showing (the incoming panel with its Accept). */
+	incomingRematch(): boolean;
 	/** True once the piece lands on `expected.to` (confirmed by the move list), false if it snaps back. */
 	observeMove(expected: ExpectedMove, timeoutMs: number): Promise<boolean>;
 	probe(): ProbeReport;
@@ -258,6 +281,13 @@ export const BRIDGE_KINDS = {
 	cursorHide: "cursorHide",
 	/** Request/reply: open only the next virtual point through the native hit-test shield. */
 	cursorPrepare: "cursorPrepare",
+	/**
+	 * Content → page: the board-effect batch for the move that just landed, plus the optional
+	 * quality chip. Its own overlay element, drawn above the recommendation mark and cleared
+	 * independently of it (`Settings.automation.boardEffects`).
+	 */
+	effects: "effects",
+	effectsClear: "effectsClear",
 } as const;
 
 /** Normalised `getState` / `move` / `state` payload from the bridge. */
@@ -268,7 +298,7 @@ export interface BridgeState {
 	mode?: string;
 	flipped?: boolean;
 	lastMove?: { from: Square; to: Square; san?: string };
-	result?: string;
+	result?: string | null;
 	gameOver?: boolean;
 	/** chess.com `timeControl.get()` / `timestamps.get()` as the site reports them (opaque). */
 	timeControl?: unknown;
@@ -372,9 +402,8 @@ export interface AdapterReading {
 	gameOver: GameResult | null;
 	/**
 	 * Identity of the game: the URL game id when the page has one, otherwise
-	 * `<path>#<serial>` where the serial advances only when a fresh board appears
-	 * (board element replaced, or the ply count reset after ≥ 2 plies). Never
-	 * changes as plies accumulate (`gameIdentity()`).
+	 * `<path>#<serial>` for a replaced/reset board or a confirmed restart after game end.
+	 * Never changes as plies accumulate (`gameIdentity()`).
 	 */
 	gameKey: string;
 }
@@ -449,6 +478,7 @@ export abstract class AdapterBase implements SiteAdapter {
 	private gameSerial = 0;
 	private gameBoard: Element | null = null;
 	private gamePly = -1;
+	private gameEnded = false;
 	private selfCheckTimer: ReturnType<typeof setInterval> | null = null;
 	private destroyed = false;
 	private primed = false;
@@ -519,6 +549,9 @@ export abstract class AdapterBase implements SiteAdapter {
 		targetId?: string,
 		point?: Pt
 	): NewGameTargetResult;
+	abstract resignTarget(step: ResignStep, targetId?: string, point?: Pt): ResignTargetResult;
+	abstract rematchTarget(action: RematchAction, targetId?: string, point?: Pt): RematchTargetResult;
+	abstract incomingRematch(): boolean;
 	abstract probe(): ProbeReport;
 
 	// ---- shared behaviour --------------------------------------------------------
@@ -954,19 +987,28 @@ export abstract class AdapterBase implements SiteAdapter {
 	/**
 	 * Game identity for `AdapterReading.gameKey`; call once per `read()`.
 	 * With a URL id the identity is that id. Without one, the serial advances
-	 * when the board element is replaced or the ply count resets after ≥ 2 plies.
+	 * when the board is replaced/reset, or a finished game becomes active again.
+	 * The latter also covers aborted one-ply games and a new opening that skips ply zero.
 	 */
-	protected gameIdentity(ply: number): string {
+	protected gameIdentity(ply: number, ended = false, active = false): string {
 		const board = this.boardElement();
+		const restarted = this.gameEnded && !ended && active;
+		const replaced = board !== this.gameBoard && this.gameBoard !== null;
 		if (board !== this.gameBoard) {
-			if (this.gameBoard !== null) this.gameSerial++;
 			this.gameBoard = board;
 		}
-		if (ply === 0 && this.gamePly >= 2) this.gameSerial++;
+		const reset = ply === 0 && this.gamePly >= 2;
+		if (replaced || reset || restarted) this.gameSerial++;
+		this.gameEnded = ended || (this.gameEnded && !replaced && !reset && !restarted);
 		this.gamePly = ply;
 		const id = this.urlGameId();
 		if (id !== null) return id;
 		return `${this.win.location.pathname.replace(/\W+/g, "-")}#${this.gameSerial}`;
+	}
+
+	/** Changes for a new board/game, independently of a route changing around the old board. */
+	protected get gameGeneration(): number {
+		return this.gameSerial;
 	}
 
 	/** Log required selector misses and extra warnings only when they differ from the last probe. */

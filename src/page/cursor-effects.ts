@@ -1,4 +1,4 @@
-/** Cursor artwork feedback and one pooled tapered ribbon, driven by dispatched points only. */
+/** Cursor artwork feedback and a short ghost trail, driven by dispatched points only. */
 import { BRIDGE_WIRE as W } from "@core/constants/bridge";
 import { CURSOR_EFFECTS as E } from "@core/constants/cursor";
 import { HIGHLIGHT_MOTION } from "@core/constants/timings";
@@ -19,8 +19,6 @@ const div = (a: Expression, b: Expression) => js.op(a, "/", b);
 const doc = id("document");
 const attr = (node: Expression, key: string, value: Expression) =>
 	js.expr(call(node, "setAttribute", s(key), value));
-const svg = (tag: string) => call(doc, "createElementNS", s("http://www.w3.org/2000/svg"), s(tag));
-const pointText = (point: Expression) => js.tpl(["", " ", ""], at(point, 0), at(point, 1));
 const distance = (a: Expression, b: Expression) =>
 	call(id("Math"), "hypot", sub(at(a, 0), at(b, 0)), sub(at(a, 1), at(b, 1)));
 const scale = (value: number) => s(`scale(${value})`);
@@ -31,6 +29,7 @@ export function cursorEffectStatements(p: {
 	cls: Expression;
 	accent: Expression;
 	zIndex: number;
+	sizePx: number;
 	hotX: number;
 	hotY: number;
 }): Statement[] {
@@ -86,91 +85,6 @@ export function cursorEffectStatements(p: {
 			]
 		)
 	);
-	// Quadratic edges make one closed shape, rather than a chain of uniform strokes.
-	const edge = js.const_(
-		"curFxEdge",
-		js.arrow(
-			["points", "start"],
-			[
-				js.let_("path", add(id("start"), pointText(at(id("points"), 0)))),
-				js.let_("index", n(1)),
-				js.while_(js.op(id("index"), "<", sub(js.member(id("points"), "length"), n(1))), [
-					js.const_("point", at(id("points"), id("index"))),
-					js.const_("next", at(id("points"), add(id("index"), n(1)))),
-					js.assign(
-						id("path"),
-						add(
-							id("path"),
-							js.tpl(
-								[" Q", " ", " ", ""],
-								pointText(id("point")),
-								div(add(at(id("point"), 0), at(id("next"), 0)), n(2)),
-								div(add(at(id("point"), 1), at(id("next"), 1)), n(2))
-							)
-						)
-					),
-					js.assign(id("index"), add(id("index"), n(1))),
-				]),
-				js.ret(add(id("path"), add(s(" L"), pointText(call(id("points"), "at", n(-1)))))),
-			]
-		)
-	);
-	const ribbon = js.const_(
-		"curFxRibbon",
-		js.arrow(
-			["points", "width"],
-			[
-				js.const_("left", js.arr()),
-				js.const_("right", js.arr()),
-				js.let_("index", n(0)),
-				js.forOf("point", id("points"), [
-					js.const_("before", at(id("points"), call(id("Math"), "max", n(0), sub(id("index"), n(1))))),
-					js.const_(
-						"after",
-						at(
-							id("points"),
-							call(id("Math"), "min", sub(js.member(id("points"), "length"), n(1)), add(id("index"), n(1)))
-						)
-					),
-					js.const_("dx", sub(at(id("after"), 0), at(id("before"), 0))),
-					js.const_("dy", sub(at(id("after"), 1), at(id("before"), 1))),
-					js.const_("length", js.or(call(id("Math"), "hypot", id("dx"), id("dy")), n(1))),
-					js.const_(
-						"taper",
-						mul(
-							div(id("width"), n(2)),
-							call(
-								id("Math"),
-								"pow",
-								div(id("index"), sub(js.member(id("points"), "length"), n(1))),
-								n(E.taperPower)
-							)
-						)
-					),
-					js.const_("nx", mul(div(sub(n(0), id("dy")), id("length")), id("taper"))),
-					js.const_("ny", mul(div(id("dx"), id("length")), id("taper"))),
-					js.expr(
-						call(
-							id("left"),
-							"push",
-							js.arr(add(at(id("point"), 0), id("nx")), add(at(id("point"), 1), id("ny")))
-						)
-					),
-					js.expr(
-						call(
-							id("right"),
-							"unshift",
-							js.arr(sub(at(id("point"), 0), id("nx")), sub(at(id("point"), 1), id("ny")))
-						)
-					),
-					js.assign(id("index"), add(id("index"), n(1))),
-				]),
-				js.ret(
-					add(add(run("curFxEdge", id("left"), s("M")), run("curFxEdge", id("right"), s(" L"))), s(" Z"))
-				),
-			]
-		)
-	);
 	const trim = js.const_(
 		"curFxTrim",
 		js.arrow(
@@ -219,56 +133,81 @@ export function cursorEffectStatements(p: {
 			]
 		)
 	);
+	const lags = js.arr(...E.ghosts.map((ghost) => n(ghost.lag)));
+	const opacities = js.arr(...E.ghosts.map((ghost) => n(ghost.opacity)));
+	// Translucent copies of the artwork itself, each parked a few dispatched points behind the head.
 	const trail = js.const_(
 		"curFxDrawTrail",
 		js.arrow(
-			[],
+			["cursor"],
 			[
 				js.let_("layer", run("curFxFind")),
 				js.if_(js.not(id("layer")), [
-					js.assign(id("layer"), svg("svg")),
+					js.const_("art", call(id("cursor"), "querySelector", s("svg"))),
+					js.if_(js.not(id("art")), [js.ret()]),
+					js.assign(id("layer"), call(doc, "createElement", s("div"))),
 					attr(id("layer"), "class", js.tpl(["", "e"], p.cls)),
 					attr(
 						id("layer"),
 						"style",
-						s(
-							`position:fixed;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none;z-index:${p.zIndex};`
-						)
+						s(`position:fixed;inset:0;overflow:visible;pointer-events:none;z-index:${p.zIndex};`)
 					),
-					js.forOf(
-						"band",
-						js.arr(
-							...E.bands.map((band) =>
-								js.obj({ width: n(band.widthPx), opacity: n(band.opacity), blur: n(band.blurPx) })
+					js.forOf("ghost", opacities, [
+						js.const_("copy", call(id("art"), "cloneNode", js.bool(true))),
+						js.while_(js.op(js.member(id("copy"), "childElementCount"), ">", n(2)), [
+							js.expr(call(js.member(id("copy"), "lastElementChild"), "remove")),
+						]),
+						// Tinted through and through: the body takes the accent, the inner shape a darker cut
+						// of it, so the copies read as an orange echo rather than a second white pointer.
+						attr(js.member(id("copy"), "firstElementChild"), "fill", p.accent),
+						attr(js.member(id("copy"), "lastElementChild"), "fill", p.accent),
+						attr(
+							js.member(id("copy"), "lastElementChild"),
+							"fill-opacity",
+							s(String(E.ghostInnerOpacity))
+						),
+						attr(
+							id("copy"),
+							"style",
+							js.tpl(
+								[
+									`position:fixed;left:0;top:0;width:${p.sizePx}px;height:${p.sizePx}px;pointer-events:none;will-change:transform;opacity:`,
+									`;filter:drop-shadow(0 0 ${E.ghostShadowBlurPx}px `,
+									");",
+								],
+								id("ghost"),
+								p.accent
 							)
 						),
-						[
-							js.const_("path", svg("path")),
-							attr(id("path"), "fill", p.accent),
-							attr(
-								id("path"),
-								"style",
-								js.tpl(
-									["opacity:", ";filter:blur(", "px);"],
-									js.member(id("band"), "opacity"),
-									js.member(id("band"), "blur")
-								)
-							),
-							js.expr(call(id("layer"), "appendChild", id("path"))),
-						]
-					),
-					js.expr(call(js.member(doc, "body"), "appendChild", id("layer"))),
+						js.expr(call(id("layer"), "appendChild", id("copy"))),
+					]),
+					// Beside the arrow, under `<html>` (see `curEnsure`): no site stacking context above it.
+					js.expr(call(js.member(doc, "documentElement"), "appendChild", id("layer"))),
 				]),
 				js.let_("index", n(0)),
-				js.forOf("path", js.member(id("layer"), "children"), [
-					attr(
-						id("path"),
-						"d",
-						run(
-							"curFxRibbon",
-							id("curFxPoints"),
-							at(js.arr(...E.bands.map((b) => n(b.widthPx))), id("index"))
-						)
+				js.forOf("copy", js.member(id("layer"), "children"), [
+					js.const_(
+						"slot",
+						sub(sub(js.member(id("curFxPoints"), "length"), n(1)), at(lags, id("index")))
+					),
+					js.if_(
+						js.op(id("slot"), "<", n(0)),
+						[js.assign(js.member(id("copy"), "style", "opacity"), s("0"))],
+						[
+							js.const_("point", at(id("curFxPoints"), id("slot"))),
+							js.assign(
+								js.member(id("copy"), "style", "opacity"),
+								js.call(id("String"), at(opacities, id("index")))
+							),
+							js.assign(
+								js.member(id("copy"), "style", "transform"),
+								js.tpl(
+									["translate3d(", "px,", "px,0)"],
+									sub(at(id("point"), 0), n(p.hotX)),
+									sub(at(id("point"), 1), n(p.hotY))
+								)
+							),
+						]
 					),
 					js.assign(id("index"), add(id("index"), n(1))),
 				]),
@@ -405,18 +344,17 @@ export function cursorEffectStatements(p: {
 		js.arrow(
 			["q", "cursor"],
 			[
-				js.const_(
-					"point",
-					js.arr(
-						add(js.member(id("q"), W.x), n(E.rearOffsetX)),
-						add(js.member(id("q"), W.y), n(E.rearOffsetY))
-					)
-				),
+				js.const_("point", js.arr(js.member(id("q"), W.x), js.member(id("q"), W.y))),
 				js.const_("down", js.not(js.not(js.member(id("q"), W.down)))),
+				// Off when the owner turned the effects off, when the page prefers reduced motion, or
+				// when the document cannot animate at all: the plain arrow is all that is drawn then.
 				js.const_(
 					"motion",
 					js.and(
-						js.op(js.typeof_(js.member(doc, "documentElement", "animate")), "===", s("function")),
+						js.and(
+							js.op(js.member(id("q"), W.effects), "!==", js.bool(false)),
+							js.op(js.typeof_(js.member(doc, "documentElement", "animate")), "===", s("function"))
+						),
 						js.not(
 							js.and(
 								js.member(id("window"), "matchMedia"),
@@ -445,7 +383,7 @@ export function cursorEffectStatements(p: {
 				js.if_(js.op(id("distance"), "<", n(E.minDistancePx)), [js.ret()]),
 				js.expr(call(id("curFxPoints"), "push", id("point"))),
 				js.expr(run("curFxTrim")),
-				js.expr(run("curFxDrawTrail")),
+				js.expr(run("curFxDrawTrail", id("cursor"))),
 			]
 		)
 	);
@@ -459,8 +397,6 @@ export function cursorEffectStatements(p: {
 		find,
 		clearTrail,
 		clear,
-		edge,
-		ribbon,
 		trim,
 		trail,
 		artwork,

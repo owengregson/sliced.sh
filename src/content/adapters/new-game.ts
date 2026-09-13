@@ -3,7 +3,8 @@ import type { NewGameMode } from "./adapter";
 import { queryAllSafe } from "./query";
 import { SELECTORS as S } from "./selectors";
 
-function labels(element: Element): string[] {
+/** The strings a control is labelled with: `aria-label`, `title`, visible text (whitespace folded). */
+export function labels(element: Element): string[] {
 	return [element.getAttribute("aria-label"), element.getAttribute("title"), element.textContent]
 		.filter((label): label is string => label !== null)
 		.map((label) => label.replace(/\s+/g, " ").trim())
@@ -11,7 +12,7 @@ function labels(element: Element): string[] {
 }
 
 /** Both the control and its ancestors must be rendered; hidden modal copies are common. */
-function visible(element: Element, win: Window): boolean {
+export function visible(element: Element, win: Window): boolean {
 	if (!element.isConnected || element.closest(S.actionHidden)) return false;
 	for (let node: Element | null = element; node; node = node.parentElement) {
 		const style = win.getComputedStyle(node);

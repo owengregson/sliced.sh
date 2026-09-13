@@ -17,8 +17,12 @@ export const CDP = {
 	stallResyncMs: 40,
 	/** Waits shorter than this are not worth a timer: dispatch immediately. */
 	minSleepMs: 1,
-	/** `buttons` bitmask / `clickCount` / `modifiers` values the hand ever sends. */
-	mouse: { noButtons: 0, leftButtons: 1, clickCount: 1, modifiers: 0 },
+	/**
+	 * `buttons` bitmask / `clickCount` / `modifiers` values the hand ever sends. `rightButtons` is
+	 * the bit a line preview holds (`src/core/motor/line-preview.ts`): a right-button drag is how
+	 * chess.com draws an arrow, and it is the only gesture the hand ever makes with that button.
+	 */
+	mouse: { noButtons: 0, leftButtons: 1, rightButtons: 2, clickCount: 1, modifiers: 0 },
 } as const;
 
 /** Post-game controls share the motor path and input admission used on the board. */
@@ -131,8 +135,17 @@ export const EXECUTOR = {
 	committedTier: "drag",
 	/** Dispatch attempts including the first (a drag, then one more drag; no third attempt). */
 	maxAttempts: 2,
-	/** Free-move dispatch cadence for the post-drop rest tremor (ms). */
-	postDropRestMs: [120, 320] as [number, number],
+	/**
+	 * After the drop (owner, 2026-09-11): a quick decision — straight into pondering (the
+	 * opponent-turn exploration), or first a short rest over a random piece, either colour, drawn
+	 * toward the centre of the board (`postDropCentreBias` is the exponent on the centrality weight).
+	 * `postDropLingerMs` is the pause on the dropped piece before either; `postDropRestMs` the dwell
+	 * at the rest piece.
+	 */
+	postDropLingerMs: [40, 160] as [number, number],
+	postDropRestProb: 0.55,
+	postDropRestMs: [250, 800] as [number, number],
+	postDropCentreBias: 2,
 	/** Executor event names (`MoveExecutor.on`). */
 	events: {
 		executed: "executed",
@@ -163,12 +176,33 @@ export const EXECUTOR = {
 		 * submitted nothing rather than dropping it wherever the stale path ended (§9.5).
 		 */
 		boardMoved: "board-moved",
+		/**
+		 * A scramble hold was given up — the opponent's move made the held move unsound, the hold
+		 * timed out, or the run was cancelled — and the piece went back to its origin square (§7.4a
+		 * hold). Nothing was submitted.
+		 */
+		holdAbandoned: "hold-abandoned",
 	},
 	/** Zero-length `ExecutionResult.timeline` entries that annotate an execution. */
 	timelineNotes: {
 		promotionGeometryUnavailable: "promotion-geometry-unavailable",
 		/** The board moved while the piece was held; the hand put it back on its origin square. */
 		boardMoved: "board-moved",
+		/** The scramble hold was abandoned; the hand put the piece back on its origin square. */
+		holdAbandoned: "hold-abandoned",
+		/** A click-click was interrupted after its first click; the hand clicked an idle square. */
+		selectionCleared: "selection-cleared",
+		/**
+		 * One right-button drag of a line preview went out (press on the from-square, release on the
+		 * to-square): chess.com draws an arrow. The number of these notes in a timeline is the number
+		 * of arrows the hand drew for that move.
+		 */
+		arrow: "arrow",
+	},
+	/** Named `ExecutionResult.timeline` phases besides the fixed hand sequence. */
+	timelinePhases: {
+		/** The line preview (`LINE_PREVIEW`): right-button arrows drawn inside the decision phase. */
+		linePreview: "line-preview",
 	},
 } as const;
 
@@ -182,6 +216,12 @@ export const POINTER_CONTROL = {
 	notDelivered: "pointer-input-not-delivered",
 	boundaryEventsPerType: 32,
 	msPerSecond: 1000,
+	/**
+	 * `MouseEvent.button` codes the content admission filter accepts on a press/release: the left
+	 * button for every committed move and preview selection, the right button for a line preview's
+	 * arrows (`PreparedPointer.button`). Nothing else is ever admitted.
+	 */
+	domButton: { left: 0, right: 2 },
 } as const;
 
 export interface PreparedPointer {
@@ -191,4 +231,9 @@ export interface PreparedPointer {
 	buttons: number;
 	/** Current epoch milliseconds, also supplied as the browser event's timestamp. */
 	timestampMs: number;
+	/**
+	 * The button a press/release is for. Absent means the left button (the wire shape of every
+	 * pre-line-preview dispatch, unchanged); `right` is a line-preview arrow drag.
+	 */
+	button?: "left" | "right";
 }

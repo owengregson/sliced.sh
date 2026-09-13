@@ -90,6 +90,42 @@ describe("HandOwnership", () => {
 		expect(hand.startPoint(7, () => ({ x: 9, y: 9 }))).toEqual({ x: 5, y: 5 });
 	});
 
+	/**
+	 * 2026-09-13: ownership is never announced to a tab that is not on a game page. The content
+	 * side's own gate is what holds regardless; this keeps the worker from posting a lock the page
+	 * will refuse anyway, and drops one the moment the tab's `hello` says it left a game page.
+	 */
+	it("announces ownership only to a tab whose last hello is a game page", () => {
+		hand.dispose();
+		const posts: GamePortCommand[] = [];
+		hand = new HandOwnership({
+			...link,
+			post: (_tabId, cmd) => {
+				posts.push(cmd);
+				return true;
+			},
+		});
+		const hello = (pageKind: "live-game" | "live-lobby" | "vs-computer" | "analysis" | "puzzles") =>
+			link.emit(7, { kind: "hello", site: "chesscom", pageKind, adapterVersion: "test" });
+		hand.armed(7);
+		expect(posts.at(-1)).toEqual({ kind: "inputOwnership", owned: true });
+		// SPA navigation to the analysis board: released for the page, still armed for the worker
+		hello("analysis");
+		expect(posts.at(-1)).toEqual({ kind: "inputOwnership", owned: false });
+		expect(hand.isArmed(7)).toBe(true);
+		hand.armed(7);
+		expect(posts.at(-1)).toEqual({ kind: "inputOwnership", owned: false });
+		hello("puzzles");
+		expect(posts.at(-1)).toEqual({ kind: "inputOwnership", owned: false });
+		// back on any game page, the standing arm is announced again
+		for (const kind of ["live-lobby", "vs-computer", "live-game"] as const) {
+			hello(kind);
+			expect(posts.at(-1)).toEqual({ kind: "inputOwnership", owned: true });
+		}
+		hand.released(7);
+		expect(posts.at(-1)).toEqual({ kind: "inputOwnership", owned: false });
+	});
+
 	it("dispose unsubscribes from the link", () => {
 		hand.dispose();
 		expect(link.listeners()).toBe(0);

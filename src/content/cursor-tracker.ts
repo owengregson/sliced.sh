@@ -16,8 +16,16 @@ export interface CursorSample {
 }
 
 export interface CursorTracker {
-	/** Last trusted pointer sample, or `null` before any. */
+	/** Last trusted pointer sample taken while the pointer was not owned, or `null` before any. */
 	report(): CursorSample | null;
+	/**
+	 * The owner's most recent real pointer sample regardless of ownership, or `null` before any.
+	 * Real moves keep arriving while the shield is up — the shield is an element under the pointer
+	 * and this listener runs before it stops them — so this is where the real mouse is *now*; it is
+	 * what the unlock glide aims at. `report()` deliberately freezes during ownership (the next
+	 * hand's start must not be a sample the shield swallowed); this does not.
+	 */
+	latest(): CursorSample | null;
 	/** Start counting real pointer events (the hand is moving). */
 	beginHand(): void;
 	/** Stop counting; returns how many real pointer events arrived meanwhile. */
@@ -44,6 +52,7 @@ export function createCursorTracker(options: CursorTrackerOptions = {}): CursorT
 	const now = options.now ?? (() => Date.now());
 	const minInterval = options.minIntervalMs ?? TIMINGS.cursorReportIntervalMs;
 	let last: CursorSample | null = null;
+	let latest: CursorSample | null = null;
 	let lastPosted = Number.NEGATIVE_INFINITY;
 	let hand = false;
 	let realDuringHand = 0;
@@ -57,6 +66,7 @@ export function createCursorTracker(options: CursorTrackerOptions = {}): CursorT
 		if (typeof pe.clientX !== "number" || typeof pe.clientY !== "number") return;
 		const t = now();
 		const sample: CursorSample = { x: pe.clientX, y: pe.clientY, t, real: true };
+		latest = sample;
 		if (!virtualActive) last = sample;
 		if (hand || virtualActive) realDuringHand += 1;
 		if (!options.onSample) return;
@@ -69,6 +79,7 @@ export function createCursorTracker(options: CursorTrackerOptions = {}): CursorT
 
 	return {
 		report: () => (last ? { ...last } : null),
+		latest: () => (latest ? { ...latest } : null),
 		beginHand() {
 			hand = true;
 			realDuringHand = 0;

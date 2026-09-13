@@ -18,7 +18,7 @@ it("drains the final accepted move before grading a game's 19-to-20 sample thres
 		timeControl: { baseMs: 180_000, incMs: 0 },
 		settings: {
 			automation: { autoMove: true },
-			execution: { verifyMoves: true, previewSelects: "off" },
+			execution: { verifyMoves: true, previewSelectScale: 0 },
 		},
 		onCommand(cmd) {
 			if (cmd.kind === "observeMove" && ++checks === 1) h.site.endGame("1-0");
@@ -56,7 +56,7 @@ it("reports a landed move once when the position feed cancels its pending verifi
 	h = await createGameHarness({
 		settings: {
 			automation: { autoMove: true },
-			execution: { verifyMoves: true, previewSelects: "off" },
+			execution: { verifyMoves: true, previewSelectScale: 0 },
 		},
 		onCommand(cmd) {
 			if (cmd.kind !== "observeMove" || ++checks !== 1) return;

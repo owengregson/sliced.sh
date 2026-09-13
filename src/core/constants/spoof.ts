@@ -19,6 +19,12 @@ export const SPOOF_PURPOSES = {
 	 * Also the only way the program finds the element again, so it carries no `id` / `data-*`.
 	 */
 	cursorClass: "cursorCls",
+	/**
+	 * Class name of the board-effect `<svg>` the bridge inserts on the first `effects` command
+	 * (§13.3 rule 3). Its own class, not the highlight overlay's: the two are separate elements
+	 * with separate lifetimes, and each finds itself by looking its class up in the DOM.
+	 */
+	effectsClass: "effectsCls",
 } as const;
 
 export type SpoofPurpose = (typeof SPOOF_PURPOSES)[keyof typeof SPOOF_PURPOSES];

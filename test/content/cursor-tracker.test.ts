@@ -88,6 +88,27 @@ describe("CursorTracker", () => {
 		tracker.beginHand();
 		expect(tracker.endHand()).toBe(0);
 	});
+	/**
+	 * 2026-09-13: the unlock glide aims at the owner's real pointer *now*. Real moves keep reaching
+	 * this capture-phase listener while the shield is up (the shield stops them afterwards), so
+	 * `latest()` follows them throughout; `report()` — the next hand's plausible start — keeps
+	 * freezing during ownership, exactly as before.
+	 */
+	it("latest() follows real moves while the pointer is owned; report() still freezes", () => {
+		const { tracker, fire } = setup();
+		expect(tracker.latest()).toBeNull();
+		fire("pointermove", 10, 10, true);
+		expect(tracker.latest()).toEqual({ x: 10, y: 10, t: 5_000, real: true });
+		tracker.setVirtualActive(true);
+		fire("pointermove", 700, 140, true);
+		fire("pointermove", 701, 141, false); // synthetic: not a real position
+		expect(tracker.report()).toEqual({ x: 10, y: 10, t: 5_000, real: true });
+		expect(tracker.latest()).toEqual({ x: 700, y: 140, t: 5_000, real: true });
+		tracker.setVirtualActive(false);
+		fire("pointermove", 20, 20, true);
+		expect(tracker.report()).toMatchObject({ x: 20, y: 20 });
+		expect(tracker.latest()).toMatchObject({ x: 20, y: 20 });
+	});
 	it("dispose removes the listeners", () => {
 		const { tracker, samples, fire } = setup();
 		tracker.dispose();

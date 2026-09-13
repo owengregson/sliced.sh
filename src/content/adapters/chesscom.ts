@@ -6,7 +6,14 @@
 
 import { turnFieldOf } from "@core/chess/fen";
 import { squareOf } from "@core/chess/squares";
-import type { NewGameTargetResult } from "@core/constants/messages";
+import type {
+	NewGameTargetResult,
+	RematchAction,
+	RematchTargetResult,
+	ResignStep,
+	ResignTargetResult,
+} from "@core/constants/messages";
+import { normaliseTitle } from "@core/constants/rematch";
 import { TIMINGS } from "@core/constants/timings";
 import { log } from "@core/logger";
 import type { Pt } from "@core/motor/types";
@@ -36,12 +43,14 @@ import {
 	type SiteAdapter,
 	toRect,
 } from "./adapter";
-import { activeClockColor, bottomClockColor, readClock } from "./clocks";
+import { activeClockColor, bottomClockColor, readClock, readComputerClock } from "./clocks";
 import { approximateFen, placementFromDom, placementOf, replayMoves } from "./dom-fen";
 import { type MoveList, readMoveList } from "./move-list";
 import { newGameControl, newGameSearchActive } from "./new-game";
 import { pageKindFromPath } from "./page-kind";
 import { queryAllSafe, queryFirst, queryFirstElement, querySafe } from "./query";
+import { incomingRematchShowing, rematchControl } from "./rematch";
+import { resignControl, visibleControls } from "./resign";
 import { PROMOTION_ORDER, SELECTORS } from "./selectors";
 import {
 	checkBoardSanity,
@@ -93,6 +102,7 @@ const RELEVANT = [
 	...S.gameOver,
 	...S.result,
 	...S.promotionWindow,
+	S.computerClock,
 ].join(",");
 
 function squareFromClass(el: Element): Square | null {
@@ -123,9 +133,20 @@ function plyOf(list: MoveList): number {
 export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 	private restartControl: HTMLElement | null = null;
 	private restartTargetId = "";
+	/** `resignTarget`'s last discovered control per step, and the id the service worker revalidates by. */
+	private readonly resignControls: Record<ResignStep, { element: HTMLElement; id: string } | null> =
+		{ resign: null, confirm: null };
+	/** The clickable controls visible when the resign control was read: the confirmation is what is new. */
+	private resignBaseline: ReadonlySet<Element> | null = null;
+	/** `rematchTarget`'s last discovered control per action, and the id the service worker revalidates by. */
+	private readonly rematchControls: Record<
+		RematchAction,
+		{ element: HTMLElement; id: string } | null
+	> = { rematch: null, accept: null, decline: null, cancel: null };
 	readonly site = SITE;
 	private observedBoard: Element | null = null;
 	private observedMoveList: Element | null = null;
+	private observedClocks: Element[] = [];
 
 	constructor(options: AdapterOptions = {}) {
 		super(options, TIMINGS.adapterDebounceMs, TIMINGS.adapterSelfCheckIntervalMs);
@@ -151,6 +172,9 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 		const top = queryFirstElement(S.playerTop, this.doc);
 		const topName = top ? queryFirstElement(S.username, top)?.textContent?.trim() : undefined;
 		const topRating = top ? ratingFrom(queryFirstElement(S.rating, top)?.textContent) : null;
+		// The title chip lives in the same card as the rating; read inside the *opponent's* card only
+		// (2026-09-13) — our own card carries one too when the owner is titled.
+		const title = top ? normaliseTitle(querySafe(top, S.playerTitle)?.textContent) : undefined;
 		const card = queryFirstElement(S.botCard, this.doc);
 		const isBot = kind === "vs-computer" || card !== null;
 		const name =
@@ -158,7 +182,7 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 		const rating =
 			topRating ?? (card ? ratingFrom(queryFirstElement(S.botRating, card)?.textContent) : null);
 		if (!name && rating === null) return null;
-		return { isBot, name, ratingEstimate: rating };
+		return { isBot, name, ratingEstimate: rating, ...(title !== undefined ? { title } : {}) };
 	}
 
 	isReady(): boolean {
@@ -222,7 +246,18 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 	}
 
 	getClock(side: Color): ClockReading | null {
-		return readClock(this.doc, side);
+		const clock = readClock(this.doc, side);
+		if (clock) return clock;
+		// A positive site time control distinguishes countdowns from the computer page's
+		// identically styled elapsed-move counters. These clocks have no active-side class.
+		if (this.detectPageKind() !== "vs-computer" || !this.getTimeControl()) return null;
+		const info = this.getPositionInfo();
+		const observedTurn = this.getSideToMove();
+		const runningSide =
+			info && observedTurn && this.isAtLivePosition() && !this.isGameOver()
+				? this.reconciledTurn(info, observedTurn)
+				: null;
+		return readComputerClock(this.doc, side, runningSide);
 	}
 
 	/**
@@ -235,7 +270,14 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 	getTimeControl(): TimeControl | null {
 		// The clocks are the unit cross-check (§4.3): a no-increment base a credible page clock exceeds a hundredfold is
 		// not in milliseconds. Both sides come from the same reading, so the two cannot disagree.
-		const hint = Math.max(this.clockState("w").ms, this.clockState("b").ms);
+		// Read the raw elements here: getClock uses this time control to gate computer clocks.
+		const computer = this.detectPageKind() === "vs-computer";
+		const hint = Math.max(
+			...(["w", "b"] as const).map(
+				(side) =>
+					(readClock(this.doc, side) ?? (computer ? readComputerClock(this.doc, side) : null))?.ms ?? 0
+			)
+		);
 		return timeControlFromBridge(this.bridgeState?.timeControl, hint);
 	}
 
@@ -332,17 +374,7 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 		if (kind !== "live-game" && kind !== "live-lobby" && kind !== "vs-computer")
 			return { status: "not-ready" };
 		if (newGameSearchActive(this.doc, this.win)) return { status: "searching" };
-		const running = [this.getClock("w"), this.getClock("b")].some(
-			(clock) => clock?.running && clock.ms > 0
-		);
-		const playing = this.bridgeState?.mode === "playing" && this.bridgeState.gameOver === false;
-		if (
-			!this.isGameOver() &&
-			this.getMyColor() !== null &&
-			this.getFen() !== null &&
-			(running || playing)
-		)
-			return { status: "in-game" };
+		if (this.inGame()) return { status: "in-game" };
 		const control = newGameControl(
 			this.doc,
 			this.win,
@@ -369,6 +401,98 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 			status: "ready",
 			target: {
 				targetId: this.restartTargetId,
+				rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+				viewport: { width: this.win.innerWidth, height: this.win.innerHeight },
+			},
+		};
+	}
+
+	/** A game is being played on this board: a running clock, or the bridge saying so. */
+	private inGame(): boolean {
+		const running = [this.getClock("w"), this.getClock("b")].some(
+			(clock) => clock?.running && clock.ms > 0
+		);
+		const playing = this.bridgeState?.mode === "playing" && this.bridgeState.gameOver === false;
+		return (
+			!this.isGameOver() &&
+			this.getMyColor() !== null &&
+			this.getFen() !== null &&
+			(running || playing)
+		);
+	}
+
+	/**
+	 * Discover the rematch control of `action` without activating it, or revalidate the exact
+	 * element under `point` (2026-09-13) — the same passive discipline as `newGameTarget`, on the
+	 * same pages. The service worker decides *whether* to rematch; this only says *where*.
+	 */
+	rematchTarget(action: RematchAction, targetId?: string, point?: Pt): RematchTargetResult {
+		const kind = pageKindFromPath(this.win.location.pathname);
+		if (kind !== "live-game" && kind !== "live-lobby") return { status: "not-ready" };
+		if (this.inGame()) return { status: "in-game" };
+		const control = rematchControl(this.doc, this.win, action);
+		if (!control) return { status: "not-ready" };
+		const known = this.rematchControls[action];
+		if (targetId !== undefined && (known?.element !== control || targetId !== known.id))
+			return { status: "not-ready" };
+		if (point) {
+			const hit = this.doc.elementFromPoint(point.x, point.y);
+			if (!hit || (hit !== control && !control.contains(hit))) return { status: "not-ready" };
+		}
+		const entry =
+			known?.element === control ? known : { element: control, id: this.win.crypto.randomUUID() };
+		this.rematchControls[action] = entry;
+		const rect = control.getBoundingClientRect();
+		return {
+			status: "ready",
+			target: {
+				targetId: entry.id,
+				rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+				viewport: { width: this.win.innerWidth, height: this.win.innerHeight },
+			},
+		};
+	}
+
+	incomingRematch(): boolean {
+		return incomingRematchShowing(this.doc, this.win);
+	}
+
+	/**
+	 * Discover the resign control of `step` without activating it, or revalidate the exact
+	 * element under `point` (2026-09-12). Only a page that can host a live game answers; the
+	 * service worker decides *whether* to resign, this only says *where* the control is.
+	 */
+	resignTarget(step: ResignStep, targetId?: string, point?: Pt): ResignTargetResult {
+		const kind = pageKindFromPath(this.win.location.pathname);
+		if (kind !== "live-game" && kind !== "vs-computer") return { status: "not-ready" };
+		// The confirmation is never the resign control we already found (its label may say "Resign"),
+		// and it is looked for first among the controls that were not visible when that control was
+		// read — the popup the resign click opens.
+		const exclude = step === "confirm" ? (this.resignControls.resign?.element ?? null) : null;
+		const control = resignControl(
+			this.doc,
+			this.win,
+			step,
+			exclude,
+			step === "confirm" ? this.resignBaseline : null
+		);
+		if (!control) return { status: "not-ready" };
+		if (step === "resign") this.resignBaseline = visibleControls(this.doc, this.win);
+		const known = this.resignControls[step];
+		if (targetId !== undefined && (known?.element !== control || targetId !== known.id))
+			return { status: "not-ready" };
+		if (point) {
+			const hit = this.doc.elementFromPoint(point.x, point.y);
+			if (!hit || (hit !== control && !control.contains(hit))) return { status: "not-ready" };
+		}
+		const entry =
+			known?.element === control ? known : { element: control, id: this.win.crypto.randomUUID() };
+		this.resignControls[step] = entry;
+		const rect = control.getBoundingClientRect();
+		return {
+			status: "ready",
+			target: {
+				targetId: entry.id,
 				rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
 				viewport: { width: this.win.innerWidth, height: this.win.innerHeight },
 			},
@@ -441,7 +565,8 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 			attributes: true,
 			attributeFilter: ["class"],
 		});
-		for (const clock of queryAllSafe(this.doc, S.clock))
+		this.observedClocks = this.clockElements();
+		for (const clock of this.observedClocks)
 			this.observe(clock, {
 				attributes: true,
 				attributeFilter: ["class"],
@@ -461,8 +586,14 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 	protected read(): AdapterReading | null {
 		const board = this.boardElement();
 		if (!board) return null;
-		// the live page grows its move list after the first move; observe it when it appears
-		if (board !== this.observedBoard || this.moveListElement() !== this.observedMoveList)
+		const clocks = this.clockElements();
+		// The move list and computer clocks can first appear after play starts.
+		if (
+			board !== this.observedBoard ||
+			this.moveListElement() !== this.observedMoveList ||
+			clocks.length !== this.observedClocks.length ||
+			clocks.some((clock, index) => clock !== this.observedClocks[index])
+		)
 			this.reinstallObservers();
 		const domPieces = hasDomPieces(board);
 		// DOM renderer only: a `.piece.dragging` means the markup is mid-gesture. The WebGL board
@@ -480,7 +611,13 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 		const ply = plyOf(list);
 		const replay = replayMoves(list.sans.slice(0, ply));
 		const lastMove = replay?.lastMove ?? this.bridgeLastMove();
-		const gameId = this.gameIdentity(ply);
+		const gameOver = this.gameResultFor(list);
+		const computer = this.detectPageKind() === "vs-computer";
+		const gameId = this.gameIdentity(
+			ply,
+			gameOver !== null,
+			computer && this.bridgeState?.gameOver === false && this.isAtLivePosition()
+		);
 		const timeControl = this.getTimeControl();
 		const snapshot: AdapterPositionSnapshot = {
 			site: SITE,
@@ -502,9 +639,9 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 		return {
 			// Keyed off the position actually published: the DOM placement is `null` for the
 			// whole of a WebGL game, which would dedupe every move away.
-			key: `${placementOf(info.fen)}|${sideToMove}`,
+			key: `${this.gameGeneration}|${placementOf(info.fen)}|${sideToMove}`,
 			snapshot,
-			gameOver: this.gameResultFor(list),
+			gameOver,
 			gameKey: gameId,
 		};
 	}
@@ -580,6 +717,13 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 
 	private moveListElement(): Element | null {
 		return queryFirstElement(S.moveList, this.doc);
+	}
+
+	private clockElements(): Element[] {
+		return queryAllSafe(
+			this.doc,
+			this.detectPageKind() === "vs-computer" ? `${S.clock},${S.computerClock}` : S.clock
+		);
 	}
 
 	protected urlGameId(): string | null {
@@ -725,7 +869,7 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 		}
 	}
 
-	private parseResult(text: string | undefined): GameResult | null {
+	private parseResult(text: string | null | undefined): GameResult | null {
 		if (text === "1-0" || text === "0-1" || text === "1/2-1/2") return text;
 		return null;
 	}

@@ -13,13 +13,18 @@ import type { PreparedPointer } from "@core/constants/cdp";
  * drag (click-to-move was removed end to end), so the retry is a second drag.
  */
 
+import { loadPosition } from "@core/chess/fen";
+import { playUci } from "@core/chess/san";
 import { isSquare } from "@core/chess/squares";
 import { EXECUTOR } from "@core/constants/cdp";
+import { SCRAMBLE_HOLD } from "@core/constants/hold";
 import type { BoardGeometryReply, ExpectedMove } from "@core/constants/messages";
 import { TIMINGS } from "@core/constants/timings";
 import { log } from "@core/logger";
-import { FAST_TOUCH, OPPONENT_EXPLORATION } from "@core/motor/constants";
+import { FAST_TOUCH, LINE_PREVIEW, OPPONENT_EXPLORATION } from "@core/motor/constants";
 import { sampleRange } from "@core/motor/geometry";
+import { autoClickProbFor } from "@core/motor/input-style";
+import { type LinePreviewMode, planLinePreview } from "@core/motor/line-preview";
 import {
 	perGameProfile,
 	perMoveProfile,
@@ -27,12 +32,17 @@ import {
 	withMotorSpeed,
 } from "@core/motor/motor-profile";
 import type { OpponentExplorationCandidates } from "@core/motor/opponent-candidates";
-import { planOpponentExploration } from "@core/motor/opponent-exploration";
+import {
+	decideOpponentTurn,
+	type ExplorationSpell,
+	planOpponentExploration,
+} from "@core/motor/opponent-exploration";
 import { plausibleStart } from "@core/motor/sampling";
 import type {
 	ExecutionPlan,
 	ExecutionResult,
 	HandState,
+	InputStyle,
 	MotorMoveKind,
 	MoveCandidate,
 	Pt,
@@ -52,7 +62,7 @@ import type { ReplyFor, RequestInput, RequestKind } from "@service/content-link"
 import type { DebuggerManager } from "@service/debugger-manager";
 import type { HandOwnership } from "@service/hand-ownership";
 import type { GameSessionView, PromoPiece, Recommendation, Site, Square } from "@typedefs/game";
-import type { PersonaId } from "@typedefs/settings";
+import type { PersonaId, Settings } from "@typedefs/settings";
 import type { TimingPlan } from "@typedefs/timing";
 import { CdpInputBackend } from "./cdp-input-backend";
 import {
@@ -70,6 +80,8 @@ import { checkSquares, type VerifyResult, verifyMove } from "./verifier";
 
 /** The slice of `ContentLink` the executor needs (geometry + verification requests). */
 export interface ExecutorLink {
+	/** Whether the pointer mirror is on the page (drawn and not hidden since); absent = no. */
+	pointerControlled?(tabId: number): boolean;
 	confirmPointer?(tabId: number, pointer: PreparedPointer): Promise<boolean>;
 	preparePointer?(
 		tabId: number,
@@ -94,6 +106,13 @@ export interface ExecutorGameConfig {
 	gameSeed: number | string;
 	/** `Settings.execution.verifyMoves` (default true). */
 	verifyMoves?: boolean;
+	/** `Settings.execution.inputMode` (default `drag`: every committed move a drag). */
+	inputMode?: Settings["execution"]["inputMode"];
+	/**
+	 * The line preview (`LINE_PREVIEW`): `auto` (default) runs the model, `force` skips only its
+	 * probability draw (QA / tests — every other rule still applies), `off` never previews.
+	 */
+	linePreview?: LinePreviewMode;
 }
 
 export interface MoveExecutorDeps extends ExecutorGameConfig {
@@ -115,6 +134,8 @@ export interface MoveExecutorDeps extends ExecutorGameConfig {
 /** Per-move context the session knows and the recommendation does not carry. */
 export interface MoveContext {
 	myClockMs?: number;
+	/** A recovery must observe current square occupancy even when optional move verification is off. */
+	requirePositionCheck?: boolean;
 	nReasonable?: number;
 	candidates?: readonly MoveCandidate[];
 	legalDestinations?: (sq: Square) => Square[];
@@ -129,6 +150,18 @@ export interface MoveContext {
 	 * whether the site kept the gesture.
 	 */
 	queuedPremove?: boolean;
+	/**
+	 * The scramble hold (`SCRAMBLE_HOLD`): during the opponent's turn the hand carries the piece to
+	 * its destination and holds it there until `releaseHold()` (the move is played the moment the
+	 * opponent's move landed) or `abandonHold()` (the piece goes back). Like a premove the
+	 * destination guard is relaxed — the position it is aimed at does not exist yet — but unlike a
+	 * premove the release happens on *our* turn, so the move is verified and reported `executed`.
+	 */
+	holdUntilReply?: boolean;
+	/** How long the hold may wait for the opponent before the piece goes back (default scramble). */
+	holdMaxMs?: number;
+	/** The opponent's last move: the line preview prefers lines active around its piece. */
+	lastMove?: { from: Square; to: Square };
 }
 
 export interface ExecutionReport {
@@ -173,6 +206,8 @@ interface Running {
 	committed: boolean;
 	ac: AbortController;
 	done: Promise<ExecutionResult>;
+	/** A scramble hold's decision, until it is made (`MoveContext.holdUntilReply`). */
+	hold: { resolve(decision: "release" | "abandon"): void; decided: boolean } | null;
 }
 
 /**
@@ -260,6 +295,21 @@ export function candidatesFromLines(rec: Recommendation): MoveCandidate[] {
 	return out;
 }
 
+/** A delayed receipt may belong to the move before the opponent's already published reply. */
+function isNextOwnTurn(previous: Recommendation, next: Recommendation): boolean {
+	const board = loadPosition(previous.fen);
+	const target = loadPosition(next.fen);
+	if (!board || !target || board.turn() !== target.turn()) return false;
+	if (!playUci(board, previous.chosen.uci)) return false;
+	for (const reply of board.moves({ verbose: true })) {
+		board.move(reply);
+		const matches = board.fen() === target.fen();
+		board.undo();
+		if (matches) return true;
+	}
+	return false;
+}
+
 const HAND_VIEW: Record<HandState, GameSessionView["hand"]> = {
 	rest: "resting",
 	orientation: "exploring",
@@ -270,6 +320,7 @@ const HAND_VIEW: Record<HandState, GameSessionView["hand"]> = {
 	dropping: "moving",
 	correcting: "moving",
 	promoting: "moving",
+	holding: "moving",
 };
 
 export class MoveExecutor {
@@ -312,6 +363,12 @@ export class MoveExecutor {
 	private exploration: { ac: AbortController; done: Promise<void> } | null = null;
 	private explorationSeed = 0;
 	private waitingForExploration = 0;
+	/**
+	 * Line previews this game (`LINE_PREVIEW.maxPerGame`) and the moves (`fen:uci`) that already
+	 * got one — a replacement or a re-dispatch of the same move never previews twice. Counted when
+	 * planned: a preview the hand cut short still spent the game's allowance.
+	 */
+	private readonly linePreviews = { count: 0, moves: new Set<string>() };
 
 	constructor(deps: MoveExecutorDeps) {
 		this.tabId = deps.tabId;
@@ -330,6 +387,8 @@ export class MoveExecutor {
 			previewScale: deps.previewScale,
 			gameSeed: deps.gameSeed,
 			verifyMoves: deps.verifyMoves ?? true,
+			inputMode: deps.inputMode ?? "drag",
+			linePreview: deps.linePreview ?? "auto",
 		};
 		this.geometry = {
 			read: (tabId, promotion, signal) => this.readGeometry(tabId, promotion, signal),
@@ -361,9 +420,23 @@ export class MoveExecutor {
 
 	/** Next executions/bouts use live controls; a committed gesture keeps its sampled profile. */
 	updateSettings(
-		settings: Pick<ExecutorGameConfig, "persona" | "previewScale" | "verifyMoves" | "motorSpeed">
+		settings: Pick<
+			ExecutorGameConfig,
+			"persona" | "previewScale" | "verifyMoves" | "motorSpeed" | "inputMode"
+		> &
+			Partial<Pick<ExecutorGameConfig, "linePreview">>
 	): void {
 		Object.assign(this.config, settings);
+	}
+
+	/** The line preview's mode for the next executions (`ExecutorGameConfig.linePreview`). */
+	setLinePreviewMode(mode: LinePreviewMode): void {
+		this.config.linePreview = mode;
+	}
+
+	/** Moves of this game that were given a line preview (`LINE_PREVIEW.maxPerGame` caps it). */
+	linePreviewCount(): number {
+		return this.linePreviews.count;
 	}
 
 	// ── lifecycle ─────────────────────────────────────────────────────────
@@ -404,9 +477,17 @@ export class MoveExecutor {
 			return;
 		// A *fresh* attach is the one that brings the infobar; re-arming an attached tab shifts nothing.
 		if (!wasAttached) this.attachedAt = this.now();
+		// While the mirror is on the page the arrow *is* the pointer the owner sees (the shield keeps
+		// the real one off the page), so the hand resumes from the rest point it is parked on rather
+		// than from a real pointer sample — what is shown and where the hand starts stay one point.
+		const mirrored = this.link.pointerControlled?.(this.tabId) === true;
 		this.ownership.armed(
 			this.tabId,
-			startPoint ?? this.ownership.lastRealPosition(this.tabId) ?? undefined
+			startPoint ??
+				(mirrored
+					? this.ownership.position(this.tabId)
+					: this.ownership.lastRealPosition(this.tabId)) ??
+				undefined
 		);
 		log.info("executor: armed", { tabId: this.tabId, start: this.ownership.position(this.tabId) });
 	}
@@ -474,9 +555,37 @@ export class MoveExecutor {
 		return this.running !== null;
 	}
 
+	/** Changes on every explicit cancellation, including disarm/dispose and position replacement. */
+	cancellationGeneration(): number {
+		return this.inputVersion;
+	}
+
 	/** Hovering, previews, decision pauses and approach remain interruptible until mouse-down. */
 	canFastForward(): boolean {
 		return this.running?.committed !== true;
+	}
+
+	/** The move whose piece the hand is holding over its destination, waiting for the opponent. */
+	holdingMove(): { rec: Recommendation } | null {
+		const running = this.running;
+		return running?.hold && !running.hold.decided ? { rec: running.rec } : null;
+	}
+
+	/** The opponent moved and the held move is still sound: let go — the move is played. */
+	releaseHold(): boolean {
+		return this.decideHold("release");
+	}
+
+	/** The held move is no longer wanted: carry the piece back to its square and let go there. */
+	abandonHold(): boolean {
+		return this.decideHold("abandon");
+	}
+
+	private decideHold(decision: "release" | "abandon"): boolean {
+		const hold = this.running?.hold;
+		if (!hold || hold.decided) return false;
+		hold.resolve(decision);
+		return true;
 	}
 
 	/**
@@ -526,6 +635,9 @@ export class MoveExecutor {
 				const rng = createRng(`${this.config.gameSeed}:opponent:${this.explorationSeed++}`);
 				const initial = source();
 				if (!initial) return;
+				// Rolled once per turn: some turns get no pondering at all beyond a rest (the hand
+				// keeps still, with its idle tremor, where the post-drop decision left it).
+				const turn = decideOpponentTurn(initial.attention, initial.policy, rng);
 				await sleep(
 					sampleRange(
 						initial.policy?.lowTime
@@ -537,6 +649,7 @@ export class MoveExecutor {
 					ac.signal
 				);
 				let previousTarget: Square | undefined;
+				let previousSpell: ExplorationSpell | undefined;
 				while (!ac.signal.aborted && !this.disposed && this.isArmed() && !this.pending) {
 					if (!source()) return;
 					const reply = await this.readGeometry(this.tabId, undefined, ac.signal);
@@ -561,6 +674,8 @@ export class MoveExecutor {
 							cursor,
 							...candidates,
 							...(previousTarget ? { previousTarget } : {}),
+							...(previousSpell ? { previousSpell } : {}),
+							quiet: !turn.ponder,
 						},
 						rng
 					);
@@ -591,6 +706,7 @@ export class MoveExecutor {
 						throw error;
 					}
 					previousTarget = plan.lastTarget ?? undefined;
+					previousSpell = plan.spell;
 				}
 			})
 			.catch((error: unknown) => {
@@ -703,10 +819,10 @@ export class MoveExecutor {
 	 * replacement request is *parked* behind it — visible to `pendingMove()`,
 	 * dropped by `cancel()` / `disarm()` / `dispose()` / a newer `schedule()` —
 	 * and plays only if the hand is still armed and the run it waited on did
-	 * *not* land its move (an `executed` outcome, including an interrupted press
-	 * the re-check confirmed, ends the replacement as `skipped: position-changed`
-	 * — never a second piece after our move is on the board, §9.3), after its
-	 * own position guard (`dispatch`). A second
+	 * *not* land its move, or the recommendation is for the exact next own turn
+	 * after that move and an opponent reply. A successful receipt suppresses all
+	 * other replacements, including same-position and queued moves. The next
+	 * turn still passes its fresh position guard (`dispatch`). A second
 	 * request while an execution is live (not cancelled) is dropped and the
 	 * running promise returned: the session owns the "one recommendation per
 	 * position" rule and must `cancel()` before scheduling a replacement —
@@ -743,22 +859,24 @@ export class MoveExecutor {
 			const park = { rec, ac: new AbortController() };
 			this.parked?.ac.abort();
 			this.parked = park;
-			let landed = false;
+			let landedBlocks = false;
 			while (this.running && !park.ac.signal.aborted) {
-				const prior = await this.running.done.catch(() => null);
-				landed = prior?.ok === true && prior.outcome === "executed";
+				const previous = this.running;
+				const prior = await previous.done.catch(() => null);
+				if (prior?.ok === true && prior.outcome === "executed")
+					landedBlocks ||= ctx.queuedPremove === true || !isNextOwnTurn(previous.rec, rec);
 			}
 			if (this.parked === park) this.parked = null;
 			replacement = true;
 			if (park.ac.signal.aborted || this.disposed || !this.isArmed()) {
 				return this.droppedReplacement(rec);
 			}
-			if (landed) return this.landedReplacement(rec);
+			if (landedBlocks) return this.landedReplacement(rec);
 		}
 		if (this.disposed) return this.droppedReplacement(rec);
 		const ac = new AbortController();
 		const done = this.runOne(rec, timing, ctx, ac.signal, replacement);
-		this.running = { rec, timing, ctx, committed: false, ac, done };
+		this.running = { rec, timing, ctx, committed: false, ac, done, hold: null };
 		try {
 			return await done;
 		} finally {
@@ -900,9 +1018,18 @@ export class MoveExecutor {
 		if (rec.chosen.promotion) expected.promotion = rec.chosen.promotion;
 		// Fix F: a premove sent during the opponent's turn (`MoveContext.queuedPremove`).
 		const queued = ctx.queuedPremove === true;
+		// The scramble hold is also entered during the opponent's turn, so its destination is guarded
+		// the way a premove's is; the release itself lands on our turn and is verified like a move.
+		const holding = ctx.holdUntilReply === true;
 		// Position guard: never dispatch on a position that already changed (a replacement after a
 		// cancelled run, or any reply whose occupancy says the piece left the from-square).
-		const guard = await this.positionChanged(rec, reply, replacement, queued);
+		const guard = await this.positionChanged(
+			rec,
+			reply,
+			replacement || ctx.requirePositionCheck === true,
+			queued || holding,
+			ctx.requirePositionCheck === true
+		);
 		if (guard !== null) {
 			log.info("executor: position guard vetoed the committed press; not dispatching", {
 				tabId: this.tabId,
@@ -973,7 +1100,7 @@ export class MoveExecutor {
 			// `premove` here means "entered as a premove", which is what relaxes the hand's own
 			// destination guard — not merely "the §7.4 policy chose it" (a premove played after the
 			// predicted reply landed is an ordinary move and is guarded like one).
-			expected: { san: rec.chosen.san, uci: rec.chosen.uci, premove: queued },
+			expected: { san: rec.chosen.san, uci: rec.chosen.uci, premove: queued || holding },
 			geometry: { reply, readAt },
 			exploration: {
 				candidates: ctx.candidates ?? candidatesFromLines(rec),
@@ -985,6 +1112,50 @@ export class MoveExecutor {
 			},
 		};
 		if (rec.chosen.promotion) plan.promotion = rec.chosen.promotion;
+		// `Settings.execution.inputMode`: a premove or a hold is always a drag (the site's premove
+		// UI is built around it, and a hold *is* a drag paused mid-way); a promotion too, so the
+		// picker click stays the one click of the move. Otherwise the setting, with `auto` drawing
+		// per move from its own stream so the motor's per-move sampling is untouched by the choice.
+		const styleRng = createRng(`${config.gameSeed}:${rec.fen}:${rec.chosen.uci}:style`);
+		const clickProb = autoClickProbFor(rec.chosen.from, rec.chosen.to, ctx.myClockMs);
+		const style: InputStyle =
+			queued || holding || rec.chosen.promotion !== undefined
+				? "drag"
+				: config.inputMode === "click"
+					? "click"
+					: config.inputMode === "auto" && styleRng.chance(clickProb)
+						? "click"
+						: "drag";
+		plan.style = style;
+		let holdTimer: unknown = null;
+		if (holding) {
+			// One decision per hold, from the session's verdict on the opponent's move, the timeout,
+			// or a cancel (the hand answers an abort as `abandon` itself). Decided once: a retry
+			// attempt after a released hold finds the directive already answered and drops at once.
+			let settle: (decision: "release" | "abandon") => void = () => {};
+			const decision = new Promise<"release" | "abandon">((resolve) => {
+				settle = resolve;
+			});
+			const hold = {
+				decided: false,
+				resolve: (verdict: "release" | "abandon"): void => {
+					if (hold.decided) return;
+					hold.decided = true;
+					if (holdTimer !== null) this.scheduler.clearTimeout(holdTimer);
+					holdTimer = null;
+					settle(verdict);
+				},
+			};
+			holdTimer = this.scheduler.setTimeout(() => {
+				log.info("executor: the scramble hold timed out; giving the piece back", {
+					tabId: this.tabId,
+					uci: rec.chosen.uci,
+				});
+				hold.resolve("abandon");
+			}, ctx.holdMaxMs ?? SCRAMBLE_HOLD.scrambleHoldMs[1]);
+			if (this.running?.rec === rec) this.running.hold = hold;
+			plan.hold = { decide: () => decision };
+		}
 		// Optional normal verification never disables the evidence check after a failed
 		// or interrupted press: even a preview release might have submitted a move.
 		const check = (timeoutMs: number, checkSignal: AbortSignal): Promise<VerifyResult> =>
@@ -994,6 +1165,46 @@ export class MoveExecutor {
 			const readyTiming = fitTiming(timing, timing.deadlineMs - this.now());
 			if (this.running?.rec === rec) this.running.timing = readyTiming;
 			if (queued) return await this.enterPremove(controller, plan, readyTiming, signal);
+			// The line preview (`LINE_PREVIEW`): decided from its own stream so the motor's per-move
+			// sampling is untouched by the choice, on the plan the hand will actually run (a retry's
+			// instant plan never draws), never on a premove or a hold, never twice for one move, and
+			// at most `maxPerGame` times a game.
+			const lineKey = `${rec.fen}:${rec.chosen.uci}`;
+			if (
+				config.linePreview !== "off" &&
+				!this.linePreviews.moves.has(lineKey) &&
+				this.linePreviews.count < LINE_PREVIEW.maxPerGame
+			) {
+				const preview = planLinePreview(
+					{
+						fen: rec.fen,
+						chosenUci: rec.chosen.uci,
+						lines: rec.lines,
+						timing: readyTiming,
+						myClockMs: ctx.myClockMs ?? 0,
+						premove: holding,
+						...(ctx.lastMove ? { lastMoveTo: ctx.lastMove.to } : {}),
+						profile: motor,
+						geometry: geo,
+						cursor: start,
+						seed: `${config.gameSeed}:${rec.fen}:${rec.chosen.uci}:line:paths`,
+						mode: config.linePreview ?? "auto",
+					},
+					createRng(`${config.gameSeed}:${rec.fen}:${rec.chosen.uci}:line`)
+				);
+				if (preview) {
+					plan.linePreview = preview;
+					this.linePreviews.moves.add(lineKey);
+					this.linePreviews.count += 1;
+					log.debug("executor: line preview planned", {
+						tabId: this.tabId,
+						uci: rec.chosen.uci,
+						lines: preview.lines.map((l) => `${l.uci}×${l.arrows.length}`),
+						reserveMs: Math.round(preview.reserveMs),
+						thisGame: this.linePreviews.count,
+					});
+				}
+			}
 			return await runWithRetry({
 				attempt: (index) =>
 					controller.execute(plan, index === 0 ? readyTiming : instantTiming(readyTiming), signal),
@@ -1007,6 +1218,7 @@ export class MoveExecutor {
 			});
 		} finally {
 			this.checkAc = null;
+			if (holdTimer !== null) this.scheduler.clearTimeout(holdTimer);
 			backend.dispose();
 		}
 	}
@@ -1106,7 +1318,8 @@ export class MoveExecutor {
 		rec: Recommendation,
 		reply: BoardGeometryReply,
 		replacement: boolean,
-		queued = false
+		queued = false,
+		required = false
 	): Promise<{ outcome: "skipped" | "aborted"; reason: string } | null> {
 		const changed = { outcome: "skipped", reason: EXECUTOR.reasons.positionChanged } as const;
 		// Fix F: a premove is entered in the position *before* the opponent's reply, where its
@@ -1117,7 +1330,7 @@ export class MoveExecutor {
 		if (reply.occupancy) {
 			return positionIntact(reply, rec.chosen.from, to) ? null : changed;
 		}
-		if (!replacement || !this.config.verifyMoves) return null;
+		if (!replacement || (!this.config.verifyMoves && !required)) return null;
 		const from = rec.chosen.from;
 		const squares: Square[] = to === undefined ? [from] : [from, to];
 		const signal = this.freshCheckSignal();

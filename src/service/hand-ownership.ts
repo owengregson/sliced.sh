@@ -9,11 +9,13 @@
  * previous hand session.
  */
 
+import { isGamePage } from "@content/adapters/page-kind";
 import { EXECUTOR } from "@core/constants/cdp";
 import type { GamePortMessage } from "@core/constants/messages";
 import type { Pt } from "@core/motor/types";
 import { defaultNow } from "@core/util/scheduler";
 import type { ContentLink, ContentLinkEvents } from "@service/content-link";
+import type { PageKind } from "@typedefs/game";
 
 type OwnershipLink = ContentLinkEvents & Partial<Pick<ContentLink, "post" | "onConnect" | "tabs">>;
 
@@ -25,6 +27,8 @@ interface TabHand {
 	lastRealAt: number | null;
 	/** Last real position reported while the hand was NOT armed. */
 	lastReal: { x: number; y: number; t: number } | null;
+	/** The page kind the tab's last `hello` reported; `null` until one arrives. */
+	pageKind: PageKind | null;
 }
 
 const fresh = (): TabHand => ({
@@ -33,6 +37,7 @@ const fresh = (): TabHand => ({
 	realCount: 0,
 	lastRealAt: null,
 	lastReal: null,
+	pageKind: null,
 });
 
 export class HandOwnership {
@@ -122,8 +127,16 @@ export class HandOwnership {
 		this.tabs.clear();
 	}
 
+	/**
+	 * Ownership is never announced to a tab whose page is not a game page (2026-09-13): the
+	 * content side gates the shield on the same set and would refuse it anyway, but not posting it
+	 * keeps the two in step. A tab that has not said `hello` yet is not gated — the content side's
+	 * own gate is the one that holds regardless.
+	 */
 	private publish(tabId: number, owned: boolean): void {
-		this.link?.post?.(tabId, { kind: "inputOwnership", owned });
+		const kind = this.tabs.get(tabId)?.pageKind ?? null;
+		const gamePage = kind === null || isGamePage(kind);
+		this.link?.post?.(tabId, { kind: "inputOwnership", owned: owned && gamePage });
 	}
 
 	private state(tabId: number): TabHand {
@@ -137,6 +150,7 @@ export class HandOwnership {
 
 	private onPortMessage(tabId: number, msg: GamePortMessage): void {
 		if (msg.kind === "hello") {
+			this.state(tabId).pageKind = msg.pageKind;
 			this.publish(tabId, this.isArmed(tabId));
 			return;
 		}

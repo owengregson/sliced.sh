@@ -13,7 +13,11 @@
  *     selection;
  *   - pointerup on a different square than the press: a legal destination
  *     plays the move (drag), any other square clears the selection (the piece
- *     snaps back); pointerup on the press square keeps the selection (a click).
+ *     snaps back); pointerup on the press square keeps the selection (a click);
+ *   - a RIGHT-button press/release is an **annotation** (chess.com draws an arrow
+ *     for a right drag, a highlight for a right click): it never selects, moves
+ *     or deselects anything and is kept out of `presses` altogether — it is
+ *     recorded in `diag.annotations` and counts toward `PointerOffset` only.
  *
  * One `AcObservation` is closed per submitted move. Its period runs from the
  * previous submission (or the shadow's creation) to this submission; the
@@ -77,10 +81,23 @@ export interface PressRecord {
 	movesBefore: number;
 }
 
+/** One right-button press → release: a chess.com arrow (different squares) or square highlight. */
+export interface AnnotationRecord {
+	square: Square | null;
+	releaseSquare: Square | null;
+	/** Pointer moves between the press and its release (an arrow drags; a highlight is a click). */
+	movesDuring: number;
+	trusted: boolean;
+	at: number;
+}
+
 export interface AcDiagnostics {
 	/** Distinct pieces selected during the period, in order. */
 	selections: Square[];
+	/** Left-button presses only; right-button annotations are in `annotations`. */
 	presses: PressRecord[];
+	/** Right-button drags/clicks in the period (line-preview arrows), in order. */
+	annotations: AnnotationRecord[];
 	/** Pointer moves / presses before the committing press. */
 	movesBeforeCommit: number;
 	pressesBeforeCommit: number;
@@ -139,6 +156,7 @@ interface Period {
 	toggled: boolean;
 	selections: Square[];
 	presses: PressRecord[];
+	annotations: AnnotationRecord[];
 	moves: number;
 	pathPx: number;
 	maxStepPx: number;
@@ -149,8 +167,13 @@ interface PointerLike {
 	isTrusted: boolean;
 	clientX: number;
 	clientY: number;
+	/** `MouseEvent.button`: 0 left, 2 right. */
+	button: number;
 	target: EventTarget | null;
 }
+
+/** `MouseEvent.button` of the right button (the DOM's own code, not a registry value). */
+const RIGHT_BUTTON = 2;
 
 export function createAcShadow(dom: TabDom, model: SiteModel, options: AcShadowOptions): AcShadow {
 	const { now } = options;
@@ -164,6 +187,8 @@ export function createAcShadow(dom: TabDom, model: SiteModel, options: AcShadowO
 	let dragFrom: Square | null = null;
 	let press: PressRecord | null = null;
 	let pressPoint: { x: number; y: number } | null = null;
+	/** The right-button press awaiting its release, if any. */
+	let annotation: { record: AnnotationRecord; movesBefore: number } | null = null;
 	/** Trust of the gesture that ends up submitting the move. */
 	let gestureTrusted = true;
 	let period = fresh(now());
@@ -184,6 +209,7 @@ export function createAcShadow(dom: TabDom, model: SiteModel, options: AcShadowO
 			toggled: false,
 			selections: [],
 			presses: [],
+			annotations: [],
 			moves: 0,
 			pathPx: 0,
 			maxStepPx: 0,
@@ -256,6 +282,19 @@ export function createAcShadow(dom: TabDom, model: SiteModel, options: AcShadowO
 		const at = now();
 		track(e);
 		const sq = model.squareOf(e.target);
+		if (e.button === RIGHT_BUTTON) {
+			// An annotation: chess.com's board draws with the right button and touches no selection.
+			const record: AnnotationRecord = {
+				square: sq,
+				releaseSquare: null,
+				movesDuring: 0,
+				trusted: e.isTrusted,
+				at,
+			};
+			annotation = { record, movesBefore: period.moves };
+			period.annotations.push(record);
+			return;
+		}
 		const record: PressRecord = {
 			square: sq,
 			releaseSquare: null,
@@ -293,6 +332,17 @@ export function createAcShadow(dom: TabDom, model: SiteModel, options: AcShadowO
 		const at = now();
 		track(e);
 		const sq = model.squareOf(e.target);
+		if (e.button === RIGHT_BUTTON) {
+			// The annotation's release: an arrow when it ends on another square. The left-button
+			// selection state is untouched — a held piece (never the case for the hand) would stay held.
+			if (annotation) {
+				annotation.record.releaseSquare = sq;
+				annotation.record.movesDuring = period.moves - annotation.movesBefore;
+				annotation.record.trusted = annotation.record.trusted && e.isTrusted;
+				annotation = null;
+			}
+			return;
+		}
 		if (press) {
 			press.releaseSquare = sq;
 			press.movesDuring = period.moves - press.movesBefore;
@@ -352,6 +402,7 @@ export function createAcShadow(dom: TabDom, model: SiteModel, options: AcShadowO
 			diag: {
 				selections: [...p.selections],
 				presses: [...p.presses],
+				annotations: [...p.annotations],
 				movesBeforeCommit: commit ? commit.movesBefore : p.moves,
 				pressesBeforeCommit: before.length,
 				pendingSelectionAtCommit: pendingAtCommit,

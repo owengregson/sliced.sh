@@ -84,7 +84,9 @@ export type HandState =
 	| "dragging"
 	| "dropping"
 	| "correcting"
-	| "promoting";
+	| "promoting"
+	/** The piece is carried to its destination and held there, waiting for the opponent's move. */
+	| "holding";
 
 /**
  * One modelled preview selection (§9.3a). Timings are in dispatch order:
@@ -175,9 +177,76 @@ export interface ExplorationInput {
 	legalDestinations(sq: Square): Square[];
 }
 
+/**
+ * A scramble hold's decision source: the hand carries the piece to its destination and then waits
+ * on `decide()` with the button down. `release` drops it there (the move is played); `abandon`
+ * carries it back to its origin square and lets go there (nothing is played). The executor resolves
+ * it from the session's verdict on the opponent's move, from a timeout, or from a cancel.
+ */
+export interface HoldDirective {
+	decide(): Promise<"release" | "abandon">;
+}
+
+/** How a committed move is entered on the board (`Settings.execution.inputMode`, resolved per move). */
+export type InputStyle = "drag" | "click";
+
+/**
+ * The mouse buttons the hand ever uses: `left` for every move, preview selection and click;
+ * `right` only for a line preview's arrow drags (`LINE_PREVIEW`), which chess.com renders and
+ * which can never move a piece.
+ */
+export type MouseButton = "left" | "right";
+
+/** One arrow of a line preview: a right-button drag from `from` to `to`, with its sampled pauses. */
+export interface LinePreviewArrow {
+	from: Square;
+	to: Square;
+	/** Pause on the from-square before the right press. */
+	prePressMs: number;
+	/** Right button held still before the drag sets off. */
+	pressToDragMs: number;
+	/** Settle over the to-square before the release. */
+	settleMs: number;
+	/** After the release: the pause before the next arrow, or the look at the finished line. */
+	afterMs: number;
+	/** Whole-arrow estimate (approach + press + drag + release + `afterMs`), for the time bound. */
+	estimateMs: number;
+}
+
+export interface LinePreviewLine {
+	/** UCI of the line's first ply (the candidate it previews), for logs and tests. */
+	uci: string;
+	arrows: LinePreviewArrow[];
+	/** Pause before this line starts (0 for the first line). */
+	beforeMs: number;
+	/** Whole-line estimate: `beforeMs` plus every arrow's estimate. */
+	estimateMs: number;
+}
+
+/**
+ * A planned line preview (`src/core/motor/line-preview.ts`), drawn by the hand inside the decision
+ * phase before the touch is planned. `seed` is the stream the hand draws the arrow paths and press
+ * points from, so the gesture never consumes the move's own motor stream.
+ */
+export interface LinePreviewPlan {
+	seed: string;
+	lines: LinePreviewLine[];
+	/** Rest after the last arrow before the approach (the decision pause absorbs it). */
+	restBeforeApproachMs: number;
+	/**
+	 * What the gesture is expected to take in all, `restBeforeApproachMs` included: the executor
+	 * takes this off the exploration budget so scan/preview hovers make room for it.
+	 */
+	reserveMs: number;
+}
+
 export interface ExecutionPlan {
 	tabId: number;
 	site: Site;
+	/** Present for a scramble hold: pause with the piece held over the destination until told. */
+	hold?: HoldDirective;
+	/** Absent → a drag. `click` clicks the piece, carries the pointer over and clicks the square. */
+	style?: InputStyle;
 	from: { x: number; y: number; rect: Rect; square: Square };
 	to: { x: number; y: number; rect: Rect; square: Square };
 	promotion?: PromoPiece;
@@ -192,4 +261,6 @@ export interface ExecutionPlan {
 	exploration?: ExplorationInput;
 	/** A geometry reply the caller already holds (avoids a duplicate read at the start). */
 	geometry?: { reply: BoardGeometryReply; readAt: number };
+	/** Present when this move gets a line preview (right-button arrows along the PV, `LINE_PREVIEW`). */
+	linePreview?: LinePreviewPlan;
 }

@@ -33,6 +33,7 @@ import {
 	safe,
 	setTimeout_,
 } from "./bridge-common";
+import { effects, effectsStatements } from "./effects-overlay";
 import { overlay, overlayStatements } from "./highlight-overlay";
 import { cursor, cursorStatements } from "./virtual-cursor";
 
@@ -62,6 +63,10 @@ export const chesscomBridge = defineProgram({
 		cursorClass: "string",
 		cursorFadeMs: "number",
 		cursorAccent: "string",
+		effectsClass: "string",
+		effectPalette: "json",
+		effectStyles: "json",
+		qualityIcons: "json",
 	},
 	entry: true,
 	build: (p) =>
@@ -72,8 +77,17 @@ export const chesscomBridge = defineProgram({
 			js.let_("board", js.nil()),
 			js.let_("game", js.nil()),
 			js.let_("keys", js.arr()),
+			js.let_("unbind", js.arr()),
+			js.let_("listenerToken", js.nil()),
 			js.let_("wait", p.retryMs),
 			...overlayStatements({ hosts: p.boardSelectors, cls: p.overlayClass, colors: p.colors }),
+			...effectsStatements({
+				hosts: p.boardSelectors,
+				cls: p.effectsClass,
+				palette: p.effectPalette,
+				styles: p.effectStyles,
+				icons: p.qualityIcons,
+			}),
 			...cursorStatements({ cls: p.cursorClass, fadeMs: p.cursorFadeMs, accent: p.cursorAccent }),
 			// first board element (in ladder order) that carries the `game` API
 			js.const_(
@@ -152,14 +166,54 @@ export const chesscomBridge = defineProgram({
 				js.arrow(
 					["el"],
 					[
+						js.forOf("stop", js.id("unbind"), [js.expr(safe(js.call(js.id("stop"))))]),
+						js.assign(js.id("unbind"), js.arr()),
 						js.assign(board, el),
 						js.assign(game, js.member(el, "game")),
 						js.assign(keys, js.arr()),
+						js.const_("attachedGame", game),
+						js.const_("token", js.obj({})),
+						js.assign(js.id("listenerToken"), js.id("token")),
 						js.const_(
 							"sub",
 							js.arrow(
 								["type", "k"],
-								safe(gameCall("on", js.id("type"), js.arrow([], js.call(js.id("emit"), js.id("k")))))
+								[
+									js.const_(
+										"listener",
+										js.arrow(
+											[],
+											[
+												js.if_(js.op(js.id("listenerToken"), "===", js.id("token")), [
+													js.expr(js.call(js.id("emit"), js.id("k"))),
+												]),
+											]
+										)
+									),
+									js.const_("stop", safe(gameCall("on", js.id("type"), js.id("listener")))),
+									js.if_(
+										js.op(js.typeof_(js.id("stop")), "===", js.str("function")),
+										[js.expr(js.call(js.member(js.id("unbind"), "push"), js.id("stop")))],
+										[
+											js.if_(
+												js.op(js.typeof_(js.member(js.id("attachedGame"), "off")), "===", js.str("function")),
+												[
+													js.expr(
+														js.call(
+															js.member(js.id("unbind"), "push"),
+															js.arrow(
+																[],
+																safe(
+																	js.call(js.member(js.id("attachedGame"), "off"), js.id("type"), js.id("listener"))
+																)
+															)
+														)
+													),
+												]
+											),
+										]
+									),
+								]
 							)
 						),
 						js.expr(js.call(js.id("sub"), js.str("Move"), js.str(KINDS.move))),
@@ -167,6 +221,29 @@ export const chesscomBridge = defineProgram({
 						js.expr(js.call(js.id("sub"), js.str("CreateGame"), js.str(KINDS.load))),
 						js.expr(js.call(js.id("sub"), js.str("ModeChanged"), js.str(KINDS.state))),
 						js.expr(js.call(js.id("sub"), js.str("GameOver"), js.str(KINDS.gameover))),
+					]
+				)
+			),
+			js.const_(
+				"sync",
+				js.arrow(
+					[],
+					[
+						js.const_(
+							"el",
+							js.cond(js.and(board, js.member(board, "isConnected")), board, js.call(js.id("find")))
+						),
+						js.if_(
+							js.and(
+								el,
+								js.and(
+									js.member(el, "game"),
+									js.or(js.op(el, "!==", board), js.op(js.member(el, "game"), "!==", game))
+								)
+							),
+							[js.expr(js.call(js.id("attach"), el)), js.ret(js.bool(true))]
+						),
+						js.ret(js.bool(false)),
 					]
 				)
 			),
@@ -297,6 +374,13 @@ export const chesscomBridge = defineProgram({
 							),
 						],
 					},
+					// The board-effect layer is its own element with its own lifetime: a `clear` of the
+					// recommendation mark leaves it alone, and this leaves the mark alone.
+					{ kind: KINDS.effects, body: [effects.draw(q), post(KINDS.effects, i, js.nil())] },
+					{
+						kind: KINDS.effectsClear,
+						body: [effects.clear(), post(KINDS.effectsClear, i, js.nil())],
+					},
 					{ kind: KINDS.cursor, body: [post(KINDS.cursor, i, js.id(NAMES.cursor))] },
 					// Fix D, fire-and-forget (no reply): the mirror of the hand's own pointer. One
 					// command per dispatched point, so a reply each would double the traffic.
@@ -305,25 +389,15 @@ export const chesscomBridge = defineProgram({
 					{ kind: KINDS.cursorPrepare, body: [post(KINDS.cursorPrepare, i, cursor.prepare(q))] },
 				],
 				[
-					// the SPA may have replaced the board since we attached
-					js.if_(js.or(js.not(board), js.not(js.member(board, "isConnected"))), [
-						js.const_("el", js.call(js.id("find"))),
-						js.if_(js.and(el, js.op(el, "!==", board)), [js.expr(js.call(js.id("attach"), el))]),
-					]),
+					// The computer page can replace the game while retaining the board element.
+					js.expr(js.call(js.id("sync"))),
 				]
 			),
 			js.const_(
 				"watch",
 				js.arrow(
 					[],
-					[
-						js.if_(js.and(board, js.member(board, "isConnected")), [js.ret()]),
-						js.const_("el", js.call(js.id("find"))),
-						js.if_(js.and(el, js.op(el, "!==", board)), [
-							js.expr(js.call(js.id("attach"), el)),
-							js.expr(js.call(js.id("emit"), js.str(KINDS.load))),
-						]),
-					]
+					[js.if_(js.call(js.id("sync")), [js.expr(js.call(js.id("emit"), js.str(KINDS.load)))])]
 				)
 			),
 			js.const_(

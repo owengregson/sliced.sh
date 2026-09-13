@@ -51,6 +51,19 @@ export const BRIDGE_WIRE = {
 	at: "t",
 	/** Left-button state of the mirrored pointer (`cursorTo` request). */
 	down: "d",
+	/** `cursorTo` only: `false` turns the mirror's motion feedback off (absent = on). */
+	effects: "e",
+	// board effects (`effects` request): the batch for the move that just landed
+	/** The effect list itself. */
+	effectList: "z",
+	/** One effect's kind, as a `BOARD_EFFECT_KINDS` letter. */
+	effectKind: "n",
+	/** The side that played the move is the owner's, so the batch takes the accent palette. */
+	mine: "u",
+	/** The move-quality chip: `{ [square], [badgeIndex] }`. */
+	badge: "b",
+	/** Index into `MOVE_QUALITY_ORDER` — a number, never the category's name (§13.3 rule 5). */
+	badgeIndex: "j",
 } as const;
 
 /** `orientation` values on the wire. */

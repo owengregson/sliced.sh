@@ -5,6 +5,7 @@
  */
 
 import { SETTINGS_RANGES } from "@core/constants/limits";
+import { SETTING_GAIN } from "@core/constants/setting-gain";
 import type { Rng } from "@core/rng";
 import type { PersonaId } from "@typedefs/settings";
 import {
@@ -25,9 +26,19 @@ export { sampleRange };
 
 const FAST_TC: ReadonlySet<TimeControlClass> = new Set(["bullet", "blitz"]);
 
+/**
+ * The hand's speed multiplier, clamped to the motor-speed slider's range in *effective* units:
+ * the executor receives `Settings.execution.motorSpeed × SETTING_GAIN.motorSpeed`
+ * (`executorSettingsFor`, owner 2026-09-13), so the bound is the slider's range scaled the same
+ * way — otherwise the top ticks of the slider would all act as the old maximum.
+ */
 export function boundedMotorSpeed(speed: number | undefined): number {
 	if (speed === undefined || !Number.isFinite(speed)) return 1;
-	return Math.min(SETTINGS_RANGES.motorSpeed.max, Math.max(SETTINGS_RANGES.motorSpeed.min, speed));
+	const gain = SETTING_GAIN.motorSpeed;
+	return Math.min(
+		SETTINGS_RANGES.motorSpeed.max * gain,
+		Math.max(SETTINGS_RANGES.motorSpeed.min * gain, speed)
+	);
 }
 
 /** Faster movement changes travel duration; the peak cap and button settling remain intact. */

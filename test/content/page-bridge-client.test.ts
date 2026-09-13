@@ -177,6 +177,7 @@ describe("PageBridgeClient — wire", () => {
 					flipped: true,
 					lastMove: { from: "e2", to: "e4", san: "e4" },
 					gameOver: false,
+					result: null,
 					timeControl: { base: 1 },
 					timestamps: [1, 2],
 				} satisfies BridgeState,
@@ -194,6 +195,13 @@ describe("PageBridgeClient — wire", () => {
 			["ply", undefined],
 		]);
 	});
+	it("preserves explicit null result and time control so a fresh game clears the previous state", () => {
+		const previous = decodeState({ g: true, r: "1-0", c: { baseTime: 180_000, increment: 2_000 } });
+		const next = decodeState({ g: false, r: null, c: null });
+		expect({ ...previous, ...next }).toEqual({ gameOver: false, result: null, timeControl: null });
+		expect(decodeState({})).toEqual({});
+	});
+
 	it("codec helpers: decodeState rejects non-objects; encodePayload passes unknown kinds through", () => {
 		expect(decodeState(null)).toBeNull();
 		expect(decodeState("x")).toBeNull();

@@ -8,6 +8,7 @@ import { SIM_TELEMETRY } from "@test/sim/telemetry/constants";
 import { runSimulatedGame, type SimulatedGame } from "@test/sim/telemetry/harness";
 import { COPY } from "../../../src/panel/copy";
 import { telemetryPill } from "../../../src/panel/views/live/session-strip";
+import { preTouchMsOf } from "../../../src/service/move-executor/hand-controller";
 import { assertHumanShapedAc, moveMetaOf } from "../../../tools/telemetry-conformance/ac-model";
 
 let game: SimulatedGame | null = null;
@@ -54,10 +55,12 @@ describe("telemetry: focus discipline inside the think window (Step 2b)", () => 
 		game = await runSimulatedGame({
 			seed: "panel-click",
 			moves: 3,
-			duringMove: async ({ index, site, sim }) => {
+			duringMove: async ({ index, site, sim, plan }) => {
 				if (index !== 1 || injected) return;
 				injected = true;
-				await sim.time.advance(300); // inside the think window, before the committed press
+				// Inside the think window, before the committed press: halfway through the plan's own
+				// pre-touch budget, whatever mode the head drew for this move.
+				await sim.time.advance(Math.max(50, Math.min(300, preTouchMsOf(plan) / 2)));
 				site.panelClick(); // focus leaves the page: window blur, document.hasFocus() false
 			},
 		});

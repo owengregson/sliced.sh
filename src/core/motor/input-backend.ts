@@ -7,17 +7,25 @@
  * implements the same interface.
  */
 
-import type { PathPoint, Pt } from "./types";
+import type { MouseButton, PathPoint, Pt } from "./types";
 
 export interface InputBackend {
 	/**
-	 * Free move (`buttons: 0`) or, while pressed, a drag move (`buttons: 1`).
-	 * An abort during the wait throws `AbortedError` without dispatching.
+	 * Free move (`buttons: 0`) or, while pressed, a drag move (`buttons: 1`, or `2` while a line
+	 * preview holds the right button). An abort during the wait throws `AbortedError` without
+	 * dispatching.
 	 */
 	move(p: Pt, atMs: number, signal?: AbortSignal): Promise<void>;
-	press(p: Pt, atMs: number, signal?: AbortSignal, beforePress?: () => void): Promise<void>;
-	/** Never aborted: the abort path itself releases at the current point. */
-	release(p: Pt, atMs: number): Promise<void>;
+	/** `button` defaults to `left`; `right` is only ever a line preview's arrow drag. */
+	press(
+		p: Pt,
+		atMs: number,
+		signal?: AbortSignal,
+		beforePress?: () => void,
+		button?: MouseButton
+	): Promise<void>;
+	/** Never aborted: the abort path itself releases at the current point. `button` as for `press`. */
+	release(p: Pt, atMs: number, button?: MouseButton): Promise<void>;
 	/**
 	 * Dispatch a path on an absolute schedule (`dtMs` after the previous point,
 	 * drift-corrected, re-anchored after a stall). `beforePoint` runs before every
@@ -30,5 +38,10 @@ export interface InputBackend {
 	travelledPx?(): number;
 	/** `true` while the left button is held. */
 	pressed(): boolean;
+	/**
+	 * Every button currently held, as the `buttons` bitmask the backend last dispatched (`CDP.mouse`
+	 * bits). A backend that only ever tracks the left button may omit it; `pressed()` then answers.
+	 */
+	pressedButtons?(): number;
 	dispose(): void;
 }

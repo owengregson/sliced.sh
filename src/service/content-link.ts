@@ -33,7 +33,11 @@ type ReplyKindOf<K extends RequestKind> = K extends "geometry"
 						? "cursorDelivered"
 						: K extends "startNewGame"
 							? "startNewGameResult"
-							: never;
+							: K extends "resign"
+								? "resignResult"
+								: K extends "rematch"
+									? "rematchResult"
+									: never;
 export type ReplyFor<K extends RequestKind> = Extract<GamePortMessage, { kind: ReplyKindOf<K> }>;
 /** A request without its `id`; `timeoutMs` defaults to the request budget. */
 export type RequestInput<K extends RequestKind> = { kind: K } & Omit<
@@ -120,6 +124,15 @@ export class ContentLink implements ContentLinkEvents {
 	/** Cleanup from an older gesture must not hide a newer owner's cursor. */
 	pointerVersion(tabId: number): number {
 		return this.pointerVersions.get(tabId) ?? 0;
+	}
+
+	/**
+	 * Whether the mirror has been drawn on this tab and not hidden since (a `cursorTo` went out
+	 * after the last `cursorHide`, on this port). While it is, the arrow is the pointer the owner
+	 * sees, so the hand starts from where it is parked rather than from a real pointer sample.
+	 */
+	pointerControlled(tabId: number): boolean {
+		return this.controlledPointers.has(tabId);
 	}
 
 	/** Install the page's single-use admission before sending the matching browser event. */

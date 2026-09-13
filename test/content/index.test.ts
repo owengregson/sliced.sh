@@ -5,6 +5,7 @@ import path from "node:path";
 import type { FeedPort } from "@content/feed-port";
 import { type ContentHandle, startContent } from "@content/index";
 import { detectSite, hostOfMatchPattern } from "@content/site-detect";
+import { CURSOR_UNLOCK } from "@core/constants/cursor";
 import type { GamePortCommand, GamePortMessage } from "@core/constants/messages";
 import { TIMINGS } from "@core/constants/timings";
 import { createTabDom, installWindowGlobals, type TabDom } from "@test/sim/dom/tab-dom";
@@ -250,11 +251,19 @@ describe("content entry — feed", () => {
 		await waitFor(() => handle.pageKind() === "analysis");
 		expect(feed.of("hello").at(-1)?.pageKind).toBe("analysis");
 		expect(feed.of("hello")).toHaveLength(2);
+		expect(feed.of("gameStarted")).toHaveLength(1);
 		dom.window.history.pushState({}, "", "/play/computer");
 		fire(dom, "window", "popstate");
 		await waitFor(() => handle.pageKind() === "vs-computer");
 		expect(feed.of("hello")).toHaveLength(3);
-		expect(feed.of("gameStarted")).toHaveLength(1); // same game id: no second start
+		expect(feed.of("gameStarted")).toHaveLength(1); // the previous board still occupies the destination route
+		loadFixtureInto(dom, "chesscom-computer");
+		await waitFor(() => feed.of("gameStarted").length === 2);
+		expect(feed.of("gameStarted").at(-1)?.game).toMatchObject({
+			pageKind: "vs-computer",
+			gameId: "-play-computer#1",
+		});
+		expect(feed.of("position").at(-1)?.snapshot.ply).toBe(2);
 	});
 	it("forwards position snapshots (with capturedAt) and moveObserved when the board changes", async () => {
 		const { feed, dom } = boot("chesscom-live");
@@ -951,6 +960,164 @@ describe("content entry — the pointer mirror (Fix D)", () => {
 		feed.command({ kind: "cursorTo", x: 1, y: 2, down: false });
 		handle.dispose();
 		expect(bridge.notified.at(-1)).toEqual({ kind: "cursorHide", payload: undefined });
+	});
+});
+
+/**
+ * 2026-09-13, the owner: "when on a page that isnt a game page (url doesnt contain /play/online or
+ * /play/... or /game/live/...) we shouldnt lock cursor/disable input on the page." The gate lives
+ * here, on the page kind (`GAME_PAGE_KINDS`: `live-game`, `live-lobby`, `vs-computer`), and it
+ * holds whatever the service worker believes: ownership is answered as not owned and a `cursorTo`
+ * draws nothing. Leaving a game page by SPA navigation releases what was up — after the arrow has
+ * glided to the real mouse, so the swap of cursors is a motion and not a jump.
+ */
+describe("content entry — the page-kind gate (2026-09-13)", () => {
+	const keydown = (dom: TabDom, key: string, code: string): KeyboardEvent => {
+		const event = new dom.window.KeyboardEvent("keydown", {
+			key,
+			code,
+			bubbles: true,
+			cancelable: true,
+		});
+		dom.document.body.dispatchEvent(event);
+		return event as unknown as KeyboardEvent;
+	};
+	const trustedPointer = (
+		dom: TabDom,
+		type: "pointermove" | "pointerdown",
+		x: number,
+		y: number
+	): PointerEvent => {
+		const event = new dom.window.PointerEvent(type, {
+			clientX: x,
+			clientY: y,
+			buttons: type === "pointerdown" ? 1 : 0,
+			bubbles: true,
+			cancelable: true,
+		});
+		Object.defineProperty(event, "isTrusted", { value: true });
+		dom.document.body.dispatchEvent(event);
+		return event as unknown as PointerEvent;
+	};
+	const glideSteps = Math.ceil(CURSOR_UNLOCK.glideMs / CURSOR_UNLOCK.stepMs);
+
+	it("on a non-game page neither ownership nor the mirror is taken, whatever the worker sends", async () => {
+		const { feed, bridge, dom, handle } = boot("chesscom-live");
+		dom.window.history.pushState({}, "", "/analysis/game/live/1");
+		fire(dom, "window", "popstate");
+		await waitFor(() => handle.pageKind() === "analysis");
+		feed.command({ kind: "inputOwnership", owned: true });
+		expect(keydown(dom, "q", "KeyQ").defaultPrevented).toBe(false);
+		expect(trustedPointer(dom, "pointerdown", 200, 300).defaultPrevented).toBe(false);
+		feed.command({ kind: "cursorTo", x: 410, y: 320, down: false });
+		feed.command({ kind: "cursorTo", x: 412, y: 318, down: true });
+		expect(bridge.notified).toEqual([]);
+		expect(keydown(dom, "q", "KeyQ").defaultPrevented).toBe(false);
+		expect(trustedPointer(dom, "pointermove", 210, 310).defaultPrevented).toBe(false);
+		feed.command({ kind: "cursorHide" });
+		expect(bridge.notified).toEqual([]);
+		// the same on the other non-game kinds
+		const others = [
+			["/puzzles/rated", "puzzles"],
+			["/daily/1", "daily"],
+			["/home", "other"],
+		] as const;
+		for (const [path, kind] of others) {
+			dom.window.history.pushState({}, "", path);
+			fire(dom, "window", "popstate");
+			await waitFor(() => handle.pageKind() === kind);
+			feed.command({ kind: "inputOwnership", owned: true });
+			feed.command({ kind: "cursorTo", x: 1, y: 1, down: false });
+			expect(keydown(dom, "q", "KeyQ").defaultPrevented).toBe(false);
+			expect(bridge.notified).toEqual([]);
+		}
+		// back on a game page the same commands take the page again
+		dom.window.history.pushState({}, "", "/play/online");
+		fire(dom, "window", "popstate");
+		await waitFor(() => handle.pageKind() === "live-lobby");
+		feed.command({ kind: "inputOwnership", owned: true });
+		expect(keydown(dom, "q", "KeyQ").defaultPrevented).toBe(true);
+		feed.command({ kind: "cursorTo", x: 5, y: 6, down: false });
+		expect(bridge.notified).toEqual([{ kind: "cursorTo", payload: { x: 5, y: 6, down: false } }]);
+	});
+
+	// 2026-09-13, the owner: "dont lock the mouse on …/play/online/ (no other url) if both timers
+	// are locked … this is the QUEUE screen BEFORE you've queued a game". The board there reports
+	// itself as `playing`, so the refined page kind is `live-game` on the lobby and on the game
+	// alike — the URL flag is what tells the service worker's lobby hold which one it is.
+	it("says on hello whether the URL is the exact /play/online queue screen, and re-says it when only that changes", async () => {
+		const bridge = new FakeBridge();
+		bridge.responses.set("getState", () => ({ fen: WEBGL_FEN, mode: "playing", playingAs: 1 }));
+		const { feed, dom, handle } = boot("chesscom-webgl", { bridge });
+		await waitFor(() => feed.of("gameStarted").length === 1, 2_000);
+		expect(feed.of("hello")).toHaveLength(1);
+		expect(feed.of("hello")[0]).not.toHaveProperty("lobby");
+		expect(feed.of("gameStarted")[0]?.game).not.toHaveProperty("lobby");
+
+		dom.window.history.pushState({}, "", "/play/online");
+		fire(dom, "window", "popstate");
+		await waitFor(() => feed.of("hello").length === 2, 2_000);
+		// the kind did not change — the bridge still says playing — and the hello went out anyway
+		expect(handle.pageKind()).toBe("live-game");
+		expect(feed.of("hello")[1]).toMatchObject({ pageKind: "live-game", lobby: true });
+
+		// not the exact path: `/play/online/new` is not the queue screen
+		dom.window.history.pushState({}, "", "/play/online/new");
+		fire(dom, "window", "popstate");
+		await waitFor(() => feed.of("hello").length === 3, 2_000);
+		expect(feed.of("hello")[2]).not.toHaveProperty("lobby");
+
+		dom.window.history.pushState({}, "", "/play/online/");
+		fire(dom, "window", "popstate");
+		await waitFor(() => feed.of("hello").length === 4, 2_000);
+		expect(feed.of("hello")[3]?.lobby).toBe(true);
+
+		// the game id chess.com rewrites the URL to
+		dom.window.history.pushState({}, "", "/game/live/174252022573");
+		fire(dom, "window", "popstate");
+		await waitFor(() => feed.of("hello").length === 5, 2_000);
+		expect(feed.of("hello")[4]).not.toHaveProperty("lobby");
+	});
+
+	it("leaving a game page by SPA navigation glides the arrow to the real mouse, then unlocks", async () => {
+		const { feed, bridge, dom, handle } = boot("chesscom-live");
+		feed.command({ kind: "inputOwnership", owned: true });
+		feed.command({ kind: "cursorTo", x: 410, y: 320, down: false });
+		// the owner's real mouse moves under the shield: stopped, but sampled — it is the target
+		expect(trustedPointer(dom, "pointermove", 700, 140).defaultPrevented).toBe(true);
+		expect(keydown(dom, "q", "KeyQ").defaultPrevented).toBe(true);
+		expect(bridge.notified).toHaveLength(1);
+
+		dom.window.history.pushState({}, "", "/analysis");
+		fire(dom, "window", "popstate");
+		await waitFor(() => handle.pageKind() === "analysis");
+		// the glide is under way: nothing erased yet, and the page is still shielded
+		expect(bridge.notified.some((n) => n.kind === "cursorHide")).toBe(false);
+		expect(keydown(dom, "q", "KeyQ").defaultPrevented).toBe(true);
+		await waitFor(() => bridge.notified.some((n) => n.kind === "cursorHide"), 5_000);
+		const points = bridge.notified
+			.filter((n) => n.kind === "cursorTo")
+			.slice(1)
+			.map((n) => n.payload as { x: number; y: number; down: boolean });
+		expect(points).toHaveLength(glideSteps);
+		expect(points.at(-1)).toEqual({ x: 700, y: 140, down: false });
+		expect(bridge.notified.at(-1)?.kind).toBe("cursorHide");
+		// and only now the page has its keyboard and mouse back
+		expect(keydown(dom, "q", "KeyQ").defaultPrevented).toBe(false);
+		expect(trustedPointer(dom, "pointerdown", 700, 140).defaultPrevented).toBe(false);
+		// a late ownership grant for the old page changes nothing
+		feed.command({ kind: "inputOwnership", owned: true });
+		expect(keydown(dom, "q", "KeyQ").defaultPrevented).toBe(false);
+	});
+
+	it("a worker hide with no real position known unlocks at once (no glide to nowhere)", () => {
+		const { feed, bridge, dom } = boot("chesscom-live");
+		feed.command({ kind: "cursorTo", x: 410, y: 320, down: false });
+		expect(keydown(dom, "q", "KeyQ").defaultPrevented).toBe(true);
+		feed.command({ kind: "cursorHide" });
+		expect(bridge.notified.at(-1)).toEqual({ kind: "cursorHide", payload: undefined });
+		expect(bridge.notified).toHaveLength(2);
+		expect(keydown(dom, "q", "KeyQ").defaultPrevented).toBe(false);
 	});
 });
 

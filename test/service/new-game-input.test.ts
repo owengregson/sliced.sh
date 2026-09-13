@@ -162,7 +162,12 @@ describe("NewGameInput", () => {
 				)
 			).toBe(true);
 		expect(commands.filter((command) => command.kind === "cursorDelivery")).toHaveLength(2);
-		expect(commands.at(-1)?.kind).toBe("cursorHide");
+		// 2026-09-13: the mirror stays parked on the release point — this click is the bridge between
+		// two games and the next hand starts from here. Nothing hides it.
+		expect(commands.some((command) => command.kind === "cursorHide")).toBe(false);
+		const parked = commands.filter((command) => command.kind === "cursorTo").at(-1);
+		expect(parked).toMatchObject({ x: release.x, y: release.y, down: false });
+		expect(ownership.position(tabId)).toEqual({ x: release.x, y: release.y });
 		expect(ownership.isArmed(tabId)).toBe(false);
 		expect(manager.isFocusMaintained(tabId)).toBe(false);
 		expect(sim.input.pointer(tabId)?.buttons).toBe(0);
@@ -282,5 +287,29 @@ describe("NewGameInput", () => {
 		expect(await run()).toEqual({ status: "started" });
 		expect(commands.some((command) => command.kind === "cursorTo")).toBe(false);
 		expect(mouse().filter((event) => event.type === "mousePressed")).toHaveLength(1);
+	});
+
+	it("disposal during a held press cancels the click and rejects future attempts", async () => {
+		let clicked = 0;
+		dom.query("button").addEventListener("click", () => clicked++);
+		dom.query("button").addEventListener("mousedown", () => input.dispose());
+		expect(await run()).toEqual({ status: "not-ready" });
+		expect(clicked).toBe(0);
+		expect(mouse().at(-1)).toMatchObject({ type: "mouseReleased", ...NEW_GAME_INPUT.cancelPoint });
+		expect(sim.input.pointer(tabId)?.buttons).toBe(0);
+		expect(manager.isFocusMaintained(tabId)).toBe(false);
+		const eventCount = mouse().length;
+		expect(await run()).toEqual({ status: "not-ready" });
+		expect(mouse()).toHaveLength(eventCount);
+	});
+
+	it("a replacement focus reservation stops the old gesture before pressing", async () => {
+		beforeCommand = (command) => {
+			if (command.kind !== "startNewGame" || !command.targetId) return;
+			void manager.setFocusMaintained(tabId, true, manager.reserveFocus(tabId));
+		};
+		expect(await run()).toEqual({ status: "not-ready" });
+		expect(mouse().some((event) => event.type === "mousePressed")).toBe(false);
+		expect(manager.isFocusMaintained(tabId)).toBe(true);
 	});
 });

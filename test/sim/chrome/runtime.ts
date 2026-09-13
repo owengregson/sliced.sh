@@ -67,7 +67,7 @@ export function createRuntimeSubsystem(
 		},
 		getURL: (path: string): string => bus.getURL(path),
 		getManifest: (): chrome.runtime.Manifest => ({
-			name: "sliced.gg",
+			name: "sliced.sh",
 			short_name: "sliced",
 			manifest_version: 3,
 			version: "2.0.0",

@@ -105,7 +105,15 @@ export function createPointerControl(win: Window, now: () => number): PointerCon
 				Math.abs(mouse.clientX - prepared.x) <= POINTER_CONTROL.coordinateTolerancePx &&
 				Math.abs(mouse.clientY - prepared.y) <= POINTER_CONTROL.coordinateTolerancePx &&
 				mouse.buttons === prepared.buttons &&
-				(prepared.type === "mouseMoved" || BOUNDARIES.has(event.type) || mouse.button === 0) &&
+				// A press/release is admitted for the button it was prepared for: the left button for
+				// every move and preview selection, the right button only for a line preview's arrow
+				// drag (`PreparedPointer.button`). Anything else stays physical input and is stopped.
+				(prepared.type === "mouseMoved" ||
+					BOUNDARIES.has(event.type) ||
+					mouse.button ===
+						(prepared.button === "right"
+							? POINTER_CONTROL.domButton.right
+							: POINTER_CONTROL.domButton.left)) &&
 				Math.abs(event.timeStamp - preparedEventAt) <= POINTER_CONTROL.timestampToleranceMs
 			) {
 				remaining.set(event.type, count - 1);

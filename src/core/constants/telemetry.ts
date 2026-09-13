@@ -9,6 +9,7 @@
 
 import {
 	CLICK,
+	LINE_PREVIEW,
 	MOTOR_DEFAULTS,
 	PATH,
 	PREVIEW,
@@ -73,7 +74,12 @@ export const TELEMETRY_BANDS = {
 	 */
 	multiSelect: {
 		rate: [0.04, 0.12] as readonly [number, number],
-		/** Never above this, whatever the sample size. */
+		/**
+		 * Never above this — but only once the sample can say so. Asserted from
+		 * `minMovesForNonZero` non-trivial moves, like the 0 %/100 % check, because below that a
+		 * "rate" is a couple of moves: a bullet game leaves only a handful of moves that are
+		 * non-trivial at all, and two previews among four of them is not a 50 % rate.
+		 */
 		hardMax: 0.25,
 		/** Fewest non-trivial moves before the population band is asserted. */
 		minMovesForBand: 200,
@@ -90,8 +96,8 @@ export const TELEMETRY_BANDS = {
 	/** §8.4a / §9.6a: the `MoveHoldTime` distribution. */
 	holdTime: {
 		/** Per-game coefficient of variation (after enough moves). */
-		cvMin: TIMING_CONSTANTS.cvGuard.minCv,
-		cvAfterMoves: TIMING_CONSTANTS.cvGuard.afterMoves,
+		cvMin: 0.5,
+		cvAfterMoves: 12,
 		/** No non-premove/instant move completes faster than this. */
 		minMs: TIMING_CONSTANTS.minNormalMs,
 		/**
@@ -157,5 +163,20 @@ export const TELEMETRY_BANDS = {
 		 * press fails at once, and the gate never widens to the square it is clamped into.
 		 */
 		dragReturnMaxPx: PREVIEW.dragReturnSigmaPx * DRAG_RETURN_SIGMAS,
+	},
+	/**
+	 * Right-button drags — the arrows of a line preview (`LINE_PREVIEW`). They are **annotations**,
+	 * not presses: a right press selects nothing on chess.com and can submit nothing, so the `ac`
+	 * shadow keeps them out of `presses` / `DidSelectMultiplePieces` and the hand keeps them out of
+	 * `previewedSquares` / `pressedAny`. What is asserted about them, per game
+	 * (`assertHumanShapedAnnotations`): they appear only on a `normal` / `long` move planned at
+	 * least `minThinkMs`, never more than `maxPerMove` on one move, and on at most `maxPerGame`
+	 * moves. The `ac` blob carries no arrow field, so `report.py` has nothing to mirror here.
+	 */
+	annotation: {
+		minThinkMs: LINE_PREVIEW.minThinkMs,
+		/** Two full lines at the longest the planner draws. */
+		maxPerMove: LINE_PREVIEW.plies[1] * 2,
+		maxPerGame: LINE_PREVIEW.maxPerGame,
 	},
 } as const;

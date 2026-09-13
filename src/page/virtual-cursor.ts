@@ -42,7 +42,7 @@
 
 import { BRIDGE_WIRE as W } from "@core/constants/bridge";
 import { POINTER_CONTROL } from "@core/constants/cdp";
-import { CURSOR_EFFECTS } from "@core/constants/cursor";
+import { CURSOR_EFFECTS, CURSOR_LAYER } from "@core/constants/cursor";
 import { HIGHLIGHT_MOTION } from "@core/constants/timings";
 import { defineProgram, type Expression, js, type Statement } from "@pagescript";
 import cursorCss from "../../css/page-cursor.css?raw";
@@ -72,8 +72,13 @@ export const CURSOR_ART = {
 	hotY: 5,
 	/** Artwork compression; the input position stays fixed. */
 	pressScale: CURSOR_EFFECTS.pressedScale,
-	/** Above the site's own layers; the element has no layout effect of its own. */
-	zIndex: 2_147_483_000,
+	/**
+	 * The maximum `z-index` there is (`CURSOR_LAYER`, 2026-09-13: "some popups go over it"). Nothing
+	 * with a `z-index` can paint over the arrow; only the top layer can, and that is not a number.
+	 */
+	zIndex: CURSOR_LAYER.zIndex,
+	/** The trail and the shield's no-popover fallback sit one step under the arrow. */
+	underlayZIndex: CURSOR_LAYER.underlayZIndex,
 	/** A CSS-pixel aperture, not a board-sized passthrough. */
 	apertureRadiusPx: 1,
 } as const;
@@ -168,11 +173,13 @@ export function cursorStatements(p: CursorParams): Statement[] {
 							js.member(shield, "setAttribute"),
 							js.str("style"),
 							js.str(
-								`position:fixed;inset:0;width:auto;height:auto;margin:0;padding:0;border:0;pointer-events:auto;cursor:not-allowed;z-index:${A.zIndex - 1};background:transparent;`
+								`position:fixed;inset:0;width:auto;height:auto;margin:0;padding:0;border:0;pointer-events:auto;cursor:not-allowed;z-index:${A.underlayZIndex};background:transparent;`
 							)
 						)
 					),
-					js.expr(js.call(js.member(doc, "body", "appendChild"), shield)),
+					// Under `<html>` like the arrow: where the popover API is missing, the `z-index`
+					// fallback must not be trapped in a stacking context either.
+					js.expr(js.call(js.member(doc, "documentElement", "appendChild"), shield)),
 					js.if_(js.op(js.typeof_(js.member(shield, "showPopover")), "===", js.str("function")), [
 						js.expr(js.call(js.member(shield, "setAttribute"), js.str("popover"), js.str("manual"))),
 						js.try_([js.expr(js.call(js.member(shield, "showPopover")))], "error", [
@@ -226,15 +233,26 @@ export function cursorStatements(p: CursorParams): Statement[] {
 		"curFind",
 		js.arrow([], js.call(js.member(doc, "querySelector"), add(js.str("."), p.cls)))
 	);
+	// The host is `<html>` itself (2026-09-13), and the arrow must be its *direct* child: a `z-index`
+	// only competes inside its own stacking context, and any `transform`, `filter` or `contain` a
+	// site puts on `<body>` (or anything under it) would open one and trap the arrow beneath every
+	// sibling of that ancestor. Under `<html>` there is no ancestor left to do that. An element the
+	// site's re-render moved out from under the host is re-appended rather than re-created, so the
+	// fade and the effects' state survive it.
 	const curEnsure = js.const_(
 		"curEnsure",
 		js.arrow(
 			[],
 			[
-				js.let_("el", js.call(js.id("curFind"))),
-				js.if_(el, [js.ret(el)]),
-				js.const_("host", js.member(doc, "body")),
+				js.const_("host", js.member(doc, "documentElement")),
 				js.if_(js.not(host), [js.ret(js.nil())]),
+				js.let_("el", js.call(js.id("curFind"))),
+				js.if_(el, [
+					js.if_(js.op(js.member(el, "parentNode"), "!==", host), [
+						js.expr(js.call(js.member(host, "appendChild"), el)),
+					]),
+					js.ret(el),
+				]),
 				js.assign(el, js.call(js.member(doc, "createElement"), js.str("div"))),
 				js.expr(js.call(js.member(el, "setAttribute"), js.str("class"), p.cls)),
 				js.expr(js.call(js.member(el, "setAttribute"), js.str("style"), js.id("curBase"))),
@@ -320,7 +338,8 @@ export function cursorStatements(p: CursorParams): Statement[] {
 		...cursorEffectStatements({
 			cls: p.cls,
 			accent: p.accent,
-			zIndex: A.zIndex - 1,
+			zIndex: A.underlayZIndex,
+			sizePx: A.sizePx,
 			hotX: A.hotX,
 			hotY: A.hotY,
 		}),

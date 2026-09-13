@@ -21,7 +21,7 @@ it("the actual canvas adapter verifies the completed move on a fresh check after
 	h = await createGameHarness({
 		settings: {
 			automation: { autoMove: true },
-			execution: { verifyMoves: true, previewSelects: "off" },
+			execution: { verifyMoves: true, previewSelectScale: 0 },
 		},
 	});
 	const dom = h.sim.getTabDom(h.tabId)!;

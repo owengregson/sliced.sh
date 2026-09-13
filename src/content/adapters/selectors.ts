@@ -72,6 +72,9 @@ export const SELECTORS = {
 	clockColor: { w: ".clock-white", b: ".clock-black" } as const,
 	clockActive: [".clock-player-turn", ".clock-playerTurn", ".running"],
 	clockTime: [".clock-time-monospace", '[role="timer"]', '[data-cy="clock-time"]'],
+	computerClock: ".player-row-component .move-time-time.player-row-move-time",
+	computerClockDark: ".move-time-dark",
+	computerClockTime: ".move-time-content.move-time-monospace",
 	// players (§1.5)
 	playerTop: [
 		"#board-layout-player-top",
@@ -95,6 +98,8 @@ export const SELECTORS = {
 		".user-tagline-rating",
 		".player-rating",
 	],
+	/** The title chip inside a player card (`<div class="cc-user-title-component …">FM</div>`), 2026-09-13. */
+	playerTitle: ".cc-user-title-component",
 	bottomColorClass: { w: ".cc-user-block-white", b: ".cc-user-block-black" } as const,
 	capturedPieces: "wc-captured-pieces[player-color]",
 	// game over / new game (§1.6)
@@ -150,6 +155,95 @@ export const SELECTORS = {
 		".new-game-buttons-rematch",
 		".game-over-buttons-incoming-rematch button",
 	],
+	// rematching titled players (2026-09-13). The owner's captures: the outgoing offer is
+	// `<button … aria-label="Rematch">` beside the new-game button; an incoming offer replaces
+	// both with `.game-over-buttons-incoming-rematch` holding `aria-label="Decline Rematch"` /
+	// `aria-label="Accept Rematch"`. The cancel of a pending outgoing offer was not captured, so
+	// it is a labelled search inside the game-over button containers (the open QA item).
+	/** Our outgoing offer: exactly "Rematch", never a button inside the incoming panel. */
+	rematchOffer: [
+		'[data-cy="game-over-modal-rematch-button"]',
+		'[data-cy="sidebar-game-over-rematch-button"]',
+		'button[aria-label="Rematch"]',
+		".new-game-buttons-rematch",
+	],
+	rematchOfferTextRe: /^rematch$/i,
+	/** The incoming-offer panel ("Good game! Rematch?") and its two answers. */
+	rematchIncoming: ".game-over-buttons-incoming-rematch",
+	rematchAccept: [
+		'button[aria-label="Accept Rematch"]',
+		'[aria-label="Accept Rematch"]',
+		".game-over-buttons-incoming-rematch button",
+	],
+	rematchAcceptTextRe: /^accept\b/i,
+	rematchDecline: [
+		'button[aria-label="Decline Rematch"]',
+		'[aria-label="Decline Rematch"]',
+		".game-over-buttons-incoming-rematch button",
+	],
+	rematchDeclineTextRe: /^decline\b/i,
+	/** Where a pending offer's cancel control can live: the game-over button containers. */
+	rematchCancelScope: [
+		".game-over-buttons-component",
+		".game-over-buttons-buttons",
+		".game-over-modal-shell-buttons",
+		".new-game-buttons-component",
+		".new-game-buttons-buttons",
+	],
+	rematchCancelControl: 'button, [role="button"]',
+	/** "Cancel" / "Cancel Rematch" / "Cancel rematch offer" — but never a matchmaking "Cancel Search". */
+	rematchCancelLabelRe: /\bcancel\b/i,
+	rematchCancelSearchRe: /\bsearch\b/i,
+	// resign (2026-09-12). chess.com's live-game markup for the resign control and its "Resign?"
+	// confirmation is not captured in the fixtures, so both are candidate ladders (most specific
+	// first) plus a text fallback — the open QA item in `docs/qa/resign-2026-09-12.md`.
+	resign: [
+		'[data-cy="resign-button"]',
+		'[data-cy="game-controls-resign-button"]',
+		'button[aria-label="Resign"]',
+		'[aria-label="Resign"]',
+		".resign-button-component",
+		".game-controls-component button",
+		".game-controls-container button",
+		".board-layout-controls button",
+	],
+	resignTextRe: /^resign$/i,
+	/** Matches an `aria-label` / `title` that mentions resigning ("Resign", "Resign game"). */
+	resignLabelRe: /\bresign\b/i,
+	resignConfirm: [
+		'[data-cy="resign-confirm-button"]',
+		'[data-cy="confirm-resign-button"]',
+		'button[aria-label="Yes"]',
+		'[role="dialog"] button',
+		".board-modal-container-container button",
+		".board-modal-container button",
+		"wc-modal button",
+		".modal-content button",
+		".cc-modal-component button",
+		".confirm-button",
+		".game-controls-component button",
+		".game-controls-container button",
+	],
+	/**
+	 * The confirmation appears in a popup after the resign click (owner, 2026-09-12). Every
+	 * clickable control on the page — the popup's buttons are found as controls that were *not*
+	 * visible before the resign click, whatever their class names.
+	 */
+	resignAnyControl: 'button, [role="button"], a[href]',
+	/** Containers a confirmation popup is likely to live in; a new control inside one ranks first. */
+	resignPopup: [
+		'[role="dialog"]',
+		'[role="alertdialog"]',
+		".board-modal-container-container",
+		".board-modal-container",
+		"wc-modal",
+		".modal-content",
+		".cc-modal-component",
+		".popup",
+		".confirm-modal",
+	],
+	/** The confirmation's own label is exactly "Resign" (the owner, 2026-09-13): nothing looser. */
+	resignConfirmTextRe: /^resign$/i,
 	// promotion (§1.9)
 	promotionWindow: [
 		".promotion-window",

@@ -48,6 +48,7 @@ function setup() {
 		type: string,
 		params: {
 			buttons?: number;
+			button?: number;
 			x?: number;
 			stamp?: number;
 			detail?: number;
@@ -58,6 +59,7 @@ function setup() {
 			clientX: params.x ?? 60,
 			clientY: 70,
 			buttons: params.buttons ?? 0,
+			button: params.button ?? 0,
 			detail: params.detail ?? 1,
 			pointerType: params.pointerType ?? "mouse",
 			bubbles: true,
@@ -194,6 +196,33 @@ describe("virtual page pointer ownership", () => {
 		fire("click");
 		expect(seen).toEqual(["pointerdown", "mousedown", "pointerup", "mouseup", "click"]);
 		expect(samples).toHaveLength(1);
+	});
+
+	it("admits a prepared RIGHT-button press/release (a line-preview arrow) and only that button", () => {
+		// A line preview (`LINE_PREVIEW`) draws chess.com arrows with right-button drags. The prepared
+		// pointer says which button the press is for; a left press arriving against a right admission
+		// (or the reverse) is physical input and is stopped like any other.
+		const { tracker, pointer, fire, seen, samples } = setup();
+		tracker.setVirtualActive(true);
+		const press: PreparedPointer = { ...pointer("mousePressed", 2), button: "right" };
+		tracker.prepareVirtualPointer(press);
+		expect(fire("pointerdown", { buttons: 2 }).defaultPrevented).toBe(true); // button 0 ≠ right
+		expect(fire("pointerdown", { buttons: 2, button: 2 }).defaultPrevented).toBe(false);
+		expect(fire("mousedown", { buttons: 2, button: 2 }).defaultPrevented).toBe(false);
+		expect(tracker.virtualPointerDelivered(press)).toBe(true);
+		// the context menu the right press would open is never admitted
+		expect(fire("contextmenu", { buttons: 2, button: 2 }).defaultPrevented).toBe(true);
+		const release: PreparedPointer = { ...pointer("mouseReleased"), button: "right" };
+		tracker.prepareVirtualPointer(release);
+		expect(fire("pointerup", { button: 2 }).defaultPrevented).toBe(false);
+		expect(fire("mouseup", { button: 2 }).defaultPrevented).toBe(false);
+		expect(fire("auxclick", { button: 2 }).defaultPrevented).toBe(true);
+		expect(tracker.virtualPointerDelivered(release)).toBe(true);
+		// and a left admission still refuses a right-button press
+		tracker.prepareVirtualPointer(pointer("mousePressed", 1));
+		expect(fire("pointerdown", { buttons: 1, button: 2 }).defaultPrevented).toBe(true);
+		expect(seen).toEqual(["pointerdown", "mousedown", "pointerup", "mouseup"]);
+		expect(samples).toHaveLength(2);
 	});
 
 	it("expires unused admissions and clears them on deactivation", () => {

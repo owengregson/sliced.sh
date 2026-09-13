@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { FAST_TOUCH } from "@core/motor/constants";
 import { windowTotalMs } from "@core/timing/move-window";
 import { fitTiming, instantTiming } from "@service/move-executor";
 import type { TimingPlan } from "@typedefs/timing";
@@ -34,8 +35,8 @@ describe("execution budget fitting", () => {
 			expect(fitted.thinkMs).toBe(79);
 			expect(windowTotalMs(fitted.window)).toBe(79);
 			expect(instantTiming(fitted).thinkMs).toBe(79);
-			expect(fitTiming(urgent, 0).thinkMs).toBe(20);
-			expect(fitTiming(urgent, -10).window.approachMs).toBe(20);
+			expect(fitTiming(urgent, 0).thinkMs).toBe(FAST_TOUCH.minBudgetMs);
+			expect(fitTiming(urgent, -10).window.approachMs).toBe(FAST_TOUCH.minBudgetMs);
 			const minimal = { ...urgent, thinkMs: 20, window: { ...urgent.window, approachMs: 20 } };
 			expect(fitTiming(minimal, -10).thinkMs).toBe(20);
 			expect(instantTiming(minimal).thinkMs).toBe(20);

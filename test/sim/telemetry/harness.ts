@@ -23,6 +23,8 @@ import { defaultScheduler } from "@core/util/scheduler";
 import { ContentLink } from "@service/content-link";
 import { DebuggerManager } from "@service/debugger-manager";
 import { FocusGate, type FocusSnapshot } from "@service/focus-gate";
+import { executorSettingsFor } from "@service/game-session/executor-settings";
+import { timingSettingsFor } from "@service/game-session/presets";
 import { HandOwnership } from "@service/hand-ownership";
 import { Keepalive } from "@service/keepalive";
 import {
@@ -42,6 +44,8 @@ import type { PersonaId } from "@typedefs/settings";
 import type { AcBlob, LichessBlurBit, MoveTelemetryRecord } from "@typedefs/telemetry";
 import type { TimingLogEntry, TimingPlan } from "@typedefs/timing";
 import { isNonTrivial, moveMetaOf } from "../../../tools/telemetry-conformance/ac-model";
+
+const MS_PER_S = 1000;
 
 /** One `Input.dispatchMouseEvent` the executor issued, flattened. */
 export interface MouseCommand {
@@ -299,12 +303,23 @@ export async function runSimulatedGame(options: SimulatedGameOptions): Promise<S
 				scheduler: defaultScheduler,
 				persona,
 				tcClass: motorClass,
-				previewScale: options.previewScale ?? DEFAULT_SETTINGS.execution.previewSelectScale,
+				// Through the session's own boundaries (`SETTING_GAIN`, 2026-09-13), so the bands
+				// measure what a default install runs, not the raw slider values.
+				previewScale:
+					options.previewScale ?? executorSettingsFor(DEFAULT_SETTINGS.execution).previewScale,
 				gameSeed: options.seed,
 			});
 			const timing = new TimingModel(
 				new V1ParametricHead(),
-				DEFAULT_SETTINGS.timing,
+				// The game's own clock, for the same reason the motor class above is derived and never
+				// handed in: `timingSettingsFor` reads the time control for the preset *and*, since
+				// 2026-09-13, for the per-class base-speed gain (`SETTING_GAIN.speedScale`). Passing
+				// `undefined` here ran every simulated game — a 10+0 included — on the blitz gain, which
+				// is a configuration no production session has.
+				timingSettingsFor(DEFAULT_SETTINGS.timing, {
+					baseMs: baseSec * MS_PER_S,
+					incMs: incSec * MS_PER_S,
+				}),
 				createRng(`${options.seed}:timing`)
 			);
 			timing.startGame({ targetElo, profile: persona, baseSec, incSec, site, gameId: options.seed });

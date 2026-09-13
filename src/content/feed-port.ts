@@ -45,6 +45,8 @@ export interface FeedPortOptions {
 
 export function createFeedPort(options: FeedPortOptions): FeedPort {
 	let lastHello: GamePortMessage | null = null;
+	/** Replayed with `hello`: a rebuilt session has no opponent until the content script says so. */
+	let lastOpponent: GamePortMessage | null = null;
 	let lastPosition: GamePortMessage | null = null;
 	let lastStarted: Extract<GamePortMessage, { kind: "gameStarted" }> | null = null;
 	let lastFocus: GamePortMessage | null = null;
@@ -72,6 +74,7 @@ export function createFeedPort(options: FeedPortOptions): FeedPort {
 			const pending = outbox;
 			outbox = [];
 			if (lastHello) port.post(lastHello);
+			if (lastOpponent && !pending.some((m) => m.kind === "opponent")) port.post(lastOpponent);
 			// Before the position, and that order is load-bearing (see the header). The reconnected
 			// worker's `FocusGate` has no reading, so this message is a *first* reading and fires a
 			// focus edge. Delivered after the position it would land inside the move window the
@@ -104,6 +107,7 @@ export function createFeedPort(options: FeedPortOptions): FeedPort {
 						}
 					: msg;
 			if (msg.kind === "hello") lastHello = msg;
+			else if (msg.kind === "opponent") lastOpponent = msg;
 			else if (msg.kind === "position") {
 				if (lastPosition?.kind === "position" && lastPosition.snapshot.gameId !== msg.snapshot.gameId)
 					lastEnded = null;

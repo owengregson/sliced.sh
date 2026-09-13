@@ -18,7 +18,9 @@
  */
 
 import { BRIDGE_KINDS, type BridgeState, type PageBridge } from "@content/adapters/adapter";
+import { BOARD_EFFECT_KINDS, type BoardEffect } from "@core/constants/board-effects";
 import { BRIDGE_ORIENTATION, BRIDGE_WIRE as W } from "@core/constants/bridge";
+import { type MoveQualityMark, moveQualityIndex } from "@core/constants/move-quality";
 import { SPOOF_PURPOSES } from "@core/constants/spoof";
 import { TIMINGS } from "@core/constants/timings";
 import { deriveToken } from "@core/spoof";
@@ -92,9 +94,9 @@ export function decodeState(p: unknown): BridgeState | null {
 	if (lastMove) out.lastMove = lastMove;
 	const result = str(p[W.result]);
 	if (result !== undefined) out.result = result;
+	else if (p[W.result] === null) out.result = null;
 	if (typeof p[W.gameOver] === "boolean") out.gameOver = p[W.gameOver] as boolean;
-	if (p[W.timeControl] !== undefined && p[W.timeControl] !== null)
-		out.timeControl = p[W.timeControl];
+	if (p[W.timeControl] !== undefined) out.timeControl = p[W.timeControl];
 	if (p[W.timestamps] !== undefined && p[W.timestamps] !== null) out.timestamps = p[W.timestamps];
 	return out;
 }
@@ -149,6 +151,13 @@ export function decodePayload(kind: string, p: unknown): unknown {
 	}
 }
 
+interface EffectsPayload {
+	orientation?: "white" | "black";
+	mine?: boolean;
+	effects?: BoardEffect[];
+	quality?: MoveQualityMark;
+}
+
 interface DrawPayload {
 	orientation?: "white" | "black";
 	highlights?: Array<{ square: Square; color: string }>;
@@ -180,6 +189,29 @@ export function encodePayload(kind: string, payload: unknown): unknown {
 			const keys = isDict(payload) && Array.isArray(payload.keys) ? payload.keys : undefined;
 			return keys === undefined ? undefined : { [W.keys]: keys };
 		}
+		case BRIDGE_KINDS.effects: {
+			// One letter per kind and one index per verdict: the batch names no chess idea and no
+			// category on the wire (§13.3 rule 5). The page reads both out of its bound tables.
+			const e: EffectsPayload = isDict(payload) ? (payload as EffectsPayload) : {};
+			return {
+				[W.orientation]:
+					e.orientation === "black" ? BRIDGE_ORIENTATION.black : BRIDGE_ORIENTATION.white,
+				[W.mine]: e.mine === true,
+				[W.effectList]: (e.effects ?? []).map((effect) => ({
+					[W.effectKind]: BOARD_EFFECT_KINDS[effect.kind],
+					[W.from]: effect.from,
+					[W.to]: effect.to,
+				})),
+				...(e.quality
+					? {
+							[W.badge]: {
+								[W.square]: e.quality.square,
+								[W.badgeIndex]: moveQualityIndex(e.quality.quality),
+							},
+						}
+					: {}),
+			};
+		}
 		case BRIDGE_KINDS.cursorTo: {
 			// Viewport CSS px straight from the executor; `x` / `y` are the cursor probe's own
 			// wire letters (`BRIDGE_WIRE`), reused rather than given synonyms.
@@ -188,6 +220,9 @@ export function encodePayload(kind: string, payload: unknown): unknown {
 				[W.x]: typeof p.x === "number" ? p.x : 0,
 				[W.y]: typeof p.y === "number" ? p.y : 0,
 				[W.down]: p.down === true,
+				// Omitted unless off: the page reads `q[effects] !== false`, so nothing extra travels
+				// for the default.
+				...(p.effects === false ? { [W.effects]: false } : {}),
 			};
 		}
 		default:

@@ -3,8 +3,10 @@
 // The other behavioural files hand-assemble an equivalent stack so they can script the engine at
 // the UCI level; this one exists so the two cannot silently diverge.
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { MAIA } from "@core/constants/maia";
 import { LOCAL_KEYS } from "@core/constants/storage-keys";
 import { installMessageRouter, type MessageRouter } from "@core/messaging/router";
+import { maiaSizeFor } from "@core/policy/maia-size";
 import { setSettings } from "@core/storage/settings-storage";
 import { TimingModel } from "@core/timing/timing-model";
 import type { GameMeta as TimingGameMeta } from "@core/timing/types";
@@ -22,6 +24,7 @@ import type { EngineVariant } from "@typedefs/engine";
 import { ctx } from "../../core/timing/helpers";
 import { FAKE_ID_LINES } from "../../fakes/engine-transport";
 import { FakeStockfishWeb } from "../../fakes/stockfish";
+import { isPonderSearch } from "./scripted-engine";
 
 const START = 1_700_000_000_000;
 
@@ -168,7 +171,16 @@ describe("createGameStack: the real service-worker stack", () => {
 				expect(a).toBeDefined();
 				expect(b).toBeDefined();
 				expect(built.registry.sessionFor(secondTab)).not.toBe(built.registry.sessionFor(tabId));
-				const ca = ctx({ targetElo: 1650, myClockMs: 180_000, oppClockMs: 170_000 });
+				// A rapid base for A, where `CM.fastFloor` is a no-op by speed class: what is under test
+				// here is *which cached distribution answered whose session*, not how either is paced,
+				// and at a full blitz clock the floor moves ~30 % of a single-bucket fixture's mass into
+				// bucket 0. B's 30 s of a 180 s base is below the floor's last knot, so it is unaffected.
+				const ca = ctx({
+					targetElo: 1650,
+					baseSec: 600,
+					myClockMs: 180_000,
+					oppClockMs: 170_000,
+				});
 				const cb = ctx({ targetElo: 2300, myClockMs: 30_000, oppClockMs: 50_000 });
 				const answer = (at: number, bucket: number) => {
 					const request = timingRequests[at]!;
@@ -191,10 +203,16 @@ describe("createGameStack: the real service-worker stack", () => {
 				await other;
 				expect(timingRequests.map(({ command }) => command.inputs)).toMatchObject([
 					{ rating: 1650, band: "1500_1600", playerClockS: 180, opponentClockS: 170 },
-					{ rating: 2300, band: "1800_1900", playerClockS: 30, opponentClockS: 50 },
+					// 2300 selects `2200_3500` since 2026-09-13. The centres are each band's own training
+					// population mean (`bandCentre` reads `scalers.json`) — 1252 / 1551 / 1849 / 2048 /
+					// 2357 — not the arithmetic midpoint of the name, which would put the wide top band
+					// at 2850 and send every target from 2200 to 2450 to `2000_2100` to be clamped at
+					// 2100. Before the two new bands this was `1800_1900`, clamped to 1900: a 400 Elo
+					// lie at this target, and the whole reason the bands were added.
+					{ rating: 2300, band: "2200_3500", playerClockS: 30, opponentClockS: 50 },
 				]);
 				expect(a.planMove(ca).rationale.join(" ")).toContain("chessmimic band=1500_1600 bucket 6");
-				expect(b.planMove(cb).rationale.join(" ")).toContain("chessmimic band=1800_1900 bucket 8");
+				expect(b.planMove(cb).rationale.join(" ")).toContain("chessmimic band=2200_3500 bucket 8");
 				// Restart A while its next request is pending; late completion must not revive it,
 				// and A's reset must not invalidate B's already prepared distribution.
 				const cancelled = a.prepare(ca);
@@ -210,7 +228,7 @@ describe("createGameStack: the real service-worker stack", () => {
 				answer(2, 6);
 				await cancelled;
 				expect(a.planMove(ca).rationale.join(" ")).toContain("fallback");
-				expect(b.planMove(cb).rationale.join(" ")).toContain("chessmimic band=1800_1900 bucket 8");
+				expect(b.planMove(cb).rationale.join(" ")).toContain("chessmimic band=2200_3500 bucket 8");
 			});
 		} finally {
 			spy.mockRestore();
@@ -272,7 +290,9 @@ describe("createGameStack: the real service-worker stack", () => {
 		});
 		const after = (site as SimulatedSite).commands().filter((c) => c.kind === "settings");
 		expect(after.length).toBeGreaterThan(before);
-		expect(after.at(-1)).toEqual({ kind: "settings", highlightMoves: true });
+		// Both drawing gates travel in the one command (§13.3 rule 4): the recommendation mark and
+		// the board-effect layer, each `enabled && <its own setting>`.
+		expect(after.at(-1)).toEqual({ kind: "settings", highlightMoves: true, boardEffects: true });
 	});
 
 	it("a first-position ponder follows the game reset through the actual offscreen port", async () => {
@@ -287,7 +307,7 @@ describe("createGameStack: the real service-worker stack", () => {
 		});
 		expect(built.controller.status().gameId).toBe((site as SimulatedSite).gameId);
 		const reset = sf.commands.indexOf("ucinewgame");
-		const search = sf.commands.findIndex((command) => command.startsWith("go infinite"));
+		const search = sf.commands.findIndex(isPonderSearch);
 		expect(reset).toBeGreaterThanOrEqual(0);
 		expect(search).toBeGreaterThan(reset);
 		expect(sf.commands.slice(reset, search)).toContain("isready");
@@ -311,10 +331,28 @@ describe("createGameStack: the real service-worker stack", () => {
 			await settle();
 		});
 		expect(built.controller.status().gameId).toBe((site as SimulatedSite).gameId);
-		const search = sf.commands.findIndex((command) => command.startsWith("go infinite"));
+		const search = sf.commands.findIndex(isPonderSearch);
 		expect(search).toBeGreaterThan(
 			sf.commands.indexOf("setoption name UCI_LimitStrength value false")
 		);
+	});
+
+	it("a game's Maia size becomes what a recreated offscreen document is told to pre-load", async () => {
+		const built = stack as GameStack;
+		// Before any game: the cheap default, so a fresh document pays the wasm instantiation early.
+		expect(built.transport.warmPolicySize()).toBe(MAIA.defaultSize);
+		await (sw as SwContext).run(async () => {
+			await setSettings({ strength: { targetElo: 2200, matchOpponentRating: false } });
+			(site as SimulatedSite).hello();
+			(site as SimulatedSite).startGame();
+			await settle();
+		});
+		const session = built.registry.sessionFor(tabId);
+		expect(session?.currentState()).toBe("live:opponent-turn");
+		// The size the session warmed for its target is what every later `configure` carries, so a
+		// document torn down mid-game comes back loading the right one, not the default.
+		expect(session?.targetElo()).toBe(2200);
+		expect(built.transport.warmPolicySize()).toBe(maiaSizeFor(2200));
 	});
 
 	it("dispose() releases the stack: the game port registry is empty and the timing log is flushed", async () => {

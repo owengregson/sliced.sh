@@ -7,7 +7,7 @@
 // stable identifier, `pointer-events: none` — plus the two things that make it readable as a
 // pointer: the hotspot offset and the press feedback.
 import { afterEach, describe, expect, it } from "bun:test";
-import { CURSOR_EFFECTS } from "@core/constants/cursor";
+import { CURSOR_EFFECTS, CURSOR_LAYER } from "@core/constants/cursor";
 import { TIMINGS } from "@core/constants/timings";
 import { TOKENS } from "@design/tokens.generated";
 import { bindCode, emit } from "@pagescript";
@@ -49,6 +49,8 @@ function boot(): { win: ReturnType<typeof makeWindow>; posts: Posted[]; keysBefo
 }
 
 const el = (win: ReturnType<typeof makeWindow>) => win.document.querySelector(`.${cursorClass}`);
+/** `<html>`, untyped: happy-dom's class and lib.dom's `ParentNode` are not assignable either way. */
+const html = (win: ReturnType<typeof makeWindow>): unknown => win.document.documentElement;
 
 /** `cursorTo` envelope: the wire letters (`BRIDGE_WIRE`), no id — it is fire-and-forget. */
 const to = (x: number, y: number, down = false): Record<string, unknown> => {
@@ -168,6 +170,70 @@ describe("virtual-cursor (the page-realm pointer mirror)", () => {
 		expect(posts).toHaveLength(0);
 	});
 
+	/**
+	 * 2026-09-13, "some popups go over it": a `z-index` competes only inside its stacking context,
+	 * so the arrow is a direct child of `<html>` — where no site `transform` / `filter` / `contain`
+	 * can open one above it — at the largest value CSS has. Everything that goes with it (the trail
+	 * layer and the shield's no-popover fallback) sits one step under it, under the same host. What
+	 * this cannot beat is the top layer, which is not a number; that limitation is recorded in
+	 * `docs/qa/virtual-cursor-2026-09-13.md`.
+	 */
+	it("sits directly under <html> at the maximum z-index, with its layers one step below", () => {
+		const { win } = boot();
+		const h = animateHarness(win);
+		sendToPage(win, to(100, 200));
+		const node = el(win) as HTMLElement | null;
+		expect(CURSOR_ART.zIndex).toBe(2_147_483_647);
+		expect(CURSOR_LAYER.zIndex).toBe(2_147_483_647);
+		expect(node?.style.zIndex).toBe(String(CURSOR_LAYER.zIndex));
+		expect(Object.is(node?.parentNode, html(win))).toBe(true);
+		// the arrow never lives in <body>, whose stacking context a site can change under it
+		expect(win.document.body.children).toHaveLength(0);
+		// the shield, where the popover API is missing, and the trail: both under <html>, both below
+		sendToPage(win, command("cursorPrepare", "prepare", { x: 104, y: 200 }));
+		const shield = win.document.querySelector(`.${cursorClass}h`) as HTMLElement | null;
+		expect(Object.is(shield?.parentNode, html(win))).toBe(true);
+		expect(shield?.style.zIndex).toBe(String(CURSOR_LAYER.underlayZIndex));
+		sendToPage(win, to(104, 200));
+		sendToPage(win, to(108, 200));
+		const layer = h.layer() as HTMLElement | null;
+		expect(Object.is(layer?.parentNode, html(win))).toBe(true);
+		expect(layer?.style.zIndex).toBe(String(CURSOR_LAYER.underlayZIndex));
+		expect(Number(layer?.style.zIndex)).toBeLessThan(Number(node?.style.zIndex));
+		// and the emitted program carries no other z-index: nothing of ours is ever above the arrow
+		const zs = [...emitted.code.matchAll(/z-index:(\d+)/g)].map((m) => Number(m[1]));
+		expect(zs.length).toBeGreaterThan(0);
+		expect(Math.max(...zs)).toBe(CURSOR_LAYER.zIndex);
+		expect(zs.every((z) => z === CURSOR_LAYER.zIndex || z === CURSOR_LAYER.underlayZIndex)).toBe(
+			true
+		);
+	});
+
+	it("re-appends the arrow under <html> when the site moved it, instead of drawing a second one", () => {
+		const { win } = boot();
+		sendToPage(win, to(100, 200));
+		const found = el(win);
+		if (!found) throw new Error("no arrow");
+		const node = found as unknown as HTMLElement;
+		// a site re-render that swallows the element into its own container
+		const container = win.document.createElement("div");
+		win.document.body.appendChild(container);
+		container.appendChild(found);
+		expect(Object.is(node.parentNode, container)).toBe(true);
+		sendToPage(win, to(120, 220));
+		expect(win.document.querySelectorAll(`.${cursorClass}`)).toHaveLength(1);
+		expect(Object.is(el(win), found)).toBe(true);
+		expect(Object.is(node.parentNode, html(win))).toBe(true);
+		expect(node.style.transform).toBe(
+			`translate3d(${120 - CURSOR_ART.hotX}px,${220 - CURSOR_ART.hotY}px,0)`
+		);
+		// and one the site removed outright is drawn again, still under <html>
+		node.remove();
+		sendToPage(win, to(130, 230));
+		expect(win.document.querySelectorAll(`.${cursorClass}`)).toHaveLength(1);
+		expect(Object.is(el(win)?.parentNode, html(win))).toBe(true);
+	});
+
 	it("is idempotent: a second position (and a second evaluation) keeps exactly one element", () => {
 		const { win } = boot();
 		sendToPage(win, to(100, 200));
@@ -252,8 +318,10 @@ describe("virtual-cursor (the page-realm pointer mirror)", () => {
 		expect(shield()?.style.clipPath).toBe("none");
 		sendToPage(win, command("cursorHide", "hide"));
 		expect(win.document.body.children).toHaveLength(0);
+		expect(win.document.querySelectorAll(`[class^="${cursorClass}"]`)).toHaveLength(0);
 		sendToPage(win, command("cursorPrepare", "late", { x: 210, y: 310 }));
 		expect(win.document.body.children).toHaveLength(0);
+		expect(win.document.querySelectorAll(`[class^="${cursorClass}"]`)).toHaveLength(0);
 	});
 
 	it("seals an aperture when dispatch never acknowledges it", async () => {
@@ -266,30 +334,51 @@ describe("virtual-cursor (the page-realm pointer mirror)", () => {
 		expect(shield?.style.clipPath).toBe("none");
 	});
 
-	it("reuses one short smooth tapered ribbon behind the cursor body", async () => {
+	it("reuses a few translucent copies of the artwork trailing behind the cursor body", async () => {
 		const { win } = boot();
 		const h = animateHarness(win);
 		sendToPage(win, to(100, 200));
 		expect(h.layer()).toBeNull();
-		for (let step = 1; step <= 25; step++) sendToPage(win, to(100 + step * 4, 200));
-		expect(h.layer()?.children.length).toBe(CURSOR_EFFECTS.bands.length);
-		expect(h.layer()?.tagName.toLowerCase()).toBe("svg");
-		const paths = [...(h.layer()?.children ?? [])];
-		for (const path of paths) {
-			const d = path.getAttribute("d") ?? "";
-			expect(d).toContain(" Q");
-			expect(d).toEndWith(" Z");
-			expect(d).not.toMatch(/NaN|Infinity/);
-			expect(path.getAttribute("fill")).toBe(TOKENS.color.dark.brand);
-			const values = d.match(/-?\d+(?:\.\d+)?/g)?.map(Number) ?? [];
-			const xs = values.filter((_, i) => i % 2 === 0);
-			expect(Math.max(...xs)).toBe(200 + CURSOR_EFFECTS.rearOffsetX);
-			expect(Math.max(...xs) - Math.min(...xs)).toBeLessThanOrEqual(CURSOR_EFFECTS.trailLengthPx);
-		}
+		// Two points: only the nearest ghost has a slot to sit in; the rest stay hidden.
+		sendToPage(win, to(104, 200));
+		sendToPage(win, to(108, 200));
+		expect(h.layer()?.tagName.toLowerCase()).toBe("div");
+		const early = [...(h.layer()?.children ?? [])] as unknown as HTMLElement[];
+		expect(early).toHaveLength(CURSOR_EFFECTS.ghosts.length);
+		expect(early[0]?.style.opacity).toBe(String(CURSOR_EFFECTS.ghosts[0]?.opacity));
+		expect(early.slice(1).map((ghost) => ghost.style.opacity)).toEqual(["0", "0"]);
+		for (let step = 3; step <= 25; step++) sendToPage(win, to(100 + step * 4, 200));
+		const ghosts = [...(h.layer()?.children ?? [])] as unknown as HTMLElement[];
+		expect(ghosts).toEqual(early);
+		const art = el(win)?.querySelector("svg");
+		let previousX = 200;
+		ghosts.forEach((ghost, index) => {
+			const spec = CURSOR_EFFECTS.ghosts[index];
+			expect(ghost.tagName.toLowerCase()).toBe("svg");
+			// The same artwork, never the press contour, tinted accent through and through.
+			expect(ghost.childElementCount).toBe(2);
+			expect(ghost.children[0]?.getAttribute("d")).toBe(art?.children[0]?.getAttribute("d"));
+			expect(ghost.children[0]?.getAttribute("fill")).toBe(TOKENS.color.dark.brand);
+			expect(ghost.children[1]?.getAttribute("fill")).toBe(TOKENS.color.dark.brand);
+			expect(ghost.children[1]?.getAttribute("fill-opacity")).toBe(
+				String(CURSOR_EFFECTS.ghostInnerOpacity)
+			);
+			expect(ghost.getAttribute("style")).toContain(
+				`drop-shadow(0 0 ${CURSOR_EFFECTS.ghostShadowBlurPx}px ${TOKENS.color.dark.brand})`
+			);
+			expect(ghost.style.opacity).toBe(String(spec?.opacity));
+			const x = Number(/translate3d\((-?[\d.]+)px/.exec(ghost.style.transform)?.[1]);
+			// Each copy sits further back along the path than the one before it, behind the head.
+			expect(x).toBe(200 - (spec?.lag ?? 0) * 4 - CURSOR_ART.hotX);
+			expect(x).toBeLessThan(previousX);
+			previousX = x;
+		});
+		expect(200 - (ghosts.length ? previousX + CURSOR_ART.hotX : 200)).toBeLessThanOrEqual(
+			CURSOR_EFFECTS.trailLengthPx
+		);
 		const count = h.records.length;
 		for (let i = 0; i < 10; i++) sendToPage(win, to(200, 200));
 		expect(h.records).toHaveLength(count);
-		expect([...(h.layer()?.children ?? [])]).toEqual(paths);
 		for (const r of h.records) if (!r.cancelled) r.finish();
 		await Promise.resolve();
 		expect(h.layer()).toBeNull();
@@ -339,9 +428,32 @@ describe("virtual-cursor (the page-realm pointer mirror)", () => {
 		sendToPage(win, command("cursorHide", "hide"));
 		expect(h.records.every((r) => r.cancelled)).toBe(true);
 		expect(win.document.body.children).toHaveLength(0);
+		expect(win.document.querySelectorAll(`[class^="${cursorClass}"]`)).toHaveLength(0);
 		await Promise.resolve();
 		sendToPage(win, to(600, 600));
 		expect(h.layer()).toBeNull();
+	});
+
+	it("draws the plain arrow only when the owner turned the effects off", () => {
+		const { win } = boot();
+		const h = animateHarness(win);
+		const off = (x: number, y: number, down = false): Record<string, unknown> => {
+			const env = command("cursorTo", "0", { x, y, d: down, e: false });
+			delete env.i;
+			return env;
+		};
+		sendToPage(win, off(100, 200));
+		for (let step = 1; step <= 8; step++) sendToPage(win, off(100 + step * 4, 200));
+		sendToPage(win, off(140, 200, true));
+		sendToPage(win, off(140, 200, false));
+		expect(h.layer()).toBeNull();
+		expect(h.records).toEqual([]);
+		expect((el(win) as HTMLElement | null)?.style.transform).toContain("135px,195px");
+		// Turning them back on resumes the trail from the next points.
+		sendToPage(win, to(144, 200));
+		sendToPage(win, to(148, 200));
+		sendToPage(win, to(152, 200));
+		expect(h.layer()).not.toBeNull();
 	});
 
 	it("shows the pointer immediately without effects when reduced motion is already enabled", () => {

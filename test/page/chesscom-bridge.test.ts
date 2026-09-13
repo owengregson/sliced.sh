@@ -313,6 +313,86 @@ describe("chesscom-bridge — behaviour", () => {
 		) as HTMLElement | null;
 		expect(shield?.style.clipPath).toContain("124px 244px");
 	});
+	it("rebinds a replacement game on the same board, reads its state, and removes old listeners", async () => {
+		const { win, posts, game } = await boot();
+		game.over = true;
+		const fresh = fakeGame("rnbqkbnr/pppppppp/8/8/2P5/8/PP1PPPPP/RNBQKBNR b KQkq c3 0 1");
+		const board = win.document.querySelector("wc-chess-board") as unknown as { game: FakeGame };
+		board.game = fresh;
+		sendToPage(win, command("getState", "replacement"));
+		expect(payload(reply(posts, "replacement"))).toMatchObject({ f: fresh.fen, g: false, r: null });
+		expect(game.listenerCount("Move")).toBe(0);
+		expect(fresh.listenerCount("Move")).toBe(1);
+		const before = postsOf(posts, "move").length;
+		game.emit("Move");
+		expect(postsOf(posts, "move")).toHaveLength(before);
+		fresh.emit("Move");
+		expect(postsOf(posts, "move")).toHaveLength(before + 1);
+		sendToPage(win, command("getState", "again"));
+		expect(fresh.listenerCount("Move")).toBe(1);
+		board.game = game;
+		sendToPage(win, command("getState", "restored"));
+		expect(fresh.listenerCount("Move")).toBe(0);
+		expect(game.listenerCount("Move")).toBe(1);
+	});
+
+	it("detects a same-board game replacement from a DOM mutation without waiting for a command", async () => {
+		const win = makeWindow("https://www.chess.com/play/computer");
+		cleanups.push(() => win.happyDOM.close());
+		win.document.body.innerHTML = '<wc-chess-board id="board-single"></wc-chess-board>';
+		const board = win.document.querySelector("wc-chess-board")!;
+		const game = fakeGame();
+		(board as unknown as { game: FakeGame }).game = game;
+		const { posts, restore } = recordPosts(win);
+		cleanups.push(restore);
+		// happy-dom delivers only the first mutation batch; start and mutate before a timer hop.
+		runProgram(bound, win, { customElements: { whenDefined: () => Promise.resolve() } });
+		await Promise.resolve();
+		const fresh = fakeGame("8/8/8/8/8/8/8/K6k w - - 0 1");
+		(board as unknown as { game: FakeGame }).game = fresh;
+		board.append(win.document.createElement("div"));
+		await waitFor(() => postsOf(posts, "load").some((post) => payload(post).f === fresh.fen));
+		expect(game.listenerCount("Move")).toBe(0);
+		expect(fresh.listenerCount("Move")).toBe(1);
+	});
+
+	it("uses a listener disposer returned by the site", async () => {
+		const { win, game } = await boot();
+		const fresh = fakeGame();
+		const subscribe = fresh.on.bind(fresh);
+		const unsubscribe = fresh.off.bind(fresh);
+		Object.defineProperty(fresh, "off", { value: undefined });
+		Object.defineProperty(fresh, "on", {
+			value: (type: string, callback: () => void) => {
+				subscribe(type, callback);
+				return () => unsubscribe(type, callback);
+			},
+		});
+		const board = win.document.querySelector("wc-chess-board") as unknown as { game: FakeGame };
+		board.game = fresh;
+		sendToPage(win, command("getState", "new-disposers"));
+		expect(fresh.listenerCount("Move")).toBe(1);
+		board.game = game;
+		sendToPage(win, command("getState", "after-dispose"));
+		expect(fresh.listenerCount("Move")).toBe(0);
+	});
+
+	it("silences old game callbacks when the site offers no listener removal", async () => {
+		const { win, posts, game } = await boot();
+		Object.defineProperty(game, "off", { value: undefined });
+		const fresh = fakeGame();
+		const board = win.document.querySelector("wc-chess-board") as unknown as { game: FakeGame };
+		board.game = fresh;
+		sendToPage(win, command("getState", "new"));
+		const before = postsOf(posts, "move").length;
+		game.emit("Move");
+		expect(postsOf(posts, "move")).toHaveLength(before);
+		board.game = game;
+		sendToPage(win, command("getState", "old-object-reused"));
+		game.emit("Move");
+		expect(postsOf(posts, "move")).toHaveLength(before + 1);
+	});
+
 	it("re-attaches when the SPA replaces the board element and posts load", async () => {
 		const { win, posts, game } = await boot();
 		const fresh = fakeGame("8/8/8/8/8/8/8/K6k w - - 0 1");

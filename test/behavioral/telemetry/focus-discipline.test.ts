@@ -136,15 +136,30 @@ describe("focus discipline: rows the simulator can record (Step 1)", () => {
 		game = await runSimulatedGame({
 			seed: "tab-switch-row",
 			moves: 2,
-			duringMove: async ({ index, retryOf, sim, site }) => {
+			duringMove: async ({ index, retryOf, sim, site, sw }) => {
 				if (index !== 1 || retryOf !== undefined) return;
 				await sim.time.advance(300);
-				other = sim.openTab("https://example.org/", { active: true }).tabId;
-				await sim.time.runMicrotasks();
-				// the user comes back to the game tab: the page regains focus and the window re-opens
-				await sim.time.advance(SIM_TELEMETRY.refocusPauseMs);
-				site.panelClick(); // (any page-blur while the other tab was active) …
-				sim.tabs.activate(site.tabId);
+				let skippedWhileHidden = false;
+				const off = sw.executor.on("skipped", ({ result }) => {
+					expect(result.reason).toBe(EXECUTOR.reasons.hidden);
+					skippedWhileHidden = true;
+				});
+				try {
+					other = sim.openTab("https://example.org/", { active: true }).tabId;
+					await sim.time.runMicrotasks();
+					expect(sw.focus.canExecute(site.tabId)).toEqual({
+						ok: false,
+						reason: EXECUTOR.reasons.hidden,
+					});
+					// Stay away until the hand reaches its gate; orientation duration varies by plan.
+					const deadline = sim.now() + SIM_TELEMETRY.maxMoveAdvanceMs;
+					while (!skippedWhileHidden && sim.now() < deadline)
+						await sim.time.advance(SIM_TELEMETRY.advanceStepMs);
+					expect(skippedWhileHidden).toBe(true);
+					sim.tabs.activate(site.tabId);
+				} finally {
+					off();
+				}
 			},
 		});
 		const skipped = game.moves.find((m) => m.index === 1 && !m.result.ok);

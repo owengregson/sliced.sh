@@ -53,6 +53,11 @@ function playingSession(value: unknown): PlayingSession | undefined {
 		return undefined;
 	if (value.breakUntil !== null && (!deadline(value.breakUntil) || value.breakUntil < value.endsAt))
 		return undefined;
+	// The once-only rematch marks (2026-09-13): a list of usernames, or nothing. A malformed list
+	// drops only itself — the session's deadlines are still worth keeping.
+	const rematched = Array.isArray(value.rematched)
+		? value.rematched.filter((name): name is string => typeof name === "string" && name !== "")
+		: [];
 	return {
 		gameId: value.gameId,
 		startedAt: value.startedAt,
@@ -60,6 +65,7 @@ function playingSession(value: unknown): PlayingSession | undefined {
 		completedGames: value.completedGames,
 		lastFinishedGameId: value.lastFinishedGameId,
 		breakUntil: value.breakUntil,
+		...(rematched.length > 0 ? { rematched } : {}),
 	};
 }
 
@@ -76,7 +82,17 @@ function validated(value: unknown): PendingAutoQueues {
 		const session = playingSession(pending.session);
 		if (dueAt !== null && !deadline(dueAt)) continue;
 		if (dueAt === null && !session) continue;
-		valid[tab] = { gameId: pending.gameId, dueAt, ...(session ? { session } : {}) };
+		// A pending rematch step names its opponent; it only means something with a deadline.
+		const rematch =
+			dueAt !== null && typeof pending.rematch === "string" && pending.rematch !== ""
+				? pending.rematch
+				: undefined;
+		valid[tab] = {
+			gameId: pending.gameId,
+			dueAt,
+			...(session ? { session } : {}),
+			...(rematch !== undefined ? { rematch } : {}),
+		};
 	}
 	return valid;
 }

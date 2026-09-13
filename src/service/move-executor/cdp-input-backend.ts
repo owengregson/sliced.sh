@@ -6,7 +6,7 @@
  */
 
 import type { InputBackend } from "@core/motor/input-backend";
-import type { PathPoint, Pt } from "@core/motor/types";
+import type { MouseButton, PathPoint, Pt } from "@core/motor/types";
 import type { DebuggerManager } from "@service/debugger-manager";
 import { type Cdp, CdpMouse, type CdpMouseOptions } from "./cdp-mouse";
 
@@ -35,12 +35,18 @@ export class CdpInputBackend implements InputBackend {
 		return this.mouse.moveAt(p, atMs, signal);
 	}
 
-	press(p: Pt, atMs: number, signal?: AbortSignal, beforePress?: () => void): Promise<void> {
-		return this.mouse.pressAt(p, atMs, signal, beforePress);
+	press(
+		p: Pt,
+		atMs: number,
+		signal?: AbortSignal,
+		beforePress?: () => void,
+		button: MouseButton = "left"
+	): Promise<void> {
+		return this.mouse.pressAt(p, atMs, signal, beforePress, button);
 	}
 
-	release(p: Pt, atMs: number): Promise<void> {
-		return this.mouse.releaseAt(p, atMs);
+	release(p: Pt, atMs: number, button: MouseButton = "left"): Promise<void> {
+		return this.mouse.releaseAt(p, atMs, undefined, button);
 	}
 
 	travel(path: readonly PathPoint[], signal?: AbortSignal, beforePoint?: () => void): Promise<void> {
@@ -57,6 +63,10 @@ export class CdpInputBackend implements InputBackend {
 
 	pressed(): boolean {
 		return this.mouse.pressed;
+	}
+
+	pressedButtons(): number {
+		return this.mouse.pressedButtons;
 	}
 
 	dispose(): void {

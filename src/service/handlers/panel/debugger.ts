@@ -22,8 +22,11 @@ export function registerDebuggerHandlers(
 		const executor = deps.sources.executor(msg.tabId);
 		const hand = deps.sources.hand;
 		try {
-			if (executor) await executor.arm();
-			else if (hand) await hand.debugger.ensureAttached(msg.tabId);
+			if (executor) {
+				await executor.arm();
+				// Reattach releases the same held recommendation as the auto-play toggle.
+				await deps.sources.session(msg.tabId)?.handArmed();
+			} else if (hand) await hand.debugger.ensureAttached(msg.tabId);
 			else throw new Error(PANEL_COMMAND_ERRORS.noExecutor);
 		} finally {
 			deps.broadcaster.notify();

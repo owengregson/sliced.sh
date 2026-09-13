@@ -19,7 +19,15 @@
 import { installFocusEdges } from "@content/adapters/adapter";
 import { type CursorTracker, createCursorTracker } from "@content/cursor-tracker";
 import { installKeybinds, type KeybindAction } from "@content/keybinds";
-import { type GamePortCommand, type GamePortMessage, MSG, PORT_NAMES } from "@core/constants";
+import {
+	type GamePortCommand,
+	type GamePortMessage,
+	MSG,
+	type NewGameTarget,
+	PORT_NAMES,
+	type RematchAction,
+	type ResignStep,
+} from "@core/constants";
 import { DEFAULT_KEYBINDS } from "@core/constants/defaults";
 import { type ConnectedPort, connectPort } from "@core/messaging/ports";
 import { sendTyped } from "@core/messaging/typed-messages";
@@ -68,6 +76,47 @@ export interface SimulatedSiteOptions {
 	 * still marked at the moment the hand presses?).
 	 */
 	onCommand?: (cmd: GamePortCommand) => void;
+	/**
+	 * 2026-09-12: lay out a resign control and its "Resign?" confirmation
+	 * (`SIM_TELEMETRY.resignControls`) that answer the `resign` port command the way the real
+	 * adapter does — a rect, revalidated by id and point — and record the native clicks that
+	 * reach them. The confirmation appears only after the resign click; clicking it ends the
+	 * game as a loss. Without this the site answers every `resign` read with `not-ready`.
+	 */
+	resignControls?: boolean;
+	/**
+	 * 2026-09-13: lay out the post-game controls (`SIM_TELEMETRY.rematchControls`) — the new-game
+	 * button, the rematch offer, the incoming-offer panel (hidden until `showIncomingRematch`) and
+	 * the cancel of a pending offer (shown after the rematch click, when `rematchCancel` is on) —
+	 * answering `startNewGame` and `rematch` reads the way the real adapter does and recording the
+	 * native clicks that reach them. Without this the site answers every `rematch` read with
+	 * `not-ready` and never answers `startNewGame` (tests answer it through `onCommand`).
+	 */
+	rematchControls?: boolean;
+	/** Whether the rematch click reveals a cancel control (the real markup is the open QA item). */
+	rematchCancel?: boolean;
+	/**
+	 * 2026-09-13: the tab is on the exact `/play/online` queue screen. `hello` and `gameStarted`
+	 * carry `lobby: true` the way the real content script sends it; `setLobby(false)` is the URL
+	 * moving on to a game (follow it with `hello()` as the content script would).
+	 */
+	lobby?: boolean;
+}
+
+/** One native click the simulated site's resign controls received. */
+export interface ResignClick {
+	step: ResignStep;
+	x: number;
+	y: number;
+	at: number;
+}
+
+/** One native click the simulated site's post-game controls received (`rematchControls`). */
+export interface RematchClick {
+	action: RematchAction | "new-game";
+	x: number;
+	y: number;
+	at: number;
 }
 
 export interface SimulatedSite {
@@ -97,6 +146,14 @@ export interface SimulatedSite {
 	premoveQueued(): { from: Square; to: Square } | null;
 	/** Every command the service worker sent down the game port, in order (Task 30). */
 	commands(): GamePortCommand[];
+	/** The native clicks the resign / confirm controls received (`resignControls` only). */
+	resignClicks(): ResignClick[];
+	/** The native clicks the post-game controls received (`rematchControls` only). */
+	rematchClicks(): RematchClick[];
+	/** The opponent's offer arrives: the incoming panel replaces the new-game and rematch buttons. */
+	showIncomingRematch(): void;
+	/** The opponent withdrew (or the offer lapsed): the two buttons are back. */
+	hideIncomingRematch(): void;
 	/** Post a raw feed message (Task 30: reconnect replays, races the board cannot produce). */
 	post(msg: GamePortMessage): void;
 	/** Task 30: the port `hello` a real content script sends on boot. */
@@ -105,10 +162,17 @@ export interface SimulatedSite {
 	startGame(meta?: Partial<GameMeta>): void;
 	/** Task 30: `gameEnded`. */
 	endGame(result?: GameResult): void;
-	/** Task 30: the §13.6 opponent identity. */
-	opponent(info: { isBot: boolean; name: string; ratingEstimate: number | null }): void;
+	/** Task 30: the §13.6 opponent identity (`title` for a titled player, 2026-09-13). */
+	opponent(info: {
+		isBot: boolean;
+		name: string;
+		ratingEstimate: number | null;
+		title?: string;
+	}): void;
 	/** §4.3: the site learns its own time control (the game actually started). */
 	setTimeControl(tc: { baseMs: number; incMs: number } | null): void;
+	/** 2026-09-13: the URL is (or is no longer) the exact `/play/online` queue screen. */
+	setLobby(lobby: boolean): void;
 	/** The game id every `position` / `gameStarted` carries. */
 	readonly gameId: string;
 	dispose(): Promise<void>;
@@ -162,6 +226,176 @@ export async function createSimulatedSite(
 		timer: ReturnType<typeof setTimeout>;
 	}> = [];
 
+	// 2026-09-12: the resign controls. Ids double as the revalidation `targetId`, which is what
+	// the real adapter's per-element id achieves; the confirmation is hidden until resign is clicked.
+	const resignClicks: ResignClick[] = [];
+	const RESIGN_IDS: Record<ResignStep, string> = { resign: "resign", confirm: "resign-confirm" };
+	const resignElement = (step: ResignStep) => dom.document.getElementById(RESIGN_IDS[step]);
+	if (options.resignControls === true) {
+		dom.document.body.insertAdjacentHTML(
+			"beforeend",
+			`<button id="${RESIGN_IDS.resign}" aria-label="Resign">Resign</button>` +
+				`<button id="${RESIGN_IDS.confirm}" hidden>Resign</button>`
+		);
+		const controls = SIM_TELEMETRY.resignControls;
+		dom.layout(`#${RESIGN_IDS.resign}`, { ...controls.resign });
+		dom.layout(`#${RESIGN_IDS.confirm}`, { ...controls.confirm });
+		const record = (step: ResignStep, event: unknown): void => {
+			const e = event as { clientX: number; clientY: number };
+			resignClicks.push({ step, x: e.clientX, y: e.clientY, at: sim.now() });
+		};
+		resignElement("resign")?.addEventListener("click", (event) => {
+			record("resign", event);
+			resignElement("confirm")?.removeAttribute("hidden");
+		});
+		resignElement("confirm")?.addEventListener("click", (event) => {
+			record("confirm", event);
+			resignElement("confirm")?.setAttribute("hidden", "");
+			port?.post({ kind: "gameEnded", result: myColor === "w" ? "0-1" : "1-0" });
+		});
+	}
+	const resignTarget = (cmd: Extract<GamePortCommand, { kind: "resign" }>): GamePortMessage => {
+		const element = resignElement(cmd.step);
+		const rect = element ? dom.rectOf(element) : null;
+		const ready =
+			element !== null &&
+			rect !== null &&
+			!element.hasAttribute("hidden") &&
+			(cmd.targetId === undefined || cmd.targetId === element.id) &&
+			(cmd.point === undefined || dom.elementAt(cmd.point.x, cmd.point.y) === element);
+		if (!ready || !element || !rect) return { kind: "resignResult", id: cmd.id, status: "not-ready" };
+		return {
+			kind: "resignResult",
+			id: cmd.id,
+			status: "ready",
+			target: {
+				targetId: element.id,
+				rect: { left: rect.x, top: rect.y, width: rect.width, height: rect.height },
+				viewport: { width: win.innerWidth, height: win.innerHeight },
+			},
+		};
+	};
+
+	// 2026-09-13: the post-game controls. Ids double as the revalidation `targetId`; the incoming
+	// panel and the cancel control are hidden until the flow reveals them.
+	const rematchClicks: RematchClick[] = [];
+	const REMATCH_IDS: Record<RematchAction | "new-game", string> = {
+		"new-game": "new-game",
+		rematch: "rematch",
+		accept: "rematch-accept",
+		decline: "rematch-decline",
+		cancel: "rematch-cancel",
+	};
+	const INCOMING_ID = "incoming-rematch";
+	const rematchElement = (action: RematchAction | "new-game") =>
+		dom.document.getElementById(REMATCH_IDS[action]);
+	const setHidden = (id: string, hidden: boolean): void => {
+		const el = dom.document.getElementById(id);
+		if (!el) return;
+		if (hidden) el.setAttribute("hidden", "");
+		else el.removeAttribute("hidden");
+	};
+	/**
+	 * The panel's answers sit where the two buttons were (chess.com replaces them), and the tab's
+	 * hit test ignores `hidden`: a control that comes back is re-registered so `elementFromPoint`
+	 * finds it on top, as the page would.
+	 */
+	const raise = (action: RematchAction | "new-game"): void => {
+		const el = rematchElement(action);
+		const rect = el ? dom.rectOf(el) : null;
+		if (el && rect) dom.layoutElement(el, rect);
+	};
+	const incomingShowing = (): boolean => {
+		const panel = dom.document.getElementById(INCOMING_ID);
+		return panel !== null && !panel.hasAttribute("hidden");
+	};
+	if (options.rematchControls === true) {
+		dom.document.body.insertAdjacentHTML(
+			"beforeend",
+			`<div class="game-over-buttons-component">` +
+				`<button id="${REMATCH_IDS["new-game"]}" aria-label="New Game">New 3 min</button>` +
+				`<button id="${REMATCH_IDS.rematch}" aria-label="Rematch">Rematch</button>` +
+				`<button id="${REMATCH_IDS.cancel}" aria-label="Cancel Rematch" hidden>Cancel</button>` +
+				`<div id="${INCOMING_ID}" class="game-over-buttons-incoming-rematch" hidden>` +
+				`<span class="game-over-buttons-label">Good game! Rematch?</span>` +
+				`<button id="${REMATCH_IDS.decline}" aria-label="Decline Rematch">Decline</button>` +
+				`<button id="${REMATCH_IDS.accept}" aria-label="Accept Rematch">Accept</button>` +
+				`</div></div>`
+		);
+		const controls = SIM_TELEMETRY.rematchControls;
+		// Hidden controls first: the tab's hit test puts later registrations on top.
+		dom.layout(`#${REMATCH_IDS.cancel}`, { ...controls.cancel });
+		dom.layout(`#${REMATCH_IDS.accept}`, { ...controls.accept });
+		dom.layout(`#${REMATCH_IDS.decline}`, { ...controls.decline });
+		dom.layout(`#${REMATCH_IDS["new-game"]}`, { ...controls.newGame });
+		dom.layout(`#${REMATCH_IDS.rematch}`, { ...controls.rematch });
+		const record = (action: RematchAction | "new-game", event: unknown): void => {
+			const e = event as { clientX: number; clientY: number };
+			rematchClicks.push({ action, x: e.clientX, y: e.clientY, at: sim.now() });
+		};
+		rematchElement("new-game")?.addEventListener("click", (event) => record("new-game", event));
+		rematchElement("rematch")?.addEventListener("click", (event) => {
+			record("rematch", event);
+			if (options.rematchCancel === true) {
+				setHidden(REMATCH_IDS.rematch, true);
+				setHidden(REMATCH_IDS.cancel, false);
+				raise("cancel");
+			}
+		});
+		rematchElement("cancel")?.addEventListener("click", (event) => {
+			record("cancel", event);
+			setHidden(REMATCH_IDS.cancel, true);
+			setHidden(REMATCH_IDS.rematch, false);
+			raise("rematch");
+		});
+		for (const action of ["accept", "decline"] as const)
+			rematchElement(action)?.addEventListener("click", (event) => {
+				record(action, event);
+				setHidden(INCOMING_ID, true);
+				setHidden(REMATCH_IDS["new-game"], false);
+				setHidden(REMATCH_IDS.rematch, false);
+				raise("new-game");
+				raise("rematch");
+			});
+	}
+	/** A control's target the way the real adapter reports it, or `null` when it is not usable. */
+	const postGameTarget = (
+		element: ReturnType<typeof rematchElement>,
+		targetId: string | undefined,
+		point: { x: number; y: number } | undefined
+	): NewGameTarget | null => {
+		const rect = element ? dom.rectOf(element) : null;
+		const hidden =
+			element === null || element.hasAttribute("hidden") || element.closest("[hidden]") !== null;
+		const ready =
+			element !== null &&
+			rect !== null &&
+			!hidden &&
+			(targetId === undefined || targetId === element.id) &&
+			(point === undefined || dom.elementAt(point.x, point.y) === element);
+		if (!ready || !element || !rect) return null;
+		return {
+			targetId: element.id,
+			rect: { left: rect.x, top: rect.y, width: rect.width, height: rect.height },
+			viewport: { width: win.innerWidth, height: win.innerHeight },
+		};
+	};
+	const rematchTarget = (cmd: Extract<GamePortCommand, { kind: "rematch" }>): GamePortMessage => {
+		const target = postGameTarget(rematchElement(cmd.action), cmd.targetId, cmd.point);
+		const incoming = incomingShowing();
+		return target
+			? { kind: "rematchResult", id: cmd.id, incoming, status: "ready", target }
+			: { kind: "rematchResult", id: cmd.id, incoming, status: "not-ready" };
+	};
+	const newGameTarget = (
+		cmd: Extract<GamePortCommand, { kind: "startNewGame" }>
+	): GamePortMessage => {
+		const target = postGameTarget(rematchElement("new-game"), cmd.targetId, cmd.point);
+		return target
+			? { kind: "startNewGameResult", id: cmd.id, status: "ready", target }
+			: { kind: "startNewGameResult", id: cmd.id, status: "not-ready" };
+	};
+
 	const settle = (): void => {
 		const last = board.lastMove();
 		if (!last?.byMe) return;
@@ -207,6 +441,12 @@ export async function createSimulatedSite(
 				flipped: myColor === "b",
 				occupancy: board.occupancyMap(),
 			});
+		} else if (cmd.kind === "resign") {
+			port.post(resignTarget(cmd));
+		} else if (cmd.kind === "rematch") {
+			port.post(rematchTarget(cmd));
+		} else if (cmd.kind === "startNewGame" && options.rematchControls === true) {
+			port.post(newGameTarget(cmd));
 		} else if (cmd.kind === "boardCheck") {
 			const occupancy: Partial<Record<Square, "own" | "enemy" | "empty">> = {};
 			for (const sq of cmd.squares) occupancy[sq] = board.occupancy(sq);
@@ -258,6 +498,7 @@ export async function createSimulatedSite(
 	});
 
 	let timeControl = options.timeControl ?? null;
+	let lobby = options.lobby === true;
 
 	function snapshot(clocks: { w: number; b: number }): PositionSnapshot {
 		const last = board.lastMove();
@@ -326,7 +567,13 @@ export async function createSimulatedSite(
 				});
 		},
 		hello(kind = pageKind) {
-			port?.post({ kind: "hello", site, pageKind: kind, adapterVersion: "sim" });
+			port?.post({
+				kind: "hello",
+				site,
+				pageKind: kind,
+				adapterVersion: "sim",
+				...(lobby ? { lobby: true } : {}),
+			});
 		},
 		startGame(meta = {}) {
 			port?.post({
@@ -338,9 +585,13 @@ export async function createSimulatedSite(
 					myColor,
 					...(timeControl ? { timeControl: { ...timeControl } } : {}),
 					startedAt: sim.now(),
+					...(lobby ? { lobby: true } : {}),
 					...meta,
 				},
 			});
+		},
+		setLobby(next) {
+			lobby = next;
 		},
 		endGame(result = "1-0") {
 			port?.post({ kind: "gameEnded", result });
@@ -381,6 +632,23 @@ export async function createSimulatedSite(
 		observeRequests: () => [...observeRequests],
 		premoveQueued: () => board.premoveQueued(),
 		commands: () => [...received],
+		resignClicks: () => [...resignClicks],
+		rematchClicks: () => [...rematchClicks],
+		showIncomingRematch() {
+			setHidden(REMATCH_IDS["new-game"], true);
+			setHidden(REMATCH_IDS.rematch, true);
+			setHidden(REMATCH_IDS.cancel, true);
+			setHidden(INCOMING_ID, false);
+			raise("decline");
+			raise("accept");
+		},
+		hideIncomingRematch() {
+			setHidden(INCOMING_ID, true);
+			setHidden(REMATCH_IDS["new-game"], false);
+			setHidden(REMATCH_IDS.rematch, false);
+			raise("new-game");
+			raise("rematch");
+		},
 		post(msg) {
 			port?.post(msg);
 		},

@@ -20,6 +20,7 @@ export const TOKENS_FOR_SEED = {
 	content: deriveToken(SEED, SPOOF_PURPOSES.contentToken),
 	overlayClass: deriveToken(SEED, SPOOF_PURPOSES.overlayClass),
 	cursorClass: deriveToken(SEED, SPOOF_PURPOSES.cursorClass),
+	effectsClass: deriveToken(SEED, SPOOF_PURPOSES.effectsClass),
 } as const;
 
 /** The seven §13.3 rule 5 words, from the build lint (`scripts/check-constants.ts`), once. */
@@ -160,6 +161,13 @@ export function fakeGame(fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b 
 			list.push(cb);
 			handlers.set(type, list);
 		},
+		off(type: string, cb: () => void) {
+			handlers.set(
+				type,
+				(handlers.get(type) ?? []).filter((handler) => handler !== cb)
+			);
+		},
+		listenerCount: (type: string) => handlers.get(type)?.length ?? 0,
 		emit(type: string) {
 			for (const cb of handlers.get(type) ?? []) cb();
 		},

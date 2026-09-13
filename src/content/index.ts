@@ -23,6 +23,10 @@
  *     `cursorProbe` (bridge closure, else the tracker);
  *   - applies `highlight` / `arrow` / `clearHighlight` only while the
  *     `settings` command has turned `highlightMoves` on (off until it arrives);
+ *   - applies `effects` / `clearEffects` — the board-effect layer for the move
+ *     that just landed — only while the same command has turned `boardEffects`
+ *     on (also off until it arrives); it is a separate page element from the
+ *     recommendation mark and neither clear touches the other;
  *   - installs the in-page keybinds (`keybinds` command updates them; the
  *     initial set comes from the `CONTENT_HELLO` request) and the cursor
  *     tracker (trusted samples on the port; unthrottled while the hand moves);
@@ -48,7 +52,8 @@ import {
 	toRect,
 } from "@content/adapters/adapter";
 import { createChesscomAdapter } from "@content/adapters/chesscom";
-import { pageKindFromPath } from "@content/adapters/page-kind";
+import { isGamePage, isLobbyPath, pageKindFromPath } from "@content/adapters/page-kind";
+import { createBoardEffects } from "@content/board-effects";
 import { occupancyOf, waitForPromotionRect } from "@content/board-state";
 import {
 	type CursorSample,
@@ -188,13 +193,57 @@ function bootContent(
 	const bridge = options.bridge ?? createPageBridgeClient({ window: win });
 	const adapter = createChesscomAdapter({ document: doc, window: win, bridge });
 	const highlights = createHighlights(adapter, false);
-	// Fix D: the mirror of the hand's own pointer. Drawn by the MAIN-world bridge (§13.3), driven
-	// only by what the service worker dispatched — never by a pointer event read here.
-	const virtualCursor = createVirtualCursor(bridge, (shown) => {
-		cursorBinding.exclusiveKeyboard = shown || cursorBinding.inputOwned;
-		cursor.setVirtualActive(cursorBinding.exclusiveKeyboard);
-	});
+	// Its own layer, its own setting and its own clear (§13.3 rule 4: off until `settings` says so).
+	const boardEffects = createBoardEffects(bridge, { flipped: () => adapter.isFlipped() });
 	let pageKind = adapter.detectPageKind();
+	/**
+	 * The exact `/play/online` queue screen (2026-09-13). Its board reports itself as a live game,
+	 * so the page kind cannot say "no game has been queued yet"; the URL can, and it travels with
+	 * `hello` and `gameStarted` for the service worker's lobby hold. Re-sent when it changes.
+	 */
+	const lobbyPath = (): boolean => isLobbyPath(win.location.pathname);
+	let lobby = lobbyPath();
+	const cursor = cursorBinding.tracker;
+	/**
+	 * The page-kind gate (2026-09-13): the shield, keyboard exclusivity and the mirror exist on
+	 * game pages only (`GAME_PAGE_KINDS`). Anywhere else the real mouse keeps the page: ownership
+	 * is answered as not owned, a `cursorTo` draws nothing, and leaving a game page by SPA
+	 * navigation releases whatever was up.
+	 */
+	const gamePage = (): boolean => isGamePage(pageKind);
+	/** The shield is up while the mirror is drawn (glide included) or the hand owns the input. */
+	const syncExclusive = (): void => {
+		cursorBinding.exclusiveKeyboard = cursorBinding.inputOwned || virtualCursor.shown();
+		cursor.setVirtualActive(cursorBinding.exclusiveKeyboard);
+	};
+	// Fix D: the mirror of the hand's own pointer. Drawn by the MAIN-world bridge (§13.3), driven
+	// only by what the service worker dispatched — never by a pointer event read here. The unlock
+	// glide's target is the one exception in spirit: it *reads* the tracker's latest real sample,
+	// but only to draw the arrow towards it once, at the moment the mirror is being erased anyway.
+	const virtualCursor = createVirtualCursor(bridge, {
+		onVisibilityChange: syncExclusive,
+		allowed: gamePage,
+		realPosition: () => {
+			const s = cursor.latest();
+			return s ? { x: s.x, y: s.y } : null;
+		},
+	});
+	/**
+	 * Every unlock goes through here: the hand's ownership is dropped and the mirror is erased —
+	 * after the glide to the real pointer, when one is possible. The shield stays up for the
+	 * glide (the mirror counts as shown) and drops from the visibility callback when it ends; when
+	 * no glide runs and the hide could not even leave (no page side to erase), the shield is
+	 * lowered anyway — a mirror nobody can move must not keep the page locked with no owner.
+	 */
+	const releaseInput = (): void => {
+		cursorBinding.inputOwned = false;
+		virtualCursor.apply({ kind: "cursorHide" });
+		if (virtualCursor.gliding()) syncExclusive();
+		else {
+			cursorBinding.exclusiveKeyboard = false;
+			cursor.setVirtualActive(false);
+		}
+	};
 	let sessionGameId: string | null = null;
 	let disposed = false;
 	let port: FeedPort | null = null;
@@ -205,12 +254,35 @@ function bootContent(
 	const post = (msg: GamePortMessage): void => {
 		if (!disposed) port?.post(msg);
 	};
-	const hello = (): void => post({ kind: "hello", site, pageKind, adapterVersion });
-	const opponent = (): void => {
+	const hello = (): void =>
+		post({ kind: "hello", site, pageKind, adapterVersion, ...(lobby ? { lobby: true } : {}) });
+	// chess.com renders the player card after the board, so the read that follows `gameStarted`
+	// (or the one at boot, at `document_start`) answers nothing or a rating-less name — and a
+	// rating-less opponent is what the worker's strength layer treats as "no opponent", i.e. the
+	// slider's Elo instead of the matched one (owner's report after a mid-game reload, 2026-09-11).
+	// Re-read until the rating is there, bounded.
+	let opponentTimer: ReturnType<typeof setInterval> | null = null;
+	let opponentAttempts = 0;
+	const stopOpponentPoll = (): void => {
+		if (opponentTimer === null) return;
+		clearInterval(opponentTimer);
+		opponentTimer = null;
+	};
+	const readOpponent = (): boolean => {
 		const op = adapter.getOpponent();
 		if (op) post({ kind: "opponent", ...op });
+		return op !== null && op.ratingEstimate !== null;
 	};
-	const cursor = cursorBinding.tracker;
+	const opponent = (): void => {
+		stopOpponentPoll();
+		if (readOpponent() || disposed) return;
+		opponentAttempts = 0;
+		opponentTimer = setInterval(() => {
+			opponentAttempts += 1;
+			if (readOpponent() || opponentAttempts >= TIMINGS.opponentReadRetryMax) stopOpponentPoll();
+		}, TIMINGS.opponentReadRetryMs);
+	};
+	disposers.push(stopOpponentPoll);
 	cursorBinding.onSample = (s) => post({ kind: "cursor", ...s });
 
 	/** `gameStarted` (once per game id) then `position`. */
@@ -231,6 +303,7 @@ function bootContent(
 					myColor: snapshot.myColor,
 					...(snapshot.timeControl ? { timeControl: snapshot.timeControl } : {}),
 					startedAt: snapshot.capturedAt,
+					...(lobby ? { lobby: true } : {}),
 				},
 			});
 			opponent();
@@ -268,8 +341,15 @@ function bootContent(
 	const redetect = (): void => {
 		if (disposed) return;
 		const kind = adapter.detectPageKind();
-		if (kind !== pageKind) {
+		// The lobby flag is part of what `hello` states: `/play/online` → `/game/<id>` keeps the
+		// refined kind (`live-game` both sides) and must still be announced.
+		const onLobby = lobbyPath();
+		if (kind !== pageKind || onLobby !== lobby) {
 			pageKind = kind;
+			lobby = onLobby;
+			// SPA navigation off a game page (the route changes between games, and to the
+			// analysis board after one): the page gets its mouse back, smoothly.
+			if (!gamePage() && (cursorBinding.inputOwned || virtualCursor.shown())) releaseInput();
 			hello();
 			opponent();
 		}
@@ -392,12 +472,13 @@ function bootContent(
 	const handleCommand = (cmd: GamePortCommand): void => {
 		if (disposed) return;
 		if (highlights.apply(cmd)) return;
+		if (boardEffects.apply(cmd)) return;
 		if (virtualCursor.apply(cmd)) return;
 		switch (cmd.kind) {
 			case "inputOwnership":
-				cursorBinding.inputOwned = cmd.owned;
-				cursorBinding.exclusiveKeyboard = cmd.owned || virtualCursor.shown();
-				cursor.setVirtualActive(cursorBinding.exclusiveKeyboard);
+				// Not a game page: answered as not owned, whatever the worker believes.
+				cursorBinding.inputOwned = cmd.owned && gamePage();
+				syncExclusive();
 				return;
 			case "cursorDelivery":
 				post({
@@ -411,6 +492,7 @@ function bootContent(
 				return;
 			case "settings":
 				highlights.setEnabled(cmd.highlightMoves);
+				boardEffects.setEnabled(cmd.boardEffects === true);
 				return;
 			case "startNewGame": {
 				const answer = (reachable: boolean) => {
@@ -425,6 +507,50 @@ function bootContent(
 				};
 				// The virtual pointer shield otherwise wins elementFromPoint. Open only its normal
 				// small hit-test aperture for this read; native input still needs separate admission.
+				if (cmd.point)
+					void virtualCursor
+						.prepare({ type: "mouseMoved", ...cmd.point, buttons: 0, timestampMs: Date.now() })
+						.then(answer);
+				else answer(true);
+				return;
+			}
+			case "resign": {
+				// The same passive read as `startNewGame`: report where the step's control is, never
+				// click it. A discovery that finds nothing is logged so the Engine view's log shows
+				// which step's ladder missed on the real page (the open QA item).
+				const answer = (reachable: boolean) => {
+					if (disposed) return;
+					const result = reachable
+						? adapter.resignTarget(cmd.step, cmd.targetId, cmd.point)
+						: { status: "not-ready" as const };
+					if (result.status === "not-ready" && cmd.targetId === undefined)
+						log.info("content: no resign control found for this step", { step: cmd.step });
+					post({ kind: "resignResult", id: cmd.id, ...result });
+				};
+				if (cmd.point)
+					void virtualCursor
+						.prepare({ type: "mouseMoved", ...cmd.point, buttons: 0, timestampMs: Date.now() })
+						.then(answer);
+				else answer(true);
+				return;
+			}
+			case "rematch": {
+				// The same passive read as `startNewGame` (2026-09-13): where the rematch control of
+				// `action` is, plus whether the opponent's own offer is showing; never a click.
+				const answer = (reachable: boolean) => {
+					if (disposed) return;
+					const result = reachable
+						? adapter.rematchTarget(cmd.action, cmd.targetId, cmd.point)
+						: { status: "not-ready" as const };
+					if (result.status === "not-ready" && cmd.targetId === undefined)
+						log.info("content: no rematch control found for this action", { action: cmd.action });
+					post({
+						kind: "rematchResult",
+						id: cmd.id,
+						incoming: adapter.incomingRematch(),
+						...result,
+					});
+				};
 				if (cmd.point)
 					void virtualCursor
 						.prepare({ type: "mouseMoved", ...cmd.point, buttons: 0, timestampMs: Date.now() })
@@ -466,12 +592,8 @@ function bootContent(
 		? options.port(handleCommand)
 		: createFeedPort({
 				onCommand: handleCommand,
-				onDisconnect: () => {
-					cursorBinding.inputOwned = false;
-					virtualCursor.apply({ kind: "cursorHide" });
-					cursorBinding.exclusiveKeyboard = false;
-					cursor.setVirtualActive(false);
-				},
+				// The worker went away: nobody is left to move the mirror or lower the shield.
+				onDisconnect: releaseInput,
 			});
 	hello();
 	opponent();
@@ -525,7 +647,9 @@ function bootContent(
 			disposed = true;
 			stopReadyPoll();
 			for (const d of disposers.splice(0).reverse()) d();
-			// Before the bridge goes: the mirror is page DOM and must not be left behind (§13.3).
+			// Before the bridge goes: the mirror and the effect layer are page DOM and must not be
+			// left behind (§13.3).
+			boardEffects.dispose();
 			virtualCursor.dispose();
 			cursor.dispose();
 			adapter.destroy();

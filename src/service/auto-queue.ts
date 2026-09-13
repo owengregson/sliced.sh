@@ -1,21 +1,36 @@
 /** Retry post-game controls until a new game is observed, retaining the original wait deadline. */
+import { REMATCH } from "@core/constants/rematch";
 import { TIMINGS } from "@core/constants/timings";
 import { log } from "@core/logger";
 import type { Rng } from "@core/rng";
 import { defaultNow, defaultScheduler, type Scheduler, sleep } from "@core/util/scheduler";
 import { beginPlayingSession, finishPlayingSessionGame } from "@service/playing-session";
+import {
+	markRematched,
+	type RematchOpponent,
+	type RematchStep,
+	rematchEligible,
+	rematchOffersLeft,
+} from "@service/rematch";
 import type { Settings } from "@typedefs/settings";
 import type { PendingAutoQueues, PlayingSession } from "@typedefs/storage";
 
 export interface AutoQueueView {
 	dueAt: number;
 	attempts: number;
-	status: "waiting" | "break" | "retrying" | "searching";
+	status: "waiting" | "break" | "retrying" | "searching" | "rematch";
 }
 interface Entry extends AutoQueueView {
 	gameId: string | null;
 	timer?: unknown;
 	controller?: AbortController;
+	/**
+	 * The rematch step (2026-09-13) still to run at `dueAt` (`pending`), or running now
+	 * (`running`: the offer is out, `dueAt` is when the ordinary click follows).
+	 */
+	rematch?: { opponent: string; phase: "pending" | "running" };
+	/** The pre-click poll for an incoming offer while `rematch` is pending. */
+	poll?: unknown;
 }
 export interface AutoQueueOptions {
 	/** Discovers and activates a queue control using the virtual mouse. */
@@ -36,6 +51,20 @@ export interface AutoQueueOptions {
 		save(records: PendingAutoQueues): Promise<void>;
 	};
 	onChanged?: () => void;
+	/**
+	 * The rematch step for titled opponents (2026-09-13); absent means the queue never rematches.
+	 * `allowed` is `automation.rematchTitled` at the moment the step would run.
+	 */
+	rematch?: {
+		step: Pick<RematchStep, "run" | "gameStarted" | "incoming">;
+		allowed(tabId: number): boolean;
+	};
+	/**
+	 * The entry moved into its session break *after* scheduling — a rematch step that was not
+	 * taken while the break was due (the session releases the mouse on it, as it does when the
+	 * break is scheduled directly).
+	 */
+	onBreak?: (tabId: number) => void;
 }
 
 export class AutoQueue {
@@ -54,10 +83,16 @@ export class AutoQueue {
 		this.ready = this.restore();
 	}
 
+	/**
+	 * `opponent` (2026-09-13) is the finished game's opponent, as far as the session read it; a
+	 * titled one with a rematch left earns the rematch step before the ordinary queue click, and
+	 * before the session's break — the break starts after the rematch game.
+	 */
 	async schedule(
 		tabId: number,
 		gameId: string | null,
-		settings: Settings["automation"]
+		settings: Settings["automation"],
+		opponent?: RematchOpponent | null
 	): Promise<void> {
 		const generation = this.generations.get(tabId);
 		await this.ready;
@@ -71,21 +106,27 @@ export class AutoQueue {
 			this.sessions.get(tabId) ?? beginPlayingSession(gameId, now, settings, this.options.rng);
 		this.sessions.set(tabId, session);
 		if (!finishPlayingSessionGame(session, gameId, now, settings, this.options.rng)) return;
+		const rematch =
+			this.options.rematch && rematchEligible(opponent, settings, session) && opponent
+				? opponent.name
+				: null;
 		const [lo, hi] = TIMINGS.autoQueueDelayRangeMs;
+		// A due break waits for the rematch step: the delay is the ordinary short one.
 		const delay =
-			session.breakUntil === null
+			session.breakUntil === null || rematch !== null
 				? lo + this.options.rng.next() * Math.max(0, hi - lo)
 				: Math.max(0, session.breakUntil - now);
 		const entry: Entry = {
 			gameId,
 			dueAt: now + delay,
 			attempts: 0,
-			status: session.breakUntil === null ? "waiting" : "break",
+			status: session.breakUntil === null || rematch !== null ? "waiting" : "break",
+			...(rematch !== null ? { rematch: { opponent: rematch, phase: "pending" as const } } : {}),
 		};
 		this.entries.set(tabId, entry);
 		this.arm(tabId, entry);
 		await this.changed();
-		log.info("auto-queue: scheduled", { tabId, delayMs: delay });
+		log.info("auto-queue: scheduled", { tabId, delayMs: delay, rematch });
 	}
 
 	view(tabId: number): AutoQueueView | undefined {
@@ -121,13 +162,19 @@ export class AutoQueue {
 		const entry = this.entries.get(tabId);
 		// Reconnecting to the finished board must preserve its original break/retry deadline.
 		if (entry?.gameId === gameId) return;
+		// A rematch offer answered: the step resolves `started` before its entry is cleared.
+		const rematching = entry?.rematch?.phase === "running";
+		if (rematching) this.options.rematch?.step.gameStarted(tabId);
 		this.clearPending(tabId);
 		const previous = this.sessions.get(tabId);
 		if (settings?.autoQueue) {
 			const session =
-				!previous || (previous.gameId !== gameId && previous.breakUntil !== null)
+				!previous || (previous.gameId !== gameId && previous.breakUntil !== null && !rematching)
 					? beginPlayingSession(gameId, this.now(), settings, this.options.rng)
 					: previous;
+			// The rematch game plays inside the current session; a break that was due waits for it
+			// — the session has already expired, so the rematch game's end samples a fresh break.
+			if (rematching && session.breakUntil !== null) session.breakUntil = null;
 			session.gameId = gameId;
 			this.sessions.set(tabId, session);
 		} else if (previous) previous.gameId = gameId;
@@ -159,7 +206,14 @@ export class AutoQueue {
 		if (!entry) return;
 		this.entries.delete(tabId);
 		if (entry.timer !== undefined) this.scheduler.clearTimeout(entry.timer);
+		this.clearPoll(entry);
 		entry.controller?.abort();
+	}
+
+	private clearPoll(entry: Entry): void {
+		if (entry.poll === undefined) return;
+		this.scheduler.clearTimeout(entry.poll);
+		delete entry.poll;
 	}
 
 	dispose(): void {
@@ -190,6 +244,9 @@ export class AutoQueue {
 							record.session?.breakUntil === record.dueAt && record.dueAt > this.now()
 								? "break"
 								: "waiting",
+						...(record.rematch !== undefined
+							? { rematch: { opponent: record.rematch, phase: "pending" as const } }
+							: {}),
 					};
 					this.entries.set(tabId, entry);
 					this.arm(tabId, entry);
@@ -211,6 +268,53 @@ export class AutoQueue {
 			},
 			Math.max(0, entry.dueAt - this.now())
 		);
+		if (entry.rematch?.phase === "pending") this.armIncomingPoll(tabId, entry);
+	}
+
+	/**
+	 * While the rematch step is pending, look for the opponent's own offer every
+	 * `REMATCH.incomingPollMs` and, when it shows, run the step at once instead of at `dueAt` —
+	 * bounded by the delay itself: the last poll is the due timer.
+	 */
+	private armIncomingPoll(tabId: number, entry: Entry): void {
+		this.clearPoll(entry);
+		const rematch = this.options.rematch;
+		if (!rematch || entry.dueAt - this.now() <= REMATCH.incomingPollMs) return;
+		entry.poll = this.scheduler.setTimeout(() => {
+			delete entry.poll;
+			void this.pollIncoming(tabId, entry, rematch);
+		}, REMATCH.incomingPollMs);
+	}
+
+	private async pollIncoming(
+		tabId: number,
+		entry: Entry,
+		rematch: NonNullable<AutoQueueOptions["rematch"]>
+	): Promise<void> {
+		const current = () =>
+			!this.disposed &&
+			this.entries.get(tabId) === entry &&
+			!entry.controller &&
+			entry.rematch?.phase === "pending";
+		if (!current() || this.options.canQueue(tabId, entry.gameId) !== "allow") {
+			if (current()) this.armIncomingPoll(tabId, entry);
+			return;
+		}
+		let incoming = false;
+		try {
+			incoming = await rematch.step.incoming(tabId, this.lifetime.signal);
+		} catch {
+			/* the tab cannot answer right now; the due timer still runs */
+		}
+		if (!current()) return;
+		if (!incoming) {
+			this.armIncomingPoll(tabId, entry);
+			return;
+		}
+		log.info("auto-queue: incoming rematch offer during the delay", { tabId });
+		if (entry.timer !== undefined) this.scheduler.clearTimeout(entry.timer);
+		delete entry.timer;
+		void this.attempt(tabId, entry);
 	}
 
 	private async attempt(tabId: number, entry: Entry): Promise<void> {
@@ -224,6 +328,7 @@ export class AutoQueue {
 			this.changed();
 			return;
 		}
+		if (entry.rematch?.phase === "pending" && !(await this.rematchStep(tabId, entry))) return;
 		const controller = new AbortController();
 		entry.controller = controller;
 		entry.attempts += 1;
@@ -263,6 +368,66 @@ export class AutoQueue {
 		}
 	}
 
+	/**
+	 * The rematch step (2026-09-13), before the ordinary click. Resolves `true` when the caller
+	 * should go on to that click at once (the offer was not taken, or the step could not run),
+	 * `false` when the entry was resolved here — the next game started, a game is on, or the
+	 * session's due break was taken instead.
+	 */
+	private async rematchStep(tabId: number, entry: Entry): Promise<boolean> {
+		const plan = entry.rematch;
+		const rematch = this.options.rematch;
+		const session = this.sessions.get(tabId);
+		this.clearPoll(entry);
+		if (!plan || !rematch) return true;
+		if (!rematch.allowed(tabId) || !rematchOffersLeft(session, plan.opponent)) {
+			delete entry.rematch;
+			return this.afterRematch(tabId, entry, session);
+		}
+		const controller = new AbortController();
+		entry.controller = controller;
+		plan.phase = "running";
+		entry.status = "rematch";
+		entry.dueAt = this.now() + REMATCH.acceptTimeoutMs;
+		this.changed();
+		let outcome: string;
+		try {
+			const result = await rematch.step.run(tabId, entry.gameId, controller.signal, {
+				onClicked: () => {
+					// The once-only mark, persisted at the press so a reload cannot re-offer.
+					if (session) markRematched(session, plan.opponent);
+					void this.changed();
+				},
+			});
+			outcome = result.outcome;
+		} catch (error) {
+			outcome = "not-ready";
+			if (!controller.signal.aborted) log.warn("auto-queue: rematch step failed", { tabId, error });
+		} finally {
+			delete entry.controller;
+		}
+		if (this.disposed || this.entries.get(tabId) !== entry) return false;
+		delete entry.rematch;
+		log.info("auto-queue: rematch step finished", { tabId, opponent: plan.opponent, outcome });
+		if (outcome === "in-game") {
+			this.clearPending(tabId);
+			void this.changed();
+			return false;
+		}
+		return this.afterRematch(tabId, entry, session);
+	}
+
+	/** No rematch game: a break that was due starts now; otherwise the ordinary click follows at once. */
+	private afterRematch(tabId: number, entry: Entry, session: PlayingSession | undefined): boolean {
+		if (session?.breakUntil === null || session?.breakUntil === undefined) return true;
+		entry.status = "break";
+		entry.dueAt = session.breakUntil;
+		this.arm(tabId, entry);
+		this.changed();
+		this.options.onBreak?.(tabId);
+		return false;
+	}
+
 	private async changed(): Promise<void> {
 		this.options.onChanged?.();
 		if (!this.options.persistence) return;
@@ -275,6 +440,7 @@ export class AutoQueue {
 					gameId: entry?.gameId ?? session?.gameId ?? null,
 					dueAt: entry?.dueAt ?? null,
 					...(session ? { session: { ...session } } : {}),
+					...(entry?.rematch?.phase === "pending" ? { rematch: entry.rematch.opponent } : {}),
 				};
 			}
 			try {

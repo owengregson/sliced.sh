@@ -6,11 +6,19 @@
 // the CDP backend dispatched, in order, nothing dropped and nothing invented. Between moves the
 // mirror parks on the last dispatched point, because that is where the pointer actually is.
 //
-// The gates are the other half: a disarmed hand owns no pointer, a switched-off assistant acts on
-// the page not at all, and `Settings.display.virtualCursor` off must post nothing whatsoever.
+// The hide contract (owner, 2026-09-13: "ensure the virtual cursor doesnt disappear between games")
+// is the other half. The arrow is where the pointer rests and it stays there — across a game
+// boundary, a navigation, a disarm, the debugger detaching — for as long as the assistant is on and
+// the session is alive. Exactly three things hide it: the switch going off (`Settings.enabled`, and
+// `Shift+X` on this tab), `Settings.display.virtualCursor` going off, and the tab going away. And
+// the next game's hand starts from the point the arrow is parked on, so the two never disagree.
 import { afterEach, describe, expect, it } from "bun:test";
+import type { PageBridge } from "@content/adapters/adapter";
+import { createVirtualCursor, type Point } from "@content/virtual-cursor";
 import { CDP } from "@core/constants/cdp";
+import { CURSOR_UNLOCK } from "@core/constants/cursor";
 import type { GamePortCommand } from "@core/constants/messages";
+import { TELEMETRY_BANDS } from "@core/constants/telemetry";
 import type { Rect } from "@core/motor/types";
 import { COMMAND_NAMES } from "@service/game-session/session";
 import { createGameHarness, type GameHarness } from "./harness";
@@ -48,10 +56,24 @@ const within = (p: [number, number, boolean] | undefined, r: Rect): boolean =>
 	p[1] >= r.top &&
 	p[1] <= r.top + r.height;
 
+const distance = (a: [number, number, boolean], b: [number, number, boolean]): number =>
+	Math.hypot(a[0] - b[0], a[1] - b[1]);
+
 /** Arm the hand and let it play the move it is given. */
 async function playOneMove(): Promise<void> {
 	await h.sw.run(() => h.session().command("armAutoMove"));
 	await h.arrive();
+	expect(await h.until(() => h.session().currentState() === "live:opponent-turn", 60_000)).toBe(
+		true
+	);
+	expect(h.site.board.lastMove()?.byMe).toBe(true);
+}
+
+/** The opponent replies and the hand plays our next move. */
+async function playNextMove(reply: string): Promise<void> {
+	const ply = h.session().view().ply;
+	await h.arrive(reply);
+	expect(await h.until(() => h.session().view().ply > ply, 10_000)).toBe(true);
 	expect(await h.until(() => h.session().currentState() === "live:opponent-turn", 60_000)).toBe(
 		true
 	);
@@ -93,13 +115,92 @@ describe("game session: the pointer mirror follows what the hand dispatched", ()
 		expect(within(sent[lastDown + 1], h.site.board.squareRect(last.to))).toBe(true);
 	});
 
-	it("hides the mirror when the hand is disarmed", async () => {
+	/**
+	 * The owner's 2026-09-13 request, end to end: the game ends, the debugger goes (it may detach
+	 * between games — the auto-queue and the panel both do that), a new game starts, and the arrow
+	 * was never hidden. And the two halves agree: the next game's first dispatched point continues
+	 * from the point the arrow is parked on — within one hand step (`TELEMETRY_BANDS.pointer`), the
+	 * same continuity the telemetry suite holds *inside* a game — because `HandOwnership.position`
+	 * survives the boundary and `MoveExecutor.arm` starts from it while the mirror is up.
+	 */
+	it("keeps the mirror parked across a game boundary, and the next hand starts where it is parked", async () => {
+		h = await createGameHarness({ settings: { automation: { autoMove: true } } });
+		await playOneMove();
+		const parked = positions().at(-1);
+		if (!parked) throw new Error("nothing was mirrored");
+		const before = positions().length;
+
+		await h.drive(() => h.site.endGame("1-0"));
+		expect(await h.until(() => h.session().currentState() === "game-over", 5_000)).toBe(true);
+		expect(hides()).toBe(0);
+		expect(mirror().at(-1)?.kind).toBe("cursorTo");
+		// the debugger detaching between games moves no pointer and hides nothing
+		await h.drive(() => h.sim.debugger.detachByUser(h.tabId));
+		expect(h.debuggerManager.isAttached(h.tabId)).toBe(false);
+		expect(hides()).toBe(0);
+		// a quiet stretch: still parked
+		await h.advance(5_000);
+		expect(hides()).toBe(0);
+		expect(positions().length).toBe(before);
+
+		// the next game: `automation.autoMove` re-arms (re-attaches) before its first position
+		await h.drive(() => h.site.startGame({ gameId: "second-game" }));
+		expect(await h.until(() => h.executor()?.isArmed() === true, 10_000)).toBe(true);
+		await playNextMove("e7e5");
+
+		expect(hides()).toBe(0);
+		const next = positions();
+		expect(next.length).toBeGreaterThan(before + 8);
+		// the whole stream is still exactly what was dispatched, game boundary included
+		expect(next).toEqual(dispatched());
+		// and the first point of the new game continues from the parked one
+		const first = next[before];
+		if (!first) throw new Error("the new game dispatched nothing");
+		expect(distance(first, parked)).toBeLessThanOrEqual(TELEMETRY_BANDS.pointer.maxStepPx);
+	});
+
+	/**
+	 * The disarm half of the same agreement. The arrow stays after a disarm, and a re-arm starts the
+	 * hand from it — not from a real pointer sample that arrived in between, which is what `arm()`
+	 * used to prefer. While the mirror is on the page the shield keeps the real pointer off it, so
+	 * the arrow *is* the pointer the owner sees; a hand that started anywhere else would teleport.
+	 */
+	it("after a disarm the arrow stays, and a re-arm starts from it rather than from a real sample", async () => {
+		h = await createGameHarness({ settings: { automation: { autoMove: true } } });
+		await playOneMove();
+		const parked = positions().at(-1);
+		if (!parked) throw new Error("nothing was mirrored");
+		const before = positions().length;
+
+		await h.sw.run(() => h.session().command("disarm"));
+		expect(h.executor()?.isArmed()).toBe(false);
+		expect(hides()).toBe(0);
+		expect(mirror().at(-1)?.kind).toBe("cursorTo");
+
+		// a fresh real pointer sample, far from the arrow, while the hand is not armed
+		const far: [number, number, boolean] = [parked[0] > 400 ? 5 : 1200, 5, false];
+		await h.drive(() =>
+			h.site.post({ kind: "cursor", x: far[0], y: far[1], t: h.sim.now(), real: true })
+		);
+		await h.sw.run(() => h.session().command("armAutoMove"));
+		expect(await h.until(() => h.executor()?.isArmed() === true, 10_000)).toBe(true);
+		await playNextMove("e7e5");
+
+		expect(hides()).toBe(0);
+		const first = positions()[before];
+		if (!first) throw new Error("the re-armed hand dispatched nothing");
+		expect(distance(first, parked)).toBeLessThanOrEqual(TELEMETRY_BANDS.pointer.maxStepPx);
+		expect(distance(first, far)).toBeGreaterThan(TELEMETRY_BANDS.pointer.maxStepPx);
+	});
+
+	it("keeps the mirror when the hand is disarmed", async () => {
 		h = await createGameHarness({ settings: { automation: { autoMove: true } } });
 		await playOneMove();
 		expect(mirror().at(-1)?.kind).toBe("cursorTo");
 
 		await h.sw.run(() => h.session().command("disarm"));
-		expect(mirror().at(-1)?.kind).toBe("cursorHide");
+		expect(hides()).toBe(0);
+		expect(mirror().at(-1)?.kind).toBe("cursorTo");
 	});
 
 	/**
@@ -110,8 +211,11 @@ describe("game session: the pointer mirror follows what the hand dispatched", ()
 	 * woken — is precisely the case that has to erase what a previous one left. Deduplication
 	 * belongs one layer down, in the relay, where the flag and the element share a lifetime
 	 * (`test/content/virtual-cursor.test.ts`, "hides only what it drew, and only once").
+	 *
+	 * 2026-09-13: and it is posted on the three hide reasons *only*. A disarm, a navigation and a
+	 * game ending post nothing — the arrow stays parked through all of them.
 	 */
-	it("posts a hide on every stop gesture even though this session drew nothing", async () => {
+	it("posts a hide on each of the three hide reasons — and on nothing else — even though this session drew nothing", async () => {
 		h = await createGameHarness();
 		expect(positions()).toEqual([]);
 		let n = hides();
@@ -120,15 +224,18 @@ describe("game session: the pointer mirror follows what the hand dispatched", ()
 			if (hides() <= n) throw new Error(`no cursorHide posted after ${label}`);
 			n = hides();
 		};
-		await stopped("disarm", () => h.sw.run(() => h.session().command("disarm")));
+		const kept = async (label: string, gesture: () => Promise<unknown>): Promise<void> => {
+			await gesture();
+			if (hides() !== n) throw new Error(`a cursorHide was posted after ${label}`);
+		};
+		await kept("disarm", () => h.sw.run(() => h.session().command("disarm")));
+		await kept("a navigation", () => h.drive(() => h.session().onTabEvent("navigated")));
+		// Above the `apply("gameEnded")` guard once, for the hide; now there is no hide to guard.
+		await kept("game over", () => h.drive(() => h.session().onGameEnded("1-0")));
 		await stopped("Shift+X", () => h.drive(() => h.session().command("disable")));
-		await stopped("a navigation", () => h.drive(() => h.session().onTabEvent("navigated")));
-		// Above the `apply("gameEnded")` guard, so it posts even from `idle` — which a navigation
-		// has just put this session in, making this the exact state the guard would have swallowed.
-		await stopped("game over", () => h.drive(() => h.session().onGameEnded("1-0")));
 		await stopped("the setting going off", () => h.patch({ display: { virtualCursor: false } }));
 		await stopped("the switch going off", () => h.patch({ enabled: false }));
-		expect(n).toBe(6);
+		expect(n).toBe(3);
 	});
 
 	it("a session that replaced an evicted one still erases the arrow the old one drew", async () => {
@@ -161,7 +268,7 @@ describe("game session: the pointer mirror follows what the hand dispatched", ()
 		expect(mirror().at(-1)?.kind).toBe("cursorHide");
 	});
 
-	it("disposing the session hides the mirror", async () => {
+	it("disposing the session (the tab going away) hides the mirror", async () => {
 		h = await createGameHarness({ settings: { automation: { autoMove: true } } });
 		await playOneMove();
 		expect(mirror().at(-1)?.kind).toBe("cursorTo");
@@ -170,19 +277,20 @@ describe("game session: the pointer mirror follows what the hand dispatched", ()
 	});
 
 	/**
-	 * The infobar's Cancel. §13.4 forbids re-attaching mid-game, and `MoveExecutor.isArmed()` is
-	 * `ownership.isArmed(tab) && debugger.isAttached(tab)` — so after a Cancel the hand owns no
-	 * pointer for the rest of the game and can never move again. An arrow left parked there is a
-	 * fossil, not a report of where the pointer is.
+	 * The infobar's Cancel. §13.4 forbids re-attaching mid-game, so after a Cancel the hand owns no
+	 * pointer for the rest of this game — but the pointer has not moved, and the next game re-arms
+	 * from where it rests (`attachExecutor`). 2026-09-13: the arrow stays; a detach is not one of
+	 * the three hide reasons.
 	 */
-	it("a user-cancelled debugger hides the mirror", async () => {
+	it("a user-cancelled debugger leaves the mirror parked", async () => {
 		h = await createGameHarness({ settings: { automation: { autoMove: true } } });
 		await playOneMove();
 		expect(mirror().at(-1)?.kind).toBe("cursorTo");
 		expect(h.debuggerManager.isAttached(h.tabId)).toBe(true);
 		await h.drive(() => h.sim.debugger.detachByUser(h.tabId));
 		expect(h.debuggerManager.isAttached(h.tabId)).toBe(false);
-		expect(mirror().at(-1)?.kind).toBe("cursorHide");
+		expect(hides()).toBe(0);
+		expect(mirror().at(-1)?.kind).toBe("cursorTo");
 	});
 
 	it("hides the mirror when the assistant is switched off (§4.4)", async () => {
@@ -219,19 +327,144 @@ describe("game session: the pointer mirror follows what the hand dispatched", ()
 		expect(mirror()).toEqual([]);
 	});
 
-	it("hides the mirror when the game ends", async () => {
+	it("keeps the mirror when the game ends", async () => {
 		h = await createGameHarness({ settings: { automation: { autoMove: true } } });
 		await playOneMove();
 		expect(mirror().at(-1)?.kind).toBe("cursorTo");
 		await h.drive(() => h.session().onGameEnded("1-0"));
-		expect(mirror().at(-1)?.kind).toBe("cursorHide");
+		expect(hides()).toBe(0);
+		expect(mirror().at(-1)?.kind).toBe("cursorTo");
 	});
 
-	it("hides the mirror when the tab navigates away", async () => {
+	it("keeps the mirror when the tab navigates (the route changes between every two games)", async () => {
 		h = await createGameHarness({ settings: { automation: { autoMove: true } } });
 		await playOneMove();
 		expect(mirror().at(-1)?.kind).toBe("cursorTo");
 		await h.drive(() => h.session().onTabEvent("navigated"));
+		expect(hides()).toBe(0);
+		expect(mirror().at(-1)?.kind).toBe("cursorTo");
+	});
+
+	it("hides the mirror when the tab is removed", async () => {
+		h = await createGameHarness({ settings: { automation: { autoMove: true } } });
+		await playOneMove();
+		expect(mirror().at(-1)?.kind).toBe("cursorTo");
+		await h.drive(() => h.session().onTabEvent("tabRemoved"));
 		expect(mirror().at(-1)?.kind).toBe("cursorHide");
+	});
+});
+
+/**
+ * The simulated site runs the tracker and the keybinds but not the relay, so the page side here is
+ * the real `createVirtualCursor` fed from the harness's command hook, drawing into a recording
+ * bridge and running on the simulator's clock. What it draws is what the page would see.
+ */
+interface RecordingBridge extends PageBridge {
+	sent: Array<{ kind: string; payload: unknown }>;
+}
+function recordingBridge(): RecordingBridge {
+	const sent: RecordingBridge["sent"] = [];
+	return {
+		sent,
+		isAvailable: () => true,
+		call: <T>() => Promise.resolve(true as T),
+		on: () => () => {},
+		notify: (kind, payload) => {
+			sent.push({ kind, payload });
+		},
+	};
+}
+const drawnPoints = (bridge: RecordingBridge): Point[] =>
+	bridge.sent
+		.filter((s) => s.kind === "cursorTo")
+		.map((s) => {
+			const p = s.payload as { x: number; y: number };
+			return { x: p.x, y: p.y };
+		});
+const GLIDE_STEPS = Math.ceil(CURSOR_UNLOCK.glideMs / CURSOR_UNLOCK.stepMs);
+
+/**
+ * The owner's 2026-09-13 requests, end to end. Locked → unlocked is a *motion*: the worker's
+ * `cursorHide` reaches the page as a glide of the arrow to the real mouse — drawing only, no CDP
+ * dispatch — and the element goes only when it gets there. And a tab that is not on a game page is
+ * never handed the pointer: the worker announces no ownership to it, and the content gate (held in
+ * `test/content/index.test.ts`) would refuse one anyway.
+ */
+describe("game session: the unlock glide and the page-kind gate (2026-09-13)", () => {
+	it("an unlock glides the arrow from its parked point to the real mouse before the hide", async () => {
+		const bridge = recordingBridge();
+		let real: Point | null = null;
+		const relay = createVirtualCursor(bridge, { realPosition: () => real });
+		h = await createGameHarness({
+			settings: { automation: { autoMove: true } },
+			onCommand: (cmd) => void relay.apply(cmd),
+		});
+		await playOneMove();
+		const parked = positions().at(-1);
+		if (!parked) throw new Error("nothing was mirrored");
+		// the relay drew exactly the dispatched stream
+		expect(drawnPoints(bridge)).toEqual(positions().map(([x, y]) => ({ x, y })));
+		expect(relay.shown()).toBe(true);
+		const drawnBefore = drawnPoints(bridge).length;
+		const dispatchedBefore = dispatched().length;
+
+		// the owner's real mouse is far from the arrow (under the shield, it moved freely)
+		real = { x: parked[0] > 400 ? 5 : 1200, y: 5 };
+		// the switch goes off: one of the three hide reasons
+		await h.patch({ enabled: false });
+		expect(hides()).toBe(1);
+		// the page has not erased anything yet: the arrow is on its way to the mouse
+		expect(relay.shown()).toBe(true);
+		expect(relay.gliding()).toBe(true);
+		expect(bridge.sent.some((s) => s.kind === "cursorHide")).toBe(false);
+
+		expect(await h.until(() => !relay.shown(), CURSOR_UNLOCK.glideMs * 4, CURSOR_UNLOCK.stepMs)).toBe(
+			true
+		);
+		const glide = drawnPoints(bridge).slice(drawnBefore);
+		expect(glide).toHaveLength(GLIDE_STEPS);
+		expect(glide[0]).not.toEqual({ x: parked[0], y: parked[1] });
+		expect(glide.at(-1)).toEqual(real);
+		// every glide point lies between the parked point and the mouse, in order
+		for (let i = 1; i < glide.length; i += 1) {
+			const a = glide[i - 1];
+			const b = glide[i];
+			if (!a || !b) throw new Error("missing point");
+			expect(Math.hypot(real.x - b.x, real.y - b.y)).toBeLessThanOrEqual(
+				Math.hypot(real.x - a.x, real.y - a.y)
+			);
+		}
+		// then, and only then, the element goes
+		expect(bridge.sent.at(-1)?.kind).toBe("cursorHide");
+		expect(bridge.sent.filter((s) => s.kind === "cursorHide")).toHaveLength(1);
+		// drawing only: the glide dispatched no input and the worker sent no further point
+		expect(dispatched()).toHaveLength(dispatchedBefore);
+		expect(positions()).toHaveLength(drawnBefore);
+		relay.dispose();
+	});
+
+	it("a tab that is not on a game page is never handed the pointer", async () => {
+		h = await createGameHarness({ settings: { automation: { autoMove: true } } });
+		await playOneMove();
+		const owned = (): boolean | undefined =>
+			h
+				.commands()
+				.filter(
+					(c): c is Extract<GamePortCommand, { kind: "inputOwnership" }> => c.kind === "inputOwnership"
+				)
+				.at(-1)?.owned;
+		expect(owned()).toBe(true);
+
+		// the tab moves to the analysis board (SPA navigation: the content script re-sends hello)
+		await h.drive(() => h.site.hello("analysis"));
+		expect(owned()).toBe(false);
+		// re-arming on that page announces nothing
+		await h.sw.run(() => h.session().command("disarm"));
+		await h.sw.run(() => h.session().command("armAutoMove"));
+		expect(await h.until(() => h.executor()?.isArmed() === true, 10_000)).toBe(true);
+		expect(owned()).toBe(false);
+		// and the tab coming back to a game page gets the standing arm announced again
+		await h.drive(() => h.site.hello("live-game"));
+		expect(owned()).toBe(true);
 	});
 });

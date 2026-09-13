@@ -116,9 +116,12 @@ describe("telemetry: pointer continuity (Step 2e)", () => {
 		game = await runSimulatedGame({
 			seed: "panel-click",
 			moves: 2,
-			duringMove: async ({ index, site, sim }) => {
+			duringMove: async ({ index, site, sim, plan }) => {
 				if (index !== 1) return;
-				await sim.time.advance(250);
+				// Before the hand can have touched a piece: a book move at this rating is planned fast
+				// (`TIMING_CONSTANTS.bookSpeed`), and a click that lands mid-grab is answered by the
+				// release the veto owes the page — a different scenario from this one.
+				await sim.time.advance(Math.min(250, plan.thinkMs * 0.2));
 				site.panelClick();
 			},
 		});

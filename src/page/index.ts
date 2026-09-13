@@ -24,6 +24,8 @@
  */
 
 import { SELECTORS } from "@content/adapters/selectors";
+import { BOARD_EFFECT_STYLES } from "@core/constants/board-effects";
+import { MOVE_QUALITY_ICONS } from "@core/constants/move-quality";
 import { SPOOF_PURPOSES } from "@core/constants/spoof";
 import { TIMINGS } from "@core/constants/timings";
 import { deriveToken } from "@core/spoof";
@@ -31,6 +33,7 @@ import { TOKENS } from "@design/tokens.generated";
 import type { AnyPageProgram, EntryEnv } from "@pagescript";
 import { chesscomBridge } from "./chesscom-bridge";
 import { cursorProbe } from "./cursor-probe";
+import { effectsOverlay } from "./effects-overlay";
 import { focusProbe } from "./focus-probe";
 import { highlightOverlay } from "./highlight-overlay";
 import { verifyMoveProbe } from "./verify-move-probe";
@@ -44,18 +47,36 @@ export const OVERLAY_COLORS = {
 	edge: TOKENS.color.dark.canvas,
 } as const;
 
+/**
+ * The board-effect palette (owner, 2026-09-13: "blue for your attacks and reddish for their
+ * attacks", then "make sure the enemy castle/discover lines are also red like the take lines — and
+ * ours are blue"): one opaque `effect.*-strong` token per side, every kind alike — the soft a64
+ * steps read as a washed-out grey beside the capture and are no longer bound. `edge` tints the
+ * arrow's shadow, as `OVERLAY_COLORS.edge` does for the recommendation mark. From `TOKENS` like
+ * every other colour that reaches the page (C1/C4) — the board effects are not overridden by the
+ * light theme, because they are painted on the host page, so one palette is the whole story. The
+ * quality chip keeps its own per-category colours (`MOVE_QUALITY_ICONS`).
+ */
+export const EFFECT_COLORS = {
+	mine: TOKENS.color.dark.effectMine,
+	theirs: TOKENS.color.dark.effectTheirs,
+	edge: TOKENS.color.dark.canvas,
+} as const;
+
 /** The two seed-derived direction tokens plus the inserted elements' classes (§13.3 rules 3, 5). */
 export function bridgeTokens(env: EntryEnv): {
 	token: string;
 	peer: string;
 	overlayClass: string;
 	cursorClass: string;
+	effectsClass: string;
 } {
 	return {
 		token: deriveToken(env.seed, SPOOF_PURPOSES.pageToken),
 		peer: deriveToken(env.seed, SPOOF_PURPOSES.contentToken),
 		overlayClass: deriveToken(env.seed, SPOOF_PURPOSES.overlayClass),
 		cursorClass: deriveToken(env.seed, SPOOF_PURPOSES.cursorClass),
+		effectsClass: deriveToken(env.seed, SPOOF_PURPOSES.effectsClass),
 	};
 }
 
@@ -68,11 +89,15 @@ export const chesscomEntryArgs = (env: EntryEnv) => ({
 	retryMaxMs: TIMINGS.bridgeRetryMaxMs,
 	cursorFadeMs: TIMINGS.virtualCursorFadeMs,
 	cursorAccent: TOKENS.color.dark.brand,
+	effectPalette: EFFECT_COLORS,
+	effectStyles: BOARD_EFFECT_STYLES,
+	qualityIcons: MOVE_QUALITY_ICONS,
 });
 
 export const programs: readonly AnyPageProgram[] = [
 	{ ...chesscomBridge, entryArgs: chesscomEntryArgs },
 	highlightOverlay,
+	effectsOverlay,
 	virtualCursor,
 	cursorProbe,
 	focusProbe,

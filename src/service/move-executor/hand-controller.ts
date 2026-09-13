@@ -3,9 +3,9 @@
  * `rest → orientation → [scan hovers …] → [preview-select …] → decision pause
  * → approach(from) → press → grabWobble → travel(to) → [hesitate] → settle →
  * release → [promotion: look-delay → approach(picker) → click] → post-drop rest`.
- * A committed move is always a drag; click-to-move was removed end to end after
- * the owner's live game (preview selections, §9.3a, still click — a preview is
- * not a move).
+ * A committed move is a drag, or — `Settings.execution.inputMode`, the owner's 2026-09-11
+ * reversal of the drag-only ruling — a click-click (`clickClick`): click the piece, carry the
+ * pointer over with the button up, click the square. Premoves and holds are drags regardless.
  *
  * Everything runs on one absolute schedule anchored at `t0`: the exploration
  * planner fills the pre-touch window (`plan.window` phases when the timing
@@ -33,12 +33,14 @@
  * There is no tab-activation pre-flight of any kind.
  */
 
-import { fileOf, rankOf } from "@core/chess/squares";
-import { EXECUTOR } from "@core/constants/cdp";
+import { ALL_SQUARES, fileOf, rankOf } from "@core/chess/squares";
+import { CDP, EXECUTOR } from "@core/constants/cdp";
+import { SCRAMBLE_HOLD } from "@core/constants/hold";
 import type { BoardGeometryReply } from "@core/constants/messages";
 import { log } from "@core/logger";
 import {
 	CLICK,
+	CLICK_MOVE,
 	EXPLORATION,
 	FAST_TOUCH,
 	PATH,
@@ -58,13 +60,15 @@ import type {
 	ExecutionResult,
 	HandAction,
 	HandState,
+	HoldDirective,
+	LinePreviewPlan,
 	MotorProfile,
 	Occupancy,
 	PathPoint,
 	Pt,
 	Rect,
 } from "@core/motor/types";
-import type { Rng } from "@core/rng";
+import { createRng, type Rng } from "@core/rng";
 import { errorMessage } from "@core/util/errors";
 import {
 	AbortedError,
@@ -212,6 +216,16 @@ class BoardMovedError extends Error {
 	}
 }
 
+/**
+ * Thrown when a scramble hold was given up: the piece has already been carried back to its origin
+ * square and released there, so nothing was submitted.
+ */
+class HoldAbandonedError extends Error {
+	constructor() {
+		super(EXECUTOR.reasons.holdAbandoned);
+	}
+}
+
 interface Phase {
 	phase: string;
 	startMs: number;
@@ -300,9 +314,17 @@ export class HandController {
 	private pressedAny = false;
 	/** Squares pressed in this execution besides the committed from-square (§13.2). */
 	private previewed: Square[] = [];
+	/** Right-button drags (line-preview arrows) dispatched in this execution — never a §13.2 press. */
+	private annotations = 0;
 	/** Clock time of the drop (second click / release); `null` until then. */
 	private dropAt: number | null = null;
 	private submittedAt: number | null = null;
+	/**
+	 * A scramble hold: when the hold was told to let go. The result's `startedAt` / `elapsedMs` are
+	 * measured from here rather than from the run's start — the page measures its own hold time from
+	 * the position's arrival, and that is the moment the release was decided on.
+	 */
+	private holdReleasedAt: number | null = null;
 
 	constructor(deps: HandControllerDeps) {
 		this.backend = deps.backend;
@@ -341,7 +363,7 @@ export class HandController {
 			this.gate();
 			guard();
 			for (const action of actions) {
-				this.setState(action.kind === "rest" ? "rest" : "exploring");
+				this.setState(action.kind === "rest" || action.kind === "drift" ? "rest" : "exploring");
 				if (action.path) await this.travel(action.path, guard);
 				await this.pause(action.dwellMs, guard);
 			}
@@ -371,8 +393,10 @@ export class HandController {
 		this.pressedAny = false;
 		this.dropAt = null;
 		this.submittedAt = null;
+		this.holdReleasedAt = null;
 		const startedPx = this.backend.travelledPx?.() ?? 0;
 		this.previewed = [];
+		this.annotations = 0;
 		const base = (): Pick<
 			ExecutionResult,
 			| "tier"
@@ -386,12 +410,14 @@ export class HandController {
 			| "pointerOffsetPx"
 			| "previewedSquares"
 			| "pressedAny"
+			| "annotations"
 		> => ({
-			tier: EXECUTOR.committedTier,
+			tier: plan.style ?? EXECUTOR.committedTier,
 			endPoint: this.backend.position(),
-			elapsedMs: (this.dropAt ?? this.now()) - t0,
-			startedAt: t0,
+			elapsedMs: (this.dropAt ?? this.now()) - (this.holdReleasedAt ?? t0),
+			startedAt: this.holdReleasedAt ?? t0,
 			...(this.submittedAt === null ? {} : { submittedAt: this.submittedAt }),
+			...(this.annotations > 0 ? { annotations: this.annotations } : {}),
 			timeline: tl.entries,
 			pressed: this.pressedCommitted,
 			pressedAny: this.pressedAny,
@@ -439,6 +465,17 @@ export class HandController {
 					...base(),
 				};
 			}
+			if (error instanceof HoldAbandonedError) {
+				// The piece is back on its square: the abandon leg released it there before throwing.
+				log.info("hand: the scramble hold was given up; the piece went back", { tabId: plan.tabId });
+				return {
+					ok: false,
+					outcome: "aborted",
+					reason: EXECUTOR.reasons.holdAbandoned,
+					attempts,
+					...base(),
+				};
+			}
 			if (isAbortedError(error) || signal.aborted) {
 				return {
 					ok: false,
@@ -476,10 +513,17 @@ export class HandController {
 		let readAt = plan.geometry?.readAt ?? this.now();
 		const preTouchMs = preTouchMsOf(timing);
 
+		// A line preview (`LINE_PREVIEW`) is drawn inside the decision phase, so its reserve comes
+		// off the exploration budget: a previewed move hovers less and annotates instead. Only on the
+		// plan it was decided for — an instant retry or an urgent plan never draws.
+		const linePreview =
+			plan.linePreview && !fastTouch(timing) && timing.mode !== "instant" ? plan.linePreview : null;
+		const exploreMs = Math.max(0, preTouchMs - (linePreview?.reserveMs ?? 0));
+
 		// Exploration inside the pre-touch window (§9.3 / §9.3a); the trailing decision
 		// pause is executed by the controller itself so it can absorb the touch budget.
-		const actions = fastTouch(timing) ? [] : this.planExploration(plan, timing, preTouchMs, reply);
-		const tail = actions[actions.length - 1]?.kind === "rest" ? actions.pop() : undefined;
+		const actions = fastTouch(timing) ? [] : this.planExploration(plan, timing, exploreMs, reply);
+		let tail = actions[actions.length - 1]?.kind === "rest" ? actions.pop() : undefined;
 		// The coordinate space the exploration was planned in: a preview **presses** a real square,
 		// so its legs need the same reflow guard the committed touch has (below).
 		const explored = reply !== null ? { board: reply.boardRect, flipped: reply.flipped } : null;
@@ -504,6 +548,21 @@ export class HandController {
 		}
 		this.guardPosition(plan, reply);
 		let rects = this.resolveRects(plan, reply);
+		if (linePreview && reply !== null) {
+			// The arrows go out before the touch is planned, bounded by where the approach must start
+			// (the approach is fitted into `window.approachMs`, so that is the provisional start), so
+			// the touch is planned from wherever the last arrow left the hand.
+			const moved = await this.previewLine(
+				plan,
+				linePreview,
+				reply,
+				m,
+				tl,
+				t0 + timing.thinkMs - timing.window.approachMs - linePreview.restBeforeApproachMs
+			);
+			// The planned rest was a path from the exploration's end point; the hand is elsewhere now.
+			if (moved) tail = undefined;
+		}
 		let touch = this.planTouch(plan, timing, rects, this.backend.position());
 		const approachStartAt = Math.max(
 			this.now(),
@@ -551,10 +610,11 @@ export class HandController {
 			touch.approach,
 			guardOf(planned, (r) => this.guardBoard(r))
 		);
-		await this.drag(touch, rects, m, tl, plan, planned);
+		if (plan.style === "click") await this.clickClick(touch, rects, reply, m, tl, plan, planned);
+		else await this.drag(touch, rects, m, tl, plan, planned);
 
 		if (plan.promotion) await this.promote(plan, timing, plan.promotion, m, tl);
-		if (!fastTouch(timing)) await this.postDropRest(m, tl);
+		if (!fastTouch(timing)) await this.postDropRest(plan, reply, m, tl);
 	}
 
 	private planExploration(
@@ -728,9 +788,15 @@ export class HandController {
 				SAMPLING.release.innerFrac,
 				rng
 			);
-			const budget = Math.min(
-				FAST_TOUCH.maxBudgetMs,
-				timing.window.approachMs > 0 ? timing.window.approachMs : FAST_TOUCH.minBudgetMs
+			const available =
+				timing.window.approachMs > 0 ? timing.window.approachMs : FAST_TOUCH.minBudgetMs;
+			// Comfortable own clock: spend the sampled reply window on motion, rather than
+			// waiting before an identical 300 ms gesture. Our clock emergencies keep their cap.
+			const budget = Math.max(
+				FAST_TOUCH.gestureFloorMs,
+				(timing.features.opponentOnlyRace ?? 0) > 0
+					? available
+					: Math.min(FAST_TOUCH.maxBudgetMs, available)
 			);
 			const approachDistance = Math.hypot(press.x - cursor.x, press.y - cursor.y);
 			const dragDistance = Math.hypot(drop.x - press.x, drop.y - press.y);
@@ -841,6 +907,28 @@ export class HandController {
 			// The last look before the move is submitted: a reflow between the settle and the release
 			// is the one that would drop the piece on the wrong square with nothing else noticing.
 			guard?.();
+			if (plan.hold) {
+				// The scramble hold: the piece stays over its destination, button down, until the
+				// opponent's move decides its fate. No focus gate and no abort inside the wait itself —
+				// both are answered by *abandon*, which carries the piece home before anything else can
+				// release it where it is (`recover()` would, and that is the drop this exists to avoid).
+				tl.begin("hold");
+				this.setState("holding");
+				const decision = await this.holdUntil(plan.hold);
+				if (decision === "abandon") {
+					await this.returnToOrigin(plan, planned, m, tl);
+					throw new HoldAbandonedError();
+				}
+				this.holdReleasedAt = this.now();
+				tl.begin("drop");
+				this.setState("dropping");
+				// Seeing their move and letting go are two events, even for a hand already holding the
+				// piece over its square. Ungated and unsignalled like the abandon leg: a cancel landing
+				// in this pause must not release the piece where it is through `recover()`.
+				const [reactMin, reactMax] = SCRAMBLE_HOLD.releaseReactionMs;
+				const skew = this.rng.next() ** 2;
+				await sleep(reactMin + (reactMax - reactMin) * skew, this.scheduler);
+			}
 		} catch (error) {
 			if (error instanceof BoardMovedError) {
 				await this.releaseOnOrigin(plan, error.live, planned?.flipped ?? false, m, tl);
@@ -850,6 +938,191 @@ export class HandController {
 		await this.release(this.backend.position());
 		this.dropAt = this.now();
 		this.submittedAt = this.dropAt;
+	}
+
+	/** The hold's wait: the directive's decision, or `abandon` the moment the run is cancelled. */
+	private holdUntil(hold: HoldDirective): Promise<"release" | "abandon"> {
+		const signal = this.signal;
+		if (!signal) return hold.decide();
+		if (signal.aborted) return Promise.resolve("abandon");
+		return new Promise((resolve) => {
+			const onAbort = (): void => resolve("abandon");
+			signal.addEventListener("abort", onAbort, { once: true });
+			hold.decide().then(
+				(decision) => {
+					signal.removeEventListener("abort", onAbort);
+					resolve(decision);
+				},
+				() => {
+					signal.removeEventListener("abort", onAbort);
+					resolve("abandon");
+				}
+			);
+		});
+	}
+
+	/**
+	 * The abandon leg of a scramble hold: carry the held piece back to its origin square in the
+	 * geometry the page has now and let go there. Same primitive as the reflow escape — ungated,
+	 * unsignalled, a generated path — for the same reason: the button is down and this must finish.
+	 */
+	private async returnToOrigin(
+		plan: ExecutionPlan,
+		planned: PlannedGeometry | null,
+		m: MotorProfile,
+		tl: Timeline
+	): Promise<void> {
+		if (planned) {
+			const live = boardShift(this.board, this.tabId, planned.board) ?? planned.board;
+			await this.releaseOnSquare(
+				plan.from.square,
+				plan.from.rect,
+				live,
+				{ board: live, flipped: planned.flipped },
+				m,
+				tl,
+				EXECUTOR.timelineNotes.holdAbandoned
+			);
+			return;
+		}
+		tl.note(EXECUTOR.timelineNotes.holdAbandoned);
+		tl.begin("correct");
+		this.setState("correcting");
+		const target = { x: plan.from.x, y: plan.from.y };
+		const path = generatePath(this.backend.position(), target, plan.from.rect, m, this.rng);
+		await this.escapeTravel(path);
+		await this.release(lastPoint(path, target));
+	}
+
+	/**
+	 * Click-to-move (`Settings.execution.inputMode`): click the piece, let go, carry the pointer over
+	 * with the button up, click the square. The first click is the committed press — it selects the
+	 * piece on the site — and the second is what submits, so between the two a selection is
+	 * *standing*, which §13.7 item 3 forbids leaving behind: any exit from that stretch (a veto, an
+	 * abort, a reflow) first clicks an idle square to clear it, ungated and unsignalled like the drag's
+	 * escape release, and only then unwinds. The same touch plan as the drag (approach, press point,
+	 * travel, drop point, hesitation, settle) so the timing model's window fits it unchanged.
+	 */
+	private async clickClick(
+		t: DragTouch,
+		rects: Rects,
+		reply: BoardGeometryReply | null,
+		m: MotorProfile,
+		tl: Timeline,
+		plan: ExecutionPlan,
+		planned: PlannedGeometry | null
+	): Promise<void> {
+		const guard = guardOf(planned, (r) => this.guardBoard(r));
+		tl.begin("grab");
+		this.setState("grabbing");
+		await this.pause(t.preGrabMs, guard);
+		await this.press(t.pressAt, true, guard);
+		await this.pause(sampleRange(m.pressHoldMs, this.rng));
+		await this.release(clickReleasePoint(t.pressAt, this.rng));
+		try {
+			await this.pause(sampleRange(CLICK_MOVE.interClickGapMs, this.rng), guard);
+			tl.begin("drag");
+			this.setState("dragging");
+			await this.travel(t.travel, guard);
+			if (t.hesitate.length > 0) await this.travel(t.hesitate, guard);
+			tl.begin("drop");
+			this.setState("dropping");
+			await this.pause(t.settleMs, guard);
+			if (!inRect(this.backend.position(), rects.to, PATH.targetPadPx)) {
+				tl.begin("correct");
+				this.setState("correcting");
+				await this.travel(generatePath(this.backend.position(), t.drop, rects.to, m, this.rng), guard);
+				tl.begin("drop");
+				this.setState("dropping");
+			}
+			guard?.();
+			await this.pause(sampleRange(CLICK.prePressPauseMs, this.rng), guard);
+		} catch (error) {
+			await this.clearSelection(plan, reply, m, tl);
+			throw error;
+		}
+		// The submitting click: from here the move is the site's, exactly as a drag's release is.
+		const at = this.backend.position();
+		await this.press(at, false);
+		this.dropAt = this.now();
+		this.submittedAt = this.dropAt;
+		await sleep(sampleRange(m.pressHoldMs, this.rng), this.scheduler);
+		await this.release(clickReleasePoint(at, this.rng));
+	}
+
+	/**
+	 * A click-click that could not reach its second click has left the piece selected on the site.
+	 * Click an idle square — empty, and not a legal destination of the selected piece, so the click
+	 * can submit nothing (the §9.3a preview's own deselect) — in the geometry the page has now.
+	 * Without occupancy to choose by, the origin square itself is clicked, which the site reads as
+	 * toggling the selection off.
+	 */
+	private async clearSelection(
+		plan: ExecutionPlan,
+		reply: BoardGeometryReply | null,
+		m: MotorProfile,
+		tl: Timeline
+	): Promise<void> {
+		tl.note(EXECUTOR.timelineNotes.selectionCleared);
+		tl.begin("correct");
+		this.setState("correcting");
+		let live = reply;
+		try {
+			live = (await this.readGeometry(plan.tabId)) ?? reply;
+		} catch {
+			// The geometry read failing is no reason to leave the selection standing.
+		}
+		const geo = live ? boardGeometryOf(live) : null;
+		const occupancy = live?.occupancy;
+		const legal = new Set(plan.exploration?.legalDestinations(plan.from.square) ?? []);
+		let square: Square = plan.from.square;
+		if (occupancy && geo) {
+			const idle = ALL_SQUARES.filter(
+				(sq) => occupancy[sq] === "empty" && !legal.has(sq) && sq !== plan.to.square
+			);
+			const pick = idle[this.rng.int(0, Math.max(0, idle.length - 1))];
+			if (pick !== undefined) square = pick;
+		}
+		const rect = geo ? geo.squareRect(square) : plan.from.rect;
+		const target = samplePointInRect(
+			rect,
+			SAMPLING.press.sigmaFrac,
+			SAMPLING.press.innerFrac,
+			this.rng
+		);
+		const path = generatePath(this.backend.position(), target, rect, m, this.rng);
+		await this.escapeTravel(path);
+		const at = lastPoint(path, target);
+		log.info("hand: clearing the standing selection after an interrupted click-click", {
+			tabId: this.tabId,
+			square,
+		});
+		await this.backend.press(at, this.now());
+		this.pressedAny = true;
+		await sleep(sampleRange(m.pressHoldMs, this.rng), this.scheduler);
+		await this.release(clickReleasePoint(at, this.rng));
+	}
+
+	/**
+	 * The square of a random piece — ours or theirs, never the one just moved — weighted toward the
+	 * centre (`EXECUTOR.postDropCentreBias`), in the geometry the page reported. `null` without
+	 * occupancy or with no other piece on the board.
+	 */
+	private restPiece(reply: BoardGeometryReply, avoid: Square): Rect | null {
+		const occupancy = reply.occupancy;
+		if (!occupancy) return null;
+		const squares: Square[] = [];
+		const weights: number[] = [];
+		for (const sq of ALL_SQUARES) {
+			const occ = occupancy[sq];
+			if (sq === avoid || (occ !== "own" && occ !== "enemy")) continue;
+			// Chebyshev distance from the board's centre: 0.5 for the four middle squares, 3.5 at the rim.
+			const fromCentre = Math.max(Math.abs(fileOf(sq) - 3.5), Math.abs(rankOf(sq) - 3.5));
+			squares.push(sq);
+			weights.push((4 - fromCentre) ** EXECUTOR.postDropCentreBias);
+		}
+		if (squares.length === 0) return null;
+		return boardGeometryOf(reply).squareRect(this.rng.weighted(squares, weights));
 	}
 
 	/**
@@ -899,9 +1172,10 @@ export class HandController {
 		live: Rect,
 		planned: PlannedGeometry | null,
 		m: MotorProfile,
-		tl: Timeline
+		tl: Timeline,
+		note: string = EXECUTOR.timelineNotes.boardMoved
 	): Promise<void> {
-		tl.note(EXECUTOR.timelineNotes.boardMoved);
+		tl.note(note);
 		tl.begin("correct");
 		this.setState("correcting");
 		const origin = boardGeometryOf({
@@ -980,13 +1254,33 @@ export class HandController {
 	}
 
 	/**
-	 * Post-drop rest (§9.4): slow idle drift on the dropped piece. The move is
-	 * complete by now, so a gate veto or an abort here merely ends the drift.
+	 * Post-drop rest (§9.4, owner 2026-09-11): a moment on the dropped piece, then a quick decision.
+	 * Either the hand goes straight to pondering — the execution ends and the opponent-turn
+	 * exploration takes over — or it first walks to a random piece, either colour, drawn toward the
+	 * centre of the board, and rests there briefly. The move is complete by now, so a gate veto or an
+	 * abort here merely ends the walk where it is. Without occupancy there is no piece to rest on and
+	 * the decision is "ponder".
 	 */
-	private async postDropRest(m: MotorProfile, tl: Timeline): Promise<void> {
+	private async postDropRest(
+		plan: ExecutionPlan,
+		reply: BoardGeometryReply | null,
+		m: MotorProfile,
+		tl: Timeline
+	): Promise<void> {
 		tl.begin("rest");
 		this.setState("rest");
 		try {
+			await this.pause(sampleRange(EXECUTOR.postDropLingerMs, this.rng));
+			if (!this.rng.chance(EXECUTOR.postDropRestProb)) return;
+			const rest = reply ? this.restPiece(reply, plan.to.square) : null;
+			if (!rest) return;
+			const target = samplePointInRect(
+				rest,
+				SAMPLING.press.sigmaFrac,
+				SAMPLING.press.innerFrac,
+				this.rng
+			);
+			await this.travel(generatePath(this.backend.position(), target, rest, m, this.rng));
 			const restMs = sampleRange(EXECUTOR.postDropRestMs, this.rng);
 			const untilAt = this.now() + restMs;
 			const drift = idleTremor(this.backend.position(), restMs, m, this.rng);
@@ -1096,8 +1390,133 @@ export class HandController {
 		if (!verdict.ok) throw new SkipError(verdict.reason);
 	}
 
+	/**
+	 * The line preview (`LINE_PREVIEW`, `src/core/motor/line-preview.ts`): for each ply of the
+	 * planned line, travel to the from-square, press the **right** button, drag to the to-square on
+	 * the same humanised path a left drag uses, release, pause; chess.com draws an arrow per drag
+	 * and clears them all on the move's own left press. Every travel and pause is gated and guarded
+	 * exactly like the rest of the execution. `untilAt` bounds the gesture: an arrow whose estimate
+	 * would run past it is not started, so the approach starts on time whatever the paths came to.
+	 *
+	 * Nothing here can move a piece, so the exits are gentle: a reflow (`BoardMovedError`) or the
+	 * time bound simply ends the preview and the move proceeds (the touch is planned afterwards,
+	 * from fresh geometry when the board moved); a focus veto or a cancel releases the right button
+	 * where the pointer is — an arrow to nowhere is harmless — and unwinds the execution as it
+	 * would anywhere else. The right button is released in a `finally`, so it is never left held.
+	 *
+	 * Returns whether the hand moved at all (the planned rest path is stale if it did).
+	 */
+	private async previewLine(
+		plan: ExecutionPlan,
+		preview: LinePreviewPlan,
+		reply: BoardGeometryReply,
+		m: MotorProfile,
+		tl: Timeline,
+		untilAt: number
+	): Promise<boolean> {
+		const rng = createRng(preview.seed);
+		const geo = boardGeometryOf(reply);
+		const planned: PlannedGeometry = { board: reply.boardRect, flipped: reply.flipped };
+		const guard = guardOf(planned, (r) => this.guardBoard(r));
+		let moved = false;
+		tl.begin(EXECUTOR.timelinePhases.linePreview);
+		this.setState("exploring");
+		try {
+			lines: for (const line of preview.lines) {
+				if (this.now() + line.estimateMs > untilAt) break;
+				if (line.beforeMs > 0) await this.pause(line.beforeMs, guard);
+				for (const arrow of line.arrows) {
+					if (this.now() + arrow.estimateMs > untilAt) break lines;
+					const fromRect = geo.squareRect(arrow.from);
+					const toRect = geo.squareRect(arrow.to);
+					const press = samplePointInRect(
+						fromRect,
+						SAMPLING.press.sigmaFrac,
+						SAMPLING.press.innerFrac,
+						rng
+					);
+					const approach = generatePath(this.backend.position(), press, fromRect, m, rng);
+					await this.travel(approach, guard);
+					moved = true;
+					await this.pause(arrow.prePressMs, guard);
+					const pressAt = lastPoint(approach, press);
+					await this.pressRight(pressAt, guard);
+					try {
+						await this.pause(arrow.pressToDragMs, guard);
+						const release = samplePointInRect(
+							toRect,
+							SAMPLING.release.sigmaFrac,
+							SAMPLING.release.innerFrac,
+							rng
+						);
+						await this.travel(generatePath(pressAt, release, toRect, m, rng), guard);
+						await this.pause(arrow.settleMs, guard);
+						guard?.();
+					} finally {
+						await this.releaseRight(this.backend.position());
+					}
+					this.annotations += 1;
+					tl.note(EXECUTOR.timelineNotes.arrow);
+					await this.pause(Math.min(arrow.afterMs, Math.max(0, untilAt - this.now())), guard);
+				}
+			}
+		} catch (error) {
+			if (!(error instanceof BoardMovedError)) throw error;
+			// The board moved under an arrow: the arrow (if any) is already released, nothing was
+			// submitted, and the touch is re-planned from the geometry the page has now.
+			log.debug("hand: the board moved during the line preview; the move proceeds", {
+				tabId: plan.tabId,
+				arrows: this.annotations,
+			});
+		} finally {
+			tl.begin("decision");
+		}
+		return moved;
+	}
+
+	/** A right-button press: a line-preview arrow's start. Gated like every press, never a §13.2 press. */
+	private async pressRight(p: Pt, guard?: () => void): Promise<void> {
+		throwIfAborted(this.signal ?? undefined);
+		this.gate();
+		await this.backend.press(
+			p,
+			this.now(),
+			this.signal ?? undefined,
+			() => {
+				this.gate();
+				guard?.();
+			},
+			"right"
+		);
+		this.ownership.setPosition(this.tabId, this.backend.position());
+	}
+
+	private async releaseRight(p: Pt): Promise<void> {
+		await this.backend.release(p, this.now(), "right");
+		this.ownership.setPosition(this.tabId, this.backend.position());
+	}
+
+	/** Every button the backend still holds (`CDP.mouse` bits). */
+	private heldButtons(): number {
+		const mask = this.backend.pressedButtons?.();
+		if (mask !== undefined) return mask;
+		return this.backend.pressed() ? CDP.mouse.leftButtons : CDP.mouse.noButtons;
+	}
+
 	/** Never leave a button held: an abort or skip mid-drag drops the piece where it is. */
 	private async recover(): Promise<void> {
+		const held = this.heldButtons();
+		if ((held & CDP.mouse.rightButtons) !== 0) {
+			// A line-preview arrow cut short: let go where the pointer is (an arrow to nowhere).
+			try {
+				await this.releaseRight(this.backend.position());
+			} catch (error) {
+				log.warn("hand: right-button release after abort failed", {
+					tabId: this.tabId,
+					error: errorMessage(error),
+				});
+			}
+		}
 		if (!this.backend.pressed()) return;
 		try {
 			await this.release(this.backend.position());

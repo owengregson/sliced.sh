@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { debuggerAttach, debuggerSend } from "@core/chrome/debugger";
 import { type BoardGeometryReply, CDP, EXECUTOR } from "@core/constants";
-import { MOTOR_DEFAULTS, PROMOTION_LOOK_DELAY_MS } from "@core/motor/constants";
+import { FAST_TOUCH, MOTOR_DEFAULTS, PROMOTION_LOOK_DELAY_MS } from "@core/motor/constants";
 import type {
 	ExecutionPlan,
 	HandState,
@@ -223,6 +223,84 @@ async function run(
 	return done;
 }
 
+describe("HandController post-drop decision", () => {
+	it("either goes straight to pondering or rests over another piece near the centre, never the moved one", async () => {
+		const pieces: BoardGeometryReply["occupancy"] = {
+			e2: "own",
+			d4: "enemy",
+			e5: "enemy",
+			c3: "own",
+			f6: "enemy",
+			a1: "own",
+			h8: "enemy",
+		};
+		let rested = 0;
+		let pondered = 0;
+		const restSquares: string[] = [];
+		for (let seed = 1; seed <= 16; seed++) {
+			sim.debugger.clearCommands();
+			boardReads = 0;
+			occupancyByRead = { 1: pieces, 2: pieces, 3: pieces, 4: pieces };
+			const ctrl = makeController(seed);
+			const plan = makePlan();
+			const result = await run(ctrl, plan, makeTiming());
+			expect(result.outcome).toBe("executed");
+			const cmds = commands();
+			const release = cmds.find((c) => c.type === "mouseReleased") as Cmd;
+			const after = cmds.slice(cmds.indexOf(release) + 1);
+			if (after.length === 0) {
+				pondered += 1;
+				continue;
+			}
+			rested += 1;
+			for (const c of after) expect(c).toMatchObject({ type: "mouseMoved", buttons: 0 });
+			const end = after.at(-1) as Cmd;
+			expect(inside(end, plan.to.rect)).toBe(false);
+			const over = Object.keys(pieces).find((sq) => inside(end, squareRect(sq as Square)));
+			expect(over).toBeDefined();
+			if (over) restSquares.push(over);
+			// reset the read counter for the next seed
+			boardReads = 0;
+		}
+		expect(rested).toBeGreaterThan(0);
+		expect(pondered).toBeGreaterThan(0);
+		// Drawn toward the centre: the rim pieces are the rare rest, the central ones the common one.
+		const central = restSquares.filter((sq) => ["d4", "e5", "c3", "f6"].includes(sq)).length;
+		expect(central).toBeGreaterThanOrEqual(restSquares.length - 1);
+	});
+});
+
+describe("HandController click-click (Settings.execution.inputMode)", () => {
+	it("clicks the piece, carries the pointer over with the button up, and clicks the square", async () => {
+		const ctrl = makeController(11);
+		const plan = makePlan({ style: "click" });
+		const timing = makeTiming();
+		const result = await run(ctrl, plan, timing);
+		expect(result.outcome).toBe("executed");
+		expect(result.tier).toBe("click");
+		const cmds = commands();
+		const presses = cmds.filter((c) => c.type === "mousePressed");
+		const releases = cmds.filter((c) => c.type === "mouseReleased");
+		expect(presses).toHaveLength(2);
+		expect(releases).toHaveLength(2);
+		expect(inside(presses[0] as Cmd, plan.from.rect)).toBe(true);
+		expect(inside(presses[1] as Cmd, plan.to.rect)).toBe(true);
+		// Each click releases where it pressed (a click, not a drag), and the carry between the
+		// two clicks travels with the button up.
+		for (const [i, press] of presses.entries()) {
+			const release = releases[i] as Cmd;
+			expect(Math.hypot(release.x - press.x, release.y - press.y)).toBeLessThanOrEqual(2);
+		}
+		const between = cmds.slice(cmds.indexOf(releases[0] as Cmd) + 1, cmds.indexOf(presses[1] as Cmd));
+		expect(between.length).toBeGreaterThan(3);
+		for (const c of between) expect(c).toMatchObject({ type: "mouseMoved", buttons: 0 });
+		// Whatever follows the second click is the post-drop rest: moves only, never a press.
+		for (const c of cmds.slice(cmds.indexOf(releases[1] as Cmd) + 1))
+			expect(c).toMatchObject({ type: "mouseMoved", buttons: 0 });
+		expect(result.pressed).toBe(true);
+	});
+});
+
 describe("HandController urgent gestures", () => {
 	it("waits for promotion geometry without adding a look delay or slow picker gesture", async () => {
 		const ctrl = makeController(7);
@@ -243,7 +321,10 @@ describe("HandController urgent gestures", () => {
 		const presses = commands().filter((c) => c.type === "mousePressed");
 		expect(presses).toHaveLength(2);
 		expect(inside(presses[1]!, promotionRect)).toBe(true);
-		expect(sim.now() - start).toBeLessThanOrEqual(150);
+		// The gesture floor plus the fast promotion click, and nothing else.
+		expect(sim.now() - start).toBeLessThanOrEqual(
+			FAST_TOUCH.gestureFloorMs + FAST_TOUCH.promotionTravelMs[1]
+		);
 	});
 	it.each([
 		{ budget: 20, mode: "normal" as const, features: { clockRace: 1 } },
@@ -281,14 +362,74 @@ describe("HandController urgent gestures", () => {
 			expect(cmds.filter((c) => c.type === "mouseReleased")).toHaveLength(1);
 			expect(inside(press!, plan.from.rect)).toBe(true);
 			expect(inside(release!, plan.to.rect)).toBe(true);
-			expect(release!.at).toBeGreaterThanOrEqual(budget - 1);
-			expect(sim.now() - start).toBeLessThanOrEqual(budget + 1);
+			// A budget under the gesture floor is stretched to it: the hand never acts faster than one.
+			const gesture = Math.max(budget, FAST_TOUCH.gestureFloorMs);
+			expect(release!.at).toBeGreaterThanOrEqual(gesture - 1);
+			expect(sim.now() - start).toBeLessThanOrEqual(gesture + 1);
 			expect(cmds.at(-1)?.type).toBe("mouseReleased");
 		}
 	);
 });
 
 describe("HandController replies with transport latency", () => {
+	it.each([
+		{ thinkMs: 330, setupMs: 0 },
+		{ thinkMs: 470, setupMs: 0 },
+		{ thinkMs: 650, setupMs: 0 },
+		{ thinkMs: 330, setupMs: 90 },
+		{ thinkMs: 470, setupMs: 90 },
+		{ thinkMs: 650, setupMs: 90 },
+	])(
+		"uses the available opponent-only $thinkMs ms window for movement after $setupMs ms setup",
+		async ({ thinkMs, setupMs }) => {
+			sim.debugger.respond(
+				CDP.inputDispatchMouseEvent,
+				() => new Promise((resolve) => setTimeout(() => resolve({}), 16))
+			);
+			await sim.time.advance(setupMs);
+			const ctrl = makeController(9);
+			const plan = makePlan();
+			const timing = fitTiming(
+				makeTiming({
+					mode: "instant",
+					thinkMs,
+					deadlineMs: START + thinkMs,
+					preMoveHoverMs: 0,
+					dragDurationMs: 0,
+					features: { clockRace: 1, opponentOnlyRace: 1 },
+					window: {
+						orientationMs: 0,
+						scanMs: 0,
+						previewMs: 0,
+						decisionMs: 0,
+						approachMs: thinkMs,
+					},
+				}),
+				thinkMs - setupMs
+			);
+			const result = await run(ctrl, plan, timing);
+			const cmds = commands();
+			const pressIndex = cmds.findIndex((cmd) => cmd.type === "mousePressed");
+			const releaseIndex = cmds.findIndex((cmd) => cmd.type === "mouseReleased");
+			const approach = cmds.slice(0, pressIndex).filter((cmd) => cmd.type === "mouseMoved");
+			const drag = cmds.slice(pressIndex + 1, releaseIndex).filter((cmd) => cmd.type === "mouseMoved");
+			expect(result.outcome).toBe("executed");
+			expect(approach.length).toBeGreaterThan(2);
+			expect(drag.length).toBeGreaterThan(2);
+			expect(approach.every((cmd) => cmd.buttons === 0)).toBe(true);
+			expect(drag.every((cmd) => cmd.buttons === 1)).toBe(true);
+			// A cached/quick search should start the gesture now, not wait before a fixed 300 ms burst.
+			expect(approach[0]!.at).toBeLessThanOrEqual(setupMs + 32);
+			expect(cmds.filter((cmd) => cmd.type === "mousePressed")).toHaveLength(1);
+			expect(cmds.filter((cmd) => cmd.type === "mouseReleased")).toHaveLength(1);
+			expect(inside(cmds[pressIndex]!, plan.from.rect)).toBe(true);
+			expect(inside(cmds[releaseIndex]!, plan.to.rect)).toBe(true);
+			expect(cmds[releaseIndex]!.at).toBeGreaterThanOrEqual(thinkMs);
+			// Two path boundaries and the acknowledged button edges retain transport cost.
+			expect(result.submittedAt! - START).toBeLessThanOrEqual(thinkMs + 6 * 16);
+		}
+	);
+
 	it.each([650, 3000])(
 		"honors a %i ms reply window through the real generated approach, press, drag and release",
 		async (thinkMs) => {
@@ -631,15 +772,18 @@ describe("HandController drag execution", () => {
 			const b = cmds[i] as Cmd;
 			if (a.type === "mouseMoved" && b.type === "mouseMoved") expect(b.at - a.at).toBeGreaterThan(0);
 		}
-		// Short post-drop rests stay stationary and still consume their sampled time interval.
+		// The post-drop rest: a moment on the piece, then either straight to pondering (nothing more
+		// dispatched) or a walk to another piece — moves only, never another press.
 		const after = cmds.slice(releaseIdx + 1);
-		expect(after).toEqual([]);
+		for (const c of after) expect(c).toMatchObject({ type: "mouseMoved", buttons: 0 });
 		const rest = [...result.timeline].reverse().find((entry) => entry.phase === "rest");
 		expect(rest).toBeDefined();
 		const restMs = (rest?.endMs ?? 0) - (rest?.startMs ?? 0);
-		expect(restMs).toBeGreaterThanOrEqual(EXECUTOR.postDropRestMs[0]);
-		expect(restMs).toBeLessThanOrEqual(EXECUTOR.postDropRestMs[1]);
-		expect(result.endPoint).toEqual({ x: release.x, y: release.y });
+		expect(restMs).toBeGreaterThanOrEqual(EXECUTOR.postDropLingerMs[0]);
+		if (after.length > 0) {
+			expect(result.endPoint).not.toEqual({ x: release.x, y: release.y });
+			expect(inside(after.at(-1) as Cmd, plan.to.rect)).toBe(false);
+		}
 		expect(result.pressed).toBe(true);
 		expect(ownership.position(tabId)).toEqual(result.endPoint);
 		expect(ctrl.backend.position()).toEqual(result.endPoint);

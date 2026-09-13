@@ -16,8 +16,10 @@ trusted event as physical interference. Cancellation and focus/geometry guards a
 again after the acknowledgment. Browser releases remain available for cleanup.
 
 Hiding the mirror removes its native-cursor stylesheet. Disconnecting the content port also
-hides it and drops input ownership; disposal, stop, debugger detach and game end use the same
-cleanup. A resting hand now spends most pauses stationary; a long pause can contain one small
+hides it and drops input ownership; disposal and the stop gestures use the same cleanup. Since
+2026-09-13 a debugger detach, a game ending, a navigation and a disarm do **not** hide it — the
+arrow stays parked between games and the next hand starts from it
+(`docs/qa/virtual-cursor-2026-09-13.md`). A resting hand now spends most pauses stationary; a long pause can contain one small
 adjustment, never continuous idle twitching. Stationary post-drop rests retain their timed wait.
 
 A dedicated headless Chrome run on 2026-09-10 verified the production capture code in an isolated

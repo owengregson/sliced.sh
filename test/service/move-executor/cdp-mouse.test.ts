@@ -61,6 +61,61 @@ describe("CdpMouse", () => {
 		expect(mouseCommands().map((c) => c.type)).toEqual(["mousePressed", "mouseReleased"]);
 	});
 
+	it("a RIGHT-button drag (a line-preview arrow) carries button:right / buttons:2 on every point and never reads as `pressed`", async () => {
+		const prepared: Array<{ type: string; buttons: number; button?: string }> = [];
+		const mouse = new CdpMouse(
+			(method, params) => debuggerSend(tabId, method, params),
+			{ x: 10, y: 10 },
+			{
+				now: sim.now,
+				beforeDispatch: async (pointer) => {
+					prepared.push({
+						type: pointer.type,
+						buttons: pointer.buttons,
+						...(pointer.button ? { button: pointer.button } : {}),
+					});
+					return undefined;
+				},
+			}
+		);
+		await mouse.moveAt({ x: 450, y: 650 }, sim.now());
+		await mouse.pressAt({ x: 450, y: 650 }, sim.now(), undefined, undefined, "right");
+		expect(mouse.pressed).toBe(false); // `pressed` is the LEFT button: nothing is picked up
+		expect(mouse.pressedButtons).toBe(CDP.mouse.rightButtons);
+		await mouse.moveAt({ x: 450, y: 520 }, sim.now());
+		await mouse.releaseAt({ x: 450, y: 450 }, sim.now(), undefined, "right");
+		expect(mouse.pressedButtons).toBe(CDP.mouse.noButtons);
+		const cmds = mouseCommands();
+		expect(cmds).toHaveLength(4);
+		expect(cmds[1]).toMatchObject({
+			type: "mousePressed",
+			button: "right",
+			buttons: CDP.mouse.rightButtons,
+			clickCount: 1,
+		});
+		expect(cmds[2]).toMatchObject({ type: "mouseMoved", button: "right", buttons: 2 });
+		expect(cmds[3]).toMatchObject({
+			type: "mouseReleased",
+			button: "right",
+			buttons: 0,
+			clickCount: 1,
+		});
+		// the admission filter is told which button the press/release is for; moves are unchanged
+		expect(prepared).toEqual([
+			{ type: "mouseMoved", buttons: 0 },
+			{ type: "mousePressed", buttons: 2, button: "right" },
+			{ type: "mouseMoved", buttons: 2 },
+			{ type: "mouseReleased", buttons: 0, button: "right" },
+		]);
+		// the page saw a right-button pointer sequence: down (button 2) → move with buttons 2 → up
+		const downs = sim.input.events.filter((e) => e.type === "pointerdown");
+		expect(downs.map((e) => [e.button, e.buttons])).toEqual([[2, 2]]);
+		expect(sim.input.events.filter((e) => e.type === "pointermove").map((e) => e.buttons)).toEqual([
+			0, 2,
+		]);
+		expect(sim.input.events.some((e) => e.type === "click")).toBe(false);
+	});
+
 	it("dispatches the verified press / drag-move / release parameter shapes and never a timestamp", async () => {
 		const mouse = makeMouse();
 		await mouse.moveAt({ x: 450, y: 650 }, sim.now());
