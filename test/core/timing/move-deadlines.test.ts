@@ -11,7 +11,7 @@ describe("move-window budgets", () => {
 		it(`bounds a clock-blind ${mode} head without making the cap a repeated delay`, () => {
 			const head: DistributionHead = {
 				id: "chessmimic",
-				median: () => 90,
+				median: () => 1,
 				sample: () => ({ tSec: 90, mode: mode as TimingMode, why: [] }),
 			};
 			const model = new TimingModel(
@@ -31,7 +31,7 @@ describe("move-window budgets", () => {
 				const durations = new Set<number>();
 				for (let i = 0; i < 100; i++) {
 					const plan = model.planMove(ctx({ myClockMs: clock }));
-					expect(plan.thinkMs).toBeLessThanOrEqual(clock * C.budget.windowClockFraction);
+					expect(plan.thinkMs).toBeLessThanOrEqual(clock * C.moveBudget.clockFraction);
 					expect(plan.thinkMs).toBeLessThanOrEqual((plan.features.capSec ?? 0) * 1000);
 					durations.add(Math.round(plan.thinkMs));
 				}

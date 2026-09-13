@@ -76,10 +76,11 @@ describe("computeFeatures", () => {
 		expect(hit.ponder_hit).toBe(1);
 		expect(miss.ponder_hit).toBe(0);
 	});
-	it("in_book only in the first 16 plies when playing the engine's best move", () => {
-		expect(computeFeatures(ctx({ fen: START_FEN, ply: 0, chosenMove: "d2d4" })).in_book).toBe(1);
-		expect(computeFeatures(ctx({ fen: START_FEN, ply: 0, chosenMove: "a2a4" })).in_book).toBe(0);
-		expect(computeFeatures(ctx({ ply: 24 })).in_book).toBe(0);
+	it("in_book requires a confirmed book hit, including a deep remembered line", () => {
+		expect(computeFeatures(ctx({ fen: START_FEN, ply: 0, chosenMove: "d2d4" })).in_book).toBe(0);
+		expect(computeFeatures(ctx({ fen: START_FEN, ply: 0, inBook: true })).in_book).toBe(1);
+		expect(computeFeatures(ctx({ ply: 24, inBook: true })).in_book).toBe(1);
+		expect(computeFeatures(ctx({ ply: 24, inBook: false })).in_book).toBe(0);
 	});
 	it("clock-derived features", () => {
 		const f = computeFeatures(ctx({ myClockMs: 60_000, oppClockMs: 120_000 }));

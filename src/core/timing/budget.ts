@@ -6,6 +6,7 @@
 
 import { clamp } from "@core/util/clamp";
 import { TIMING_CONSTANTS } from "./constants";
+import { ratingPace } from "./rating-pace";
 import type { Persona, TcClass } from "./types";
 
 const B = TIMING_CONSTANTS.budget;
@@ -21,20 +22,26 @@ export interface BudgetInputs {
 	non_pawn_pieces: number;
 	pawns: number;
 	budget_used_ratio: number;
+	targetElo?: number;
 }
 
-/** `N_rem = clamp(22 + 0.9·pieces + 0.5·pawns − 0.25·(ply/2), 10, 45)`. */
+/** A rolling horizon: a surviving rook ending must not expire after move 40 or 80. */
 export function expectedMovesRemaining(nonPawnPieces: number, pawns: number, ply: number): number {
 	return clamp(
-		B.nRemBase + B.nRemPerPiece * nonPawnPieces + B.nRemPerPawn * pawns - B.nRemPerMove * (ply / 2),
+		B.nRemBase +
+			B.nRemPerPiece * Math.max(0, nonPawnPieces) +
+			B.nRemPerPawn * Math.max(0, pawns) -
+			(B.nRemPerMove * Math.min(B.openingHorizonPlies, Math.max(0, ply))) / 2,
 		B.nRemMin,
 		B.nRemMax
 	);
 }
 
-/** `reserve = τ · clamp(0.06·base, 2, 20)` seconds. */
+/** Reserve grows with base time and discipline; even a novice retains a minimum buffer. */
 export function reserveSec(baseSec: number, tau: number): number {
-	return tau * clamp(B.reserveFraction * baseSec, B.reserveMinS, B.reserveMaxS);
+	return (
+		(0.5 + 0.5 * clamp(tau, 0, 1)) * clamp(B.reserveFraction * baseSec, B.reserveMinS, B.reserveMaxS)
+	);
 }
 
 /** Clock-free allocation: `base_eff / N0` — the schedule an untimed or budget-off player follows. */
@@ -42,14 +49,18 @@ export function scheduleAlloc(f: Pick<BudgetInputs, "base_eff">): number {
 	return Math.max(B.allocMinS, f.base_eff / TIMING_CONSTANTS.features.expectedMovesN0);
 }
 
-/** Per-move allocation in seconds (Appendix D §3a.2). */
+/** Sustainable seconds per move, including increment once and keeping a recoverable reserve. */
 export function budgetController(f: BudgetInputs, persona: Persona): number {
 	if (f.tc === "untimed") return scheduleAlloc(f);
-	const nRem = expectedMovesRemaining(f.non_pawn_pieces, f.pawns, f.ply);
-	const reserve = reserveSec(f.base_s, persona.tau);
-	let alloc = Math.max(B.allocMinS, (f.clock_s - reserve) / nRem + B.allocIncWeight * f.inc_s);
+	const discipline =
+		f.targetElo === undefined ? persona.tau : (ratingPace(f.targetElo).discipline + persona.tau) / 2;
+	const horizon = expectedMovesRemaining(f.non_pawn_pieces, f.pawns, f.ply);
+	const reserve = Math.min(reserveSec(f.base_s, discipline), Math.max(0, f.clock_s) * 0.35);
+	const principal = Math.max(0, f.clock_s - reserve) / horizon;
 	const early = Math.max(0, 1 - f.ply / B.overspendPlyHorizon);
-	alloc *= 1 + B.overspendFactor * (1 - persona.tau) * early;
-	alloc *= Math.exp(B.aheadOfScheduleExp * f.budget_used_ratio);
-	return Math.max(B.allocMinS, alloc);
+	return Math.max(
+		B.allocMinS,
+		principal * (1 + B.overspendFactor * (1 - discipline) * early) +
+			B.allocIncWeight * Math.max(0, f.inc_s)
+	);
 }

@@ -32,9 +32,16 @@ describe("scalers.json", () => {
 			expect(s.rating.std).toBeLessThan(hi - lo);
 		}
 	});
-	it("bandRange / bandCentre parse the `<lo>_<hi>` names", () => {
+	it("bandRange parses the `<lo>_<hi>` name; bandCentre is the band's population mean", () => {
 		expect(bandRange("1500_1600")).toEqual([1500, 1600]);
-		expect(bandCentre("1200_1300")).toBe(1250);
+		// Not the midpoint of the name: for a 100-wide band the two nearly coincide …
+		expect(bandCentre("1200_1300")).toBeCloseTo(1251.858, 3);
+		expect(Math.abs(bandCentre("1200_1300") - 1250)).toBeLessThan(5);
+		// … and for the 1 300-wide top band they do not, which is the whole reason for the change:
+		// the midpoint 2850 sent every 2200–2450 target to the band below.
+		expect(bandCentre("2200_3500")).toBeCloseTo(2357.105, 3);
+		// A band with no scalers falls back to the midpoint of its name.
+		expect(bandCentre("900_1000", {})).toBe(950);
 	});
 });
 
@@ -91,17 +98,28 @@ describe("standardiseInputs", () => {
 				incrementS: 0,
 			}).scaledRating
 		);
+		const z = (band: string, rating: number): number =>
+			standardiseInputs({ band, rating, playerClockS: 1, opponentClockS: 1, incrementS: 0 })
+				.scaledRating;
+		// A 100-Elo band's rating std is ≈ 27, so the clamp puts *any* target within 2.5 std of what
+		// the band saw — that is the whole point of clamping rather than extrapolating.
 		for (const band of CHESSMIMIC_BANDS)
-			for (const rating of [0, 1000, 1550, 3000]) {
-				const z = standardiseInputs({
-					band,
-					rating,
-					playerClockS: 1,
-					opponentClockS: 1,
-					incrementS: 0,
-				}).scaledRating;
-				expect(Math.abs(z)).toBeLessThan(2.5);
-			}
+			if (bandRange(band)[1] - bandRange(band)[0] === 100)
+				for (const rating of [0, 1000, 1550, 3000]) expect(Math.abs(z(band, rating))).toBeLessThan(2.5);
+		// `2200_3500` is the exception and it is upstream's, not ours: one model for everything above
+		// 2200, 1 300 Elo wide against a 126.7 Elo std around a mean of 2357. Clamping bounds the
+		// *outside*; inside the range the band's own tail is thin, so a 3000 target really is +5.07
+		// std out. Pinned so that a re-export which changed the scaler would show up here.
+		expect(z("0_1000", 400)).toBeCloseTo(
+			(400 - CHESSMIMIC_SCALERS["0_1000"].rating.mean) / CHESSMIMIC_SCALERS["0_1000"].rating.std,
+			10
+		);
+		expect(z("0_1000", -500)).toBe(z("0_1000", 0));
+		expect(z("2200_3500", 0)).toBeCloseTo(-1.2397, 3);
+		expect(z("2200_3500", 1550)).toBeCloseTo(-1.2397, 3);
+		expect(z("2200_3500", 2400)).toBeCloseTo(0.3385, 3);
+		expect(z("2200_3500", 3000)).toBeCloseTo(5.0732, 3);
+		expect(z("2200_3500", 9999)).toBeCloseTo(9.0188, 3);
 	});
 	it("uses log(clock + 1) with the band's own means and stds", () => {
 		const s = CHESSMIMIC_SCALERS["1500_1600"];

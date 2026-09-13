@@ -1,7 +1,7 @@
 /**
  * `TimingModel` (§8.3, §8.4a, §8.4b, §8.5, Appendix D §5): per game the
  * persona is sampled fresh from the per-game seed and every piece of state is
- * discarded; per move `features → budget → head.sample → pressure caps →
+ * discarded; per move `features → budget → head.sample → budget normalization →
  * orientation → motor split → window allocation → TimingPlan`. Runs in the
  * service worker; the ChessMimic head's inference is prepared asynchronously
  * through `prepare()`.
@@ -11,24 +11,24 @@ import { isLoneKing } from "@core/chess/material";
 import { parseUci } from "@core/chess/san";
 import type { Rng } from "@core/rng";
 import { clamp } from "@core/util/clamp";
-import type { Square } from "@typedefs/game";
 import type { Settings } from "@typedefs/settings";
 import { budgetController, scheduleAlloc } from "./budget";
 import { TIMING_CONSTANTS } from "./constants";
 import { uniform } from "./distributions";
 import { computeFeatures, featuresToRecord, isBotPace } from "./features";
+import { createMoveBudget } from "./move-budget";
 import { allocateWindow, type MotorTimes, motorModel } from "./move-window";
 import { clockRacePolicy, opponentClockPressure } from "./opponent-pressure";
 import { sampleOrientationMs } from "./orientation";
 import { samplePersona } from "./persona-latents";
-import { boundByCap, hardCapSec, paceFactor } from "./pressure";
+import { boundByCap } from "./pressure";
 import { buildTimingLogEntry } from "./timing-log";
+
 import type {
 	DistributionHead,
 	Features,
 	GameMeta,
 	GameTimingState,
-	HeadSample,
 	MoveWindowBudget,
 	Persona,
 	ReplanReason,
@@ -87,29 +87,11 @@ export function freshState(gameId: string, knobs?: TimingKnobs): GameTimingState
 		oppThinkMs: [],
 		myThinkMs: [],
 		plannedMs: [],
-		fastAdded: 0,
 		paceResiduals: [],
 		lastEvalOurPov: null,
 		lastPlan: null,
 		knobs: knobs ? { ...knobs } : { sigmaScale: 1, piOffset: 0, lambdaScale: 1 },
 	};
-}
-
-function cv(xs: readonly number[]): number {
-	if (xs.length === 0) return 0;
-	let m = 0;
-	for (const x of xs) m += x;
-	m /= xs.length;
-	if (m <= 0) return 0;
-	let v = 0;
-	for (const x of xs) v += (x - m) ** 2;
-	return Math.sqrt(v / xs.length) / m;
-}
-
-/** §8.4a: after 12 moves the per-game CV of `thinkMs` must stay ≥ 0.5. */
-export function needsResample(plannedMs: readonly number[], candidateMs: number): boolean {
-	if (plannedMs.length < C.cvGuard.afterMoves) return false;
-	return cv([...plannedMs, candidateMs]) < C.cvGuard.minCv;
 }
 
 const IDLE_WINDOW: MoveWindowBudget = {
@@ -195,7 +177,7 @@ export class TimingModel {
 	 * §4.6: the time control arrived *after* the game started, so the session rebuilt this model
 	 * with the preset the clock selects — but the **game** has not restarted. Adopt the previous
 	 * model's per-game history so the rebuild is a change of knobs, not a new game: the AR(1)
-	 * residual, the tilt counter, both pace histories, the CV guard's population and the eval the
+	 * residual, the tilt counter, both pace histories, planned timing history and the eval the
 	 * tilt trigger compares against. The persona is not copied: it is sampled from the game id, so
 	 * the rebuild already produced the same one.
 	 */
@@ -206,7 +188,6 @@ export class TimingModel {
 		st.oppThinkMs = [...previous.oppThinkMs];
 		st.myThinkMs = [...previous.myThinkMs];
 		st.plannedMs = [...previous.plannedMs];
-		st.fastAdded = previous.fastAdded;
 		st.paceResiduals = [...previous.paceResiduals];
 		st.lastEvalOurPov = previous.lastEvalOurPov;
 		st.lastPlan = previous.lastPlan;
@@ -231,48 +212,17 @@ export class TimingModel {
 		return this.settings.respectBudget ? budgetController(f, this._persona) : scheduleAlloc(f);
 	}
 
-	private capFor(f: Features, mode: TimingMode): number {
-		const hard = hardCapSec(f);
-		if (f.tc === "untimed") return hard;
-		// Keep room for the rest of the game even if the distribution head ignores its
-		// allocation input. The absolute emergency caps remain authoritative.
-		const allocation = budgetController(f, this._persona);
-		const windows =
-			mode === "long" ? C.budget.longWindowAllocations : C.budget.normalWindowAllocations;
-		return Math.min(
-			hard,
-			Math.max(floorFor(mode), allocation * windows * Math.min(1, this.settings.speedScale)),
-			Math.max(C.caps.tinyCapS, f.clock_s * C.budget.windowClockFraction)
-		);
-	}
-
-	/** Head sample with the per-game CV guard (§8.4a). */
-	private sampleGuarded(f: Features, alloc: number): HeadSample {
-		const st = this._state;
-		let s = this.head.sample(f, this._persona, st, this.rng, alloc);
-		for (let k = 0; k < C.cvGuard.maxResamples; k++) {
-			if (s.mode === "premove" || s.mode === "instant") break;
-			if (!needsResample(st.plannedMs, s.tSec * 1000)) break;
-			s = this.head.sample(f, this._persona, st, this.rng, alloc);
-			s.why.push("re-sampled: per-game CV < 0.5");
-		}
-		return s;
-	}
-
 	private motorFor(
 		f: Features,
 		ctx: TimingContext,
 		mode: TimingMode
-	): MotorTimes & {
-		fakeout?: TimingPlan["fakeout"];
-	} {
+	): MotorTimes & { fakeout?: TimingPlan["fakeout"] } {
 		const motor = motorModel(f, ctx, this._persona, this.rng);
 		if (mode !== "normal" || (f.tc !== "untimed" && f.clock_s <= C.fakeout.minClockS)) return motor;
-		const pFake = C.fakeout.pBase + C.fakeout.pElo * (1 - f.elo_z);
-		if (this.rng.next() >= pFake) return motor;
+		if (this.rng.next() >= C.fakeout.pBase + C.fakeout.pElo * (1 - f.elo_z)) return motor;
 		const alt =
-			f.n_reasonable >= 2 ? ctx.lines.find((l) => l.pvUci[0] !== ctx.chosenMove) : undefined;
-		const piece: Square = (alt && parseUci(alt.pvUci[0] ?? "")?.from) || f.from;
+			f.n_reasonable >= 2 ? ctx.lines.find((line) => line.pvUci[0] !== ctx.chosenMove) : undefined;
+		const piece = (alt && parseUci(alt.pvUci[0] ?? "")?.from) || f.from;
 		const holdMs = uniform(this.rng, C.fakeout.holdMs[0], C.fakeout.holdMs[1]);
 		const gapMs = uniform(this.rng, C.fakeout.gapMs[0], C.fakeout.gapMs[1]);
 		return {
@@ -290,115 +240,86 @@ export class TimingModel {
 		if (st.lastEvalOurPov !== null && f.eval_cp <= st.lastEvalOurPov - C.tilt.dropCp && st.tilt === 0)
 			st.tilt = C.tilt.moves;
 		const alloc = this.allocFor(f);
-		const sample = this.sampleGuarded(f, alloc);
+		const budget = createMoveBudget(
+			f,
+			this._persona,
+			this.settings.speedScale,
+			this.settings.respectBudget ? undefined : alloc
+		);
+		const sample = this.head.sample(f, this._persona, st, this.rng, alloc);
 		let { tSec, mode } = sample;
 		const why = [...sample.why];
-		// `min(§3a.3 compression, relative-clock urgency)` — NOT the compression alone. The shipped
-		// ChessMimic head never reads `alloc`, so without this the budget controller has no effect on
-		// the plan at all and a 3+0 game is paced the same at 1:00 as at 3:00 (the owner's live
-		// report, 2026-09-10; the measured curves are in fixC-report.md). It is a `min`, so no move is
-		// ever planned slower than it is today and the last seconds stay exactly as §13.2 measures
-		// them.
-		const comp = paceFactor(f);
-		tSec *= comp;
-		// `premove` mode skips `boundByCap` and the physical floor below, because the hand is supposed to
-		// be on the piece already: pre-positioned during the opponent's think, leaving only press and
-		// release. `allocateWindow` then hands the plan `approachMs = thinkMs` with zero orientation.
-		//
-		// Nothing actually pre-positions the hand from this mode. Checked: the only readers of
-		// `plan.mode === "premove"` are `move-window.ts` (the window split), `preview-select.ts` (no
-		// previews) and the panel's copy — the executor's premove path is keyed on
-		// `rec.chosen.source === "premove"`, a different quantity. So the mode on its own produces a
-		// **100–220 ms whole move from a cold start** (measured p50 157 ms at ply 0 on the real bands)
-		// unless we really were waiting on this position with the move already entered, and no hand can
-		// deliver that — the brief's own figure for approach + press + drag + release is 400–900 ms.
-		//
-		// The condition for "we really were waiting" is `ponder_hit`: we predicted the opponent's reply
-		// and they played it. `premove_eligible`'s other three predictors (recapture, in book, only legal
-		// move) say a premove would have been *reasonable to enter*, not that one *was* entered — at ply 0
-		// `in_book` alone made the flick reachable, and at ply 2 with no prediction at all it made one
-		// reachable again. Appendix D §3a.5's premove logit is untouched; what is gated is whether the
-		// resulting mode is physically honourable.
-		const noPreEntry = f.ponder_hit === 0;
-		if (mode === "premove" && (!f.premove_eligible || this.forbidPremove || noPreEntry)) {
+		const rawMedian = this.head.median(f, this._persona, st, alloc);
+		const rawMean = Math.max(
+			C.moveBudget.minimumShapeMeanS,
+			this.head.mean?.(f, this._persona, st, alloc) ?? rawMedian
+		);
+		// The learned distribution supplies relative difficulty and variation; the actual game clock
+		// supplies scale. Normalize by the mean, because a median does not budget a heavy tail.
+		const target = budget.targetSec * Math.exp(this._persona.s_game);
+		const comp =
+			f.tc === "untimed"
+				? this.settings.speedScale
+				: Math.min(this.settings.speedScale, target / rawMean);
+		if (mode === "normal" || mode === "long") tSec *= comp;
+		else if (mode === "instant") tSec *= Math.min(1, this.settings.speedScale);
+		const median = rawMedian * comp;
+		why.push(
+			`move budget ${target.toFixed(2)} s; effort ${budget.effort.toFixed(2)}, recognition ${budget.recognition.toFixed(2)}`
+		);
+
+		if (mode === "premove" && (!f.premove_eligible || this.forbidPremove || !f.ponder_hit)) {
 			mode = "instant";
-			// Reuse the head's continuous spike draw instead of replacing it with a
-			// constant or consuming an unrelated extra draw from the game's random stream.
-			tSec = C.instant.minS + C.instant.rangeS * clamp(tSec / (C.premove.maxS * comp), 0, 1);
-			why.push(
-				this.forbidPremove
-					? "no premove entered → instant"
-					: !f.premove_eligible
-						? "premove not eligible → instant"
-						: "nothing was pre-entered for this position (no ponder hit) → instant"
-			);
+			tSec = C.instant.minS + C.instant.rangeS * clamp(tSec / C.premove.maxS, 0, 1);
+			why.push("no premove entered → instant");
 		}
-		if (mode !== "premove") tSec *= this.settings.speedScale;
-		const median = this.head.median(f, this._persona, st, alloc) * comp;
-		if (f.opp_is_bot && mode !== "premove") why.push("bot opponent: mirror coefficient floored");
 		if (mode === "premove") tSec += C.premove.penaltyS;
+		if (f.opp_is_bot && mode !== "premove") why.push("bot opponent: mirror coefficient floored");
 
 		const loneKing = isLoneKing(ctx.fen, ctx.myColor);
-		const race = clockRacePolicy({
+		const clockInput = {
 			ownClockMs: ctx.myClockMs,
 			opponentClockMs: ctx.oppClockMs,
 			baseMs: ctx.baseSec * 1000,
 			incrementMs: ctx.incSec * 1000,
-			loneKing,
-		});
+		};
+		const race = clockRacePolicy({ ...clockInput, loneKing });
 		if (race) mode = "instant";
 		const motor = this.motorFor(f, ctx, mode);
 		const orientationMs = race || mode === "premove" ? 0 : sampleOrientationMs(f, this.rng);
 		const physicalS = orientationMs / 1000 + motor.totalS;
 		const clockEmergency = f.tc !== "untimed" && ctx.myClockMs < C.replan.emergencyClockMs;
-		const capSec = this.capFor(f, mode);
-		let totalS: number;
-		let emergency = false;
-		// A premove plan still has to be physically deliverable. `ponder_hit` (above) says we predicted
-		// the reply, not that a move was *entered*: the only thing that enters one is the session's own
-		// §7.4 path, which sets `chosen.source = "premove"` and builds its own plan in `session.ts` —
-		// it never reaches here. So a premove-mode plan out of `planMove` is a hand that has hovered
-		// (the previous plan's `preMoveHoverMs`) but has not pressed, and the press, drag and release
-		// still cost `PHYSICAL_FLOOR_S`. Without this floor the plan was a 100–209 ms whole move
-		// (measured p50 154 ms), which is the same non-human signature the ponder-hit gate removed for
-		// the no-prediction case. `replan("opponent-moved")` computes the fire time itself and is
-		// unaffected.
-		if (mode === "premove") {
-			// A predicted reply still needs a physical gesture. A fixed floor erases every
-			// sampled fast reply into the same duration; use the sampled hand plus reaction.
-			const b = boundByCap(motor.totalS + tSec, capSec, PHYSICAL_FLOOR_S, clockEmergency, this.rng);
-			totalS = b.totalSec;
-			emergency = b.emergency;
-		} else {
-			// Instant: orientation + motor + the head's U(0.05, 0.25). Normal/long: Appendix D §5's
-			// `max(tSec, motor.total)` with the §8.4b item 2 orientation inside the window. A
-			// binding hard cap (§3a.3) wins over that physical floor, sampled in `cap · U(lo, 1)`
-			// with every floor folded into `lo` (never a clamp after jittering); `lo ≥ 1` or the
-			// §8.5 clock threshold is the emergency regime (`boundByCap`).
-			const value = mode === "instant" ? physicalS + tSec : Math.max(tSec, physicalS);
-			const b = boundByCap(value, capSec, floorFor(mode), clockEmergency, this.rng);
-			totalS = b.totalSec;
-			emergency = b.emergency;
-			if (b.bound) why.push(`cap ${capSec.toFixed(2)} s binds (lo ${b.lo.toFixed(2)})`);
-		}
-		const opponentPressure = opponentClockPressure({
-			ownClockMs: ctx.myClockMs,
-			opponentClockMs: ctx.oppClockMs,
-			baseMs: ctx.baseSec * 1000,
-			incrementMs: ctx.incSec * 1000,
-		});
+		const capSec = Math.min(budget.capSec, Math.max(physicalS, budget.recognitionCapSec));
+		const value =
+			mode === "premove"
+				? motor.totalS + tSec
+				: mode === "instant"
+					? physicalS + tSec
+					: Math.max(tSec, physicalS);
+		const bounded = boundByCap(value, capSec, floorFor(mode), clockEmergency, this.rng);
+		let totalS = bounded.totalSec;
+		let emergency = bounded.emergency;
+		if (bounded.bound) why.push(`cap ${capSec.toFixed(2)} s binds (lo ${bounded.lo.toFixed(2)})`);
+
+		const opponentPressure = opponentClockPressure(clockInput);
 		if (opponentPressure > 0 && mode !== "premove") {
 			const factor = 1 - C.opponentPressure.maxThinkReduction * opponentPressure;
 			const floor = emergency ? C.motor.minMotorMs / 1000 : Math.max(floorFor(mode), physicalS);
-			// Shorten only discretionary time. Keep the sampled gesture, and never extend
-			// an already capped move to satisfy a floor that no longer fits the clock.
 			totalS = Math.min(totalS, Math.max(floor, totalS * factor));
 			why.push(`opponent clock pressure: think ×${factor.toFixed(2)}`);
 		}
 		if (race) {
-			totalS = Math.min(totalS, uniform(this.rng, race.minMoveMs, race.maxMoveMs) / 1000);
-			emergency = true;
-			why.push(loneKing ? "lone king: fast execution" : "clock race: fast execution");
+			if (race.opponentOnly) {
+				const maxMs = Math.min(race.maxMoveMs, capSec * 1000);
+				const minMs = Math.min(race.minMoveMs, maxMs * C.caps.jitterMin);
+				totalS = uniform(this.rng, minMs, maxMs) / 1000;
+				emergency = clockEmergency;
+				why.push("opponent clock pressure: varied reply window");
+			} else {
+				totalS = Math.min(totalS, uniform(this.rng, race.minMoveMs, race.maxMoveMs) / 1000);
+				emergency = true;
+				why.push(loneKing ? "lone king: fast execution" : "own clock emergency: fast execution");
+			}
 		}
 		if (emergency) why.push("emergency regime: no floors, minimal motor");
 		const thinkMs = totalS * 1000;
@@ -414,8 +335,14 @@ export class TimingModel {
 			alloc,
 			comp,
 			capSec,
+			budgetTargetSec: target,
+			budgetEffort: budget.effort,
+			recognition: budget.recognition,
+			complexity: budget.complexity,
+			headMeanSec: rawMean,
 			opponentPressure,
 			clockRace: race?.urgency ?? 0,
+			opponentOnlyRace: race?.opponentOnly ? 1 : 0,
 			loneKing: race && loneKing ? 1 : 0,
 			emergency: emergency ? 1 : 0,
 			eps: st.eps,
@@ -434,12 +361,7 @@ export class TimingModel {
 		};
 		if (!race && motor.fakeout) plan.fakeout = motor.fakeout;
 		if (!race && motor.promoS > 0) plan.promotionDelayMs = motor.promoS * 1000;
-
 		st.plannedMs.push(thinkMs);
-		// Counted here and not in the head: `sampleGuarded` discards re-sampled candidates, and a
-		// discarded sample must not consume the budget. `mode` is re-read because the premove/physical
-		// gates above can have converted the sample since the head produced it.
-		if (sample.addedFast === true && mode === "instant") st.fastAdded++;
 		st.lastPlan = plan;
 		st.lastEvalOurPov = f.eval_cp;
 		st.oppThinkMs = [...ctx.oppThinkMsHistory];
@@ -544,7 +466,7 @@ export class TimingModel {
 			}
 			case "clock-jump": {
 				const f = computeFeatures(ctx, this._state);
-				const capSec = this.capFor(f, plan.mode);
+				const capSec = createMoveBudget(f, this._persona, this.settings.speedScale).capSec;
 				if (plan.thinkMs / 1000 <= capSec)
 					return this.withElapsed(plan, ctx, plan.thinkMs, plan.window, "clock-jump: within caps");
 				const clockEmergency = f.tc !== "untimed" && ctx.myClockMs < C.replan.emergencyClockMs;

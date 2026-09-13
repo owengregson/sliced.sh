@@ -89,6 +89,11 @@ export function phiOf(e: number): number {
 export class V1ParametricHead implements DistributionHead {
 	readonly id = "v1-parametric" as const;
 
+	mean(f: Features, p: Persona, st: GameTimingState, allocSec: number): number {
+		const sigma = sigmaOf(f, f.elo_z, st.knobs);
+		return this.median(f, p, st, allocSec) * Math.exp((sigma * sigma) / 2);
+	}
+
 	/** Body median: `alloc · exp(Σβf − mirror + s_game)` (no residual, no mirroring, no tilt). */
 	median(f: Features, p: Persona, _st: GameTimingState, allocSec: number): number {
 		const body = bodyTerms(f, p, f.elo_z);

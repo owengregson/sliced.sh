@@ -77,6 +77,11 @@ export type PhaseName = "opening" | "middlegame" | "endgame";
  * `premove_eligible`, piece counts for the budget controller).
  */
 export interface Features {
+	/** Unclipped requested rating for the continuous timing policy. */
+	targetElo?: number;
+	/** Distinguishes an observed single choice from missing engine analysis. */
+	analysis_lines?: number;
+	threat_reply?: number;
 	// 1–8
 	elo_z: number;
 	tc: TcClass;
@@ -177,15 +182,8 @@ export interface GameTimingState {
 	tilt: number;
 	oppThinkMs: number[];
 	myThinkMs: number[];
-	/** `thinkMs` of every plan this game (the CV guard reads it). */
+	/** `thinkMs` of every plan this game. */
 	plannedMs: number[];
-	/**
-	 * How many adopted plans this game came from the fast channel **this lane added** — a bucket-0
-	 * draw on a position §7.4 cannot pre-enter. `fastAddedShare` divides it by `plannedMs.length` to
-	 * get the rate `fastShareCap` budgets. Counted in `planMove` rather than in the head, so a sample
-	 * the CV guard discards is not counted.
-	 */
-	fastAdded: number;
 	/** `ln t_actual − ln t_model_body` per observed move (`my_pace_resid`). */
 	paceResiduals: number[];
 	/** Eval (our POV) after our previous move; drives the tilt trigger. */
@@ -198,12 +196,6 @@ export interface HeadSample {
 	tSec: number;
 	mode: TimingMode;
 	why: string[];
-	/**
-	 * This sample came from the fast channel the fix-C lane added (an `instant` from a bucket-0 draw on
-	 * a position that is not §7.4 premove-eligible). `planMove` counts it into `state.fastAdded` when
-	 * it adopts the sample, which is what `fastShareCap` budgets.
-	 */
-	addedFast?: boolean;
 	/** Per-term contributions (`β_i f_i`) for the debug view / timing log. */
 	terms?: Array<[string, number]>;
 }
@@ -225,6 +217,8 @@ export interface DistributionHead {
 	): HeadSample;
 	/** Model median think time for the position without residual/mirroring (bot-pace floor). */
 	median(f: Features, persona: Persona, state: GameTimingState, allocSec: number): number;
+	/** Expected sampled seconds before outer clock budgeting, when available. */
+	mean?(f: Features, persona: Persona, state: GameTimingState, allocSec: number): number;
 	/** Issue asynchronous inference for `ctx` ahead of `sample` (ChessMimic); resolves when cached. */
 	prepare?(ctx: TimingContext, options?: TimingPreparation): Promise<void>;
 	/** Source actually available for this position, including fallback failures. */

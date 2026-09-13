@@ -14,7 +14,7 @@
 
 import type { Color } from "@typedefs/game";
 import type { ClockReading } from "./adapter";
-import { queryFirst, querySafe } from "./query";
+import { queryAllSafe, queryFirst, querySafe } from "./query";
 import { SELECTORS } from "./selectors";
 
 /** Whole field (hours, minutes): 1–3 digits, no fraction. */
@@ -74,6 +74,22 @@ export function readClock(root: ParentNode, side: Color): ClockReading | null {
 		running: hasAnyClass(clock, SELECTORS.clockActive),
 		hasTenths: /\.\d{1,2}\s*$/.test(text),
 	};
+}
+
+/** The computer page reuses these elements for elapsed move time in untimed games. */
+export function readComputerClock(
+	root: ParentNode,
+	side: Color,
+	runningSide: Color | null = null
+): ClockReading | null {
+	const clock = queryAllSafe(root, SELECTORS.computerClock).find(
+		(el) => el.matches(SELECTORS.computerClockDark) === (side === "b")
+	);
+	if (!clock) return null;
+	const text = querySafe(clock, SELECTORS.computerClockTime)?.textContent ?? "";
+	const ms = parseClockText(text);
+	if (Number.isNaN(ms)) return null;
+	return { ms, running: side === runningSide, hasTenths: /\.\d{1,2}\s*$/.test(text) };
 }
 
 export function activeClockColor(root: ParentNode): Color | null {

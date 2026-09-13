@@ -1,6 +1,16 @@
 import { describe, expect, it } from "bun:test";
 import { DEFAULT_SETTINGS } from "@core/constants/defaults";
-import { ownMoveBudget, searchBudget } from "@service/game-session/recommendation";
+import { LIMITS } from "@core/constants/limits";
+import { MAIA } from "@core/constants/maia";
+import { SEARCH_BUDGET } from "@core/constants/search";
+import { automaticDepthForElo } from "@core/engine/depth-policy";
+import { clockRacePolicy } from "@core/timing/opponent-pressure";
+import {
+	maiaPriorMode,
+	maiaSearchMode,
+	ownMoveBudget,
+	searchBudget,
+} from "@service/game-session/recommendation";
 import type { Settings } from "@typedefs/settings";
 
 const START = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -31,11 +41,11 @@ const ownPosition = {
 };
 
 describe("high-Elo search candidate allocation", () => {
-	it("switches Hybrid at 2500 without changing its time or depth budget", () => {
+	it("switches Hybrid breadth at 2500 while time stays bounded and depth follows Elo", () => {
 		const below = searchBudget({ ...comfortable, targetElo: 2499 }, settings("hybrid"));
 		const at = searchBudget({ ...comfortable, targetElo: 2500 }, settings("hybrid"));
-		expect(below).toEqual({ movetimeMs: 600, depthCap: 18, multiPv: 12 });
-		expect(at).toEqual({ movetimeMs: 600, depthCap: 18, multiPv: 6 });
+		expect(below).toEqual({ movetimeMs: 600, depthCap: automaticDepthForElo(2499), multiPv: 12 });
+		expect(at).toEqual({ movetimeMs: 600, depthCap: automaticDepthForElo(2500), multiPv: 6 });
 		expect(at).toEqual(searchBudget({ ...comfortable, targetElo: 2500 }, settings("engine-elo")));
 	});
 
@@ -44,7 +54,7 @@ describe("high-Elo search candidate allocation", () => {
 			const input = { ...comfortable, targetElo };
 			expect(searchBudget(input, settings("hybrid"))).toEqual({
 				movetimeMs: 600,
-				depthCap: 18,
+				depthCap: automaticDepthForElo(targetElo),
 				multiPv: 6,
 			});
 			expect(searchBudget(input, settings("hybrid"))).toEqual(
@@ -67,14 +77,14 @@ describe("high-Elo search candidate allocation", () => {
 		const tiny = { ...comfortable, targetElo: 2700, plannedThinkMs: 400 };
 		expect(searchBudget(tiny, settings("hybrid", 1))).toEqual({
 			movetimeMs: 240,
-			depthCap: 18,
+			depthCap: automaticDepthForElo(2700),
 			multiPv: 3,
 		});
 		expect(searchBudget(tiny, settings("hybrid", 8)).multiPv).toBe(8);
 		expect(searchBudget({ ...tiny, legalMoves: 2 }, settings("hybrid", 8)).multiPv).toBe(2);
 		expect(searchBudget({ ...tiny, legalMoves: 1 }, settings("hybrid", 8))).toEqual({
 			movetimeMs: 150,
-			depthCap: 18,
+			depthCap: automaticDepthForElo(2700),
 			multiPv: 1,
 		});
 	});
@@ -84,9 +94,9 @@ describe("high-Elo search candidate allocation", () => {
 		const neutral = ownMoveBudget({ ...ownPosition, targetElo: 2600, form: 0 }, s);
 		const poorForm = ownMoveBudget({ ...ownPosition, targetElo: 2600, form: -1 }, s);
 		const goodForm = ownMoveBudget({ ...ownPosition, targetElo: 2499, form: 1 }, s);
-		expect(neutral).toEqual({ movetimeMs: 600, depthCap: 18, multiPv: 6 });
-		expect(poorForm).toEqual({ movetimeMs: 600, depthCap: 18, multiPv: 12 });
-		expect(goodForm).toEqual(neutral);
+		expect(neutral).toEqual({ movetimeMs: 600, depthCap: automaticDepthForElo(2600), multiPv: 6 });
+		expect(poorForm).toEqual({ movetimeMs: 600, depthCap: automaticDepthForElo(2600), multiPv: 12 });
+		expect(goodForm).toEqual({ ...neutral, depthCap: automaticDepthForElo(2499) });
 		expect(ownMoveBudget({ ...ownPosition, targetElo: 2600 }, s)).toEqual(neutral);
 		expect(s.strength.targetElo).toBe(1500);
 	});
@@ -95,5 +105,72 @@ describe("high-Elo search candidate allocation", () => {
 		const s = settings("persona-sampling");
 		expect(ownMoveBudget({ ...ownPosition, targetElo: 2600, form: 1 }, s).multiPv).toBe(12);
 		expect(ownMoveBudget({ ...ownPosition, targetElo: 2700, form: -1 }, s).multiPv).toBe(6);
+	});
+
+	it("expands opponent-only rush candidates without increasing the search time or own-emergency breadth", () => {
+		const input = {
+			...ownPosition,
+			targetElo: 2700,
+			myClockMs: 90_000,
+			oppClockMs: 1000,
+			timeControl: { baseMs: 180_000, incMs: 0 },
+		};
+		const race = clockRacePolicy({
+			ownClockMs: input.myClockMs,
+			opponentClockMs: input.oppClockMs,
+			baseMs: input.timeControl.baseMs,
+			incrementMs: 0,
+		});
+		expect(ownMoveBudget(input, settings("hybrid"))).toEqual({
+			depthCap: automaticDepthForElo(2700),
+			movetimeMs: race!.maxSearchMs,
+			multiPv: 12,
+		});
+		expect(ownMoveBudget(input, settings("hybrid", 20)).multiPv).toBe(20);
+		// One legal check evasion, Kxa2: breadth cannot exceed available roots.
+		expect(
+			ownMoveBudget({ ...input, fen: "7k/8/8/8/8/8/r7/KR6 w - - 0 1" }, settings("hybrid", 20)).multiPv
+		).toBe(1);
+		expect(ownMoveBudget({ ...input, myClockMs: 1000 }, settings("hybrid")).multiPv).toBe(3);
+	});
+
+	// H15 (2026-09-13): above 2600 a Maia-79M prior breaks the engine's ties, which needs a pool.
+	it("maiaPriorMode: from MAIA.eloMax up to LIMITS.eloMax, with a port and no race; never below", () => {
+		const base = { policy: true, clockRace: false };
+		expect(maiaPriorMode({ ...base, targetElo: MAIA.eloMax })).toBe(true);
+		expect(maiaPriorMode({ ...base, targetElo: 3000 })).toBe(true);
+		expect(maiaPriorMode({ ...base, targetElo: LIMITS.eloMax - 1 })).toBe(true);
+		expect(maiaPriorMode({ ...base, targetElo: LIMITS.eloMax })).toBe(false);
+		expect(maiaPriorMode({ ...base, targetElo: MAIA.eloMax - 1 })).toBe(false);
+		expect(maiaPriorMode({ ...base, targetElo: 2700, policy: false })).toBe(false);
+		expect(maiaPriorMode({ ...base, targetElo: 2700, clockRace: true })).toBe(false);
+		// the two modes never overlap, and `maiaSearchMode` is exactly what it was below 2600
+		for (const targetElo of [800, 2599, 2600, 2700, 3799])
+			expect(maiaSearchMode({ ...base, targetElo }) && maiaPriorMode({ ...base, targetElo })).toBe(
+				false
+			);
+		expect(maiaSearchMode({ ...base, targetElo: 2599 })).toBe(true);
+	});
+
+	it("the prior's referee keeps the native strength shape but asks for priorCandidates roots", () => {
+		for (const selectionMode of ["hybrid", "engine-elo"] as const) {
+			const s = settings(selectionMode);
+			const plain = searchBudget({ ...comfortable, targetElo: 2700 }, s);
+			const prior = searchBudget({ ...comfortable, targetElo: 2700, maiaPrior: true }, s);
+			expect(plain.multiPv).toBe(6);
+			expect(prior).toEqual({ ...plain, multiPv: SEARCH_BUDGET.priorCandidates });
+			expect(ownMoveBudget({ ...ownPosition, targetElo: 2700, maiaPrior: true }, s).multiPv).toBe(
+				SEARCH_BUDGET.priorCandidates
+			);
+		}
+		// the prior never widens a search that is already broad, and never adds a human frame
+		expect(
+			searchBudget({ ...comfortable, targetElo: 2700, maiaPrior: true }, settings("hybrid", 20))
+				.multiPv
+		).toBe(20);
+		expect(
+			ownMoveBudget({ ...ownPosition, targetElo: 2700, maiaPrior: true }, settings("hybrid"))
+				.featureDepth
+		).toBeUndefined();
 	});
 });

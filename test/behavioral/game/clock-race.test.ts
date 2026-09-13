@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { CDP } from "@core/constants/cdp";
 import type { OpponentExplorationCandidates } from "@core/motor/opponent-candidates";
+import { clockRacePolicy } from "@core/timing/opponent-pressure";
 import { createGameHarness, type GameHarness } from "./harness";
+import { isPonderSearch } from "./scripted-engine";
 
 let h: GameHarness;
 afterEach(async () => {
@@ -41,6 +43,13 @@ describe("clock-race session integration", () => {
 		},
 	])
 		it(`delivers the actual move quickly: ${scenario.name}`, async () => {
+			const policy = clockRacePolicy({
+				ownClockMs: scenario.clocks.b,
+				opponentClockMs: scenario.clocks.w,
+				baseMs: 180_000,
+				incrementMs: 0,
+				loneKing: scenario.fen !== undefined,
+			});
 			await start(scenario.fen);
 			await h.arrive(null, { w: 8000, b: 60_000 });
 			await h.advance(500);
@@ -52,7 +61,7 @@ describe("clock-race session integration", () => {
 						h.sim.debugger
 							.commandsFor(CDP.inputDispatchMouseEvent)
 							.some((command) => command.params?.type === "mouseReleased"),
-					400,
+					policy?.opponentOnly ? 700 : 400,
 					5
 				)
 			).toBe(true);
@@ -61,10 +70,14 @@ describe("clock-race session integration", () => {
 			const release = events.filter((command) => command.params?.type === "mouseReleased");
 			expect(press).toHaveLength(1);
 			expect(release).toHaveLength(1);
-			expect(release[0]!.at - started).toBeLessThan(300);
+			const elapsed = release[0]!.at - started;
+			if (policy?.opponentOnly) {
+				expect(elapsed).toBeGreaterThanOrEqual(policy.minMoveMs - 1);
+				expect(elapsed).toBeLessThanOrEqual(policy.maxMoveMs + 10);
+			} else expect(elapsed).toBeLessThan(300);
 			expect(
 				h.transport.goLines
-					.filter((line) => !line.includes("infinite"))
+					.filter((line) => !isPonderSearch(line))
 					.every((line) => Number(/movetime (\d+)/.exec(line)?.[1]) < 100)
 			).toBe(true);
 			expect(h.site.board.fen().split(" ")[1]).toBe("w");

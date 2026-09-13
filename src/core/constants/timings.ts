@@ -6,6 +6,13 @@ export const TIMINGS = {
 	analysisDefaultMovetimeMs: 1_500,
 	ponderMaxMs: 60_000,
 	panelSnapshotMinIntervalMs: 100,
+	/**
+	 * The panel store re-requests the snapshot this often while its document is visible, and on
+	 * every visibility/focus return (owner, 2026-09-13: the Live view sometimes did not learn a
+	 * game had started until the side panel was closed and reopened — the reopen's own request is
+	 * exactly what a poll repeats). Keeps the worker awake while the panel is open, by design.
+	 */
+	panelSnapshotPollMs: 2_500,
 	engineInfoCoalesceMs: 100,
 	/** Offscreen host → SW: coalesced `info` lines are forwarded at most this often (§6.4). */
 	engineInfoForwardMs: 50,
@@ -67,6 +74,21 @@ export const TIMINGS = {
 	 */
 	adapterTimeControlRetryMs: 1_000,
 	/**
+	 * How long a `GameSession` holds the game's first position when the site has not reported the
+	 * time control yet. The control arrives on a republish of that unmoved position (§4.3), and a
+	 * move decided before it is decided *again* when it lands — on a different budget, so usually
+	 * on a different move, with the mark on the board jumping under the owner's eyes. Bounded: a
+	 * page that never answers (`/play/computer`) costs the first move this much and nothing more.
+	 */
+	timeControlGraceMs: 1_500,
+	/**
+	 * chess.com renders the player card — and the rating inside it — after the board, so the
+	 * content script's first opponent read answers nothing or a rating-less name. Re-read at this
+	 * cadence until a rating is found, at most this many times.
+	 */
+	opponentReadRetryMs: 1_000,
+	opponentReadRetryMax: 30,
+	/**
 	 * Fix D: how long the pointer mirror takes to fade in once the hand's first point arrives
 	 * (the reference implementation's `transition: opacity 0.4s ease`). Only a fade *in* exists —
 	 * the element is removed on hide, per the §13.3 presence rules.
@@ -84,7 +106,13 @@ export const TIMINGS = {
 	 * game. 250 ms × 12 covers the first three seconds of the move.
 	 */
 	sessionRetryMs: 250,
-	sessionRetryMax: 12,
+	/**
+	 * 10 s of asking again: long enough for a crashed engine's backoff (`engineRestartBackoffMs`
+	 * 0.5 s + 2 s), a reboot and its nets — including the small-net fallback after a full-build
+	 * crash — to come back before the position is written off (owner's 2026-09-12 report: the
+	 * old 3 s gave up while the engine was still rebooting).
+	 */
+	sessionRetryMax: 40,
 } as const;
 
 /**
@@ -185,6 +213,12 @@ export const HIGHLIGHT_MOTION = {
 	arrowDrawMs: 340,
 	arrowHoldMs: 180,
 	arrowFadeMs: 300,
+	/**
+	 * A cleared mark fades out over this rather than vanishing (owner, 2026-09-12: in a fast
+	 * endgame the marks were snapping out one after another). The fading overlay is detached
+	 * from lookup, so the next draw gets a fresh one on top of it.
+	 */
+	clearFadeMs: 220,
 	drawEasing: "cubic-bezier(0.22, 0.68, 0.3, 1)",
 	reducedMotionQuery: "(prefers-reduced-motion: reduce)",
 } as const;

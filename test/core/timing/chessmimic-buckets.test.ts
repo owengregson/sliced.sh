@@ -9,6 +9,7 @@ import {
 	bucketMask,
 	CHESSMIMIC_BUCKETS,
 	CLOCK_BUCKET_BOUNDARIES,
+	clockBucketBoundaries,
 	distributionMedianSec,
 	sampleBucket,
 	sampleWithinBucket,
@@ -27,14 +28,16 @@ function probsAt(indices: number[], weights?: number[]): number[] {
 }
 
 describe("buckets.json", () => {
-	it("every registered band has 30 buckets with the same edges: 1 s to 27, then 32, 40, ∞", () => {
+	it("every registered band carries its own valid 30-bucket schema", () => {
 		for (const band of CHESSMIMIC_BANDS) {
 			const b = CHESSMIMIC_BUCKETS[band];
 			expect(b).toEqual(buckets[band]);
 			expect(b.n_buckets).toBe(CM.nBuckets);
 			expect(b.boundaries).toHaveLength(CM.nBuckets + 1);
-			expect(b.boundaries.slice(0, 28)).toEqual(Array.from({ length: 28 }, (_, i) => i));
-			expect(b.boundaries.slice(28)).toEqual([32, 40, null]);
+			expect(clockBucketBoundaries(band)[0]).toBe(0);
+			expect(clockBucketBoundaries(band)[30]).toBe(Infinity);
+			if (band === "0_1000") expect(b.boundaries.slice(0, 4)).toEqual([0, 2, 4, 6]);
+			else expect(b.boundaries.slice(0, 28)).toEqual(Array.from({ length: 28 }, (_, i) => i));
 			expect(b.bucket_probabilities).toHaveLength(CM.nBuckets);
 			expect(b.bucket_empirical_distributions).toHaveLength(CM.nBuckets);
 			const prior = b.bucket_probabilities.reduce((a, x) => a + x, 0);
@@ -50,6 +53,13 @@ describe("buckets.json", () => {
 });
 
 describe("bucket index and validity mask", () => {
+	it("uses the novice band's wider bins when masking a small clock", () => {
+		expect(bucketIndexOf(1.5, "0_1000")).toBe(0);
+		expect(bucketIndexOf(2, "0_1000")).toBe(1);
+		const mask = bucketMask(4.5, 2, "0_1000");
+		expect(mask.slice(0, 4)).toEqual([true, true, true, true]);
+		expect(mask.slice(4).some(Boolean)).toBe(false);
+	});
 	it("bucketIndexOf follows searchsorted(right) − 1, clipped", () => {
 		expect(bucketIndexOf(0)).toBe(0);
 		expect(bucketIndexOf(0.99)).toBe(0);
@@ -97,8 +107,8 @@ describe("within-bucket decoding (empirical integer second + U(0,1))", () => {
 				const seen = new Set<number>();
 				for (let i = 0; i < 40; i++) {
 					const t = sampleWithinBucket(band, b, rng);
-					expect(t).toBeGreaterThanOrEqual(CLOCK_BUCKET_BOUNDARIES[b] ?? 0);
-					expect(t).toBeLessThan(CLOCK_BUCKET_BOUNDARIES[b + 1] ?? Number.POSITIVE_INFINITY);
+					expect(t).toBeGreaterThanOrEqual(clockBucketBoundaries(band)[b] ?? 0);
+					expect(t).toBeLessThan(clockBucketBoundaries(band)[b + 1] ?? Number.POSITIVE_INFINITY);
 					seen.add(t);
 				}
 				expect(seen.size).toBe(40);
@@ -157,26 +167,21 @@ describe("within-bucket decoding (empirical integer second + U(0,1))", () => {
 			return acc / total;
 		};
 		for (const band of CHESSMIMIC_BANDS) {
-			// The 1-second buckets hold only their own second, so table mean === midpoint there.
-			for (let b = 0; b < 27; b++) {
-				expect(bucketExpectedSec(band, b)).toBeCloseTo(b + 0.5, 9);
-				expect(tableMean(band, b)).toBeCloseTo(b + 0.5, 9);
+			for (let bucket = 0; bucket < 29; bucket++) {
+				const lo = clockBucketBoundaries(band)[bucket] ?? 0;
+				const hi = clockBucketBoundaries(band)[bucket + 1] ?? 0;
+				const mean = bucketExpectedSec(band, bucket);
+				expect(mean).toBeCloseTo(tableMean(band, bucket), 9);
+				expect(mean).toBeGreaterThan(lo);
+				expect(mean).toBeLessThan(hi);
 			}
-			// The wide finite buckets are left-skewed: the mean is below the midpoint.
-			for (const [b, lo, hi] of [
-				[27, 27, 32],
-				[28, 32, 40],
-			] as const) {
-				const got = bucketExpectedSec(band, b);
-				expect(got).toBeCloseTo(tableMean(band, b), 9);
-				expect(got).toBeGreaterThan(lo);
-				expect(got).toBeLessThan((lo + hi) / 2);
-			}
-			// The open bucket blends its table with the exponential tail, so it sits above both.
-			const open = bucketExpectedSec(band, 29);
-			expect(open).toBeGreaterThan(tableMean(band, 29));
-			expect(open).toBeGreaterThan(45);
-			expect(open).toBeLessThan(70);
+			const distribution = buckets[band].bucket_empirical_distributions[29];
+			const coverage = (distribution?.coverage ?? 100) / 100;
+			const tailStart = Math.max(...Object.keys(distribution?.distribution ?? {}).map(Number)) + 1;
+			expect(bucketExpectedSec(band, 29)).toBeCloseTo(
+				coverage * tableMean(band, 29) + (1 - coverage) * (tailStart + CM.openBucketTailMeanS),
+				9
+			);
 		}
 	});
 	it("bucketExpectedSec matches the mean sampleWithinBucket actually draws (N = 20 000)", () => {

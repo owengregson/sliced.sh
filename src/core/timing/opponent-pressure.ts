@@ -12,6 +12,8 @@ export interface ClockRacePolicy {
 	urgency: number;
 	opponentUrgency: number;
 	ownUrgency: number;
+	/** Our clock can afford the opponent-pressure window; own emergencies always take priority. */
+	opponentOnly: boolean;
 	minMoveMs: number;
 	maxMoveMs: number;
 	maxSearchMs: number;
@@ -42,15 +44,20 @@ export function clockRacePolicy(
 			: 0;
 	const urgency = Math.max(opponentUrgency, ownUrgency, input.loneKing ? 1 : 0);
 	if (urgency === 0) return null;
+	const opponentOnly = ownUrgency === 0 && input.loneKing !== true;
 	const interpolate = (range: readonly [number, number]): number =>
 		range[0] + (range[1] - range[0]) * urgency;
 	const clockCap = Math.max(C.minimumWindowMs, ownClockMs * C.remainingClockFraction);
-	const maxMoveMs = Math.min(interpolate(C.moveMaxMs), clockCap);
+	const maxMoveMs = Math.min(
+		interpolate(opponentOnly ? C.opponentMoveMaxMs : C.moveMaxMs),
+		clockCap
+	);
 	return {
 		urgency,
 		opponentUrgency,
 		ownUrgency,
-		minMoveMs: Math.min(interpolate(C.moveMinMs), maxMoveMs),
+		opponentOnly,
+		minMoveMs: Math.min(interpolate(opponentOnly ? C.opponentMoveMinMs : C.moveMinMs), maxMoveMs),
 		maxMoveMs,
 		maxSearchMs: Math.round(Math.min(interpolate(C.searchMaxMs), clockCap)),
 	};

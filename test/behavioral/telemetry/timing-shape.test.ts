@@ -144,10 +144,15 @@ describe("telemetry: timing shape over 200 simulated moves (Step 2f)", () => {
 			}
 			expect(spanBins.size).toBeGreaterThan(3);
 			expect(Math.max(...spanBins.values()) / spans.length).toBeLessThan(0.5);
-			// and on the moves that have a real think budget the hand is a small part of the move
+			// and on the moves that have a real think budget the hand is a small part of the move.
+			// Under `20_000` the think is *meant* to be short (the owner,
+			// 2026-09-13: "starting at 20 seconds left the bot moves quite faster"), so those moves are
+			// the motor by design and are not what this characterisation is about.
 			const ratios = moves
 				.map((m, i) => ({ m, span: spans[i] ?? 0 }))
-				.filter(({ m }) => m.plan.mode === "normal" || m.plan.mode === "long")
+				.filter(
+					({ m }) => (m.plan.mode === "normal" || m.plan.mode === "long") && m.myClockMs >= 20_000
+				)
 				.map(({ m, span }) => span / m.plan.thinkMs)
 				.sort((a, b) => a - b);
 			expect(ratios.length).toBeGreaterThan(TELEMETRY_BANDS.holdTime.cvAfterMoves);

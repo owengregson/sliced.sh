@@ -33,8 +33,8 @@ interface Observed {
 	tcUntimed: number;
 	clockS: number;
 	baseS: number;
-	/** `min(compression, urgency)` as `planMove` logged it for this move. */
-	pace: number;
+	/** Maximum total move duration allowed by the current clock budget. */
+	capSec: number;
 	alloc: number;
 	thinkMs: number;
 	mode: string;
@@ -86,7 +86,7 @@ async function playDraining(): Promise<Observed[]> {
 			tcUntimed: f.tc_untimed ?? 0,
 			clockS: f.clock_s ?? -1,
 			baseS: f.base_s ?? -1,
-			pace: f.comp ?? -1,
+			capSec: f.capSec ?? -1,
 			alloc: f.alloc ?? -1,
 			thinkMs: rec?.plan.thinkMs ?? 0,
 			mode: rec?.plan.mode ?? "?",
@@ -130,24 +130,17 @@ describe("a live 3+0 game: the page's clock reaches planMove and tracks it (fix 
 		const last = seen[seen.length - 1];
 		if (!first || !last) throw new Error("no rows");
 
-		// Pace, asserted on the quantity the clock actually sets rather than on one sampled think: two
-		// single draws cannot be compared (move 1 of this very game fires a book premove of 144 ms,
-		// which says nothing about the pace), while `features.comp` — `min(compression, urgency)` as
-		// `planMove` logged it — is a deterministic function of the reading. The distribution itself is
-		// gated in test/core/timing/clock-response.test.ts over 600 draws a point.
-		expect(first.pace).toBe(1);
-		expect(last.pace).toBeLessThan(1);
-		let previousPace = Number.POSITIVE_INFINITY;
+		// The allocation already contains clock pressure. Learned-distribution normalization
+		// may be above one and is not an additional clock-pressure curve.
 		let previousAlloc = Number.POSITIVE_INFINITY;
 		for (const row of seen) {
-			expect(row.pace, `pace at ${row.clockMs} ms`).toBeLessThanOrEqual(previousPace);
 			expect(row.alloc, `alloc at ${row.clockMs} ms`).toBeLessThan(previousAlloc);
-			previousPace = row.pace;
+			expect(row.capSec).toBeGreaterThan(0);
+			expect(row.capSec * 1000).toBeLessThan(row.clockMs);
+			expect(row.thinkMs).toBeLessThanOrEqual(row.capSec * 1000 + 1);
 			previousAlloc = row.alloc;
 		}
-		// the urgency term, not the §3a.3 compression, is what moved: compression alone is 1 at 60 s
-		const atMinute = seen.find((r) => r.clockMs === 60_000);
-		expect(atMinute?.pace ?? 1).toBeLessThan(1);
+		expect(last.alloc).toBeLessThan(first.alloc / 4);
 
 		// Accuracy: §7.2 step 6's `f_clock`, which is 1 on a full clock and must have risen by 0:30.
 		// It rising at all is also the proof that `SelectionContext.baseMs` reached the blunder model:

@@ -6,7 +6,6 @@ import {
 	buildInputs,
 	CHESSMIMIC_BANDS,
 	ChessMimicHead,
-	fastShareCap,
 	type InferResult,
 	selectBand,
 } from "@core/timing/chessmimic-head";
@@ -45,14 +44,37 @@ describe("inputs and bands", () => {
 		const negative = buildInputs(ctx({ myClockMs: -500 }));
 		expect(negative.playerClockS).toBe(0);
 	});
-	it("selects the nearest registered band from the target Elo", () => {
-		expect(CHESSMIMIC_BANDS).toEqual(["1200_1300", "1500_1600", "1800_1900"]);
-		expect(selectBand(900)).toBe("1200_1300");
+	it("uses a containing training band before filling rating gaps by nearest population mean", () => {
+		expect(CHESSMIMIC_BANDS).toEqual([
+			"0_1000",
+			"1200_1300",
+			"1500_1600",
+			"1800_1900",
+			"2000_2100",
+			"2200_3500",
+		]);
+		expect(selectBand(400)).toBe("0_1000");
+		expect(selectBand(900)).toBe("0_1000");
+		expect(selectBand(1000)).toBe("0_1000");
+		expect(selectBand(1100)).toBe("1200_1300");
+		expect(selectBand(2200)).toBe("2200_3500");
+		expect(selectBand(3800)).toBe("2200_3500");
 		expect(selectBand(1260)).toBe("1200_1300");
 		expect(selectBand(1550)).toBe("1500_1600");
 		expect(selectBand(1690)).toBe("1500_1600");
 		expect(selectBand(1720)).toBe("1800_1900");
-		expect(selectBand(2600)).toBe("1800_1900");
+		expect(selectBand(1940)).toBe("1800_1900");
+		expect(selectBand(1960)).toBe("2000_2100");
+		expect(selectBand(2100)).toBe("2000_2100");
+		// Centres are each band's own training-population mean (`bandCentre` reads `scalers.json`):
+		// 1252 / 1551 / 1849 / 2048 / 2357. The arithmetic midpoint of the wide top band's name would
+		// be 2850, which put every target from 2200 to 2450 in `2000_2100` to be clamped at 2100 —
+		// inside `2200_3500`'s own range, and exactly the owner's rating.
+		expect(selectBand(2300)).toBe("2200_3500");
+		expect(selectBand(2450)).toBe("2200_3500");
+		expect(selectBand(2500)).toBe("2200_3500");
+		expect(selectBand(2600)).toBe("2200_3500");
+		expect(selectBand(3400)).toBe("2200_3500");
 	});
 });
 
@@ -160,18 +182,8 @@ describe("ChessMimicHead", () => {
 				expect(s.why.join(" ")).toContain("bucket 3");
 			}
 		}
-		// The model's bucket-0 mass reaches the plan instead of being redistributed wholesale, and how
-		// much of it gets through is `fastShareCap` — `min(share, cap)`, via the feed-forward thinning
-		// that holds the rate at the budget from the first move rather than only asymptotically
-		// (round 6; the budget's own behaviour is pinned in chessmimic-instant-cap.test.ts).
-		//
-		// The load-bearing assertion is that it is the budget and **not zero**. Zero is what the branch
-		// this case replaced produced, at every speed and every clock.
-		const cap = fastShareCap(f, "1500_1600");
-		expect(cap).toBeGreaterThan(0);
-		expect(cap).toBeLessThan(0.9); // the fixture's own mass, so the budget is what binds here
-		expect(instant / N).toBeGreaterThan(cap * 0.7);
-		expect(instant / N).toBeLessThanOrEqual(cap * 1.2);
+		expect(instant / N).toBeGreaterThan(0.87);
+		expect(instant / N).toBeLessThan(0.93);
 		expect(instant).toBeLessThan(N);
 	});
 	it("labels the top buckets long and adds s_game + AR(1) on top", async () => {
@@ -215,6 +227,36 @@ describe("ChessMimicHead", () => {
 			fresh.sample(f, persona, st, createRng(1), 3).why.some((w) => w.includes("fallback"))
 		).toBe(true);
 	});
+	it("falls back for non-finite, negative, or empty probability mass", async () => {
+		for (const value of [Number.NaN, Number.POSITIVE_INFINITY, -1, 0]) {
+			const h = head(result(Array<number>(30).fill(value)));
+			const c = ctx();
+			await h.prepare(c);
+			expect(h.diagnostics(c.fen).head).toBe("v1-parametric");
+			expect(h.diagnostics(c.fen).fallbackReason).toBe("invalid probability distribution");
+		}
+	});
+	it("keeps the novice bucket's one-to-two-second mass out of the instant channel", async () => {
+		const h = head(result(probsAt([0]), "0_1000"));
+		const c = ctx({ targetElo: 800 });
+		const f = computeFeatures(c);
+		const st = freshState("novice");
+		st.fen = c.fen;
+		st.knobs.sigmaScale = 0;
+		await h.prepare(c);
+		const rng = createRng("novice-bin-zero");
+		let normal = 0;
+		for (let i = 0; i < 2000; i++) {
+			const sample = h.sample(f, persona, st, rng, 3);
+			if (sample.mode === "normal") {
+				normal++;
+				expect(sample.tSec).toBeGreaterThanOrEqual(1);
+				expect(sample.tSec).toBeLessThan(2);
+			}
+		}
+		expect(normal / 2000).toBeGreaterThan(0.78);
+		expect(normal / 2000).toBeLessThan(0.87);
+	});
 	it("median comes from the cached distribution", async () => {
 		const h = head(result(probsAt([4, 5, 6], [0.3, 0.4, 0.3])));
 		const c = ctx();
@@ -244,14 +286,24 @@ describe("ChessMimicHead", () => {
 			fallback,
 			budgetMs: 50,
 		});
-		const first = h.prepare(ctx({ myClockMs: 120_000 }));
-		const second = h.prepare(ctx({ myClockMs: 60_000 }));
+		// A rapid base tests the model outside its training time control. The conditional
+		// distribution towards bucket 0 and would move a single-bucket fixture off its own bucket.
+		// What is under test here is *which cached distribution* answered, not how it is paced.
+		const rapid = { baseSec: 600 };
+		const first = h.prepare(ctx({ ...rapid, myClockMs: 120_000 }));
+		const second = h.prepare(ctx({ ...rapid, myClockMs: 60_000 }));
 		await second;
 		slow.resolve?.(result(probsAt([3])));
 		await first;
 		const st = freshState("g");
 		st.fen = ctx().fen;
-		const s = h.sample(computeFeatures(ctx({ myClockMs: 60_000 })), persona, st, createRng(1), 3);
+		const s = h.sample(
+			computeFeatures(ctx({ ...rapid, myClockMs: 60_000 })),
+			persona,
+			st,
+			createRng(1),
+			3
+		);
 		expect(s.why[0]).toContain("bucket 7");
 	});
 });

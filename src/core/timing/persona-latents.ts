@@ -8,7 +8,7 @@ import { createRng } from "@core/rng";
 import { clamp } from "@core/util/clamp";
 import { TIMING_CONSTANTS } from "./constants";
 import { beta, uniform } from "./distributions";
-import { eloZ } from "./features";
+import { ratingPace } from "./rating-pace";
 import type { Persona, PersonaProfile } from "./types";
 
 const P = TIMING_CONSTANTS.persona;
@@ -27,11 +27,10 @@ export function samplePersona(
 ): Persona {
 	const rng = createRng(typeof seed === "string" ? `persona:${seed}` : seed);
 	const offsets = P.profiles[profile];
-	const e = eloZ(targetElo);
 	const s_game = rng.normal(offsets.speed, P.sGameSigma);
 	const iota = clamp(beta(rng, P.iotaBeta[0], P.iotaBeta[1]) + offsets.iota, 0, 1);
 	const pi_p = rng.normal(offsets.premove, P.piSigma);
-	const [a, b] = betaParams(P.tauMean + P.tauEloSlope * e, P.tauSd);
+	const [a, b] = betaParams(ratingPace(targetElo).discipline, P.tauSd);
 	const tau = beta(rng, a, b);
 	const rho_mirror = uniform(rng, P.mirrorRange[0], P.mirrorRange[1]);
 	const motor_k = Math.max(P.motorKMin, rng.normal(P.motorKMean, P.motorKSd));

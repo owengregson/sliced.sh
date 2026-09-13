@@ -8,8 +8,10 @@
 // learning its own clock, not the harness telling the session what class to be.
 import { afterEach, describe, expect, it } from "bun:test";
 import { SEARCH_BUDGET } from "@core/constants/search";
+import { automaticDepthForElo } from "@core/engine/depth-policy";
 import { TIMING_CONSTANTS } from "@core/timing/constants";
 import { createGameHarness, type GameHarness } from "./harness";
+import { isPonderSearch } from "./scripted-engine";
 
 let h: GameHarness;
 afterEach(async () => {
@@ -137,7 +139,7 @@ describe("game session: the time control arrives after the game started (§4.3)"
 		// lane every game asked for `movetime 4000` — the cap — because the budget was
 		// `0.6 × plannedThinkMs` and every game planned ≈ 7.5 s.
 		const movetimeOf = (harness: GameHarness): string =>
-			harness.transport.goLines.filter((l) => l.includes("movetime")).at(-1) ?? "";
+			harness.transport.goLines.filter((l) => !isPonderSearch(l)).at(-1) ?? "";
 
 		h = await createGameHarness({
 			timeControl: null, // the page reports no clock: the clockless class
@@ -160,7 +162,7 @@ describe("game session: the time control arrives after the game started (§4.3)"
 		expect(await recommended(h)).toBe(true);
 		expect(features(h).tc_bullet).toBe(1);
 		expect(movetimeOf(h)).toContain(`movetime ${SEARCH_BUDGET.moveMs.bullet}`);
-		expect(movetimeOf(h)).toContain(`depth ${SEARCH_BUDGET.depthCap.bullet}`);
+		expect(movetimeOf(h)).toContain(`depth ${automaticDepthForElo(h.session().targetElo())}`);
 	}, 60_000);
 
 	it("the page's own clock is what opens the §7.4 premove gate (bullet/blitz only)", async () => {

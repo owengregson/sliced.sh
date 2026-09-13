@@ -1,0 +1,260 @@
+/** Real-game replay. PGN marginals are references, not evidence that random positions are human. */
+import { afterAll, describe, expect, it } from "bun:test";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { applyMoves } from "@core/chess/san";
+import { DEFAULT_SETTINGS } from "@core/constants/defaults";
+import { MODELS_DIR } from "@core/constants/models";
+import { createRng } from "@core/rng";
+import { ChessMimicHead } from "@core/timing/chessmimic-head";
+import { TimingModel } from "@core/timing/timing-model";
+import type { TimingContext } from "@core/timing/types";
+import { V1ParametricHead } from "@core/timing/v1-head";
+import { createOrtRuntime } from "@offscreen/ort-loader";
+import { createTimingInference } from "@offscreen/timing-inference";
+import { timingSettingsFor } from "@service/game-session/presets";
+import { ownMoveBudget } from "@service/game-session/recommendation";
+import { fitTiming } from "@service/move-executor";
+import type { EvalLine } from "@typedefs/engine";
+import corpus from "../../fixtures/timing/pgn-replay.json";
+import { median, START_FEN } from "./helpers";
+
+const ROOT = path.resolve(import.meta.dir, "../../..");
+const inference = createTimingInference({
+	runtime: () =>
+		createOrtRuntime({
+			importModule: (url) => import(url),
+			getUrl: (p) => pathToFileURL(path.join(ROOT, p)).href,
+			threads: 1,
+		}),
+	store: {
+		get: async (name) =>
+			new Uint8Array(await Bun.file(path.join(ROOT, MODELS_DIR, name)).arrayBuffer()),
+	},
+});
+afterAll(() => inference.dispose());
+const head = new ChessMimicHead({
+	infer: async (inputs) => {
+		const reply = await inference.handle({ kind: "timing", id: "replay", inputs });
+		return reply.probs ? { probs: reply.probs, band: reply.band ?? inputs.band } : null;
+	},
+	fallback: new V1ParametricHead(),
+	budgetMs: 60_000,
+});
+interface Row {
+	move: number;
+	fraction: number;
+	plannedS: number;
+	chargedS: number;
+	leftS: number;
+}
+interface GameResult {
+	rows: Row[];
+	flagged: boolean;
+	expectedMoves: number;
+}
+async function replay(baseSec: number, seed: number): Promise<GameResult[]> {
+	const out: GameResult[] = [];
+	for (const game of corpus.games) {
+		const timingSettings = timingSettingsFor(DEFAULT_SETTINGS.timing, {
+			baseMs: baseSec * 1000,
+			incMs: 0,
+		});
+		const settings = { ...DEFAULT_SETTINGS, timing: timingSettings };
+		const model = new TimingModel(head, timingSettings, createRng(`pgn-clock-${game.id}-${seed}`));
+		model.startGame({
+			targetElo: 2400,
+			profile: "balanced",
+			baseSec,
+			incSec: 0,
+			site: "chesscom",
+			gameId: `${game.id}-${seed}`,
+		});
+		head.reset();
+		let fen = START_FEN;
+		let left = baseSec * 1000;
+		let opponent = baseSec * 1000;
+		const moves: string[] = [];
+		const ours: number[] = [];
+		const theirs: number[] = [];
+		const rows: Row[] = [];
+		const myColor = game.myColor as "w" | "b";
+		const expectedMoves = game.plies.filter(
+			(_, ply) => (ply % 2 === 0 ? "w" : "b") === myColor
+		).length;
+		let flagged = false;
+		for (const [ply, record] of game.plies.entries()) {
+			const color = ply % 2 === 0 ? "w" : "b";
+			if (color === myColor) {
+				const lines: EvalLine[] = "lines" in record ? record.lines : [];
+				expect(lines.length).toBeGreaterThan(0);
+				const context: TimingContext = {
+					fen,
+					ply,
+					moves: [...moves],
+					myColor,
+					chosenMove: record.uci,
+					lines,
+					evalBeforeOppMove: null,
+					expectedOppReply: null,
+					myClockMs: left,
+					oppClockMs: opponent,
+					baseSec,
+					incSec: 0,
+					oppThinkMsHistory: theirs.slice(-8),
+					myThinkMsHistory: ours.slice(-8),
+					site: "chesscom",
+					targetElo: 2400,
+					profile: "balanced",
+					engineReady: true,
+					inputMethod: "drag",
+					autoQueen: true,
+					nowMs: 1_000_000 + ply * 1000,
+				};
+				await model.prepare(context);
+				const plan = model.planMove(context);
+				const search = ownMoveBudget(
+					{
+						fen,
+						ply,
+						myClockMs: left,
+						oppClockMs: opponent,
+						timeControl: { baseMs: baseSec * 1000, incMs: 0 },
+						tau: model.persona.tau,
+						budgetUsedRatio: 0,
+						targetElo: 2400,
+					},
+					settings
+				);
+				// Conservative uncached search; the real executor fits its hand to what remains.
+				const charged = search.movetimeMs + fitTiming(plan, plan.thinkMs - search.movetimeMs).thinkMs;
+				rows.push({
+					move: rows.length + 1,
+					fraction: left / (baseSec * 1000),
+					plannedS: plan.thinkMs / 1000,
+					chargedS: charged / 1000,
+					leftS: (left - charged) / 1000,
+				});
+				model.observe(charged, plan);
+				left -= charged;
+				ours.push(charged);
+				if (left <= 0) {
+					flagged = true;
+					break;
+				}
+			} else {
+				const next = Math.max(0, ((record.clockAfterS * baseSec) / 180) * 1000);
+				theirs.push(Math.max(0, opponent - next));
+				opponent = next;
+			}
+			moves.push(record.uci);
+			const next = applyMoves(fen, [record.uci]);
+			if (!next) throw new Error(`Invalid corpus move ${game.id}:${ply}`);
+			fen = next;
+		}
+		out.push({ rows, flagged, expectedMoves });
+	}
+	return out;
+}
+const sweeps = new Map<number, Promise<GameResult[]>>();
+function sweep(base: number): Promise<GameResult[]> {
+	let pending = sweeps.get(base);
+	if (!pending) {
+		pending = (async () => [...(await replay(base, 0)), ...(await replay(base, 1))])();
+		sweeps.set(base, pending);
+	}
+	return pending;
+}
+function atMove(games: GameResult[], move: number): number {
+	return median(games.flatMap((g) => (g.rows[move - 1] ? [g.rows[move - 1]!.leftS] : [])));
+}
+const middle = (rows: Row[]) => rows.filter((r) => r.fraction <= 0.85 && r.fraction > 0.55);
+const share = (rows: Row[], pick: (r: Row) => boolean) => rows.filter(pick).length / rows.length;
+const report = (value: unknown) => process.stdout.write(`${JSON.stringify(value)}\n`);
+
+// Resample whole games because adjacent moves are correlated. This is a retrospective
+// regression envelope, not a confidence claim about all humans at this rating.
+function humanWindow(): number[][] {
+	return corpus.games.map((game) => {
+		let clock = 180;
+		const samples: number[] = [];
+		for (const [ply, record] of game.plies.entries()) {
+			if ((ply % 2 === 0 ? "w" : "b") === game.myColor) continue;
+			if (clock / 180 <= 0.85 && clock / 180 > 0.55) samples.push(clock - record.clockAfterS);
+			clock = record.clockAfterS;
+		}
+		return samples;
+	});
+}
+function humanRateEnvelope(predicate: (seconds: number) => boolean): [number, number] {
+	const games = humanWindow();
+	const rng = createRng("pgn-game-bootstrap");
+	const rates: number[] = [];
+	for (let i = 0; i < 2000; i++) {
+		const sample = Array.from(
+			{ length: games.length },
+			() => games[Math.floor(rng.next() * games.length)] ?? []
+		).flat();
+		rates.push(sample.filter(predicate).length / sample.length);
+	}
+	rates.sort((a, b) => a - b);
+	return [rates[50] ?? 0, rates[1949] ?? 1];
+}
+
+describe("complete PGN games with native timing and uncached execution cost", () => {
+	it("retains the PGN clock milestones and completes all long games without a flag", async () => {
+		const games = await sweep(180);
+		report({
+			timeControl: "3+0",
+			games: games.length,
+			at20: atMove(games, 20),
+			at30: atMove(games, 30),
+			at40: atMove(games, 40),
+			at50: atMove(games, 50),
+			flags: games.filter((g) => g.flagged).length,
+		});
+		expect(atMove(games, 20)).toBeGreaterThanOrEqual(90);
+		expect(atMove(games, 30)).toBeGreaterThanOrEqual(55);
+		expect(atMove(games, 50)).toBeGreaterThan(0);
+		for (const game of games) {
+			expect(game.flagged).toBe(false);
+			expect(game.rows.length).toBe(game.expectedMoves);
+		}
+	}, 300_000);
+	it("restores the fast middle-clock tail without excessive long thinks", async () => {
+		const rows = middle((await sweep(180)).flatMap((g) => g.rows));
+		const fast = share(rows, (r) => r.chargedS < 1);
+		const long = share(rows, (r) => r.chargedS > 10);
+		report({
+			window: "0.85-0.55",
+			n: rows.length,
+			median: median(rows.map((r) => r.chargedS)),
+			fast,
+			long,
+			human: {
+				n: humanWindow().flat().length,
+				median: median(humanWindow().flat()),
+				fast: humanRateEnvelope((seconds) => seconds < 1),
+				long: humanRateEnvelope((seconds) => seconds > 10),
+			},
+		});
+		expect(rows.length).toBeGreaterThan(100);
+		const [fastLow, fastHigh] = humanRateEnvelope((seconds) => seconds < 1);
+		const [longLow, longHigh] = humanRateEnvelope((seconds) => seconds > 10);
+		expect(fast).toBeGreaterThanOrEqual(fastLow);
+		expect(fast).toBeLessThanOrEqual(fastHigh);
+		expect(long).toBeGreaterThanOrEqual(longLow);
+		expect(long).toBeLessThanOrEqual(longHigh);
+	}, 300_000);
+	it("preserves comfortable rapid clocks instead of treating allocation as mandatory spend", async () => {
+		const games = await sweep(600);
+		report({
+			timeControl: "10+0",
+			games: games.length,
+			at40: atMove(games, 40),
+			flags: games.filter((g) => g.flagged).length,
+		});
+		expect(atMove(games, 40)).toBeGreaterThanOrEqual(240);
+		for (const game of games) expect(game.flagged).toBe(false);
+	}, 300_000);
+});

@@ -11,6 +11,7 @@ import { classifyMove } from "@core/chess/move-classify";
 import { phase as phaseOf } from "@core/chess/phase";
 import { legalMoves, parseUci } from "@core/chess/san";
 import { distance } from "@core/chess/squares";
+import { threatAnswered } from "@core/chess/threat";
 import { cpEquivalent } from "@core/engine/uci-client";
 import { clamp } from "@core/util/clamp";
 import type { EvalLine } from "@typedefs/engine";
@@ -132,7 +133,7 @@ export function computeFeatures(
 		n_reasonable === 1 && decisiveness > Math.log(1 + F.forcedCp / F.decisivenessScaleCp) ? 1 : 0;
 	// Either half puts us "in book": the session's book policy answered (§7.3), or we are early
 	// and playing the engine's best move.
-	const in_book = ctx.inBook === true || (ctx.ply < F.bookMaxPly && chosenIdx === 0) ? 1 : 0;
+	const in_book = ctx.inBook === true ? 1 : 0;
 	const ponder_hit =
 		prevMove !== undefined && ctx.expectedOppReply !== null && prevMove === ctx.expectedOppReply
 			? 1
@@ -171,6 +172,9 @@ export function computeFeatures(
 				);
 
 	return {
+		targetElo: ctx.targetElo,
+		analysis_lines: ctx.lines.length,
+		threat_reply: threatAnswered(ctx.fen, ctx.chosenMove) ? 1 : 0,
 		elo_z,
 		tc,
 		log_base_eff: Math.log(base_eff),

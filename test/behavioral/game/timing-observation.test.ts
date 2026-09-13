@@ -52,7 +52,7 @@ async function boot(searchMs: number): Promise<void> {
 		settings: {
 			automation: { autoMove: true },
 			timing: { profile: "custom" },
-			execution: { previewSelects: "off" },
+			execution: { previewSelectScale: 0 },
 		},
 		head: {
 			id: "v1-parametric",
@@ -86,8 +86,10 @@ it("includes search time in full-move feedback while retaining the physical hand
 		(c) => c.method === CDP.inputDispatchMouseEvent && c.params?.type === "mouseReleased"
 	)!;
 	const total = release.at - report.rec.computedAt;
-	expect(total).toBeCloseTo(4000, 2);
-	expect(report.result.elapsedMs).toBeCloseTo(3500, 2);
+	// The head answers 4 s; the plan carries the base-speed gain (`SETTING_GAIN.speedScale`), so the
+	// reference is the plan itself, not a literal.
+	expect(total).toBeCloseTo(report.rec.plan.thinkMs, 2);
+	expect(report.result.elapsedMs).toBeCloseTo(report.rec.plan.thinkMs - 500, 2);
 	expect(observed[0]?.actual).toBeCloseTo(total, 2);
 	expect(observed[0]?.after).toBeCloseTo(observed[0]!.before, 5);
 	expect(report.result.submittedAt).toBeCloseTo(release.at, 2);

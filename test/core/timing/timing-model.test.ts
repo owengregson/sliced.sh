@@ -5,7 +5,7 @@ import { createRng } from "@core/rng";
 import { TIMING_CONSTANTS } from "@core/timing/constants";
 import { computeFeatures } from "@core/timing/features";
 import { windowTotalMs } from "@core/timing/move-window";
-import { freshState, isBotPace, needsResample, TimingModel } from "@core/timing/timing-model";
+import { freshState, isBotPace, TimingModel } from "@core/timing/timing-model";
 import type { GameMeta, TimingLogEntry } from "@core/timing/types";
 import { mirrorTerm, V1ParametricHead } from "@core/timing/v1-head";
 import { AFTER_EXD5, ctx, line, pearson } from "./helpers";
@@ -188,7 +188,9 @@ describe("TimingModel.planMove", () => {
 			expect(largestCluster(r.sorted, 1)).toBeLessThan(0.1);
 			if (clockMs >= 5000) expect(r.sorted[0] ?? 0).toBeGreaterThanOrEqual(250);
 			else {
-				expect(r.q(0.9)).toBeLessThan(180);
+				// Under the export's normal-move floor (250 ms); the old 180 was the pre-2026-09-11
+				// window, raised because the hand could act faster than any human's.
+				expect(r.q(0.9)).toBeLessThan(250);
 				expect(r.plans.every((p) => p.emergency && p.approachMs === p.thinkMs)).toBe(true);
 			}
 		});
@@ -223,7 +225,7 @@ describe("TimingModel.planMove", () => {
 				expect(p.emergency).toBe(true);
 				expect(p.orientationMs).toBe(0);
 				expect(p.approachMs).toBe(p.thinkMs);
-				expect(p.thinkMs).toBeLessThan(180);
+				expect(p.thinkMs).toBeLessThan(250);
 			}
 		});
 	}
@@ -240,7 +242,7 @@ describe("TimingModel.planMove", () => {
 			expect(r.sorted[r.sorted.length - 1] ?? 0).toBeLessThanOrEqual(0.5 * clockMs + 1e-6);
 		});
 	}
-	it("probe: 3+0 with 120 s left — one seeded persona reproduces the head bands (N = 6 000)", () => {
+	it("probe: 3+0 with 120 s left — plans stay varied and inside the move budget (N = 6 000)", () => {
 		const { m } = model({}, "probe-120s");
 		m.startGame(meta);
 		const ts: number[] = [];
@@ -252,12 +254,12 @@ describe("TimingModel.planMove", () => {
 		}
 		const sorted = [...ts].sort((a, b) => a - b);
 		const q50 = sorted[Math.floor(0.5 * sorted.length)] ?? 0;
-		expect(q50).toBeGreaterThan(2);
+		expect(q50).toBeGreaterThan(0.5);
 		expect(q50).toBeLessThan(4);
 		const tail = ts.filter((t) => t > 15).length / ts.length;
 		// The clock budget now caps this position below 15 s, including long-tail draws.
 		expect(tail).toBe(0);
-		expect(sorted.at(-1) ?? 0).toBeLessThanOrEqual(120 * TIMING_CONSTANTS.budget.windowClockFraction);
+		expect(sorted.at(-1) ?? 0).toBeLessThanOrEqual(120 * TIMING_CONSTANTS.moveBudget.clockFraction);
 		expect(tail).toBeLessThan(0.06);
 		expect(instant / ts.length).toBeGreaterThan(0.05);
 		expect(instant / ts.length).toBeLessThan(0.2);
@@ -334,14 +336,25 @@ describe("TimingModel.planMove", () => {
 		}
 		expect(best / sorted.length).toBeLessThan(0.1);
 	});
-	it("CV guard: re-sample when the per-game CV would stay below 0.5 after 12 moves", () => {
-		const flat = new Array<number>(12).fill(3000);
-		expect(needsResample(flat, 3000)).toBe(true);
-		expect(needsResample(flat.slice(0, 5), 3000)).toBe(false);
-		expect(
-			needsResample([200, 6000, 300, 9000, 250, 4000, 500, 12_000, 300, 700, 8000, 350], 2000)
-		).toBe(false);
+	it("does not redraw the learned distribution to force a global coefficient of variation", () => {
+		let samples = 0;
+		const model = new TimingModel(
+			{
+				id: "chessmimic",
+				median: () => 2,
+				sample: () => {
+					samples++;
+					return { tSec: 2, mode: "normal", why: [] };
+				},
+			},
+			DEFAULT_SETTINGS.timing,
+			createRng("single-draw")
+		);
+		model.startGame(meta);
+		for (let i = 0; i < 30; i++) model.planMove(ctx());
+		expect(samples).toBe(30);
 	});
+
 	it("120 s band over a persona mixture (150 seeds × 40 moves, N = 6 000): q50 2–4 s, P(> 15 s) ≤ 7 %, P(instant) 5–20 %", () => {
 		const r = probe("mixture-120s", 120_000, 6000, { ply: 24, oppClockMs: 120_000 });
 		expect(r.q(0.5) / 1000).toBeGreaterThan(2);
@@ -349,7 +362,7 @@ describe("TimingModel.planMove", () => {
 		const tail = r.sorted.filter((t) => t > 15_000).length / r.sorted.length;
 		expect(tail).toBe(0);
 		expect(r.sorted.at(-1) ?? 0).toBeLessThanOrEqual(
-			120_000 * TIMING_CONSTANTS.budget.windowClockFraction
+			120_000 * TIMING_CONSTANTS.moveBudget.clockFraction
 		);
 		expect(tail).toBeLessThanOrEqual(0.07);
 		const instant = (r.modes.instant ?? 0) / r.sorted.length;
