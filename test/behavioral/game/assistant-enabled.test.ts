@@ -21,6 +21,7 @@ import { TIMINGS } from "@core/constants/timings";
 import { setSettings } from "@core/storage/settings-storage";
 import type { PositionSnapshot } from "@typedefs/game";
 import { createGameHarness, type GameHarness } from "./harness";
+import { isPonderSearch } from "./scripted-engine";
 
 let h: GameHarness;
 afterEach(async () => {
@@ -206,7 +207,7 @@ describe("game session: the assistant switch (Settings.enabled, §4.4)", () => {
 		// returns and stops what it just started. The window is one microtask wide, so it is driven
 		// here the only way a black-box test can: two settings writes in the same turn, the second
 		// landing while the first one's resume is parked inside the start.
-		h = await createGameHarness({ settings: { enabled: false } });
+		h = await createGameHarness({ settings: { enabled: false }, script: { holdPonder: true } });
 		const session = h.session();
 
 		// An opponent-turn position, held because the switch is off (nothing is searched for it).
@@ -244,9 +245,10 @@ describe("game session: the assistant switch (Settings.enabled, §4.4)", () => {
 
 		// One search went out — the `go infinite` that was already on its way — and it was stopped
 		// rather than left running with the assistant off. No premove search followed it either.
-		expect(h.transport.goLines).toEqual(["go infinite"]);
+		expect(h.transport.goLines).toHaveLength(1);
+		expect(isPonderSearch(h.transport.goLines[0]!)).toBe(true);
 		expect(h.transport.sent.lastIndexOf("stop")).toBeGreaterThan(
-			h.transport.sent.lastIndexOf("go infinite")
+			h.transport.sent.lastIndexOf(h.transport.sent.filter(isPonderSearch).at(-1) ?? "")
 		);
 		expect(h.controller.status().state).toBe("idle");
 		expect(h.settings().enabled).toBe(false);

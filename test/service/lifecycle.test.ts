@@ -174,14 +174,15 @@ describe("migrateLegacySettings", () => {
 		expect(second).toEqual({ migrated: false, keyImported: false, settings: null });
 	});
 	it("does not clobber v2 settings already present", async () => {
+		// A non-forced key (the persona is forced to balanced on every read, 2026-09-12).
 		sim.storage.data.local[LOCAL_KEYS.settings] = {
 			...DEFAULT_SETTINGS,
-			strength: { ...DEFAULT_SETTINGS.strength, persona: "blitz" },
+			strength: { ...DEFAULT_SETTINGS.strength, useOpeningBook: false },
 		} satisfies Settings;
 		Object.assign(sim.storage.data.local, { elo: 20 });
 		await migrateLegacySettings();
 		const s = await getSettings();
-		expect(s.strength.persona).toBe("blitz");
+		expect(s.strength.useOpeningBook).toBe(false);
 		expect(s.strength.targetElo).toBe(LIMITS.engineEloMax);
 	});
 });

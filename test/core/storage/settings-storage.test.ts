@@ -1,6 +1,6 @@
 // test/core/storage/settings-storage.test.ts
 import { beforeEach, describe, expect, it } from "bun:test";
-import { LIMITS, LOCAL_KEYS } from "@core/constants";
+import { FORCED_SETTING_VALUES, LIMITS, LOCAL_KEYS } from "@core/constants";
 import {
 	getSettings,
 	normalizeSettings,
@@ -81,16 +81,81 @@ describe("normalizeSettings", () => {
 		// `execution` keeps every surviving field and the key itself does not come back.
 		for (const stored of ["click", "auto", "drag"]) {
 			const s = normalizeSettings({
-				execution: { style: stored, motorSpeed: 1.5, previewSelects: "off" },
+				execution: { style: stored, motorSpeed: 1.5, previewSelectScale: 0.5 },
 			});
 			expect("style" in (s.execution as unknown as Record<string, unknown>)).toBe(false);
 			expect(s.execution.motorSpeed).toBe(1.5);
-			expect(s.execution.previewSelects).toBe("off");
+			expect(s.execution.previewSelectScale).toBe(0.5);
 			expect(s.execution.verifyMoves).toBe(DEFAULT_SETTINGS.execution.verifyMoves);
 			expect(s.execution.backend).toBe(DEFAULT_SETTINGS.execution.backend);
 		}
 		// and the shipped defaults never had it either
 		expect("style" in (DEFAULT_SETTINGS.execution as unknown as Record<string, unknown>)).toBe(false);
+	});
+
+	// ── settings layout, 2026-09-13: every deleted or moved leaf still loads from an old shape ──
+	describe("settings layout migrations (2026-09-13)", () => {
+		const keys = (o: object): string[] => Object.keys(o);
+
+		it("folds a stored `execution.previewSelects` into the rate slider: off → 0, auto keeps the rate", () => {
+			const off = normalizeSettings({ execution: { previewSelects: "off", previewSelectScale: 1.5 } });
+			expect(off.execution.previewSelectScale).toBe(0);
+			expect(keys(off.execution)).not.toContain("previewSelects");
+			const auto = normalizeSettings({
+				execution: { previewSelects: "auto", previewSelectScale: 1.5 },
+			});
+			expect(auto.execution.previewSelectScale).toBe(1.5);
+			expect(keys(auto.execution)).not.toContain("previewSelects");
+			// A profile that never had the segment (or had garbage in it) keeps its rate.
+			expect(
+				normalizeSettings({ execution: { previewSelects: 3 } }).execution.previewSelectScale
+			).toBe(DEFAULT_SETTINGS.execution.previewSelectScale);
+			expect(keys(DEFAULT_SETTINGS.execution)).not.toContain("previewSelects");
+		});
+
+		it("drops a stored `display.pvCount`: the engine's `multiPv` is the one lines knob", () => {
+			const s = normalizeSettings({ display: { pvCount: 2, evalBar: false }, engine: { multiPv: 6 } });
+			expect(keys(s.display)).not.toContain("pvCount");
+			expect(s.display.evalBar).toBe(false);
+			expect(s.engine.multiPv).toBe(6);
+			expect(keys(DEFAULT_SETTINGS.display)).not.toContain("pvCount");
+		});
+
+		it("forces `timing.respectBudget` on and `keybinds.global` off whatever was stored", () => {
+			const s = normalizeSettings({
+				timing: { respectBudget: false, speedScale: 2 },
+				keybinds: { global: true },
+			});
+			expect(s.timing.respectBudget).toBe(true);
+			expect(s.timing.speedScale).toBe(2);
+			expect(s.keybinds.global).toBe(false);
+		});
+
+		it("reads `strength.blunderScale` again (the accuracy offset), clamped to its range", () => {
+			expect(normalizeSettings({ strength: { blunderScale: 1.5 } }).strength.blunderScale).toBe(1.5);
+			expect(normalizeSettings({ strength: { blunderScale: 9 } }).strength.blunderScale).toBe(
+				LIMITS.blunderScaleMax
+			);
+			expect(normalizeSettings({ strength: { blunderScale: -1 } }).strength.blunderScale).toBe(
+				LIMITS.blunderScaleMin
+			);
+			expect(normalizeSettings({ strength: { blunderScale: "x" } }).strength.blunderScale).toBe(
+				DEFAULT_SETTINGS.strength.blunderScale
+			);
+		});
+
+		it("reads the new booleans with their shipped defaults", () => {
+			expect(DEFAULT_SETTINGS.automation.resignLostGames).toBe(true);
+			expect(DEFAULT_SETTINGS.automation.moveQualityChips).toBe(true);
+			const s = normalizeSettings({
+				automation: { resignLostGames: false, moveQualityChips: false },
+			});
+			expect(s.automation.resignLostGames).toBe(false);
+			expect(s.automation.moveQualityChips).toBe(false);
+			expect(
+				normalizeSettings({ automation: { resignLostGames: "no" } }).automation.resignLostGames
+			).toBe(true);
+		});
 	});
 	it("replaces invalid enum values and wrong-typed fields with defaults", () => {
 		const s = normalizeSettings({
@@ -126,16 +191,60 @@ describe("normalizeSettings", () => {
 		expect(normalizeSettings({ engine: { threads: 0 } }).engine.threads).toBe(1);
 		expect(normalizeSettings({ engine: { threads: 2.7 } }).engine.threads).toBe(3);
 	});
-	it("clamps blunderScale and previewSelectScale to their spec ranges", () => {
-		expect(normalizeSettings({ strength: { blunderScale: -50 } }).strength.blunderScale).toBe(
-			LIMITS.blunderScaleMin
-		);
-		expect(normalizeSettings({ strength: { blunderScale: 7 } }).strength.blunderScale).toBe(
-			LIMITS.blunderScaleMax
-		);
-		expect(normalizeSettings({ strength: { blunderScale: 1.5 } }).strength.blunderScale).toBe(1.5);
+	it("forces the extension-decided keys regardless of what is stored (owner, 2026-09-12; 2026-09-13)", () => {
+		// A stale profile, an import or a patch cannot resurrect a removed option: the normaliser
+		// overwrites each forced leaf with `FORCED_SETTING_VALUES`, which equal the shipped defaults.
+		const stored = normalizeSettings({
+			strength: { persona: "blitz", selectionMode: "engine-elo" },
+			timing: { respectBudget: false },
+			execution: { calibrateFromMyMouse: true, backend: "native", keepDebuggerAttached: false },
+			keybinds: { global: true },
+			engine: { nnue: "big" },
+		});
+		expect(stored.strength.persona).toBe("balanced");
+		expect(stored.strength.selectionMode).toBe("hybrid");
+		expect(stored.timing.respectBudget).toBe(true);
+		expect(stored.execution.calibrateFromMyMouse).toBe(false);
+		expect(stored.execution.backend).toBe("cdp");
+		expect(stored.execution.keepDebuggerAttached).toBe(true);
+		expect(stored.keybinds.global).toBe(false);
+		expect(stored.engine.nnue).toBe("auto");
+		expect(stored).toEqual(DEFAULT_SETTINGS);
+		expect(FORCED_SETTING_VALUES).toEqual({
+			strength: {
+				persona: DEFAULT_SETTINGS.strength.persona,
+				selectionMode: DEFAULT_SETTINGS.strength.selectionMode,
+			},
+			timing: { respectBudget: DEFAULT_SETTINGS.timing.respectBudget },
+			execution: {
+				calibrateFromMyMouse: DEFAULT_SETTINGS.execution.calibrateFromMyMouse,
+				backend: DEFAULT_SETTINGS.execution.backend,
+				keepDebuggerAttached: DEFAULT_SETTINGS.execution.keepDebuggerAttached,
+			},
+			keybinds: { global: DEFAULT_SETTINGS.keybinds.global },
+			engine: { nnue: DEFAULT_SETTINGS.engine.nnue },
+		});
+	});
+	it("setSettings accepts a patch for a forced key but stores the forced value", async () => {
+		await setSettings({
+			strength: { persona: "aggressive", blunderScale: 2 },
+			timing: { respectBudget: false },
+			engine: { nnue: "small" },
+		});
+		const s = await getSettings();
+		expect(s.strength.persona).toBe("balanced");
+		// The accuracy offset is a real setting again (2026-09-13): the patch lands.
+		expect(s.strength.blunderScale).toBe(2);
+		expect(s.timing.respectBudget).toBe(true);
+		expect(s.engine.nnue).toBe("auto");
+	});
+	it("clamps previewSelectScale to its spec range (0 is the Off position)", () => {
+		expect(LIMITS.previewSelectScaleMin).toBe(0);
 		expect(
 			normalizeSettings({ execution: { previewSelectScale: 0 } }).execution.previewSelectScale
+		).toBe(0);
+		expect(
+			normalizeSettings({ execution: { previewSelectScale: -3 } }).execution.previewSelectScale
 		).toBe(LIMITS.previewSelectScaleMin);
 		expect(
 			normalizeSettings({ execution: { previewSelectScale: 9 } }).execution.previewSelectScale
@@ -159,7 +268,8 @@ describe("normalizeSettings", () => {
 		expect(s.keybinds.playMove.key).toBe("p");
 		expect(s.keybinds.playMove.altKey).toBe(true);
 		expect(s.keybinds.disable).toEqual(DEFAULT_SETTINGS.keybinds.disable);
-		expect(s.keybinds.global).toBe(true);
+		// `global` is forced off since 2026-09-13 (Chrome's own shortcuts always work).
+		expect(s.keybinds.global).toBe(false);
 	});
 	it("does not return the frozen default objects", () => {
 		const s = normalizeSettings(undefined);

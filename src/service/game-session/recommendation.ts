@@ -1,42 +1,20 @@
-/**
- * The per-position recommendation pipeline (Part I §3.2 steps 1–4) with the
- * §7.5 search-budget policy:
- *
- *   bookPolicy → engine.analyse → selectMove → timingModel.planMove
- *
- * The book, timing inference, and engine run **in parallel** (§7.3 item 3: "the engine
- * searches in parallel regardless"); the trap check that §7.3 needs the lines
- * for is applied here once both have answered (`lineFacts` + `isTrap`), so the
- * book never has to wait for the search. Timing inference is bounded by the head’s deadline and bypassed for clock races.
- *
- * Budget (§6.4 / §7.5): **plan-independent**, derived from the time control and
- * the position — `SEARCH_BUDGET.moveMs[tc]` (§6.4's "plan-independent
- * 400–1500 ms"), bounded by §7.5's `0.6 · plannedThinkMs` so the search still
- * finishes before the hand acts, bounded again by a fraction of the clock we
- * have left, and collapsed to the floor in a position with one legal move.
- * `depthCap` follows the speed class, while candidate breadth follows both the
- * budget and the active target. A shallow search retries only within the original
- * wall-clock budget and retains the available candidates for rating-sensitive selection.
- *
- * The old budget was `0.6 · plannedThinkMs` alone, which tied the search to the
- * wait: every `untimed` game (i.e. every game, before the time control was
- * wired through) planned ≈ 7.5 s and therefore searched the full 4 s cap before
- * a recommendation existed. Two harms, not one: the panel was blind for 4 s,
- * and because the executor fits the plan into what is left of its deadline, the
- * search became a **floor** on the realised `MoveHoldTime` — the §13.2 left
- * tail (premove / instant) could not be produced at all.
- */
+/** Builds a recommendation with one shared preparation budget for policy and engine work. */
 
 import { loadPosition } from "@core/chess/fen";
 import { matchingHistory, type PositionHistory } from "@core/chess/history";
 import { isLoneKing } from "@core/chess/material";
 import { phase as phaseOf } from "@core/chess/phase";
-import { legalMoves, parseUci, uciToSan } from "@core/chess/san";
+import { legalMoves, parseUci, playUci, uciToSan } from "@core/chess/san";
+import { BOOK } from "@core/constants/books";
 import { LIMITS } from "@core/constants/limits";
-import { SEARCH_BUDGET } from "@core/constants/search";
+import { MAIA, MAIA_INPUT, type MaiaSize } from "@core/constants/maia";
+import { MAIA_CONTEXT_THINK_REF_MS, MAIA_SEARCH, SEARCH_BUDGET } from "@core/constants/search";
+import { automaticDepthForElo, humanDepth } from "@core/engine/depth-policy";
 import { requestEloForTarget } from "@core/engine/options";
 import type { AnalysisHandle, AnalysisRequest, AnalysisResult } from "@core/engine/types";
 import { log } from "@core/logger";
+import { maiaSizeFor, usesMaia, usesMaiaPrior } from "@core/policy/maia-size";
+import type { PolicyInferenceInputs, PolicyPort, PolicyResult } from "@core/policy/types";
 import type { Rng } from "@core/rng";
 import type { BookContext, BookPolicy } from "@core/strength/book/book-policy";
 import { isTrap, lineFacts } from "@core/strength/book/book-policy";
@@ -44,6 +22,7 @@ import { conversionPool, isImmediateMate } from "@core/strength/conversion";
 import { effectiveElo } from "@core/strength/elo-map";
 import { selectMove } from "@core/strength/move-selector";
 import { avoidRepetition, repetitionRisk } from "@core/strength/repetition";
+import { maiaSelfElo, type PressureTerms, pressureTerms } from "@core/strength/selection-elo";
 import { usesNativeSelection } from "@core/strength/selection-mode";
 import type { SelectionContext, SelectionState } from "@core/strength/types";
 import { budgetController, scheduleAlloc } from "@core/timing/budget";
@@ -59,6 +38,9 @@ import type { EvalLine } from "@typedefs/engine";
 import type { ChosenMove, PositionSnapshot, Recommendation, TimeControl } from "@typedefs/game";
 import type { PersonaId, Settings } from "@typedefs/settings";
 
+import { remainingClockMs } from "./clock";
+import { searchResultBeforeDeadline } from "./search-deadline";
+
 const MS_PER_S = 1000;
 
 /** The engine surface the pipeline needs (`EngineController` satisfies it). */
@@ -71,6 +53,12 @@ export interface SearchBudget {
 	movetimeMs: number;
 	depthCap: number;
 	multiPv: number;
+	/**
+	 * Maia's human-depth frame, captured alongside the main search. It is part of the cache
+	 * identity, so predicted-position searches must request the same depth. Absent uses the
+	 * engine client's default feature depth.
+	 */
+	featureDepth?: number;
 }
 
 /** Seconds/ms of clock the budget controller needs, without any engine input. */
@@ -84,17 +72,17 @@ export interface BudgetPosition {
 	/** `Persona.tau` (time-management skill) — the reserve scales with it. */
 	tau: number;
 	budgetUsedRatio: number;
+	targetElo?: number;
 }
 
 /**
- * The think time the timing model is *expected* to plan, before the search that
- * feeds it exists (§7.5's `plannedThinkMs`). Same allocation the model uses,
- * scaled by the user's speed knob.
+ * Expected think time before analysis, using the timing model's allocation and user speed
+ * setting. The allocation already includes own-clock pressure.
  */
 export function estimatedThinkMs(p: BudgetPosition, settings: Settings): number {
 	const { pieces, pawns } = pieceCounts(p.fen);
 	const F = TIMING_CONSTANTS.features;
-	// The same untimed substitution `computeFeatures` makes (§8.4b item 1).
+	// Match the virtual clock used by computeFeatures for untimed games.
 	const untimed = p.tc === "untimed";
 	const baseS = untimed ? TIMING_CONSTANTS.untimedVirtual.clockS : p.baseSec;
 	const incS = untimed ? TIMING_CONSTANTS.untimedVirtual.incS : p.incSec;
@@ -108,6 +96,7 @@ export function estimatedThinkMs(p: BudgetPosition, settings: Settings): number 
 		non_pawn_pieces: pieces,
 		pawns,
 		budget_used_ratio: untimed ? 0 : p.budgetUsedRatio,
+		targetElo: p.targetElo ?? settings.strength.targetElo,
 	};
 	const allocSec = settings.timing.respectBudget
 		? budgetController(inputs, {
@@ -122,30 +111,242 @@ export function estimatedThinkMs(p: BudgetPosition, settings: Settings): number 
 	return allocSec * MS_PER_S * Math.max(0, settings.timing.speedScale);
 }
 
-/** What sizes one own-move search: the time control, the position and §7.5's own upper bound. */
+/** Inputs for an own-move search's clock and think-time limits. */
 export interface SearchBudgetInput {
 	tc: TcClass;
 	/** Our remaining clock in ms; `0` when the page reports none (an untimed game). */
 	myClockMs: number;
 	/** Legal moves in the position — exactly one means there is nothing to search (0 = unreadable). */
 	legalMoves: number;
-	/** §7.5's bound: the think time the model is expected to plan (`estimatedThinkMs`). */
+	/** Expected think time from estimatedThinkMs; bounds how much may be spent searching. */
 	plannedThinkMs: number;
 	/** Active opponent-matched target, when different from the saved fixed target. */
 	targetElo?: number;
 	/** Form only decides whether Hybrid uses native selection; sampling breadth retains its target. */
 	form?: number;
+	/**
+	 * Maia's referee search (`maiaSearchMode`): always the sampling breadth, whatever the
+	 * `selectionMode` — the human policy needs the alternatives the engine would otherwise not score.
+	 */
+	maia?: boolean;
+	/**
+	 * Use Maia as a prior over the engine's candidates, retaining native strength with
+	 * enough candidate breadth for a meaningful tie-break.
+	 */
+	maiaPrior?: boolean;
+}
+
+/** What decides whether an own-move search is Maia's referee search. */
+export interface MaiaSearchInput {
+	targetElo: number;
+	/** A policy port exists for this session (`RecommendationPipelineDeps.policy`). */
+	policy: boolean;
+	/** The position is a clock race (`clockRacePolicy` non-null): the engine is faster, skip Maia. */
+	clockRace: boolean;
 }
 
 /**
- * §6.4 / §7.5: the movetime, depth cap and MultiPV of one own-move search.
- *
- * `movetimeMs` is the smallest of three bounds, floored at `minMovetimeMs`:
- * the class base (§6.4's plan-independent 400–1500 ms), §7.5's
- * `0.6 · plannedThinkMs` (the search must finish before we act) and
- * `clockFraction` of the clock we have left (never burn the clock searching).
- * A position with exactly one legal move takes the floor: no search can change
- * the answer.
+ * Whether Maia selects the move. Predicted-position searches use the same decision for
+ * strength, breadth and feature depth so their cache entries remain reusable.
+ */
+export function maiaSearchMode(input: MaiaSearchInput): boolean {
+	return input.policy && !input.clockRace && usesMaia(input.targetElo);
+}
+
+/**
+ * Above Maia's selection range, use its policy as a tie-breaking prior for the engine.
+ * Predicted-position searches must use the same mode and candidate breadth.
+ */
+export function maiaPriorMode(input: MaiaSearchInput): boolean {
+	return input.policy && !input.clockRace && usesMaiaPrior(input.targetElo);
+}
+
+/**
+ * Maia supplies population opening choices below the book threshold. The book remains
+ * available as a fallback when the policy query returns no answer.
+ */
+export function maiaPlaysOpening(input: { targetElo: number; form: number }): boolean {
+	return usesMaia(input.targetElo) && effectiveElo(input.targetElo, input.form) < BOOK.maiaOnlyElo;
+}
+
+/**
+ * The strength an own-move search runs at: Maia's referee search is at **full strength** (no
+ * `elo`, which the UCI client turns into `UCI_LimitStrength false`), everything else at the
+ * native `UCI_Elo` for the target when the engine calibrates that far.
+ */
+export function refereeElo(targetElo: number, maia: boolean): number | undefined {
+	return maia ? undefined : requestEloForTarget(targetElo);
+}
+
+/**
+ * The Maia query's position history: the last `MAIA_INPUT.history` positions oldest → newest,
+ * ending with `fen` itself, replayed from the validated game history. `[fen]` when there is no
+ * history that reaches this board (the encoder repeats the earliest position to fill).
+ */
+export function maiaHistoryFens(history: PositionHistory | undefined, fen: string): string[] {
+	const valid = matchingHistory(history, fen);
+	const board = valid ? loadPosition(valid.fen) : null;
+	if (!valid || !board) return [fen];
+	const fens = [board.fen()];
+	for (const move of valid.moves) {
+		if (!playUci(board, move)) return [fen];
+		fens.push(board.fen());
+	}
+	// Preserve the caller's exact final FEN string after validating the replay.
+	fens[fens.length - 1] = fen;
+	return fens.slice(-MAIA_INPUT.history);
+}
+
+/**
+ * Maia's legal moves the referee search left unscored (no line in `scored` starts with them),
+ * each at `p ≥ MAIA.minProb`, most likely first. The extra referee search draws its
+ * `searchmoves` from the front of this list.
+ */
+export function maiaUnscoredMoves(
+	policy: PolicyResult,
+	scored: readonly EvalLine[],
+	fen: string
+): Array<[uci: string, p: number]> {
+	const legal = new Set(legalMoves(fen));
+	const seen = new Set(scored.map((line) => line.pvUci[0]));
+	const prob = new Map<string, number>();
+	for (const [uci, p] of policy.moves) {
+		if (!legal.has(uci) || seen.has(uci)) continue;
+		prob.set(uci, Math.max(prob.get(uci) ?? 0, p));
+	}
+	return [...prob].filter(([, p]) => p >= MAIA.minProb).sort((a, b) => b[1] - a[1]);
+}
+
+/**
+ * Unscored moves earn a referee search when their combined probability or top probability
+ * passes its threshold. Return at most extraCandidates roots.
+ */
+export function maiaExtraSearchmoves(unscored: ReadonlyArray<readonly [string, number]>): string[] {
+	let mass = 0;
+	for (const [, p] of unscored) mass += p;
+	const top = unscored[0]?.[1] ?? 0;
+	if (mass < MAIA.extraMassMin && top < MAIA.extraTopProb) return [];
+	return unscored.slice(0, MAIA.extraCandidates).map(([uci]) => uci);
+}
+
+/** Candidate-search ceiling; run() also requires it to fit the shared preparation deadline. */
+export function extraSearchMs(budget: SearchBudget): number {
+	return Math.max(SEARCH_BUDGET.minMovetimeMs, Math.min(MAIA.extraSearchMs, budget.movetimeMs));
+}
+
+/**
+ * Whether `searchBudget`'s clock fraction bound the movetime (the search was cut short to protect
+ * the clock): the extra search is not spent then. `movetimeMs` is the smallest bound (floored),
+ * so the clock bound binds exactly when it is at or under the movetime.
+ */
+export function clockBoundSearch(myClockMs: number, budget: SearchBudget): boolean {
+	return myClockMs > 0 && SEARCH_BUDGET.clockFraction * myClockMs <= budget.movetimeMs;
+}
+
+/**
+ * Append unique extra-search candidates without changing the main frame's order.
+ * The main best line remains the evaluation and loss reference; a shallower extra
+ * search must not replace it with an optimistic score. The selector ranks the merged pool.
+ */
+export function mergeLines(main: readonly EvalLine[], extra: readonly EvalLine[]): EvalLine[] {
+	const seen = new Set(main.map((line) => line.pvUci[0]));
+	const added = extra.filter((line) => {
+		const uci = line.pvUci[0];
+		if (uci === undefined || uci === "" || seen.has(uci)) return false;
+		seen.add(uci);
+		return true;
+	});
+	if (added.length === 0) return [...main];
+	return [...main, ...added].map((line, i) => ({ ...line, multipv: i + 1 }));
+}
+
+/** Maia's legal moves for `fen`, most likely first (ties by UCI), duplicates folded to the max. */
+function maiaRankedLegal(policy: PolicyResult, fen: string): Array<[uci: string, p: number]> {
+	const legal = new Set(legalMoves(fen));
+	const prob = new Map<string, number>();
+	for (const [uci, p] of policy.moves) {
+		if (!legal.has(uci)) continue;
+		prob.set(uci, Math.max(prob.get(uci) ?? 0, p));
+	}
+	return [...prob].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+}
+
+/**
+ * Cover Maia's legal probability mass, retain available engine continuations, and fill
+ * to the minimum root count. Sort roots for stable cache identity. An unreadable board
+ * or a policy with no legal moves yields an empty set.
+ */
+export function shapedRootSet(
+	policy: PolicyResult,
+	fen: string,
+	knownTopMoves: readonly string[] = []
+): string[] {
+	const K = MAIA_SEARCH.shaped;
+	const ranked = maiaRankedLegal(policy, fen);
+	if (ranked.length === 0) return [];
+	const legal = new Set(legalMoves(fen));
+	const roots = new Set<string>();
+	let total = 0;
+	for (const [, p] of ranked) total += p;
+	let covered = 0;
+	for (const [uci, p] of ranked) {
+		if (roots.size >= K.maxRoots || covered >= K.massCover * total) break;
+		roots.add(uci);
+		covered += p;
+	}
+	let forced = 0;
+	for (const uci of knownTopMoves) {
+		if (forced >= K.knownTopMoves) break;
+		if (!legal.has(uci) || roots.has(uci)) continue;
+		roots.add(uci);
+		forced += 1;
+	}
+	for (const [uci] of ranked) {
+		if (roots.size >= K.minRoots) break;
+		roots.add(uci);
+	}
+	return [...roots].sort();
+}
+
+/** One Maia-shaped search: its roots and the budget it runs at. */
+export interface ShapedSearchPlan {
+	searchmoves: string[];
+	/** Root count and budget after any confidence-based reduction. */
+	budget: SearchBudget;
+	/** Whether Maia's top probability qualifies for a shorter search. */
+	confident: boolean;
+}
+
+/**
+ * Size a search over Maia's roots, shortening confident choices toward the search floor.
+ * Predicted-position and own-move searches share this shape for cache reuse. Return null
+ * when the policy names no legal move.
+ */
+export function shapedSearchPlan(
+	policy: PolicyResult,
+	fen: string,
+	knownTopMoves: readonly string[] | undefined,
+	budget: SearchBudget
+): ShapedSearchPlan | null {
+	const searchmoves = shapedRootSet(policy, fen, knownTopMoves);
+	if (searchmoves.length === 0) return null;
+	const K = MAIA_SEARCH.shaped;
+	const top = maiaRankedLegal(policy, fen)[0]?.[1] ?? 0;
+	const confident = top >= K.confidentProb;
+	const floor = SEARCH_BUDGET.minMovetimeMs;
+	const movetimeMs = confident
+		? Math.max(floor, budget.movetimeMs - K.confidentTimeFraction * (budget.movetimeMs - floor))
+		: budget.movetimeMs;
+	return {
+		searchmoves,
+		budget: { ...budget, multiPv: searchmoves.length, movetimeMs },
+		confident,
+	};
+}
+
+/**
+ * Bound search time by speed class, expected think time and remaining clock, with a
+ * minimum usable search duration. Exactly one legal move uses that minimum.
  */
 export function searchBudget(input: SearchBudgetInput, settings: Settings): SearchBudget {
 	const { tc, myClockMs, legalMoves, plannedThinkMs } = input;
@@ -156,32 +357,32 @@ export function searchBudget(input: SearchBudgetInput, settings: Settings): Sear
 		myClockMs > 0 ? SEARCH_BUDGET.clockFraction * myClockMs : Number.POSITIVE_INFINITY,
 	];
 	const movetimeMs =
-		// Exactly one: `legalMoves()` answers `[]` on a FEN chess.js cannot parse, and an unreadable
-		// position is the last thing that should get the shortest search.
+		// An unreadable FEN also yields zero legal moves; only a forced move takes the floor.
 		legalMoves === 1
 			? SEARCH_BUDGET.minMovetimeMs
 			: clamp(Math.min(...bounds), SEARCH_BUDGET.minMovetimeMs, SEARCH_BUDGET.maxMovetimeMs);
-	const depthCap = Math.min(SEARCH_BUDGET.depthCap[tc], settings.engine.depthCap);
+	const targetElo = input.targetElo ?? settings.strength.targetElo;
+	const depthCap = automaticDepthForElo(targetElo);
 	const adaptive =
 		movetimeMs < SEARCH_BUDGET.multiPvSmallMs
 			? SEARCH_BUDGET.multiPvSmall
 			: movetimeMs < SEARCH_BUDGET.multiPvMediumMs
 				? SEARCH_BUDGET.multiPvMedium
 				: SEARCH_BUDGET.multiPvLarge;
-	const targetElo = input.targetElo ?? settings.strength.targetElo;
-	const sampling = !usesNativeSelection(
-		settings.strength.selectionMode,
-		effectiveElo(targetElo, input.form ?? 0)
-	);
+	const sampling =
+		input.maia === true ||
+		!usesNativeSelection(settings.strength.selectionMode, effectiveElo(targetElo, input.form ?? 0));
 	const breadth = sampling
 		? (SEARCH_BUDGET.selectionCandidates.find((band) => targetElo <= band.maxElo)?.count ?? 0)
-		: 0;
+		: input.maiaPrior === true
+			? SEARCH_BUDGET.priorCandidates
+			: 0;
 	const wanted = Math.max(adaptive, settings.engine.multiPv, breadth);
 	const multiPv = legalMoves > 0 ? Math.min(wanted, legalMoves) : wanted;
 	return { movetimeMs, depthCap, multiPv };
 }
 
-/** Everything the own-move budget is a function of (§6.4 / §7.5): the clock and the position. */
+/** Position and clock inputs shared by current and predicted-position searches. */
 export interface OwnMoveBudgetInput {
 	fen: string;
 	ply: number;
@@ -193,14 +394,22 @@ export interface OwnMoveBudgetInput {
 	budgetUsedRatio: number;
 	targetElo?: number;
 	form?: number;
+	/** `maiaSearchMode(...)` for this search; the pre-analysis must pass the same answer. */
+	maia?: boolean;
+	/** maiaPriorMode for this search; predicted-position analysis must use the same value. */
+	maiaPrior?: boolean;
 }
 
-/**
- * The budget an own-move search of `fen` is given. One definition, because the §4.5 pre-analysis
- * of the *predicted* position has to ask for exactly what the own-move search will ask for: the
- * cache's depth gate is `depthCap − 2`, so a cheaper pre-analysis could never answer it.
- */
-export function ownMoveBudget(input: OwnMoveBudgetInput, settings: Settings): SearchBudget {
+/** What `ownMoveBudget` derives from the clock and the position before sizing the search. */
+interface OwnMovePlan {
+	tc: TcClass;
+	baseSec: number;
+	incSec: number;
+	plannedThinkMs: number;
+	legalCount: number;
+}
+
+function ownMovePlan(input: OwnMoveBudgetInput, settings: Settings): OwnMovePlan {
 	const [baseSec, incSec] = tcSeconds(input.timeControl);
 	const tc = tcClass(baseSec, incSec);
 	const plannedThinkMs = estimatedThinkMs(
@@ -213,35 +422,163 @@ export function ownMoveBudget(input: OwnMoveBudgetInput, settings: Settings): Se
 			tc,
 			tau: input.tau,
 			budgetUsedRatio: input.budgetUsedRatio,
-		},
-		settings
-	);
-	const budget = searchBudget(
-		{
-			tc,
-			myClockMs: input.myClockMs,
-			legalMoves: legalMoves(input.fen).length,
-			plannedThinkMs,
 			targetElo: input.targetElo ?? settings.strength.targetElo,
-			form: input.form ?? 0,
 		},
 		settings
 	);
+	return { tc, baseSec, incSec, plannedThinkMs, legalCount: legalMoves(input.fen).length };
+}
+
+/** Clock and think-time inputs to Maia's context penalty. */
+export interface MaiaContextInput {
+	myClockMs: number;
+	/** The game's base clock in ms; `0` = unknown or untimed (the clock term is 0). */
+	baseMs: number;
+	/** `estimatedThinkMs` for this move — the plan-independent allocation the search is sized by. */
+	plannedThinkMs: number;
+	/** Sustainable allocation for this position on a full clock, before user speed scaling. */
+	referenceThinkMs?: number;
+	tc: TcClass;
+}
+
+export interface MaiaContextTerms {
+	/** `clamp(1 − myClockMs / baseMs, 0, 1)`; 0 without a base clock. */
+	clockPressure: number;
+	/** Shortfall from the healthy-clock reference, clamped to 0–1; zero when untimed. */
+	shortThink: number;
+	/** The Elo penalty, capped at `MAIA.context.maxPenalty`. */
+	penalty: number;
+}
+
+/**
+ * Reduce effective strength for clock pressure and curtailed thinking, including their
+ * interaction. The selector applies Maia's ambiguity penalty separately.
+ */
+export function maiaContextPenalty(input: MaiaContextInput): MaiaContextTerms {
+	const K = MAIA.context;
+	const clockPressure =
+		input.baseMs > 0 && Number.isFinite(input.myClockMs)
+			? clamp(1 - input.myClockMs / input.baseMs, 0, 1)
+			: 0;
+	const ref = input.referenceThinkMs ?? MAIA_CONTEXT_THINK_REF_MS[input.tc];
+	const shortThink = ref > 0 ? clamp(1 - input.plannedThinkMs / ref, 0, 1) : 0;
+	const penalty = Math.min(
+		K.maxPenalty,
+		K.clockElo * clockPressure +
+			K.thinkElo * shortThink +
+			K.interactionElo * clockPressure * shortThink
+	);
+	return { clockPressure, shortThink, penalty };
+}
+
+/** The shared Maia query and selection rating, with its contributing terms. */
+export interface MaiaEloContext {
+	/** `maiaSelfElo(...)`: the query's `selfElo` below `MAIA.eloMax`, the rails' E. */
+	selfElo: number;
+	/** Clock/think penalty passed to the selector as contextEloPenalty. */
+	contextEloPenalty: number;
+	context: MaiaContextTerms;
+	pressure: PressureTerms;
+}
+
+/**
+ * Derive the Maia query rating from opponent pressure, the mistakes setting and clock/think
+ * context. Predicted-position analysis and the selector share these terms and feature depth.
+ */
+export function ownMoveMaiaElo(input: OwnMoveBudgetInput, settings: Settings): MaiaEloContext {
+	const plan = ownMovePlan(input, settings);
+	const baseMs = plan.baseSec * MS_PER_S;
+	const pressure = pressureTerms({
+		fen: input.fen,
+		myClockMs: input.myClockMs,
+		oppClockMs: input.oppClockMs ?? 0,
+		baseMs,
+		incrementMs: plan.incSec * MS_PER_S,
+	});
+	const context = maiaContextPenalty({
+		myClockMs: input.myClockMs,
+		baseMs,
+		plannedThinkMs: plan.plannedThinkMs,
+		referenceThinkMs: ownMovePlan(
+			{ ...input, myClockMs: baseMs, budgetUsedRatio: 0 },
+			{ ...settings, timing: { ...settings.timing, speedScale: 1 } }
+		).plannedThinkMs,
+		tc: plan.tc,
+	});
+	const selfElo = maiaSelfElo({
+		targetElo: input.targetElo ?? settings.strength.targetElo,
+		form: input.form ?? 0,
+		blunderScale: settings.strength.blunderScale,
+		pressureReduction: pressure.pressureReduction,
+		contextEloPenalty: context.penalty,
+	});
+	return { selfElo, contextEloPenalty: context.penalty, context, pressure };
+}
+
+/**
+ * Capture the frame at Maia's effective human depth only when Maia selects the move.
+ * Including it in ownMoveBudget keeps current and predicted-position searches aligned.
+ */
+export function ownMoveFeatureDepth(
+	input: OwnMoveBudgetInput,
+	settings: Settings
+): number | undefined {
+	return input.maia === true ? humanDepth(ownMoveMaiaElo(input, settings).selfElo) : undefined;
+}
+
+/** The clock-race policy for an own-move position, as `ownMoveBudget` and the pipeline read it. */
+export function ownMoveClockRace(
+	input: Pick<OwnMoveBudgetInput, "fen" | "myClockMs" | "oppClockMs" | "timeControl">
+): ReturnType<typeof clockRacePolicy> {
+	const [baseSec, incSec] = tcSeconds(input.timeControl);
 	const us = loadPosition(input.fen)?.turn();
-	const race = clockRacePolicy({
+	return clockRacePolicy({
 		ownClockMs: input.myClockMs,
 		opponentClockMs: input.oppClockMs ?? 0,
 		baseMs: baseSec * MS_PER_S,
 		incrementMs: incSec * MS_PER_S,
 		loneKing: us !== undefined && isLoneKing(input.fen, us),
 	});
-	return race ? { ...budget, movetimeMs: Math.min(budget.movetimeMs, race.maxSearchMs) } : budget;
+}
+
+/**
+ * Shared search budget for current and predicted positions. Matching depth, breadth and
+ * feature depth lets a correct prediction satisfy the own-move cache request.
+ */
+export function ownMoveBudget(input: OwnMoveBudgetInput, settings: Settings): SearchBudget {
+	const { tc, plannedThinkMs, legalCount } = ownMovePlan(input, settings);
+	const shaped = searchBudget(
+		{
+			tc,
+			myClockMs: input.myClockMs,
+			legalMoves: legalCount,
+			plannedThinkMs,
+			targetElo: input.targetElo ?? settings.strength.targetElo,
+			form: input.form ?? 0,
+			...(input.maia === undefined ? {} : { maia: input.maia }),
+			...(input.maiaPrior === undefined ? {} : { maiaPrior: input.maiaPrior }),
+		},
+		settings
+	);
+	// Predicted-position searches need the same feature depth for cache reuse.
+	const featureDepth = ownMoveFeatureDepth(input, settings);
+	const budget = featureDepth === undefined ? shaped : { ...shaped, featureDepth };
+	const race = ownMoveClockRace(input);
+	if (!race) return budget;
+	const wanted = race.opponentOnly
+		? Math.max(budget.multiPv, SEARCH_BUDGET.opponentRaceCandidates)
+		: budget.multiPv;
+	return {
+		...budget,
+		movetimeMs: Math.min(budget.movetimeMs, race.maxSearchMs),
+		multiPv: legalCount > 0 ? Math.min(wanted, legalCount) : wanted,
+	};
 }
 
 export interface RecommendationInput {
 	snapshot: PositionSnapshot;
 	settings: Settings;
-	/** The derived target (§7.4a) — already opponent-matched when that is on. */
+	/** The active target, already opponent-matched when that setting is enabled. */
 	targetElo: number;
 	persona: PersonaId;
 	/** Per-game AR(1) form latent. */
@@ -256,7 +593,7 @@ export interface RecommendationInput {
 	oppThinkMsHistory: number[];
 	myThinkMsHistory: number[];
 	selectionState: SelectionState;
-	/** Fraction of the starting clock already spent (features 25). */
+	/** Fraction of the starting clock already spent. */
 	budgetUsedRatio: number;
 	rng: Rng;
 	/** Cancels the search when the position moves on. */
@@ -265,13 +602,29 @@ export interface RecommendationInput {
 	engineReady: boolean;
 	autoQueen: boolean;
 	inputMethod: "drag" | "click";
+	/** The opponent rating supplied to Maia; absent uses our own rating. */
+	opponentElo?: number;
+	/** Model size retained for the game; absent uses maiaSizeFor(targetElo). */
+	maiaSize?: MaiaSize;
+	/**
+	 * Policy answer retained for exactly snapshot.fen; a mismatch is ignored.
+	 * knownTopMoves records the engine roots used by predicted-position analysis so the
+	 * own-move search can reproduce its cache key. Absent means only Maia's roots are known.
+	 */
+	policyAnswer?: {
+		fen: string;
+		result: PolicyResult;
+		selfElo: number;
+		historyPlies: number;
+		knownTopMoves?: string[];
+	};
 }
 
 export interface RecommendationOutcome {
 	rec: Recommendation;
 	/** The number of "reasonable" moves the timing features derived (the hand's exploration size). */
 	nReasonable: number;
-	/** The book answered for this position (the timing model's `in_book` half). */
+	/** Whether the chosen move came from the opening book. */
 	fromBook: boolean;
 	budget: SearchBudget;
 	/** `null` when the engine never answered (book-only or a failed search). */
@@ -282,6 +635,8 @@ export interface RecommendationPipelineDeps {
 	engine: PipelineEngine;
 	timing: TimingModel;
 	book: BookPolicy | null;
+	/** Optional Maia policy port; a missing answer uses engine selection. */
+	policy?: PolicyPort;
 	now?: () => number;
 }
 
@@ -315,16 +670,40 @@ async function finishTimingPreparation(
 	});
 }
 
+/** A Maia answer with its query rating and history coverage. */
+interface PolicyAnswer {
+	result: PolicyResult;
+	selfElo: number;
+	historyPlies: number;
+}
+
+/** A restricted search's roots, and whether it is the cacheable Maia-shaped own-move search. */
+interface SearchShape {
+	searchmoves: readonly string[];
+	shaped: boolean;
+}
+
+/** A pending Maia query and when it was issued (the budget is measured from there). */
+interface PolicyQuery {
+	pending: Promise<PolicyResult | null>;
+	issuedAt: number;
+	abort: AbortController;
+	selfElo: number;
+	historyPlies: number;
+}
+
 export class RecommendationPipeline {
 	private readonly engine: PipelineEngine;
 	private readonly timing: TimingModel;
 	private readonly book: BookPolicy | null;
+	private readonly policy: PolicyPort | null;
 	private readonly now: () => number;
 
 	constructor(deps: RecommendationPipelineDeps) {
 		this.engine = deps.engine;
 		this.timing = deps.timing;
 		this.book = deps.book;
+		this.policy = deps.policy ?? null;
 		this.now = deps.now ?? Date.now;
 	}
 
@@ -333,26 +712,35 @@ export class RecommendationPipeline {
 	 * usable line and the book had nothing either (the caller stays `analysing`).
 	 */
 	async run(input: RecommendationInput): Promise<RecommendationOutcome | null> {
+		const preparationStarted = this.now();
 		const { snapshot, settings } = input;
 		const myColor = snapshot.myColor;
 		if (myColor === null || input.signal?.aborted) return null;
 		const [baseSec, incSec] = tcSeconds(snapshot.timeControl);
-		const myClockMs = snapshot.clocks[myColor].ms;
-		const oppClockMs = snapshot.clocks[myColor === "w" ? "b" : "w"].ms;
-		const budget = ownMoveBudget(
-			{
-				fen: snapshot.fen,
-				ply: snapshot.ply,
-				myClockMs,
-				oppClockMs,
-				timeControl: snapshot.timeControl,
-				tau: input.tau,
-				budgetUsedRatio: input.budgetUsedRatio,
-				targetElo: input.targetElo,
-				form: input.form,
-			},
-			settings
-		);
+		const myClockMs = remainingClockMs(snapshot, myColor, input.nowMs);
+		const oppClockMs = remainingClockMs(snapshot, myColor === "w" ? "b" : "w", input.nowMs);
+		const position = {
+			fen: snapshot.fen,
+			ply: snapshot.ply,
+			myClockMs,
+			oppClockMs,
+			timeControl: snapshot.timeControl,
+			tau: input.tau,
+			budgetUsedRatio: input.budgetUsedRatio,
+			targetElo: input.targetElo,
+			form: input.form,
+		};
+		const mode: MaiaSearchInput = {
+			targetElo: input.targetElo,
+			policy: this.policy !== null,
+			clockRace: ownMoveClockRace(position) !== null,
+		};
+		const maia = maiaSearchMode(mode);
+		const prior = maiaPriorMode(mode);
+		const shape = { ...position, maia, maiaPrior: prior };
+		const budget = ownMoveBudget(shape, settings);
+		// The query, selector and human-depth frame share the same rating inputs.
+		const maiaElo = maia || prior ? ownMoveMaiaElo(shape, settings) : null;
 
 		const timingCtx: TimingContext = {
 			fen: snapshot.fen,
@@ -380,78 +768,306 @@ export class RecommendationPipeline {
 		// Timing inference only needs position/history/clocks; overlap its bounded
 		// preparation with the search, then fill the chosen move before sampling.
 		const preparation = new AbortController();
-		const preparationStarted = this.now();
+		const preparationDeadline = preparationStarted + budget.movetimeMs;
+		const remainingBudget = (requested: SearchBudget): SearchBudget | null => {
+			const remaining = Math.min(requested.movetimeMs, preparationDeadline - this.now());
+			return remaining > 0 ? { ...requested, movetimeMs: Math.max(1, Math.round(remaining)) } : null;
+		};
 		const abortPreparation = () => preparation.abort();
 		input.signal?.addEventListener("abort", abortPreparation, { once: true });
 		const timingPending = this.timing.prepare(timingCtx, {
 			budgetMs: budget.movetimeMs,
 			signal: preparation.signal,
 		});
+		// Reuse a policy answer only for this exact board; otherwise query alongside preparation.
+		const held = input.policyAnswer;
+		const preInferred: PolicyAnswer | null =
+			maiaElo && held && held.fen === snapshot.fen
+				? { result: held.result, selfElo: held.selfElo, historyPlies: held.historyPlies }
+				: null;
+		const policyQuery = maiaElo && !preInferred ? this.queryPolicy(input, maiaElo, prior) : null;
 
-		// §7.3 item 3 + §3.2 step 1: the book and the engine run at the same time.
-		const bookPending = this.bookMove(input);
-		let analysis: AnalysisResult | null;
 		try {
-			analysis = await this.analyse(snapshot, budget, input.targetElo, input.signal, input.history);
+			// Book lookup overlaps the policy and engine work.
+			const bookPending = this.bookMove(input);
+			// An early policy answer shapes one search over its roots and known engine continuations.
+			// Without one, search broadly and consider extra candidates only if time remains.
+			let policy: PolicyAnswer | null = preInferred;
+			let shaped: ShapedSearchPlan | null = null;
+			if (maia && MAIA_SEARCH.shaped.enabled) {
+				if (!policy && policyQuery)
+					policy = await this.awaitPolicy(
+						policyQuery,
+						input.signal,
+						Math.min(
+							MAIA_SEARCH.shaped.policyFirstMs,
+							Math.max(0, preparationDeadline - policyQuery.issuedAt)
+						)
+					);
+				if (input.signal?.aborted) return null;
+				if (policy) {
+					const known = preInferred ? held?.knownTopMoves : undefined;
+					shaped = shapedSearchPlan(policy.result, snapshot.fen, known, budget);
+					if (shaped && known === undefined)
+						log.debug("recommendation: shaped search over maia roots only", {
+							roots: shaped.searchmoves.length,
+							ply: snapshot.ply,
+						});
+				}
+			}
+			let analysis: AnalysisResult | null;
+			try {
+				const search = remainingBudget(shaped?.budget ?? budget);
+				analysis = search
+					? await this.analyse(
+							snapshot,
+							search,
+							input.targetElo,
+							maia,
+							input.signal,
+							input.history,
+							shaped ? { searchmoves: shaped.searchmoves, shaped: true } : undefined,
+							preparationDeadline
+						)
+					: null;
+			} finally {
+				// Cached analysis may return before warmed inference. Keep only the original
+				// short inference window; searches already beyond it never wait any longer.
+				await finishTimingPreparation(
+					timingPending,
+					Math.min(TIMING_CONSTANTS.chessmimic.inferenceBudgetMs, budget.movetimeMs) -
+						(this.now() - preparationStarted),
+					input.signal
+				);
+				preparation.abort();
+				input.signal?.removeEventListener("abort", abortPreparation);
+				await timingPending;
+			}
+			if (input.signal?.aborted) return null;
+			const bookAnswer = await bookPending;
+			// Any final policy wait must fit both its inference budget and the shared deadline.
+			if (!policy && policyQuery)
+				policy = await this.awaitPolicy(
+					policyQuery,
+					input.signal,
+					Math.min(MAIA.inferenceBudgetMs, Math.max(0, preparationDeadline - policyQuery.issuedAt)),
+					true
+				);
+			if (input.signal?.aborted) return null;
+			const policyResult = policy?.result ?? null;
+			if (policy && policy.historyPlies < MAIA_INPUT.history && snapshot.ply >= MAIA_INPUT.history)
+				// Report missing history once the game is long enough to supply it.
+				log.debug("recommendation: maia query carried a short history", {
+					historyPlies: policy.historyPlies,
+					ply: snapshot.ply,
+				});
+			// Use Maia for eligible opening choices only when its answer arrived; retain the book fallback.
+			const maiaOpening =
+				policyResult !== null &&
+				maia &&
+				maiaPlaysOpening({ targetElo: input.targetElo, form: input.form });
+			const book = maiaOpening ? null : bookAnswer;
+			if (maiaOpening && bookAnswer)
+				log.debug("recommendation: book suppressed, maia plays the opening", {
+					uci: bookAnswer.uci,
+					ply: snapshot.ply,
+				});
+
+			let lines = usableLines(analysis?.final.lines ?? []);
+			// Score significant unsearched policy candidates only with time left after a broad search.
+			// Shaped searches already covered their roots; incomplete extra frames are discarded.
+			let maiaExtra: string[] = [];
+			const extraBudget = remainingBudget({ ...budget, movetimeMs: extraSearchMs(budget) });
+			if (
+				analysis &&
+				policyResult &&
+				maia &&
+				!shaped &&
+				!clockBoundSearch(myClockMs, budget) &&
+				extraBudget &&
+				extraBudget.movetimeMs >= SEARCH_BUDGET.minMovetimeMs
+			) {
+				const searchmoves = maiaExtraSearchmoves(maiaUnscoredMoves(policyResult, lines, snapshot.fen));
+				if (searchmoves.length > 0) {
+					const extra = await this.runSearch(
+						snapshot,
+						{ ...extraBudget, multiPv: searchmoves.length },
+						input.targetElo,
+						maia,
+						input.signal,
+						input.history,
+						{ searchmoves, shaped: false },
+						preparationDeadline
+					);
+					if (input.signal?.aborted) return null;
+					if (extra && !extra.final.complete) {
+						// Incomplete frames cannot provide comparable scores for extra candidates.
+						log.debug("recommendation: extra referee frame incomplete, ignored", {
+							depth: extra.final.depth,
+							lines: extra.final.lines.length,
+							searchmoves,
+						});
+					} else if (extra) {
+						const merged = mergeLines(lines, usableLines(extra.final.lines));
+						const main = new Set(lines.map((line) => line.pvUci[0]));
+						maiaExtra = merged.flatMap((line) => {
+							const uci = line.pvUci[0];
+							return uci !== undefined && !main.has(uci) ? [uci] : [];
+						});
+						lines = merged;
+					}
+				}
+			}
+			const depth = analysis?.final.depth ?? 0;
+			const chosen = this.choose(input, lines, book, analysis, policyResult, maiaExtra, maiaElo, maia);
+			if (!chosen) return null;
+			if (analysis && !analysis.final.complete && chosen.source !== "book") {
+				delete chosen.cpLoss;
+				chosen.quality = {
+					kind: "search",
+					eligible: false,
+					reason: "incomplete",
+					depth,
+					candidates: lines.length,
+				};
+			}
+
+			if (input.signal?.aborted) return null;
+			timingCtx.chosenMove = chosen.uci;
+			timingCtx.lines = lines;
+			// Familiarity belongs to the chosen book move or a confident Maia opening choice.
+			const inBook =
+				bookAnswer?.uci === chosen.uci ||
+				(maiaOpening &&
+					snapshot.ply <= BOOK.maxPly &&
+					(chosen.maiaProb ?? 0) >= BOOK.maiaOpeningMinProb);
+			if (inBook) timingCtx.inBook = true;
+			const plan = this.timing.planMove(timingCtx);
+			// Use position complexity from timing features; MultiPV count depends on the search budget
+			// and would create a spurious relationship between measured complexity and move time.
+			const nReasonable = Math.max(1, plan.features.n_reasonable ?? 1);
+
+			const best = lines[0];
+			const rec: Recommendation = {
+				chosen,
+				lines,
+				eval: best?.score ?? { cp: 0 },
+				depth,
+				nps: analysis?.final.nps ?? 0,
+				plan,
+				computedAt: input.nowMs,
+				fen: snapshot.fen,
+			};
+			const wdl = best?.wdl;
+			if (wdl) rec.wdl = wdl;
+			if (policy) {
+				rec.maia = {
+					size: policy.result.size,
+					wdl: policy.result.wdl,
+					historyPlies: policy.historyPlies,
+					selfElo: policy.selfElo,
+				};
+				if (policy.result.ms !== undefined) rec.maia.ms = policy.result.ms;
+				if (chosen.maiaProb !== undefined) rec.maia.p = chosen.maiaProb;
+				if (chosen.maiaMeters !== undefined) rec.maia.meters = chosen.maiaMeters;
+			}
+			return {
+				rec,
+				nReasonable,
+				fromBook: chosen.source === "book",
+				budget: shaped?.budget ?? budget,
+				analysis,
+			};
 		} finally {
-			// Cached analysis may return before warmed inference. Keep only the original
-			// short inference window; searches already beyond it never wait any longer.
-			await finishTimingPreparation(
-				timingPending,
-				Math.min(TIMING_CONSTANTS.chessmimic.inferenceBudgetMs, budget.movetimeMs) -
-					(this.now() - preparationStarted),
-				input.signal
-			);
 			preparation.abort();
 			input.signal?.removeEventListener("abort", abortPreparation);
-			await timingPending;
+			policyQuery?.abort.abort();
 		}
-		if (input.signal?.aborted) return null;
-		const book = await bookPending;
-
-		const lines = usableLines(analysis?.final.lines ?? []);
-		const depth = analysis?.final.depth ?? 0;
-		const chosen = this.choose(input, lines, book, analysis);
-		if (!chosen) return null;
-		if (analysis && !analysis.final.complete && chosen.source !== "book") {
-			delete chosen.cpLoss;
-			chosen.quality = {
-				kind: "search",
-				eligible: false,
-				reason: "incomplete",
-				depth,
-				candidates: lines.length,
-			};
-		}
-
-		if (input.signal?.aborted) return null;
-		timingCtx.chosenMove = chosen.uci;
-		timingCtx.lines = lines;
-		if (book !== null) timingCtx.inBook = true;
-		const plan = this.timing.planMove(timingCtx);
-		// Appendix D §2 feature 11, *not* the MultiPV count: `K` depends on target and time budget,
-		// so reporting it as `n_reasonable` would put a driver of the think
-		// time on the complexity axis and make `report.py`'s `ln(hold) vs ln(n_reasonable)`
-		// correlation spurious. `planMove` has just computed the real one.
-		const nReasonable = Math.max(1, plan.features.n_reasonable ?? 1);
-
-		const best = lines[0];
-		const rec: Recommendation = {
-			chosen,
-			lines,
-			eval: best?.score ?? { cp: 0 },
-			depth,
-			nps: analysis?.final.nps ?? 0,
-			plan,
-			computedAt: input.nowMs,
-			fen: snapshot.fen,
-		};
-		const wdl = best?.wdl;
-		if (wdl) rec.wdl = wdl;
-		return { rec, nReasonable, fromBook: book !== null, budget, analysis };
 	}
 
-	/** §7.3: the book move for this position, or `null` (disabled, out of book, or it threw). */
+	/**
+	 * Query the retained model size with validated history and the shared effective rating.
+	 * Prior mode caps the rating at Maia's calibrated range; an unknown opponent uses our
+	 * rating. A refused or failed query resolves to null.
+	 */
+	private queryPolicy(
+		input: RecommendationInput,
+		elo: MaiaEloContext,
+		prior: boolean
+	): PolicyQuery | null {
+		if (!this.policy) return null;
+		const abort = new AbortController();
+		const onAbort = () => abort.abort();
+		input.signal?.addEventListener("abort", onAbort, { once: true });
+		const selfElo = prior ? Math.min(elo.selfElo, MAIA.prior.topCalibratedElo) : elo.selfElo;
+		const historyFens = maiaHistoryFens(input.history, input.snapshot.fen);
+		const inputs: PolicyInferenceInputs = {
+			size: prior ? MAIA.prior.size : (input.maiaSize ?? maiaSizeFor(input.targetElo)),
+			fen: input.snapshot.fen,
+			historyFens,
+			selfElo,
+			oppoElo: input.opponentElo ?? selfElo,
+		};
+		const issuedAt = this.now();
+		let pending: Promise<PolicyResult | null>;
+		try {
+			pending = this.policy
+				.infer(inputs, { budgetMs: MAIA.inferenceBudgetMs, signal: abort.signal })
+				.catch((error: unknown) => {
+					log.debug("recommendation: maia query failed", { error: errorMessage(error) });
+					return null;
+				});
+		} catch (error) {
+			log.debug("recommendation: maia query refused", { error: errorMessage(error) });
+			pending = Promise.resolve(null);
+		}
+		void pending.finally(() => input.signal?.removeEventListener("abort", onAbort));
+		return { pending, issuedAt, abort, selfElo, historyPlies: historyFens.length };
+	}
+
+	/**
+	 * Wait within a budget measured from query issue. The initial shaping wait can leave
+	 * the query running so the selector can use an answer arriving during engine search.
+	 * The final wait cancels the query when its remaining budget expires.
+	 */
+	private async awaitPolicy(
+		query: PolicyQuery,
+		signal: AbortSignal | undefined,
+		withinMs?: number,
+		cancelOnTimeout = withinMs === undefined
+	): Promise<PolicyAnswer | null> {
+		const elapsed = this.now() - query.issuedAt;
+		const remainingMs = (withinMs ?? MAIA.inferenceBudgetMs) - elapsed;
+		const result = await new Promise<PolicyResult | null>((resolve) => {
+			const finish = (value: PolicyResult | null) => {
+				clearTimeout(timer);
+				signal?.removeEventListener("abort", onAbort);
+				resolve(value);
+			};
+			const onAbort = () => finish(null);
+			// A zero wait is still a macrotask: an already-settled query is read before the timer fires.
+			const timer = setTimeout(() => finish(null), Math.max(0, remainingMs));
+			if (signal?.aborted) onAbort();
+			else signal?.addEventListener("abort", onAbort, { once: true });
+			query.pending.then(finish, () => finish(null));
+		});
+		if (result === null) {
+			if (!cancelOnTimeout) {
+				log.debug("recommendation: maia answer not in time to shape the search, broad search", {
+					elapsedMs: this.now() - query.issuedAt,
+				});
+				return null;
+			}
+			query.abort.abort();
+			log.debug("recommendation: maia unavailable for this move, engine policy", {
+				elapsedMs: this.now() - query.issuedAt,
+			});
+			return null;
+		}
+		return { result, selfElo: query.selfElo, historyPlies: query.historyPlies };
+	}
+
+	/** Opening-book answer, or null when disabled, unavailable or failed. */
 	private async bookMove(input: RecommendationInput): Promise<ChosenMove | null> {
 		const policy = this.book;
 		if (!policy || !input.settings.strength.useOpeningBook || input.targetElo >= LIMITS.eloMax)
@@ -471,21 +1087,30 @@ export class RecommendationPipeline {
 		}
 	}
 
-	/**
-	 * §7.5 quality guard: a shallow early result may retry within the original wall-clock budget.
-	 * A search that exhausted the budget never starts a second full search.
-	 */
+	/** Retry a shallow early result only within the original wall-clock budget. */
 	private async analyse(
 		snapshot: PositionSnapshot,
 		budget: SearchBudget,
 		targetElo: number,
+		maia: boolean,
 		signal: AbortSignal | undefined,
-		history?: PositionHistory
+		history?: PositionHistory,
+		shape?: SearchShape,
+		deadlineMs?: number
 	): Promise<AnalysisResult | null> {
 		const started = this.now();
-		const first = await this.runSearch(snapshot, budget, targetElo, signal, history);
+		const first = await this.runSearch(
+			snapshot,
+			budget,
+			targetElo,
+			maia,
+			signal,
+			history,
+			shape,
+			deadlineMs
+		);
 		if (!first || signal?.aborted) return first;
-		if (first.final.depth >= SEARCH_BUDGET.retryDepth) return first;
+		if (first.final.depth >= Math.min(SEARCH_BUDGET.retryDepth, budget.depthCap)) return first;
 		const remaining = budget.movetimeMs - Math.max(this.now() - started, first.final.timeMs);
 		if (remaining < SEARCH_BUDGET.minMovetimeMs) return first;
 		log.debug("recommendation: shallow search, retrying once", {
@@ -499,18 +1124,28 @@ export class RecommendationPipeline {
 				movetimeMs: remaining,
 			},
 			targetElo,
+			maia,
 			signal,
-			history
+			history,
+			shape,
+			deadlineMs
 		);
 		return retry && retry.final.depth > first.final.depth ? retry : first;
 	}
 
+	/**
+	 * Run a search with validated history and the shared wall-clock deadline. Restricted
+	 * Maia-shaped searches are cacheable by root set; extra candidate searches are not.
+	 */
 	private async runSearch(
 		snapshot: PositionSnapshot,
 		budget: SearchBudget,
 		targetElo: number,
+		maia: boolean,
 		signal: AbortSignal | undefined,
-		history?: PositionHistory
+		history?: PositionHistory,
+		shape?: SearchShape,
+		deadlineMs?: number
 	): Promise<AnalysisResult | null> {
 		const validHistory = matchingHistory(history, snapshot.fen);
 		const req: AnalysisRequest = {
@@ -521,7 +1156,19 @@ export class RecommendationPipeline {
 			limit: { movetimeMs: Math.round(budget.movetimeMs), depth: budget.depthCap },
 			priority: "move",
 		};
-		const elo = requestEloForTarget(targetElo);
+		// Feature depth is part of the cache identity.
+		if (budget.featureDepth !== undefined) req.featureDepth = budget.featureDepth;
+		if (shape?.searchmoves.length) {
+			req.searchmoves = [...shape.searchmoves];
+			if (shape.shaped) req.shaped = true;
+			log.debug(
+				shape.shaped
+					? "recommendation: maia-shaped referee search"
+					: "recommendation: maia extra referee search",
+				{ searchmoves: req.searchmoves, multiPv: req.multiPv, movetimeMs: req.limit.movetimeMs }
+			);
+		}
+		const elo = refereeElo(targetElo, maia);
 		if (elo !== undefined) req.elo = elo;
 		let handle: AnalysisHandle;
 		try {
@@ -530,28 +1177,26 @@ export class RecommendationPipeline {
 			log.warn("recommendation: analyse refused", { error: errorMessage(error) });
 			return null;
 		}
-		const onAbort = (): void => void handle.stop();
-		signal?.addEventListener("abort", onAbort, { once: true });
-		try {
-			const result = await handle.result;
-			return result.status === "failed" ? null : result;
-		} catch (error) {
-			log.warn("recommendation: analyse failed", { error: errorMessage(error) });
-			return null;
-		} finally {
-			signal?.removeEventListener("abort", onAbort);
-		}
+		return searchResultBeforeDeadline(handle, req, {
+			deadlineMs: deadlineMs ?? this.now() + budget.movetimeMs,
+			now: this.now,
+			...(signal ? { signal } : {}),
+		});
 	}
 
 	/**
-	 * §3.2 step 2. The book wins unless the trap check (§7.3, `E ≥ 2000`) vetoes it
-	 * with the engine's lines; otherwise `selectMove` uses the available searched candidates.
+	 * Prefer a safe book move unless repetition, conversion or mate guards veto it. Otherwise
+	 * select from the evaluated candidates.
 	 */
 	private choose(
 		input: RecommendationInput,
 		lines: EvalLine[],
 		bookMove: ChosenMove | null,
-		analysis: AnalysisResult | null
+		analysis: AnalysisResult | null,
+		policy: PolicyResult | null,
+		maiaExtra: readonly string[] = [],
+		maiaElo: MaiaEloContext | null = null,
+		humanFrame = false
 	): ChosenMove | null {
 		const E = effectiveElo(input.targetElo, input.form);
 		let book = bookMove;
@@ -590,8 +1235,7 @@ export class RecommendationPipeline {
 				loss: facts.lossLowerBound,
 			});
 		}
-		// Short searches keep their alternatives. Restricting to the top two and halving
-		// sampling noise made fast moves substantially stronger than the requested rating.
+		// Keep the candidate pool broad so shorter searches do not strengthen the sampled player.
 		const pool = lines;
 		if (pool.length === 0) {
 			const fen = input.snapshot.fen;
@@ -602,8 +1246,8 @@ export class RecommendationPipeline {
 			const race =
 				color &&
 				clockRacePolicy({
-					ownClockMs: input.snapshot.clocks[color].ms,
-					opponentClockMs: input.snapshot.clocks[color === "w" ? "b" : "w"].ms,
+					ownClockMs: remainingClockMs(input.snapshot, color, input.nowMs),
+					opponentClockMs: remainingClockMs(input.snapshot, color === "w" ? "b" : "w", input.nowMs),
 					baseMs: input.snapshot.timeControl?.baseMs ?? 0,
 					incrementMs: input.snapshot.timeControl?.incMs ?? 0,
 					loneKing: isLoneKing(fen, color),
@@ -631,8 +1275,7 @@ export class RecommendationPipeline {
 				],
 			};
 		}
-		// `run()` has already refused a position whose colour is unknown; reading it again here keeps
-		// that the only place the question is answered, rather than defaulting to white's clock.
+		// Do not guess a player color when constructing clock-sensitive selection inputs.
 		const myColor = input.snapshot.myColor;
 		if (myColor === null) return book;
 		const ctx: SelectionContext = {
@@ -642,16 +1285,36 @@ export class RecommendationPipeline {
 			form: input.form,
 			ply: input.snapshot.ply,
 			phase: phaseOf(input.snapshot.fen, input.snapshot.ply) ?? "middlegame",
-			myClockMs: input.snapshot.clocks[myColor].ms,
-			oppClockMs: input.snapshot.clocks[myColor === "w" ? "b" : "w"].ms,
+			myClockMs: remainingClockMs(input.snapshot, myColor, input.nowMs),
+			oppClockMs: remainingClockMs(input.snapshot, myColor === "w" ? "b" : "w", input.nowMs),
 			selectionMode: input.settings.strength.selectionMode,
 			blunderScale: input.settings.strength.blunderScale,
 			rng: input.rng,
 			state: input.selectionState,
 		};
-		// §7.2 step 6 reads this to scale the clock-pressure term by the game's own base clock rather
-		// than by an absolute 20 s. Absent when the page has reported no control, which the blunder model
-		// treats as "unknown" and falls back to the absolute ramp for.
+		if (policy) ctx.maia = policy;
+		if (maiaExtra.length > 0) ctx.maiaExtra = maiaExtra;
+		// The selector judges candidates at the rating used for the query.
+		if (maiaElo) ctx.contextEloPenalty = maiaElo.contextEloPenalty;
+		// Only the complete human-depth frame informs generate-and-verify. The main frame
+		// remains the evaluation reference.
+		const shallow = humanFrame ? analysis?.atFeatureDepth : undefined;
+		if (shallow?.complete === true && shallow.lines.length > 0) {
+			ctx.shallowLines = usableLines(shallow.lines);
+			ctx.shallowDepth = shallow.depth;
+			// Compare shallow and main choices for human-depth diagnostics.
+			const deepBest = lines[0]?.pvUci[0];
+			const shallowBest = ctx.shallowLines[0]?.pvUci[0];
+			log.debug("recommendation: human-depth frame", {
+				shallowDepth: shallow.depth,
+				deepDepth: analysis?.final.depth ?? 0,
+				deepBest,
+				shallowBest,
+				agree: deepBest !== undefined && deepBest === shallowBest,
+			});
+		}
+		// Scale selection pressure by the game's base clock when known; otherwise the blunder
+		// model uses its absolute-clock fallback.
 		const baseMs = input.snapshot.timeControl?.baseMs ?? 0;
 		if (baseMs > 0) ctx.baseMs = baseMs;
 		ctx.incrementMs = input.snapshot.timeControl?.incMs ?? 0;

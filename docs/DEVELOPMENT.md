@@ -1,14 +1,15 @@
 # Development
 
-Everything you need to build, load, test and ship sliced.gg, plus the licence obligations that
+Everything you need to build, load, test and ship sliced.sh, plus the licence obligations that
 attach the moment a build leaves your machine.
 
 ---
 
 ## 1. Setup
 
-Bun ≥ 1.3 is the runtime, bundler and test runner. There is no npm/webpack/Vite path, and no
-Node-only tooling in any script.
+Bun ≥ 1.3 is the runtime, bundler and test runner. The full Stockfish integration fixture also
+requires **`node` on `PATH`**, with relaxed SIMD support (validated on Node.js 25.6.1). It runs
+the shipped engine in V8 and fails explicitly if Node is missing or cannot execute that build.
 
 ```sh
 bun install
@@ -20,12 +21,29 @@ bun run build --dev    # writes dist/
 threshold-drift test that shells out to `report.py`.
 
 Some generated files are git-ignored and are produced by the pipeline, so a fresh clone has to
-build (or at least `bun run gen:tokens && bun run gen:pagescript`) before `tsc` will pass:
+build (or at least `bun run gen:tokens && bun run gen:pagescript --sources-only`) before `tsc` will pass:
 `css/tokens.css`, `src/design/tokens.generated.ts`, `src/page/generated/`.
+
+`bun run check` uses source-only page generation so it cannot overwrite the MAIN-world scripts
+in an existing `dist/` with a different spoof seed. The full build generates source modules,
+page entries and content bundles with one shared build seed. Explicit `bun run gen:pagescript`
+still writes page entries; use `--sources-only` for source preparation, and run a full build
+before loading a package whose entries were regenerated separately.
 
 **Pushing a fresh clone** that carries the ONNX bands and the wasm runtimes (~70 MB in one push)
 can fail with `the remote end hung up unexpectedly`. Raise the buffer once:
-`git config http.postBuffer 524288000`.
+`git config http.postBuffer 524288000`. A push that carries the Maia-3 models
+(`assets/models/maia3/`, ~213 MB) needs it for the same reason.
+
+**Files over the Git host's 100 MB cap are split, never LFS'd.** `assets/models/maia3/maia3-79m.onnx`
+(156 MB) is stored as `maia3-79m.onnx.part0` / `.part1` — consecutive slices of exactly
+`MAIA_FILES.partBytes` (95,000,000) bytes then the remainder, the registry's `parts` saying how
+many. The build (`scripts/maia-assets.ts`, called from `copyBundledAssets`) joins them, verifies
+the joined bytes against `MAIA_MODEL_FILES` and writes a lossless `.onnx.pack.gz` into `dist/`;
+the parts never ship. The loader restores and verifies the canonical ONNX before inference.
+Never commit a joined `maia3-79m.onnx` next to its parts — it is
+git-ignored, and `test/scripts/maia-assets.test.ts` fails if one is present. The big NNUE is the
+other over-cap file; it is stored as deterministic gzip instead because it compresses.
 
 ---
 
@@ -33,7 +51,7 @@ can fail with `the remote end hung up unexpectedly`. Raise the buffer once:
 
 1. `bun run build --dev`
 2. `chrome://extensions` → Developer mode → **Load unpacked** → select `dist/`.
-3. The extension appears as **sliced.gg (dev)** with `version_name` `<version>-dev+<timestamp>`;
+3. The extension appears as **sliced.sh (dev)** with `version_name` `<version>-dev+<timestamp>`;
    a release build has neither, which is how you tell two side-by-side installs apart.
 4. Open a game on chess.com and open the side panel from the toolbar icon.
 
@@ -96,7 +114,12 @@ Run as part of the build, or on its own with `bun run verify:dist`. It fails the
   licence host outside the service worker, or *any* registry host in `content.js` or a
   `js/page/*.js` — and a registry host that `HOST_OWNERS` does not classify at all;
 - a `.js.map` in a release package (dev maps embed the original TypeScript, so they are checked
-  for absence rather than scanned).
+  for absence rather than scanned);
+- a junk file anywhere in the tree (`.DS_Store`, `Thumbs.db`, `._*`) — the copy step drops them,
+  this proves it did;
+- `assets/engine/` holding anything but exactly `PACKAGED_ENGINE_FILES` (the two relaxed-SIMD
+  programs, the AGPL text and the three nets) — the copy step copies that directory by allowlist,
+  so a build that stopped being vendored cannot ship just because it is still on disk.
 
 Those size ceilings are a specification, not a knob. If a build breaches one, the finding is the
 size — report it and shrink the bundle.
@@ -104,11 +127,16 @@ size — report it and shrink the bundle.
 ### Packaging
 
 `bun run build` writes `release/sliced-<version>.zip` with the tree at the archive root
-(`manifest.json` first, not `dist/manifest.json`). The zip is ~63 MB because the ChessMimic bands
-(3 × 18 MB) and the engine (16 MB) ship inside it. That is well over the Chrome Web Store's 
-limit, which does not apply here: §12.2 distributes a zip plus the unpacked folder, there is no
-`update_url`, and "update available" is a version poll (`src/service/update-check.ts`) with a
-manual download.
+(`manifest.json` first, not `dist/manifest.json`), deflated at level 9 (`archiver`; measured on
+2026-09-13, `memLevel: 9` made the nets larger, not smaller). Everything the product needs ships
+inside it for offline use: the Maia-3 79M policy model, six ChessMimic rating bands, both
+Stockfish variants with their three networks, and onnxruntime. The seven ONNX models use
+lossless packing and are restored only when a session first loads them. Current model sizes,
+decode costs and inference checks are in
+[`qa/model-packing-2026-09-14.md`](qa/model-packing-2026-09-14.md). The package remains over the Chrome
+Web Store's limit, which does not apply here: §12.2 distributes a zip plus the unpacked folder,
+there is no `update_url`, and "update available" is a version poll
+(`src/service/update-check.ts`) with a manual download.
 
 ---
 
@@ -122,6 +150,13 @@ bun test --watch          # while iterating
 
 `scripts/test-runner.sh` runs one Bun process per file because Bun leaks `mock.module` state
 across files in a single process. It also picks up `tools/**/*.test.ts`.
+
+The full-engine test bundles its production loader and NNUE store into a temporary Node
+fixture. Node runs the actual shipped relaxed-SIMD JS/WASM against freshly packaged, verified
+NNUE files. Bun checks its UCI options, completed depth-8 search, network reads and errors;
+subprocess crashes and timeouts fail directly. This avoids the intermittent pthread trampoline
+trap seen when the previous fixture substituted plain SIMD under Bun. Other Bun engine tests
+still use the plain-SIMD adapter in `test/integration/engine-under-bun.ts`.
 
 Three tiers:
 
@@ -153,8 +188,11 @@ regenerate it with `bun run vendor:engine`; never hand-edit it.
 
 `assets/engine/` holds unmodified copies of the published `@lichess-org/stockfish-web` files:
 Emscripten glue and build patches under **AGPL-3.0-or-later**, wrapping **Stockfish 18** under
-**GPL-3.0-or-later**. sliced.gg's own code is not derived from Stockfish — it drives the engine
-over UCI through the package's public API — but the engine still ships inside the package.
+**GPL-3.0-or-later**. sliced.sh's own code is not derived from Stockfish — it drives the engine
+over UCI through the package's public API — but the engine still ships inside the package. Only
+the relaxed-SIMD programs are vendored (`ENGINE_FILES`, since 2026-09-13: relaxed SIMD has been
+in Chrome since 114 and the manifest requires 128); `bun run vendor:engine` copies exactly those
+and warns about anything else left in the directory, which should then be deleted.
 
 **Distributing a build to anyone (a zip, a shared `dist/`, a hosted download) triggers the
 written offer of corresponding source under GPL-3.0 §6 / AGPL-3.0 §6.** In practice that means:
@@ -174,7 +212,7 @@ written offer of corresponding source under GPL-3.0 §6 / AGPL-3.0 §6.** In pra
 `assets/models/chessmimic/*.onnx` are derived from ChessMimic's published checkpoints (Thomas
 Johnson, 2026). Both the code and the **trained weights** are under the **PolyForm Noncommercial
 License 1.0.0**, so they may be used only for non-commercial purposes. That is a condition on the
-product, not just on the files: **selling sliced.gg, or any commercial distribution, would breach
+product, not just on the files: **selling sliced.sh, or any commercial distribution, would breach
 this licence while these bands ship.** The required copyright notice is reproduced in
 `docs/third-party.md`; the FEN tokeniser underneath is Apache-2.0 (google-deepmind), transcribed
 in `src/core/timing/chessmimic-tokeniser.ts`.

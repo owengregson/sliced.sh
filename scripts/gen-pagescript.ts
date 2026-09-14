@@ -6,6 +6,7 @@
 //                                    (no imports; `bind` mirrors src/pagescript/bind.ts)
 //   <dist>/js/page/<name>.js       — for `entry` programs: the bound code as an IIFE
 //                                    (MAIN-world content script registered in the manifest)
+// `--sources-only` regenerates TypeScript without touching an existing package in dist.
 //
 // `astring` and the builders never reach a shipped bundle: runtime code imports
 // only the generated modules. With an empty registry the directories are still
@@ -40,6 +41,8 @@ export interface GenerateOptions {
 	generatedDir?: string;
 	/** Program registry (default: `src/page/index.ts`). */
 	programs?: readonly AnyPageProgram[];
+	/** Regenerate and validate source modules without writing or creating any dist files. */
+	sourcesOnly?: boolean;
 }
 
 export interface GenerateResult {
@@ -125,6 +128,14 @@ export function parseSeedArg(argv: readonly string[]): string | undefined {
 	return value;
 }
 
+export function parseGenerateArgs(argv: readonly string[]): GenerateOptions {
+	const seed = parseSeedArg(argv);
+	return {
+		sourcesOnly: argv.includes("--sources-only"),
+		...(seed === undefined ? {} : { seed }),
+	};
+}
+
 /**
  * The registry binds from runtime registries (`URLS`, `SELECTORS`, `TOKENS`)
  * whose modules read bundler defines at load time; this process is plain bun,
@@ -157,7 +168,7 @@ export async function generatePrograms(
 
 	await rm(generatedDir, { recursive: true, force: true });
 	await mkdir(generatedDir, { recursive: true });
-	await mkdir(entryDir, { recursive: true });
+	if (!options.sourcesOnly) await mkdir(entryDir, { recursive: true });
 
 	const seen = new Set<string>();
 	const generated: string[] = [];
@@ -185,6 +196,7 @@ export async function generatePrograms(
 		const entryArgs =
 			typeof program.entryArgs === "function" ? program.entryArgs({ seed }) : program.entryArgs;
 		const bound = bindCode(code, params, entryArgs ?? {});
+		if (options.sourcesOnly) continue;
 		const entryPath = path.join(entryDir, `${program.name}.js`);
 		await writeFile(entryPath, renderEntry(bound));
 		entries.push(entryPath);
@@ -202,8 +214,7 @@ export async function generatePagescript(
 
 if (import.meta.main) {
 	const argv = process.argv.slice(2);
-	const seed = parseSeedArg(argv);
-	const result = await generatePrograms(path.join(ROOT, "dist"), seed === undefined ? {} : { seed });
+	const result = await generatePrograms(path.join(ROOT, "dist"), parseGenerateArgs(argv));
 	console.log(
 		`gen-pagescript: ${result.generated.length} program(s), ${result.entries.length} entry file(s)`
 	);

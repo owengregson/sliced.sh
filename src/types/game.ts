@@ -3,6 +3,7 @@
  * Task 3 extends this file; later tasks import these names.
  */
 
+import type { MaiaSize } from "@core/constants/maia";
 import type { EvalLine } from "@typedefs/engine";
 import type { TimingPlan } from "@typedefs/timing";
 
@@ -71,6 +72,12 @@ export interface GameMeta {
 	myColor: Color | null;
 	timeControl?: TimeControl;
 	startedAt: number;
+	/**
+	 * The tab is on the exact `/play/online` queue screen (`isLobbyPath`). Sent only when true.
+	 * The lobby's board reports itself as a live game, so this is the one URL fact the session's
+	 * lobby hold cannot derive from the page kind (`src/service/game-session/lobby.ts`).
+	 */
+	lobby?: boolean;
 }
 
 /** GameSession states incl. the `live` sub-states (§3.3). */
@@ -97,12 +104,11 @@ export interface ExecutionResult {
 	outcome: "executed" | "dispatched" | "skipped" | "paused" | "aborted" | "failed";
 	reason?: string;
 	/**
-	 * How the move was committed. Every committed move is a drag — click-to-move was removed
-	 * (the owner's live-game report): the field stays because the panel's Last-action row and
-	 * the timing log name the input method, and a second inhabitant would have to be added back
-	 * deliberately rather than by accident.
+	 * How the move was committed: a drag, or — since the owner's 2026-09-11 reversal, as
+	 * `Settings.execution.inputMode` — a click-click. The panel's Last-action row and the timing log
+	 * name it.
 	 */
-	tier: "drag";
+	tier: "drag" | "click";
 	attempts: number;
 	endPoint: { x: number; y: number };
 	elapsedMs: number;
@@ -126,6 +132,13 @@ export interface ExecutionResult {
 	 * press these are the distinct pieces the page saw selected in this move window.
 	 */
 	previewedSquares?: Square[];
+	/**
+	 * Right-button drags the hand dispatched in this execution — the arrows of a line preview
+	 * (`LINE_PREVIEW`). Present only when at least one went out. Not a press in the §13.2 sense:
+	 * an arrow selects nothing and can submit nothing, so it is neither in `previewedSquares` nor
+	 * behind `pressedAny`.
+	 */
+	annotations?: number;
 	/** The committed press was dispatched — even a skipped/aborted attempt may have landed the move. */
 	pressed?: boolean;
 	/**
@@ -151,11 +164,15 @@ export interface GameSessionView {
 	clocksAt?: number;
 	/** An armed move may be fast-forwarded through preparation, until its committed mouse-down. */
 	canPlayNow?: boolean;
-	/** Pending automatic matchmaking. dueAt is the next attempt's epoch time. */
+	/**
+	 * Pending automatic matchmaking. dueAt is the next attempt's epoch time — during `rematch`
+	 * (2026-09-13: a rematch offered to, or accepted from, a titled opponent) the moment the
+	 * ordinary queue click follows if the next game has not started by then.
+	 */
 	autoQueue?: {
 		dueAt: number;
 		attempts: number;
-		status: "waiting" | "break" | "retrying" | "searching";
+		status: "waiting" | "break" | "retrying" | "searching" | "rematch";
 	};
 	/** Latest analysis for the current position, including opponent-turn pondering. Side-to-move POV. */
 	evaluation?: {
@@ -164,6 +181,11 @@ export interface GameSessionView {
 		wdl?: [number, number, number];
 	};
 	timeControl?: TimeControl;
+	/**
+	 * The lobby hold is on (present only when true): the tab is on `/play/online` with a board
+	 * whose clocks have not moved, so no game has been queued yet and the hand stays off the mouse.
+	 */
+	lobbyHold?: boolean;
 	hand: "resting" | "exploring" | "moving" | "paused" | "detached";
 	lastExecution?: ExecutionResult;
 }
@@ -174,7 +196,8 @@ export interface ChosenMove {
 	from: Square;
 	to: Square;
 	promotion?: PromoPiece;
-	source: "engine-elo" | "sampled" | "blunder" | "mate" | "book" | "premove";
+	/** `maia` (2026-09-11): drawn from the Maia-3 human policy over the engine's scored lines. */
+	source: "engine-elo" | "sampled" | "blunder" | "mate" | "book" | "premove" | "maia";
 	rankInLines: number;
 	/** Raw searched centipawn loss, omitted when the scores are not comparable. */
 	cpLoss?: number;
@@ -189,11 +212,42 @@ export interface ChosenMove {
 			| "unknown"
 			| "depth-mismatch"
 			| "incomplete"
+			| "opponent-rush"
 			| "book";
 		depth: number;
 		candidates: number;
 	};
 	rationale: string[];
+	/** `source === "maia"`: the model's probability of this move (raw, before tempering). */
+	maiaProb?: number;
+	/** Fidelity meters of the Maia draw that produced this move (2026-09-13). */
+	maiaMeters?: MaiaMeters;
+}
+
+/**
+ * How much of the move was Maia's and how much was ours (2026-09-13, §3.2 of
+ * `docs/research/human-move-selection-ideas-2026-09-13.md`). Every field is per move, computed
+ * inside the selector from numbers it already had; nothing here calibrates the model.
+ */
+export interface MaiaMeters {
+	/** The rating the query and the rails judged at (after pressure, slider and context terms). */
+	selfElo: number;
+	/** Normalised entropy of Maia's legal-move distribution, `H / log(#legal)` in [0, 1]. */
+	entropy: number;
+	/** Σ p over the scored candidates the rails excluded. */
+	railedMass: number;
+	/** Σ p over Maia's legal moves the engine never scored (before the rails). */
+	unscoredMass: number;
+	/** KL(final draw weights ‖ Maia) over the drawn set — 0 when the wrapper changed nothing. */
+	klFromMaia: number;
+	/** Maia's 1-based rank of the pick among the survivors (`0` = not a Maia pick). */
+	rank: number;
+	/** Survivors the draw was over. */
+	survivors: number;
+	/** Generate-and-verify (H3): candidates drawn, or absent when the plain draw ran. */
+	candidates?: number;
+	/** H3: the depth the candidates were verified at. */
+	verifyDepth?: number;
 }
 
 export interface Recommendation {
@@ -201,6 +255,25 @@ export interface Recommendation {
 	lines: EvalLine[];
 	eval: EvalLine["score"];
 	wdl?: [number, number, number];
+	/**
+	 * The Maia-3 policy's answer for this position when it was queried and arrived in budget —
+	 * the size that answered, its side-to-move `(loss, draw, win)` and the host's inference wall
+	 * time. Present whether or not the selector used it (`chosen.source === "maia"` says that);
+	 * `wdl` above stays the engine's.
+	 */
+	maia?: {
+		size: MaiaSize;
+		wdl: [number, number, number];
+		ms?: number;
+		/** The model's probability of the chosen move when the selector drew from it (`chosen.maiaProb`). */
+		p?: number;
+		/** Positions the query carried (1 … `MAIA_INPUT.history`); `1` = the degenerate no-history case. */
+		historyPlies?: number;
+		/** The `selfElo` the query was issued at. */
+		selfElo?: number;
+		/** `chosen.maiaMeters` when the selector drew from the model. */
+		meters?: MaiaMeters;
+	};
 	depth: number;
 	nps: number;
 	plan: TimingPlan;

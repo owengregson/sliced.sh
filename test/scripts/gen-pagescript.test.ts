@@ -8,6 +8,7 @@ import { bindCode, DEV_SPOOF_SEED, defineProgram, emit, js, std } from "@pagescr
 import {
 	generatePagescript,
 	generatePrograms,
+	parseGenerateArgs,
 	parseSeedArg,
 	ROOT,
 	renderEntry,
@@ -126,6 +127,46 @@ describe("generatePagescript", () => {
 		expect(emit(bridge, { seed }).code).toContain(`const k = typeof ${token};`);
 	});
 
+	it("source-only generation does not create dist directories or entry files", async () => {
+		const dist = path.join(root, "sources-only-dist");
+		const generatedDir = path.join(root, "sources-only-gen");
+		const result = await generatePrograms(dist, {
+			programs: [probe, bridge],
+			generatedDir,
+			seed: "source-seed",
+			sourcesOnly: true,
+		});
+		expect(result.entries).toEqual([]);
+		expect((await readdir(generatedDir)).sort()).toEqual(["probe.ts", "test-bridge.ts"]);
+		await expect(stat(dist)).rejects.toMatchObject({ code: "ENOENT" });
+	});
+
+	it("source-only generation preserves packaged entry bytes when the source seed changes", async () => {
+		const dist = path.join(root, "packaged-dist");
+		const generatedDir = path.join(root, "packaged-gen");
+		await generatePrograms(dist, {
+			programs: [bridge],
+			generatedDir,
+			seed: "release-seed",
+		});
+		const entryDir = path.join(dist, "js", "page");
+		const entryPath = path.join(entryDir, "test-bridge.js");
+		const sourcePath = path.join(generatedDir, "test-bridge.ts");
+		const packaged = await readFile(entryPath);
+		const sourceBefore = await readFile(sourcePath, "utf8");
+		const result = await generatePrograms(dist, {
+			programs: [bridge, bare],
+			generatedDir,
+			seed: DEV_SPOOF_SEED,
+			sourcesOnly: true,
+		});
+		expect(result.entries).toEqual([]);
+		expect(await readFile(entryPath)).toEqual(packaged);
+		expect(await readdir(entryDir)).toEqual(["test-bridge.js"]);
+		expect(await readFile(sourcePath, "utf8")).not.toBe(sourceBefore);
+		expect((await readdir(generatedDir)).sort()).toEqual(["bare.ts", "test-bridge.ts"]);
+	});
+
 	it("rejects an entry program with parameters but no entryArgs, and duplicate names", async () => {
 		const dist = path.join(root, "bad-dist");
 		const generatedDir = path.join(root, "bad-gen");
@@ -137,6 +178,9 @@ describe("generatePagescript", () => {
 		});
 		await expect(
 			generatePrograms(dist, { programs: [noArgs], generatedDir, seed: "s" })
+		).rejects.toThrow(/entryArgs/);
+		await expect(
+			generatePrograms(dist, { programs: [noArgs], generatedDir, seed: "s", sourcesOnly: true })
 		).rejects.toThrow(/entryArgs/);
 		await expect(
 			generatePagescript(dist, { programs: [bare, bare], generatedDir, seed: "s" })
@@ -197,6 +241,15 @@ describe("generatePagescript", () => {
 		expect(parseSeedArg(["--seed", "abc"])).toBe("abc");
 		expect(() => parseSeedArg(["--seed"])).toThrow(/--seed/);
 		expect(() => parseSeedArg(["--seed", "--other"])).toThrow(/--seed/);
+	});
+
+	it("parses source-only generation without changing the standalone default", () => {
+		expect(parseGenerateArgs([])).toEqual({ sourcesOnly: false });
+		expect(parseGenerateArgs(["--sources-only"])).toEqual({ sourcesOnly: true });
+		expect(parseGenerateArgs(["--seed", "abc", "--sources-only"])).toEqual({
+			seed: "abc",
+			sourcesOnly: true,
+		});
 	});
 
 	it("renderModule / renderEntry are pure templates", () => {

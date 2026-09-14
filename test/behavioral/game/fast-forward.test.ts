@@ -22,7 +22,7 @@ async function boot(verifyMoves = true, holdAnalysis = false): Promise<void> {
 		settings: {
 			automation: { autoMove: true },
 			timing: { profile: "custom" },
-			execution: { previewSelects: "off", verifyMoves },
+			execution: { previewSelectScale: 0, verifyMoves },
 		},
 		head: {
 			id: "v1-parametric",

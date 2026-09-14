@@ -14,6 +14,7 @@ export const LOCAL_KEYS = {
 	installedAt: "sl::installed-at", // number
 	motorTraces: "sl::motor-traces", // MotorTrace chunks (Task 19), ≤ 20 MB total
 	motorProfile: "sl::motor-profile", // fitted MotorProfile (Task 19)
+	repertoire: "sl::repertoire", // RepertoireKeys — the per-profile opening repertoire seed (H14.1)
 } as const;
 
 /** Survives worker restarts; cleared when the browser restarts or the extension reloads. */

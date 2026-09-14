@@ -38,6 +38,7 @@ import {
 } from "@core/logger";
 import type { MoveContext } from "@service/move-executor";
 import { createGameHarness, type GameHarness } from "./harness";
+import { isPonderSearch } from "./scripted-engine";
 
 let h: GameHarness;
 afterEach(async () => {
@@ -77,7 +78,7 @@ function blankSearches(harness: GameHarness, n: number): void {
 	const real = transport.send.bind(transport);
 	let left = n;
 	transport.send = (line: string): void => {
-		if (left > 0 && line.startsWith("go") && !line.includes("infinite")) {
+		if (left > 0 && line.startsWith("go") && !isPonderSearch(line)) {
 			left -= 1;
 			transport.goLines.push(line);
 			queueMicrotask(() => transport.feed("bestmove (none)"));
@@ -138,9 +139,9 @@ function playNow(): Promise<unknown> | undefined {
 	return h.router._dispatch({ type: MSG.PANEL_PLAY_NOW, tabId: h.tabId }, {});
 }
 
-/** Own-move searches the client issued (`go infinite` is a ponder, not one of ours). */
+/** Own-move searches the client issued; long bounded ponders are excluded. */
 const ownMoveSearches = (): number =>
-	h.transport.goLines.filter((line) => !line.includes("infinite")).length;
+	h.transport.goLines.filter((line) => !isPonderSearch(line)).length;
 
 /** Every `mousePressed` the hand dispatched — nonzero means a move was really attempted. */
 const presses = (): unknown[] =>
@@ -288,10 +289,10 @@ describe("game session: the first move as white (Fix G)", () => {
 
 			// One own-move search per run, each dragging the §7.5 shallow retry behind it: the first
 			// run plus exactly `sessionRetryMax` re-deliveries, and then it stops asking.
-			const searches = h.transport.goLines.filter((line) => !line.includes("infinite"));
+			const searches = h.transport.goLines.filter((line) => !isPonderSearch(line));
 			expect(searches).toHaveLength(2 * (TIMINGS.sessionRetryMax + 1));
 			await h.advance(TIMINGS.sessionRetryMs * 10);
-			expect(h.transport.goLines.filter((line) => !line.includes("infinite"))).toHaveLength(
+			expect(h.transport.goLines.filter((line) => !isPonderSearch(line))).toHaveLength(
 				searches.length
 			);
 			expect(h.site.board.lastMove()).toBeNull();
@@ -406,6 +407,39 @@ describe("game session: the first move as white (Fix G)", () => {
 		expect(ctx?.myClockMs).toBeGreaterThan(0);
 		expect(await h.until(() => h.site.board.lastMove() !== null, 60_000)).toBe(true);
 		expect(h.site.board.chess.history()).toHaveLength(1);
+	});
+
+	it("late panel Reattach plays the held black reply once, with the session's move context", async () => {
+		h = await createGameHarness({
+			myColor: "b",
+			timeControl: { baseMs: 180_000, incMs: 2_000 },
+			settings: { automation: { autoMove: false } },
+		});
+		await h.arrive("e2e4");
+		const session = h.session();
+		expect(await h.until(() => session.recommendation() !== null, 5_000)).toBe(true);
+		const executor = h.executor();
+		if (!executor) throw new Error("first-move: the session has no executor");
+		expect(executor.isArmed()).toBe(false);
+		expect(executor.pendingMove()).toBeNull();
+		const contexts: Array<MoveContext | undefined> = [];
+		const realSchedule = executor.schedule.bind(executor);
+		executor.schedule = (rec, plan, ctx): void => {
+			contexts.push(ctx);
+			realSchedule(rec, plan, ctx);
+		};
+		await h.advance(10_000);
+		await h.drive(() => {
+			void h.router._dispatch({ type: MSG.PANEL_REATTACH_DEBUGGER, tabId: h.tabId }, {});
+			void h.router._dispatch({ type: MSG.PANEL_REATTACH_DEBUGGER, tabId: h.tabId }, {});
+		});
+		expect(await h.until(() => contexts.length > 0, 5_000)).toBe(true);
+		expect(contexts).toHaveLength(1);
+		expect(contexts[0]?.candidates?.length ?? 0).toBeGreaterThan(0);
+		expect(typeof contexts[0]?.legalDestinations).toBe("function");
+		expect(contexts[0]?.myClockMs).toBeGreaterThan(0);
+		expect(await h.until(() => h.site.board.chess.history().length === 2, 10_000)).toBe(true);
+		expect(presses()).toHaveLength(1);
 	});
 
 	it("the page was not focused when the first position arrived: the move plays when the owner clicks back in", async () => {

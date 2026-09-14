@@ -2,15 +2,17 @@
  * Typed `Settings` persistence over `LOCAL_KEYS.settings`.
  * `normalizeSettings` is the single validation point: it deep-merges stored
  * data over `DEFAULT_SETTINGS`, clamps numeric ranges with `LIMITS`, replaces
- * invalid enum values with defaults and silently drops unknown keys.
+ * invalid enum values with defaults and silently drops unknown keys. The keys in
+ * `FORCED_SETTING_VALUES` are overwritten with the forced value on every read: patches for them
+ * are still accepted (tests and the harness write them), the normaliser simply wins.
  */
 
 import { chromeLocalGet, chromeLocalSet, onStorageChanged } from "@core/chrome/storage";
-import { DEFAULT_SETTINGS } from "@core/constants/defaults";
+import { DEFAULT_SETTINGS, FORCED_SETTING_VALUES } from "@core/constants/defaults";
 import { LIMITS } from "@core/constants/limits";
 import { LOCAL_KEYS } from "@core/constants/storage-keys";
 import { clamp, clampInt } from "@core/util/clamp";
-import type { Keybind, LogLevel, PersonaId, Settings } from "@typedefs/settings";
+import type { Keybind, LogLevel, Settings } from "@typedefs/settings";
 
 export type DeepPartial<T> = {
 	[K in keyof T]?: T[K] extends readonly unknown[]
@@ -25,17 +27,6 @@ type Obj = Record<string, unknown>;
 /** `Record<Enum, true>` forces the list to stay exhaustive against the union in `@typedefs/settings`. */
 type EnumSet<E extends string> = Readonly<Record<E, true>>;
 
-const PERSONAS: EnumSet<PersonaId> = {
-	cautious: true,
-	balanced: true,
-	aggressive: true,
-	blitz: true,
-};
-const SELECTION_MODES: EnumSet<Settings["strength"]["selectionMode"]> = {
-	"engine-elo": true,
-	"persona-sampling": true,
-	hybrid: true,
-};
 const TIMING_PROFILES: EnumSet<Settings["timing"]["profile"]> = {
 	manual: true,
 	fast: true,
@@ -43,8 +34,11 @@ const TIMING_PROFILES: EnumSet<Settings["timing"]["profile"]> = {
 	slow: true,
 	custom: true,
 };
-const BACKENDS: EnumSet<Settings["execution"]["backend"]> = { cdp: true, native: true };
-const PREVIEW_SELECTS: EnumSet<Settings["execution"]["previewSelects"]> = { auto: true, off: true };
+const INPUT_MODES: EnumSet<Settings["execution"]["inputMode"]> = {
+	auto: true,
+	drag: true,
+	click: true,
+};
 const HIGHLIGHT_STYLES: EnumSet<Settings["automation"]["highlightStyle"]> = {
 	squares: true,
 	arrows: true,
@@ -56,7 +50,6 @@ const REDUCED_MOTION: EnumSet<Settings["display"]["reducedMotion"]> = {
 	on: true,
 	off: true,
 };
-const NNUE: EnumSet<Settings["engine"]["nnue"]> = { small: true, big: true, auto: true };
 const LOG_LEVELS: EnumSet<LogLevel> = {
 	silent: true,
 	error: true,
@@ -116,9 +109,33 @@ function minuteRange(
 	return first <= second ? [first, second] : [second, first];
 }
 
-/** Validate an arbitrary value into a complete, fresh (unfrozen) `Settings`. */
+/**
+ * Settings layout, 2026-09-13: the `execution.previewSelects` segment ("auto" | "off") folded
+ * into the rate slider, whose 0 is Off. A profile stored before that maps `"off"` to 0 and keeps
+ * the stored rate otherwise; the old key itself never comes back.
+ */
+function previewSelectScale(execution: Obj, d: number): number {
+	if (execution.previewSelects === "off") return LIMITS.previewSelectScaleMin;
+	return numIn(
+		execution.previewSelectScale,
+		d,
+		LIMITS.previewSelectScaleMin,
+		LIMITS.previewSelectScaleMax
+	);
+}
+
+/**
+ * Validate an arbitrary value into a complete, fresh (unfrozen) `Settings`.
+ *
+ * Shapes from earlier builds still load: `automation.autoQueueDelay*` (per-game delays, dropped
+ * 2026-09-11), `execution.style` (dropped 2026-09-10), `execution.previewSelects` (folded into
+ * the rate, above), `display.pvCount` (merged into `engine.multiPv`, 2026-09-13 — the stored
+ * engine breadth wins, the display count is dropped), `timing.respectBudget` and
+ * `keybinds.global` (forced since 2026-09-13). Unknown keys never survive a read.
+ */
 export function normalizeSettings(raw: unknown): Settings {
 	const D = DEFAULT_SETTINGS;
+	const F = FORCED_SETTING_VALUES;
 	const r: Obj = isObj(raw) ? raw : {};
 	const sec = (name: keyof Settings): Obj => (isObj(r[name]) ? (r[name] as Obj) : {});
 	const strength = sec("strength");
@@ -147,8 +164,8 @@ export function normalizeSettings(raw: unknown): Settings {
 			targetElo: numIn(strength.targetElo, D.strength.targetElo, LIMITS.eloMin, LIMITS.eloMax),
 			matchOpponentRating: bool(strength.matchOpponentRating, D.strength.matchOpponentRating),
 			personaEloOffset: num(strength.personaEloOffset, D.strength.personaEloOffset),
-			persona: oneOf(strength.persona, D.strength.persona, PERSONAS),
-			selectionMode: oneOf(strength.selectionMode, D.strength.selectionMode, SELECTION_MODES),
+			persona: F.strength.persona,
+			selectionMode: F.strength.selectionMode,
 			useOpeningBook: bool(strength.useOpeningBook, D.strength.useOpeningBook),
 			blunderScale: numIn(
 				strength.blunderScale,
@@ -163,55 +180,54 @@ export function normalizeSettings(raw: unknown): Settings {
 			varianceScale: num(timing.varianceScale, D.timing.varianceScale),
 			premoveTendency: num(timing.premoveTendency, D.timing.premoveTendency),
 			longThinkFrequency: num(timing.longThinkFrequency, D.timing.longThinkFrequency),
-			respectBudget: bool(timing.respectBudget, D.timing.respectBudget),
+			respectBudget: F.timing.respectBudget,
 		},
 		execution: {
 			motorSpeed: num(execution.motorSpeed, D.execution.motorSpeed),
-			keepDebuggerAttached: bool(execution.keepDebuggerAttached, D.execution.keepDebuggerAttached),
+			keepDebuggerAttached: F.execution.keepDebuggerAttached,
 			verifyMoves: bool(execution.verifyMoves, D.execution.verifyMoves),
-			calibrateFromMyMouse: bool(execution.calibrateFromMyMouse, D.execution.calibrateFromMyMouse),
-			backend: oneOf(execution.backend, D.execution.backend, BACKENDS),
-			previewSelects: oneOf(execution.previewSelects, D.execution.previewSelects, PREVIEW_SELECTS),
-			previewSelectScale: numIn(
-				execution.previewSelectScale,
-				D.execution.previewSelectScale,
-				LIMITS.previewSelectScaleMin,
-				LIMITS.previewSelectScaleMax
-			),
+			calibrateFromMyMouse: F.execution.calibrateFromMyMouse,
+			backend: F.execution.backend,
+			inputMode: oneOf(execution.inputMode, D.execution.inputMode, INPUT_MODES),
+			previewSelectScale: previewSelectScale(execution, D.execution.previewSelectScale),
 		},
 		automation: {
 			autoMove: bool(automation.autoMove, D.automation.autoMove),
+			resignLostGames: bool(automation.resignLostGames, D.automation.resignLostGames),
 			autoQueue: bool(automation.autoQueue, D.automation.autoQueue),
 			autoQueueSessionMinMinutes,
 			autoQueueSessionMaxMinutes,
 			autoQueueBreakMinMinutes,
 			autoQueueBreakMaxMinutes,
+			rematchTitled: bool(automation.rematchTitled, D.automation.rematchTitled),
 			highlightMoves: bool(automation.highlightMoves, D.automation.highlightMoves),
 			highlightStyle: oneOf(automation.highlightStyle, D.automation.highlightStyle, HIGHLIGHT_STYLES),
+			boardEffects: bool(automation.boardEffects, D.automation.boardEffects),
+			moveQualityChips: bool(automation.moveQualityChips, D.automation.moveQualityChips),
 		},
 		keybinds: {
 			playMove: keybind(keybinds.playMove, D.keybinds.playMove),
 			toggleAutoMove: keybind(keybinds.toggleAutoMove, D.keybinds.toggleAutoMove),
 			disable: keybind(keybinds.disable, D.keybinds.disable),
 			speakMove: keybind(keybinds.speakMove, D.keybinds.speakMove),
-			global: bool(keybinds.global, D.keybinds.global),
+			global: F.keybinds.global,
 		},
 		display: {
 			evalBar: bool(display.evalBar, D.display.evalBar),
-			pvCount: intIn(display.pvCount, D.display.pvCount, LIMITS.multiPvMin, LIMITS.multiPvMax),
 			uiSounds: bool(display.uiSounds, D.display.uiSounds),
 			tts: bool(display.tts, D.display.tts),
 			ttsVoice: typeof display.ttsVoice === "string" ? display.ttsVoice : D.display.ttsVoice,
 			theme: oneOf(display.theme, D.display.theme, THEMES),
 			reducedMotion: oneOf(display.reducedMotion, D.display.reducedMotion, REDUCED_MOTION),
 			virtualCursor: bool(display.virtualCursor, D.display.virtualCursor),
+			cursorEffects: bool(display.cursorEffects, D.display.cursorEffects),
 		},
 		engine: {
 			threads: threads(engine.threads, D.engine.threads),
 			hashMb: intIn(engine.hashMb, D.engine.hashMb, LIMITS.hashMbMin, LIMITS.hashMbMax),
 			depthCap: intIn(engine.depthCap, D.engine.depthCap, LIMITS.depthMin, LIMITS.depthMax),
 			multiPv: intIn(engine.multiPv, D.engine.multiPv, LIMITS.multiPvMin, LIMITS.multiPvMax),
-			nnue: oneOf(engine.nnue, D.engine.nnue, NNUE),
+			nnue: F.engine.nnue,
 		},
 		advanced: {
 			logLevel: oneOf(advanced.logLevel, D.advanced.logLevel, LOG_LEVELS),

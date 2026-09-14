@@ -1,12 +1,12 @@
 /**
- * `PonderController` (§6.4, Appendix E §4.2). One `go infinite` at a time per
+ * `PonderController` (§6.4, Appendix E §4.2). One bounded analysis at a time per
  * session:
  *
- *   - **opponent's turn** — `go infinite` MultiPV 3 on the opponent's position
+ *   - **opponent's turn** — MultiPV 3 on the opponent's position
  *     at `ponder` priority, capped at `TIMINGS.ponderMaxMs`. Its first line's
  *     first move is `expectedOppReply`, which feeds the timing model's
  *     `ponder_hit` feature and the §7.4 premove candidate.
- *   - **our turn, nothing armed** (§7.5 "panel-only mode") — `go infinite` at
+ *   - **our turn, nothing armed** (§7.5 "panel-only mode") — analysis at
  *     `panel` priority on our own position so the eval bar keeps deepening
  *     after the bounded move search has answered.
  *
@@ -19,10 +19,17 @@
 
 import { loadPosition } from "@core/chess/fen";
 import { applyMoves } from "@core/chess/san";
+import { LIMITS } from "@core/constants/limits";
 import { SEARCH_BUDGET } from "@core/constants/search";
 import { TIMINGS } from "@core/constants/timings";
+import { automaticDepthForElo } from "@core/engine/depth-policy";
 import { requestEloForTarget } from "@core/engine/options";
-import type { AnalysisHandle, AnalysisRequest, AnalysisResult } from "@core/engine/types";
+import type {
+	AnalysisHandle,
+	AnalysisRequest,
+	AnalysisResult,
+	AnalysisUpdate,
+} from "@core/engine/types";
 import { log } from "@core/logger";
 import { errorMessage } from "@core/util/errors";
 import { newId } from "@core/util/ids";
@@ -43,10 +50,12 @@ export interface PonderControllerDeps {
 	getTargetElo?: () => number;
 	scheduler?: Scheduler;
 	now?: () => number;
-	/** Cap on one `go infinite` (default `TIMINGS.ponderMaxMs`). */
+	/** Wall-clock cap on one analysis (default `TIMINGS.ponderMaxMs`). */
 	maxMs?: number;
 	/** Called when a ponder produced a new expected reply. */
 	onExpectedReply?: (uci: string | null) => void;
+	/** A complete frame for the reached position, available before the search finishes. */
+	onAnalysis?: (fen: string, update: AnalysisUpdate, fullStrength: boolean) => void;
 	/** A new current-position line is available to the panel and free pointer planner. */
 	onUpdate?: () => void;
 }
@@ -58,6 +67,8 @@ interface Running {
 	timer: unknown;
 	settled: Promise<void>;
 	elo: number | undefined;
+	depth: number;
+	finished: boolean;
 }
 
 export class PonderController {
@@ -67,6 +78,7 @@ export class PonderController {
 	private readonly maxMs: number;
 	private readonly getTargetElo: (() => number) | undefined;
 	private readonly onExpectedReply: ((uci: string | null) => void) | undefined;
+	private readonly onAnalysis: PonderControllerDeps["onAnalysis"];
 	private readonly onUpdate: (() => void) | undefined;
 	private running: Running | null = null;
 	private expected: string | null = null;
@@ -82,6 +94,7 @@ export class PonderController {
 		this.maxMs = deps.maxMs ?? TIMINGS.ponderMaxMs;
 		this.getTargetElo = deps.getTargetElo;
 		this.onExpectedReply = deps.onExpectedReply;
+		this.onAnalysis = deps.onAnalysis;
 		this.onUpdate = deps.onUpdate;
 	}
 
@@ -110,7 +123,7 @@ export class PonderController {
 	}
 
 	isRunning(): boolean {
-		return this.running !== null;
+		return this.running !== null && !this.running.finished;
 	}
 
 	runningFen(): string | null {
@@ -118,25 +131,32 @@ export class PonderController {
 	}
 
 	/**
-	 * Start (or keep) a `go infinite` on `fen`. A ponder already running on the
-	 * same position and kind is left alone; anything else is stopped first.
+	 * Start (or keep) bounded analysis on `fen`. A matching running or completed
+	 * search is reused; any change in position, strength or depth is stopped first.
 	 */
 	async start(kind: PonderKind, fen: string, moves: readonly string[] = []): Promise<void> {
 		if (this.disposed) return;
 		const reached = moves.length ? applyMoves(fen, moves) : fen;
 		if (reached === null) return;
 		const current = this.running;
-		const elo = this.getTargetElo
-			? requestEloForTarget(this.getTargetElo())
-			: this.engine.engineElo();
-		if (current && current.kind === kind && current.fen === reached && current.elo === elo) return;
+		const targetElo = this.getTargetElo?.() ?? this.engine.engineElo() ?? LIMITS.eloMax;
+		const elo = requestEloForTarget(targetElo);
+		const depth = automaticDepthForElo(targetElo);
+		if (
+			current &&
+			current.kind === kind &&
+			current.fen === reached &&
+			current.elo === elo &&
+			current.depth === depth
+		)
+			return;
 		await this.stop();
 		if (this.disposed) return;
 		const req: AnalysisRequest = {
 			id: newId(),
 			fen,
 			multiPv: kind === "opponent" ? SEARCH_BUDGET.ponderMultiPv : SEARCH_BUDGET.panelMultiPv,
-			limit: { infinite: true },
+			limit: { depth, movetimeMs: this.maxMs },
 			priority: kind === "opponent" ? "ponder" : "panel",
 		};
 		if (moves.length > 0) req.moves = [...moves];
@@ -152,13 +172,19 @@ export class PonderController {
 			log.debug("ponder: cap reached", { fen, maxMs: this.maxMs });
 			void handle.stop();
 		}, this.maxMs);
-		const settled = handle.result.then(
-			(result) => this.settle(reached, result),
-			(error: unknown) => {
-				log.debug("ponder: failed", { error: errorMessage(error) });
-			}
-		);
-		this.running = { kind, fen: reached, handle, timer, settled, elo };
+		const settled = handle.result
+			.then(
+				(result) => this.settle(reached, result),
+				(error: unknown) => {
+					log.debug("ponder: failed", { error: errorMessage(error) });
+				}
+			)
+			.finally(() => {
+				if (this.running?.handle !== handle) return;
+				this.running.finished = true;
+				this.scheduler.clearTimeout(timer);
+			});
+		this.running = { kind, fen: reached, handle, timer, settled, elo, depth, finished: false };
 		void this.observe(reached, handle);
 		log.debug("ponder: started", { kind, fen, at: this.now() });
 	}
@@ -170,7 +196,7 @@ export class PonderController {
 		this.running = null;
 		this.scheduler.clearTimeout(current.timer);
 		try {
-			await current.handle.stop();
+			if (!current.finished) await current.handle.stop();
 		} catch (error) {
 			log.debug("ponder: stop failed", { error: errorMessage(error) });
 		}
@@ -185,7 +211,11 @@ export class PonderController {
 
 	private settle(fen: string, result: AnalysisResult): void {
 		this.latest = { fen, lines: result.final.lines };
-		if (!this.disposed) this.onUpdate?.();
+		if (!this.disposed) {
+			if (result.status !== "failed" && result.final.complete)
+				this.onAnalysis?.(fen, result.final, result.request.elo === undefined);
+			this.onUpdate?.();
+		}
 		this.lastResult = result;
 		const reply = result.final.lines[0]?.pvUci[0] ?? result.bestmove ?? null;
 		this.expected = reply;
@@ -198,6 +228,8 @@ export class PonderController {
 			for await (const update of handle.updates) {
 				if (this.disposed || this.running?.handle !== handle) return;
 				this.latest = { fen, lines: update.lines };
+				if (update.complete && update.id === handle.id)
+					this.onAnalysis?.(fen, update, this.running.elo === undefined);
 				this.onUpdate?.();
 			}
 		} catch (error) {

@@ -1,9 +1,16 @@
 // test/service/game-session/ponder.test.ts — Task 30: one `go infinite` at a time (§6.4,
 // Appendix E §4.2), the expected reply it yields and the cap.
 import { describe, expect, it } from "bun:test";
+import { applyMoves } from "@core/chess/san";
 import { SEARCH_BUDGET } from "@core/constants/search";
 import { TIMINGS } from "@core/constants/timings";
-import type { AnalysisHandle, AnalysisRequest, AnalysisResult } from "@core/engine/types";
+import { automaticDepthForElo } from "@core/engine/depth-policy";
+import type {
+	AnalysisHandle,
+	AnalysisRequest,
+	AnalysisResult,
+	AnalysisUpdate,
+} from "@core/engine/types";
 import { PonderController } from "@service/game-session/ponder";
 
 const FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -35,12 +42,17 @@ function fakeScheduler(): {
 }
 
 /** An engine whose infinite searches only settle when `stop()` is called. */
-function fakeEngine(best: (fen: string) => string) {
+function fakeEngine(
+	best: (fen: string) => string,
+	frames?: (request: AnalysisRequest) => AsyncIterable<AnalysisUpdate>
+) {
 	const requests: AnalysisRequest[] = [];
+	const completions: Array<() => void> = [];
 	let stops = 0;
 	return {
 		requests,
 		stops: () => stops,
+		complete: (index = completions.length - 1) => completions[index]?.(),
 		engineElo: () => 1800,
 		analyse(req: AnalysisRequest): AnalysisHandle {
 			requests.push(req);
@@ -49,28 +61,34 @@ function fakeEngine(best: (fen: string) => string) {
 				settle = resolve;
 			});
 			async function* none(): AsyncGenerator<never, void, unknown> {}
+			const complete = () => {
+				const uci = best(req.fen);
+				settle({
+					id: req.id,
+					bestmove: uci,
+					final: {
+						id: req.id,
+						depth: req.limit.depth ?? 20,
+						lines: [
+							{ multipv: 1, score: { cp: 12 }, depth: req.limit.depth ?? 20, pvUci: [uci], pvSan: [uci] },
+						],
+						nodes: 1,
+						nps: 1,
+						timeMs: 1,
+						complete: true,
+					},
+					status: "complete",
+					request: req,
+				});
+			};
+			completions.push(complete);
 			return {
 				id: req.id,
-				updates: none(),
+				updates: frames?.(req) ?? none(),
 				result,
 				stop: () => {
 					stops += 1;
-					const uci = best(req.fen);
-					settle({
-						id: req.id,
-						bestmove: uci,
-						final: {
-							id: req.id,
-							depth: 20,
-							lines: [{ multipv: 1, score: { cp: 12 }, depth: 20, pvUci: [uci], pvSan: [uci] }],
-							nodes: 1,
-							nps: 1,
-							timeMs: 1,
-							complete: true,
-						},
-						status: "complete",
-						request: req,
-					});
+					complete();
 					return Promise.resolve();
 				},
 			};
@@ -79,6 +97,66 @@ function fakeEngine(best: (fen: string) => string) {
 }
 
 describe("PonderController", () => {
+	it("publishes complete reached-position frames before the search settles", async () => {
+		for (const targetElo of [1800, 3800]) {
+			const seen: Array<{ fen: string; update: AnalysisUpdate; fullStrength: boolean }> = [];
+			const frame = (id: string, complete: boolean): AnalysisUpdate => ({
+				id,
+				depth: 10,
+				complete,
+				nodes: 100,
+				nps: 1000,
+				timeMs: 100,
+				lines: [{ multipv: 1, score: { cp: 20 }, depth: 10, pvUci: ["e7e5"], pvSan: ["e5"] }],
+			});
+			const engine = fakeEngine(
+				() => "e7e5",
+				async function* (request) {
+					yield frame(request.id, false);
+					yield frame("different-search", true);
+					yield frame(request.id, true);
+				}
+			);
+			const { scheduler } = fakeScheduler();
+			const p = new PonderController({
+				engine,
+				scheduler,
+				getTargetElo: () => targetElo,
+				onAnalysis: (fen, update, fullStrength) => seen.push({ fen, update, fullStrength }),
+			});
+			await p.start("opponent", FEN, ["e2e4"]);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			const reached = applyMoves(FEN, ["e2e4"])!;
+			expect(p.isRunning()).toBe(true);
+			expect(seen).toHaveLength(1);
+			expect(seen[0]).toEqual({
+				fen: reached,
+				update: frame(engine.requests[0]!.id, true),
+				fullStrength: targetElo === 3800,
+			});
+			await p.stop();
+			expect(seen).toHaveLength(2);
+			expect(seen[1]?.fen).toBe(reached);
+			p.dispose();
+		}
+	});
+
+	it("does not publish a final rating frame after disposal", async () => {
+		const seen: AnalysisUpdate[] = [];
+		const engine = fakeEngine(() => "e2e4");
+		const { scheduler } = fakeScheduler();
+		const p = new PonderController({
+			engine,
+			scheduler,
+			onAnalysis: (_, update) => seen.push(update),
+		});
+		await p.start("panel", FEN);
+		p.dispose();
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(engine.stops()).toBe(1);
+		expect(seen).toEqual([]);
+	});
+
 	it("uses the active persona rating and restarts a cached position when that rating changes", async () => {
 		const engine = fakeEngine(() => "e7e5");
 		const { scheduler } = fakeScheduler();
@@ -86,6 +164,7 @@ describe("PonderController", () => {
 		const p = new PonderController({ engine, scheduler, getTargetElo: () => targetElo });
 		await p.start("opponent", FEN, ["e2e4"]);
 		expect(engine.requests[0]?.elo).toBe(1650);
+		expect(engine.requests[0]?.limit).toEqual({ depth: 16, movetimeMs: TIMINGS.ponderMaxMs });
 		targetElo = 1673;
 		await p.start("opponent", FEN, ["e2e4"]);
 		expect(engine.requests[1]?.elo).toBe(1673);
@@ -93,17 +172,21 @@ describe("PonderController", () => {
 		targetElo = 3800;
 		await p.start("opponent", FEN, ["e2e4"]);
 		expect(engine.requests[2]?.elo).toBeUndefined();
+		expect(engine.requests[2]?.limit.depth).toBe(30);
 		expect(engine.stops()).toBe(2);
 		p.dispose();
 	});
 
-	it("starts `go infinite` MultiPV 3 at ponder priority on the opponent's position", async () => {
+	it("starts Elo-capped MultiPV 3 at ponder priority with the existing time budget", async () => {
 		const engine = fakeEngine(() => "e7e5");
 		const { scheduler } = fakeScheduler();
 		const p = new PonderController({ engine, scheduler });
 		await p.start("opponent", FEN, ["e2e4"]);
 		expect(engine.requests.length).toBe(1);
-		expect(engine.requests[0]?.limit).toEqual({ infinite: true });
+		expect(engine.requests[0]?.limit).toEqual({
+			depth: automaticDepthForElo(1800),
+			movetimeMs: TIMINGS.ponderMaxMs,
+		});
 		expect(engine.requests[0]?.multiPv).toBe(SEARCH_BUDGET.ponderMultiPv);
 		expect(engine.requests[0]?.priority).toBe("ponder");
 		expect(engine.requests[0]?.moves).toEqual(["e2e4"]);
@@ -131,6 +214,32 @@ describe("PonderController", () => {
 		await p.start("panel", FEN);
 		expect(engine.requests[0]?.priority).toBe("panel");
 		expect(engine.requests[0]?.multiPv).toBe(SEARCH_BUDGET.panelMultiPv);
+		expect(engine.requests[0]?.limit).toEqual({
+			depth: automaticDepthForElo(1800),
+			movetimeMs: TIMINGS.ponderMaxMs,
+		});
+		p.dispose();
+	});
+
+	it("finishes at its depth cap, clears its timer and reuses the completed result until strength changes", async () => {
+		const engine = fakeEngine(() => "e7e5");
+		const { scheduler, timers } = fakeScheduler();
+		let targetElo = 1800;
+		const p = new PonderController({ engine, scheduler, getTargetElo: () => targetElo });
+		await p.start("opponent", FEN);
+		engine.complete();
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(p.isRunning()).toBe(false);
+		expect(timers[0]?.cleared).toBe(true);
+		expect(p.expectedReply(FEN)).toBe("e7e5");
+		await p.start("opponent", FEN);
+		expect(engine.requests).toHaveLength(1);
+		targetElo = 800;
+		await p.start("opponent", FEN);
+		expect(engine.stops()).toBe(0);
+		expect(engine.requests[1]?.limit.depth).toBe(9);
+		expect(engine.requests[1]?.elo).toBe(1320);
 		p.dispose();
 	});
 

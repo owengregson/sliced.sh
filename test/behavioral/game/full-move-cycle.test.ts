@@ -11,6 +11,7 @@ import { CDP } from "@core/constants/cdp";
 import { MSG } from "@core/constants/messages";
 import { SEARCH_BUDGET } from "@core/constants/search";
 import { createGameHarness, type GameHarness } from "./harness";
+import { isPonderSearch } from "./scripted-engine";
 
 let h: GameHarness;
 afterEach(async () => {
@@ -83,12 +84,10 @@ describe("game session: the full move cycle (Step 2a)", () => {
 		// The position after our move is the opponent's turn, which opens the ponder:
 		// `go infinite` with MultiPV 3 on their position (§6.4, Appendix E §4.2).
 		await h.arrive();
-		expect(await h.until(() => h.transport.goLines.some((l) => l === "go infinite"), 5_000)).toBe(
-			true
-		);
+		expect(await h.until(() => h.transport.goLines.some(isPonderSearch), 5_000)).toBe(true);
 		expect(h.session().currentState()).toBe("live:opponent-turn");
 		// Preparing a trade reply may already have started another search after this ponder.
-		const ponderAt = h.transport.sent.indexOf("go infinite");
+		const ponderAt = h.transport.sent.findIndex(isPonderSearch);
 		const multiPvSets = h.transport.sent
 			.slice(0, ponderAt)
 			.filter((l) => l.startsWith("setoption name MultiPV"));

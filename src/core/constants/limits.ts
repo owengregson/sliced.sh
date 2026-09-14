@@ -12,11 +12,25 @@ export const LIMITS = {
 	depthMax: 30,
 	threadsMin: 1,
 	threadsMax: 8,
+	/**
+	 * Owner, 2026-09-13: "default our stockfish to 8 threads, 64mb hash on most devices". The
+	 * `auto` thread setting resolves to `min(threadsDefault, navigator.hardwareConcurrency)`, at
+	 * least 1 — the device's core count is the only cap (`optionsForSettings`); an explicit
+	 * `engine.threads` still wins. The Emscripten glue spawns pthread workers on demand, so no
+	 * pool size has to match this.
+	 */
+	threadsDefault: 8,
 	hashMbMin: 16,
+	/** Default transposition table (`DEFAULT_SETTINGS.engine.hashMb`), same owner instruction. */
+	hashMbDefault: 64,
 	hashMbMax: 128,
 	blunderScaleMin: 0,
 	blunderScaleMax: 2,
-	previewSelectScaleMin: 0.5,
+	/**
+	 * 2026-09-13: the preview-selection slider carries its own Off position at 0 (the former
+	 * `execution.previewSelects` segment folded into it); 0.05 is the first audible rate.
+	 */
+	previewSelectScaleMin: 0,
 	previewSelectScaleMax: 2,
 	autoQueueMinutesMin: 1,
 	autoQueueSessionMinutesMax: 240,
@@ -26,6 +40,8 @@ export const LIMITS = {
 	logRingMax: 500,
 	/** Task 26: nps sparkline sample ring (one sample per `UI_TIMINGS.sparklineSampleMs`). */
 	npsSparklineSamples: 60,
+	/** Engine view: Maia-3 inference-time ring, one sample per recommendation the model answered. */
+	policySparklineSamples: 60,
 	/** Task 26: |actual − planned| / planned above this renders a `warn` rationale row. */
 	timingLogDriftWarn: 0.5,
 	analysisCacheEntries: 256,
@@ -46,6 +62,19 @@ export const LIMITS = {
 	timingInferenceThreadsMax: 4,
 	/** Task 34: ChessMimic band sessions kept loaded at once (LRU; ≈ 36 MB fp32 each). */
 	timingSessionsMax: 2,
+	/**
+	 * Maia-3 policy sessions resident at once (2026-09-11). Exactly one: the fp16 weights unfold
+	 * to fp32 inside the session (≈ 20 / 90 / 310 MB for 5M / 23M / 79M), so a second resident
+	 * size is a memory risk in the offscreen document, and only one size answers for a target
+	 * Elo at a time. Warming a different size evicts the resident one first.
+	 */
+	policySessionsMax: 1,
+	/**
+	 * onnxruntime-web wasm threads for a Maia-3 session (capped `hardwareConcurrency`). The
+	 * transformer's matmuls parallelise well, and the query runs beside a Stockfish search that
+	 * has its own threads, so this stays at the timing head's cap rather than taking every core.
+	 */
+	policyInferenceThreadsMax: 4,
 	/** Shared `WebAssembly.Memory` initial pages (64 KiB each) tried in order (§6.3). */
 	engineMemoryInitialPages: [2560, 1536, 1024],
 	/** Shared `WebAssembly.Memory` maximum pages (512 MiB). */
@@ -75,6 +104,18 @@ export const SETTINGS_RANGES = {
 	premoveTendency: { min: 0, max: 1, step: 0.05 },
 	longThinkFrequency: { min: 0, max: 3, step: 0.1 },
 	motorSpeed: { min: 0.5, max: 2, step: 0.05 },
+	/** The preview-selection rate; 0 is the Off position (`LIMITS.previewSelectScaleMin`). */
+	previewSelectScale: {
+		min: LIMITS.previewSelectScaleMin,
+		max: LIMITS.previewSelectScaleMax,
+		step: 0.05,
+	},
+	/**
+	 * The accuracy offset (`strength.blunderScale`, H2) is shown in Elo: ±`MAIA.slider.eloSpan`
+	 * around the target in steps of this many Elo. The leaf itself stays 0–2 in storage
+	 * (`LIMITS.blunderScaleMin/Max`); `rows.ts` maps display ↔ storage.
+	 */
+	accuracyOffsetStepElo: 25,
 } as const;
 
 /**

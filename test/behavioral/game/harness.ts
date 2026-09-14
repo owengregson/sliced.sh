@@ -10,6 +10,7 @@ import { LOCAL_KEYS } from "@core/constants/storage-keys";
 import { AnalysisCache } from "@core/engine/analysis-cache";
 import { UciEngine } from "@core/engine/uci-client";
 import { installMessageRouter, type MessageRouter } from "@core/messaging/router";
+import type { PolicyPort } from "@core/policy/types";
 import type { SettingsPatch } from "@core/storage/settings-storage";
 import { getSettings, onSettingsChanged, setSettings } from "@core/storage/settings-storage";
 import { TimingLogWriter } from "@core/timing/timing-log";
@@ -57,6 +58,10 @@ export interface GameHarnessOptions {
 	premoves?: boolean;
 	script?: ScriptOptions;
 	head?: DistributionHead;
+	/** 2026-09-11: the Maia-3 policy port the pipeline queries (none by default: engine policy). */
+	policy?: PolicyPort;
+	/** 2026-09-11: observe the session's `warmPolicy(targetElo)` calls. */
+	warmPolicy?: (targetElo: number) => void;
 	/** Skip `hello` + `gameStarted` + the first position (a test that drives them itself). */
 	manualStart?: boolean;
 	/** Per-tab base seed (every per-game draw derives from it). */
@@ -70,6 +75,14 @@ export interface GameHarnessOptions {
 	storage?: Record<string, unknown>;
 	/** Observe every game-port command as it reaches the page (`SimulatedSiteOptions.onCommand`). */
 	onCommand?: (cmd: GamePortCommand) => void;
+	/** 2026-09-12: the site lays out resign + confirm controls (`SimulatedSiteOptions.resignControls`). */
+	resignControls?: boolean;
+	/** 2026-09-13: the site lays out the post-game controls (`SimulatedSiteOptions.rematchControls`). */
+	rematchControls?: boolean;
+	/** 2026-09-13: the rematch click reveals a cancel control (`SimulatedSiteOptions.rematchCancel`). */
+	rematchCancel?: boolean;
+	/** 2026-09-13: the tab starts on the exact `/play/online` queue screen (`SimulatedSiteOptions.lobby`). */
+	lobby?: boolean;
 }
 
 export interface GameHarness {
@@ -129,9 +142,16 @@ export async function createGameHarness(options: GameHarnessOptions = {}): Promi
 	// that default moves. Seeded as *stored* settings so no settings-write event fires before the
 	// stack is up. A test about the switch itself passes `settings: { enabled: false }`, which wins
 	// below.
+	// `automation.boardEffects` ships **on**, and it issues its own full-strength `panel` search per
+	// ply (`BoardEffectsReporter`). Every test that counts `go` lines or asserts the exact sequence
+	// of searches is about the *move* pipeline, so the fixture states the lane off — the same
+	// discipline as `execution.inputMode` below. `board-effects.test.ts` turns it back on.
 	const sim = createSimulator({
 		startAt: START_AT,
-		storageLocal: { [LOCAL_KEYS.settings]: { enabled: true }, ...options.storage },
+		storageLocal: {
+			[LOCAL_KEYS.settings]: { enabled: true, automation: { boardEffects: false } },
+			...options.storage,
+		},
 	});
 	sim.time.install();
 	const tabId = sim.openTab("https://www.chess.com/game/live/1", { active: true }).tabId;
@@ -139,7 +159,14 @@ export async function createGameHarness(options: GameHarnessOptions = {}): Promi
 	const spoken: string[] = [];
 	const toasts: Array<Extract<PanelPortMessage, { kind: "toast" }>> = [];
 
-	let settings: Settings = DEFAULT_SETTINGS;
+	// Drags unless a test says otherwise: most game tests count presses per move, and `auto` draws
+	// a click-click (two presses) per move at `CLICK_MOVE.autoClickProb`. A test about the input
+	// mode passes `settings: { execution: { inputMode: … } }`, which wins below.
+	let settings: Settings = {
+		...DEFAULT_SETTINGS,
+		execution: { ...DEFAULT_SETTINGS.execution, inputMode: "drag" },
+		automation: { ...DEFAULT_SETTINGS.automation, boardEffects: false },
+	};
 	let keepalive!: Keepalive;
 	let debuggerManager!: DebuggerManager;
 	let link!: ContentLink;
@@ -207,6 +234,8 @@ export async function createGameHarness(options: GameHarnessOptions = {}): Promi
 				activeTabId: () => Promise.resolve(tabId),
 				engineHasPendingOptions: () => controller.status().pendingOptions,
 				observeExecutor: (id, executor) => broadcaster.observeExecutor(id, executor),
+				policy: options.policy,
+				warmPolicy: options.warmPolicy,
 				now: sim.now,
 				scheduler: defaultScheduler,
 				seed: options.seed ?? "harness",
@@ -242,8 +271,15 @@ export async function createGameHarness(options: GameHarnessOptions = {}): Promi
 
 	// Settings live in *this* simulator's storage, so they are written inside the SW context.
 	if (options.settings) {
+		// The drag default above again, inside the patch: `setSettings` normalises from storage, where
+		// nothing says `inputMode`, and `DEFAULT_SETTINGS` would make it `auto`.
+		const patch = {
+			...options.settings,
+			execution: { inputMode: "drag" as const, ...options.settings.execution },
+			automation: { boardEffects: false, ...options.settings.automation },
+		};
 		await sw.run(async () => {
-			settings = await setSettings(options.settings ?? {});
+			settings = await setSettings(patch);
 		});
 	}
 
@@ -255,6 +291,10 @@ export async function createGameHarness(options: GameHarnessOptions = {}): Promi
 		...(options.sendKeybinds ? { sendKeybinds: true } : {}),
 		...(options.premoves ? { premoves: true } : {}),
 		...(options.onCommand ? { onCommand: options.onCommand } : {}),
+		...(options.resignControls ? { resignControls: true } : {}),
+		...(options.rematchControls ? { rematchControls: true } : {}),
+		...(options.rematchCancel ? { rematchCancel: true } : {}),
+		...(options.lobby ? { lobby: true } : {}),
 	});
 	await sim.time.runMicrotasks();
 

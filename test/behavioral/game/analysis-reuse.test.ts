@@ -4,8 +4,11 @@
 // exists for: `fenKey` kept the en-passant field, which three FEN sources spell differently, and a
 // hit had to match the requested `depthCap` exactly, which a `movetime` search never does.
 import { afterEach, describe, expect, it } from "bun:test";
+import { TIMINGS } from "@core/constants/timings";
+import { automaticDepthForElo } from "@core/engine/depth-policy";
 import type { PositionSnapshot } from "@typedefs/game";
 import { createGameHarness, type GameHarness } from "./harness";
+import { isPonderSearch } from "./scripted-engine";
 
 let h: GameHarness;
 afterEach(async () => {
@@ -27,9 +30,9 @@ const BULLET = { baseMs: 60_000, incMs: 0 };
 const REPLAY_FEN = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
 const BRIDGE_FEN = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1";
 
-/** Own-move searches the engine was actually asked for (`go infinite` ponders excluded). */
+/** Own-move searches the engine was actually asked for (long bounded ponders excluded). */
 const moveSearches = (harness: GameHarness): number =>
-	harness.transport.goLines.filter((l) => l.includes("movetime")).length;
+	harness.transport.goLines.filter((l) => !isPonderSearch(l)).length;
 
 function snapshotOf(harness: GameHarness, fen: string, timed: boolean): PositionSnapshot {
 	const snapshot: PositionSnapshot = {
@@ -53,10 +56,8 @@ describe("game session: an analysed position is not searched twice", () => {
 	it("the predicted position is pre-analysed on the opponent's clock, so the reply is answered instantly", async () => {
 		// Appendix E §4.5's promised hit, which nothing could ever satisfy: the opponent-turn ponder
 		// is keyed under the *opponent's* position and §7.4's gate search is MultiPV 2 at 120 ms.
-		// Bullet, because the cache's depth gate is `depthCap − 2` = 12 and the scripted engine
-		// answers at depth 14 — plausible for a 400 ms search, which is what the pre-analysis asks
-		// for. (At blitz the same fake depth would have to satisfy a cap of 18, which is the sort of
-		// harness-flattered pass this lane exists to stop writing.)
+		// This explicit cache-hit fixture completes at the active Elo's requested depth ceiling.
+		// It checks reuse when enough analysis exists, not the depth real hardware reaches in 400 ms.
 		h = await createGameHarness({
 			timeControl: BULLET,
 			gameId: "reuse-predicted",
@@ -64,7 +65,7 @@ describe("game session: an analysed position is not searched twice", () => {
 				automation: { autoMove: true },
 				strength: { matchOpponentRating: false, targetElo: 3000 },
 			},
-			script: { bestCp: 900, stepCp: 900 },
+			script: { bestCp: 900, stepCp: 900, depth: automaticDepthForElo(3000) },
 		});
 		// our move, then the opponent's turn: ponder → premove → pre-analysis
 		await h.arrive();
@@ -85,7 +86,7 @@ describe("game session: an analysed position is not searched twice", () => {
 		expect(rec?.chosen.uci.length).toBeGreaterThanOrEqual(4);
 	}, 120_000);
 
-	it("the opponent ponder is left alone at rapid: no harvest, no pre-analysis, one `go infinite`", async () => {
+	it("the opponent ponder is left alone at rapid: one bounded request and no pre-analysis", async () => {
 		// §7.5's opponent ponder is continuous. The pre-analysis harvests a prediction by stopping it,
 		// which is only worth doing at a premove speed — measured on the wire before the gate, every
 		// rapid opponent turn was `go infinite → go depth 22 movetime 1000 → go infinite`: the ponder
@@ -99,7 +100,7 @@ describe("game session: an analysed position is not searched twice", () => {
 				automation: { autoMove: true },
 				strength: { matchOpponentRating: false, targetElo: 3000 },
 			},
-			script: { bestCp: 900, stepCp: 900 },
+			script: { bestCp: 900, stepCp: 900, holdPonder: true },
 		});
 		await h.arrive();
 		expect(await h.until(() => h.session().currentState() === "live:opponent-turn", 60_000)).toBe(
@@ -108,7 +109,9 @@ describe("game session: an analysed position is not searched twice", () => {
 		const before = h.transport.goLines.length;
 		await h.arrive(); // the opponent is to move: ponder, and nothing else
 		await h.advance(3_000);
-		expect(h.transport.goLines.slice(before)).toEqual(["go infinite"]);
+		expect(h.transport.goLines.slice(before)).toEqual([
+			`go depth ${automaticDepthForElo(3000)} movetime ${TIMINGS.ponderMaxMs}`,
+		]);
 	}, 120_000);
 
 	it("the bridge's spelling of a ply already analysed from the replay spelling hits the cache", async () => {

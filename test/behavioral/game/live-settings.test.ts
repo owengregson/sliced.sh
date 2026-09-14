@@ -1,5 +1,6 @@
 import { afterEach, expect, it, spyOn } from "bun:test";
 import { MSG } from "@core/constants/messages";
+import { SETTING_GAIN } from "@core/constants/setting-gain";
 import type { ExecutionPlan } from "@core/motor/types";
 import { HandController } from "@service/move-executor/hand-controller";
 import { createGameHarness, type GameHarness } from "./harness";
@@ -29,7 +30,7 @@ it("live timing and mouse controls update the next move while the current gestur
 		settings: {
 			automation: { autoMove: true },
 			timing: { profile: "custom", speedScale: 1 },
-			execution: { motorSpeed: 1, previewSelects: "off", verifyMoves: false },
+			execution: { motorSpeed: 1, previewSelectScale: 0, verifyMoves: false },
 		},
 		head: {
 			id: "v1-parametric",
@@ -44,21 +45,23 @@ it("live timing and mouse controls update the next move while the current gestur
 	const currentPlan = structuredClone(current.plan);
 	expect(plans).toHaveLength(1);
 	expect(plans[0]).toMatchObject({
-		motorSpeed: 1,
+		// the user's 1 through `SETTING_GAIN` (2026-09-13); previews off stays 0
+		motorSpeed: SETTING_GAIN.motorSpeed,
 		exploration: { persona: "balanced", previewScale: 0 },
 	});
 
 	await h.patch({
 		strength: { persona: "blitz" },
 		timing: { profile: "manual", speedScale: 0.3, premoveTendency: 0.9 },
-		execution: { motorSpeed: 2, previewSelects: "auto", previewSelectScale: 2, verifyMoves: true },
+		execution: { motorSpeed: 2, previewSelectScale: 2, verifyMoves: true },
 	});
 	expect(h.executor()).toBe(executor);
 	expect(h.session().recommendation()).toBe(current);
 	expect(current.plan).toEqual(currentPlan);
 	expect(plans).toHaveLength(1);
 	expect(plans[0]).toMatchObject({
-		motorSpeed: 1,
+		// the user's 1 through `SETTING_GAIN` (2026-09-13); previews off stays 0
+		motorSpeed: SETTING_GAIN.motorSpeed,
 		exploration: { persona: "balanced", previewScale: 0 },
 	});
 	expect(await h.until(() => h.site.board.lastMove() !== null, 12_000)).toBe(true);
@@ -82,8 +85,9 @@ it("live timing and mouse controls update the next move while the current gestur
 	);
 	expect(await h.until(() => plans.length === 2, 2000)).toBe(true);
 	expect(plans[1]).toMatchObject({
-		motorSpeed: 2,
-		exploration: { persona: "blitz", previewScale: 2 },
+		motorSpeed: 2 * SETTING_GAIN.motorSpeed,
+		// The persona is forced to balanced on every read (2026-09-12); the write is ignored.
+		exploration: { persona: "balanced", previewScale: 2 * SETTING_GAIN.previewSelectScale },
 	});
 	expect(await h.until(() => h.site.board.chess.history().length === 3, 3000)).toBe(true);
 	await h.advance(1000);

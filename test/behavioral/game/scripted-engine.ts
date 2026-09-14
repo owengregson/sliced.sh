@@ -4,19 +4,47 @@
 // over the position's legal moves, so the selection layer and the timing features see a plausible
 // search without an engine.
 import { applyMoves, legalMoves } from "@core/chess/san";
+import { TIMINGS } from "@core/constants/timings";
 import { FakeEngineTransport } from "../../fakes/engine-transport";
 
 export interface ScriptOptions {
 	depth?: number;
+	/** Keep the explicitly long ponder request in flight until stop/release, for lifecycle tests. */
+	holdPonder?: boolean;
+	/** `2`: every line's PV carries the first legal reply too (what a ponder's answer reads). */
+	pvDepth?: 1 | 2;
 	/** cp of the best line; every next line loses `stepCp`. */
 	bestCp?: number;
 	stepCp?: number;
 	/** Preferred move order for a position (fen without move counters → UCI moves first). */
 	prefer?: Map<string, string[]>;
+	/**
+	 * 2026-09-12: report `score mate N` on every position's best line instead of centipawns
+	 * (UCI POV: negative = the side to move gets mated). Later lines get mated one move sooner
+	 * each (or mate one move later each when positive), floored at ±1, so "every line is lost"
+	 * holds the way a real search reports a forced mate. `mateFor` overrides it per position.
+	 */
+	mateIn?: number;
+	mateFor?: Map<string, number>;
+	/**
+	 * With a negative `mateIn`: the best line keeps its centipawn score (the escape) and only the
+	 * lower lines are mated — the coherent frame a real search reports when one move survives.
+	 */
+	escapeBest?: boolean;
 }
 
 const POSITION_RE = /^position fen (\S+ \S+ \S+ \S+ \S+ \S+)(?: moves (.*))?$/;
 const MULTIPV_RE = /^setoption name MultiPV value (\d+)$/;
+/** The `searchmoves` tail of a `go` line (the UCI client emits it last). */
+const SEARCHMOVES_RE = /\bsearchmoves ((?:[a-h][1-8][a-h][1-8][qrbn]? ?)+)$/;
+
+/** Session pondering has an explicit long wall-clock limit; short move searches do not. */
+export function isPonderSearch(line: string): boolean {
+	return (
+		line.startsWith("go ") &&
+		(line.includes("infinite") || Number(/\bmovetime (\d+)/.exec(line)?.[1]) === TIMINGS.ponderMaxMs)
+	);
+}
 
 /** `fen` without the halfmove/fullmove counters — the key `prefer` is looked up by. */
 export function positionKey(fen: string): string {
@@ -28,6 +56,9 @@ export class ScriptedEngineTransport extends FakeEngineTransport {
 	bestCp: number;
 	stepCp: number;
 	readonly prefer: Map<string, string[]>;
+	mateIn: number | undefined;
+	readonly mateFor: Map<string, number>;
+	escapeBest: boolean;
 	/** Every `go` line the client sent, in order. */
 	readonly goLines: string[] = [];
 	/** `position` lines, in order. */
@@ -38,13 +69,29 @@ export class ScriptedEngineTransport extends FakeEngineTransport {
 	private fen: string | null = null;
 	private pendingGo: string | null = null;
 	private infinite = false;
+	private readonly holdPonder: boolean;
+	private readonly pvDepth: 1 | 2;
 
 	constructor(options: ScriptOptions = {}) {
 		super();
 		this.depth = options.depth ?? 14;
+		this.holdPonder = options.holdPonder ?? false;
+		this.pvDepth = options.pvDepth ?? 1;
 		this.bestCp = options.bestCp ?? 30;
 		this.stepCp = options.stepCp ?? 25;
 		this.prefer = options.prefer ?? new Map();
+		this.mateIn = options.mateIn;
+		this.mateFor = options.mateFor ?? new Map();
+		this.escapeBest = options.escapeBest ?? false;
+	}
+
+	/** The `score …` clause of line `i` (0 = best) for `fen`. */
+	private scoreFor(fen: string, i: number): string {
+		const cp = this.bestCp - i * this.stepCp;
+		const mate = this.mateFor.get(positionKey(fen)) ?? this.mateIn;
+		if (mate === undefined || (this.escapeBest && i === 0)) return `cp ${cp}`;
+		const n = mate < 0 ? -Math.max(1, -mate - i) : Math.max(1, mate) + i;
+		return `mate ${n}`;
 	}
 
 	override send(line: string): void {
@@ -67,7 +114,8 @@ export class ScriptedEngineTransport extends FakeEngineTransport {
 			this.infinite = line.includes("infinite");
 			this.pendingGo = line;
 			// An infinite search answers only on `stop` (Appendix E §4.2).
-			if (!this.infinite && !this.hold) queueMicrotask(() => this.answer());
+			if (!this.infinite && !this.hold && !(this.holdPonder && isPonderSearch(line)))
+				queueMicrotask(() => this.answer());
 			return;
 		}
 		if (line === "stop" && this.pendingGo !== null) queueMicrotask(() => this.answer());
@@ -88,6 +136,9 @@ export class ScriptedEngineTransport extends FakeEngineTransport {
 
 	private answer(): void {
 		if (this.pendingGo === null) return;
+		const go = this.pendingGo;
+		const requestedDepth = Number(/\bdepth (\d+)/.exec(go)?.[1]);
+		const depth = Number.isFinite(requestedDepth) ? Math.min(this.depth, requestedDepth) : this.depth;
 		this.pendingGo = null;
 		this.infinite = false;
 		const fen = this.fen;
@@ -95,16 +146,25 @@ export class ScriptedEngineTransport extends FakeEngineTransport {
 			this.feed("bestmove (none)");
 			return;
 		}
-		const moves = this.movesFor(fen).slice(0, Math.max(1, this.multiPv));
+		// `go … searchmoves a b c` (H10's Maia-shaped search, the extra referee search): a real engine
+		// reports only those roots, in its own order — the preferred order here, restricted.
+		const restricted = SEARCHMOVES_RE.exec(go)?.[1]?.split(" ") ?? [];
+		const roots =
+			restricted.length > 0
+				? this.movesFor(fen).filter((m) => restricted.includes(m))
+				: this.movesFor(fen);
+		const moves = roots.slice(0, Math.max(1, this.multiPv));
 		if (moves.length === 0) {
 			this.feed("bestmove (none)");
 			return;
 		}
 		const lines = moves.map((uci, i) => {
-			const cp = this.bestCp - i * this.stepCp;
+			const after = this.pvDepth === 2 ? applyMoves(fen, [uci]) : null;
+			const reply = after === null ? undefined : legalMoves(after)[0];
+			const pv = reply === undefined ? uci : `${uci} ${reply}`;
 			return (
-				`info depth ${this.depth} seldepth ${this.depth + 2} multipv ${i + 1} ` +
-				`score cp ${cp} nodes 100000 nps 1000000 time 100 pv ${uci}`
+				`info depth ${depth} seldepth ${depth + 2} multipv ${i + 1} ` +
+				`score ${this.scoreFor(fen, i)} nodes 100000 nps 1000000 time 100 pv ${pv}`
 			);
 		});
 		this.feed(...lines, `bestmove ${moves[0]}`);

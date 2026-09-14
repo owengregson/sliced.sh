@@ -5,6 +5,7 @@
  */
 
 import { LOCAL_KEYS, SESSION_KEYS } from "@core/constants/storage-keys";
+import type { RepertoireKeys } from "@core/strength/book/repertoire";
 import type { SessionStats } from "@typedefs/game";
 import type { LicenseState, PersonaId, Settings } from "@typedefs/settings";
 import type { TimingLogEntry } from "@typedefs/timing";
@@ -40,6 +41,11 @@ export interface PlayingSession {
 	completedGames: number;
 	lastFinishedGameId: string | null;
 	breakUntil: number | null;
+	/**
+	 * Opponents (usernames) this playing session has offered a rematch to, or accepted one from
+	 * (2026-09-13). Persisted so a worker reload cannot re-offer; absent means none.
+	 */
+	rematched?: string[];
 }
 
 export interface PendingAutoQueue {
@@ -47,6 +53,8 @@ export interface PendingAutoQueue {
 	/** Null while a game is active; otherwise an absolute, persisted matchmaking deadline. */
 	dueAt: number | null;
 	session?: PlayingSession;
+	/** A rematch step still to run at `dueAt`: the titled opponent's username (2026-09-13). */
+	rematch?: string;
 }
 
 export type PendingAutoQueues = Record<string, PendingAutoQueue>;
@@ -66,6 +74,8 @@ export interface LocalStorageSchema {
 	[LOCAL_KEYS.motorTraces]: unknown[];
 	/** Task 19 defines `MotorProfile`. */
 	[LOCAL_KEYS.motorProfile]: unknown;
+	/** H14.1 (2026-09-13): the per-colour opening-repertoire seeds, created once per profile. */
+	[LOCAL_KEYS.repertoire]: RepertoireKeys;
 }
 
 export interface SessionStorageSchema {

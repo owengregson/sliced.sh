@@ -420,10 +420,10 @@ export class PanelBroadcaster {
 		const pending = executor?.pendingMove() ?? null;
 		// A move whose deadline is `now + thinkMs` is never *parked* — the hand owns the whole
 		// window — so once it starts the countdown (Task 24) reads the plan the hand is running.
-		// An `instant` plan (`playNow`, a retry) has nothing to count down and reports none.
+		// `instant` plans still include preparation and motion. Hiding their plan makes an
+		// armed, interruptible run look idle ("Awaiting command") until its first committed press.
 		const running = pending === null ? (executor?.runningMove() ?? null) : null;
-		const scheduled =
-			pending?.rec.plan ?? (running && running.plan.mode !== "instant" ? running.plan : null);
+		const scheduled = pending?.rec.plan ?? running?.plan;
 		if (scheduled) {
 			autoMove.scheduledAt = scheduled.deadlineMs;
 			autoMove.plan = scheduled;

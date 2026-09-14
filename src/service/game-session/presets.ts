@@ -6,6 +6,7 @@
  * tested without a session.
  */
 
+import { effectivePremoveTendency, SETTING_GAIN } from "@core/constants/setting-gain";
 import {
 	MANUAL_TIMING_PROFILE,
 	PROFILE_FOR_TC_CLASS,
@@ -20,6 +21,13 @@ const MS_PER_S = 1000;
 
 /** The profiles a *detected* time control may select (the rest are the user's own choice). */
 const DETECTABLE: ReadonlySet<TimingProfile> = new Set<TimingProfile>(["fast", "natural", "slow"]);
+
+/**
+ * The class the per-class gains read when the page has not told us the time control yet. Blitz,
+ * because the cost is asymmetric: a rapid game paced as blitz loses a little realism for a move or
+ * two, a blitz game paced as rapid loses the game.
+ */
+const UNKNOWN_TC_CLASS = "blitz" as const;
 
 /**
  * The profile actually in force. A detected preset wins over a stored preset — which is what the
@@ -44,8 +52,14 @@ export function autoPlayAllowed(profile: TimingProfile): boolean {
 }
 
 /**
- * The knobs the timing model runs with: the user's sliders scaled by the effective preset, so the
- * slider stays meaningful under a preset. `manual` and `custom` carry no knobs and pass through.
+ * The knobs the timing model runs with: the user's sliders re-based by `SETTING_GAIN` (owner,
+ * 2026-09-13 — the panel keeps showing the user's number; this is the one place the timing
+ * sliders turn into model input) and then scaled by the effective preset, so the slider stays
+ * meaningful under a preset. `manual` and `custom` carry no preset knob and take the gains alone.
+ *
+ * The base-speed gain is per time-control class (`SETTING_GAIN.speedScale` carries why), which is
+ * the other reason this function needs the time control and not just the profile. A game whose
+ * time control is not known yet takes the blitz value.
  */
 export function timingSettingsFor(
 	timing: Settings["timing"],
@@ -56,6 +70,14 @@ export function timingSettingsFor(
 		profile === "fast" || profile === "natural" || profile === "slow"
 			? TIMING_PROFILE_KNOBS[profile]
 			: null;
-	if (!knobs) return timing.profile === profile ? timing : { ...timing, profile };
-	return { ...timing, profile, speedScale: timing.speedScale * knobs.speedScale };
+	const cls = timeControl
+		? tcClass(timeControl.baseMs / MS_PER_S, timeControl.incMs / MS_PER_S)
+		: UNKNOWN_TC_CLASS;
+	return {
+		...timing,
+		profile,
+		speedScale: timing.speedScale * SETTING_GAIN.speedScale[cls] * (knobs?.speedScale ?? 1),
+		longThinkFrequency: timing.longThinkFrequency * SETTING_GAIN.longThinkFrequency,
+		premoveTendency: effectivePremoveTendency(timing.premoveTendency),
+	};
 }

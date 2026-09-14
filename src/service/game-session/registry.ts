@@ -15,9 +15,11 @@
 import { pageKindFromPath } from "@content/adapters/page-kind";
 import { onTabRemoved, onTabUpdated, tabsQuery } from "@core/chrome/tabs";
 import { KEEPALIVE_REASONS } from "@core/constants/alarms";
+import { REMATCH } from "@core/constants/rematch";
 import { URLS } from "@core/constants/urls";
 import { log } from "@core/logger";
 import type { TimeControlClass } from "@core/motor/types";
+import type { PolicyPort } from "@core/policy/types";
 import { createRng } from "@core/rng";
 import type { BookPolicy } from "@core/strength/book/book-policy";
 import type { TimingLogWriter } from "@core/timing/timing-log";
@@ -42,9 +44,12 @@ import type {
 	SessionSource,
 	SnapshotSources,
 } from "@service/panel-broadcaster";
+import { RematchStep } from "@service/rematch";
+import { ResignInput } from "@service/resign-input";
 import type { EngineStatus } from "@typedefs/engine";
 import type { Site } from "@typedefs/game";
 import type { LicenseState, PersonaId, Settings } from "@typedefs/settings";
+import { executorSettingsFor } from "./executor-settings";
 import { GameSession } from "./session";
 
 export interface SessionRegistryDeps {
@@ -76,6 +81,10 @@ export interface SessionRegistryDeps {
 	activeTabId(): Promise<number | null>;
 	/** Task 34: warm the ChessMimic band for a target Elo. */
 	warmTiming?: ((targetElo: number) => void) | undefined;
+	/** 2026-09-11: the shared Maia-3 policy port (one per service worker). */
+	policy?: PolicyPort | undefined;
+	/** 2026-09-11: have the Maia-3 size for a target Elo resident (`GameSessionDeps.warmPolicy`). */
+	warmPolicy?: ((targetElo: number) => void) | undefined;
 	/**
 	 * Task 13: `EngineController.status().pendingOptions` — a settings change waiting for the
 	 * engine to go idle. The registry owns the whole reaction to a settings write so the service
@@ -106,6 +115,10 @@ export class SessionRegistry implements GameSessionRegistry, SnapshotSources {
 	private readonly offs: Array<() => void> = [];
 	private readonly autoQueue: AutoQueue;
 	private readonly newGameInput: NewGameInput;
+	/** 2026-09-12: the resign + confirm clicks, one hand-driven attempt per tab (`RESIGN`). */
+	private readonly resignInput: ResignInput;
+	/** 2026-09-13: the rematch step for titled opponents, clicking through `newGameInput`. */
+	private readonly rematchStep: RematchStep;
 	private disposed = false;
 	private holdingKeepalive = false;
 
@@ -127,6 +140,39 @@ export class SessionRegistry implements GameSessionRegistry, SnapshotSources {
 			now: this.now,
 			showCursor: () => deps.getSettings().display.virtualCursor,
 		});
+		this.resignInput = new ResignInput({
+			link: deps.link,
+			debugger: deps.debugger,
+			ownership: deps.ownership,
+			focus: deps.focus,
+			rng: createRng(`${queueSeed}:resign-input`),
+			scheduler: this.scheduler,
+			now: this.now,
+			showCursor: () => deps.getSettings().display.virtualCursor,
+		});
+		this.rematchStep = new RematchStep({
+			// A passive read over the same port request the click path revalidates with.
+			incoming: async (tabId, signal) => {
+				const reply = await deps.link.request(
+					tabId,
+					{ kind: "rematch", action: "accept" },
+					REMATCH.targetTimeoutMs,
+					signal
+				);
+				return reply.incoming;
+			},
+			// The queue's own click path (`NewGameInput`): the same hand, guards and revalidation.
+			click: async (tabId, gameId, action, signal) => {
+				await this.sessions.get(tabId)?.session.executor()?.whenIdle();
+				const reply = await this.newGameInput.attempt(tabId, gameId, signal, {
+					kind: "rematch",
+					action,
+				});
+				return { status: reply.status === "searching" ? "not-ready" : reply.status };
+			},
+			scheduler: this.scheduler,
+			now: this.now,
+		});
 		this.autoQueue = new AutoQueue({
 			attempt: async (tabId, gameId, signal) => {
 				await this.sessions.get(tabId)?.session.executor()?.whenIdle();
@@ -136,6 +182,11 @@ export class SessionRegistry implements GameSessionRegistry, SnapshotSources {
 			now: this.now,
 			rng: createRng(`${queueSeed}:auto-queue`),
 			persistence: createAutoQueuePersistence(),
+			rematch: {
+				step: this.rematchStep,
+				allowed: () => deps.getSettings().automation.rematchTitled,
+			},
+			onBreak: (tabId) => this.sessions.get(tabId)?.session.takeQueueBreak(),
 			canQueue: (tabId, gameId) => {
 				if (deps.settingsKnown?.() === false) return "hold";
 				const settings = deps.getSettings();
@@ -278,6 +329,7 @@ export class SessionRegistry implements GameSessionRegistry, SnapshotSources {
 		for (const tabId of [...this.sessions.keys()]) this.drop(tabId, "disposed", true);
 		this.autoQueue.dispose();
 		this.newGameInput.dispose();
+		this.resignInput.dispose();
 		void this.deps.keepalive.release(KEEPALIVE_REASONS.game);
 	}
 
@@ -295,12 +347,15 @@ export class SessionRegistry implements GameSessionRegistry, SnapshotSources {
 			ownership: this.deps.ownership,
 			timingLog: this.deps.timingLog,
 			autoQueue: this.autoQueue,
+			resignInput: this.resignInput,
 			createExecutor: (config) => this.makeExecutor(tabId, config),
 			getSettings: this.deps.getSettings,
 			settingsKnown: this.deps.settingsKnown,
 			notify: this.deps.notify,
 			speak: this.deps.speak,
 			warmTiming: this.deps.warmTiming,
+			policy: this.deps.policy,
+			warmPolicy: this.deps.warmPolicy,
 			onLivenessChanged: () => this.reconcileKeepalive(),
 			now: this.now,
 			scheduler: this.scheduler,
@@ -330,12 +385,11 @@ export class SessionRegistry implements GameSessionRegistry, SnapshotSources {
 			now: this.now,
 			scheduler: this.scheduler,
 			persona: config.persona,
-			motorSpeed: settings.execution.motorSpeed,
+			...executorSettingsFor(settings.execution),
 			tcClass: config.tcClass,
-			previewScale:
-				settings.execution.previewSelects === "off" ? 0 : settings.execution.previewSelectScale,
 			gameSeed: config.gameSeed,
 			verifyMoves: settings.execution.verifyMoves,
+			inputMode: settings.execution.inputMode,
 		});
 		const entry = this.sessions.get(tabId);
 		if (entry) {

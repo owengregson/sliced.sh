@@ -18,7 +18,7 @@ Export the timing log afterwards and run it through `tools/telemetry-conformance
 1. `bun install && bun run check` — must exit 0. (Needs `python3` on `PATH`.)
 2. `bun run build --dev`.
 3. `chrome://extensions` → Developer mode → **Load unpacked** → `dist/`.
-   - The card must read **sliced.gg (dev)**, version `2.0.0`, `version_name` `2.0.0-dev+…`.
+   - The card must read **sliced.sh (dev)**, version `2.0.0`, `version_name` `2.0.0-dev+…`.
    - **Expect zero errors and zero warnings on the card.** Any "Unrecognized manifest key",
      permission warning you did not expect, or CSP complaint is a finding — write it down.
 4. Open the service-worker console (`chrome://extensions` → "service worker"). Every context's
@@ -41,9 +41,9 @@ not run is `not run`, never a tick.
 | A3 | Open the service-worker console | `service systems bootstrapped`, `license: validated`, no uncaught errors | |
 | A4 | Open a supported site and wait for the engine | `chrome://extensions` → "Inspect views: offscreen.html" exists | |
 | A5 | Navigate to a non-supported site (e.g. example.com) with the panel open | "Not on a supported site" view with a working chess.com link | |
-| A6 | `bun run build` (release), load *that* `dist/` unpacked in a second profile | Card reads **sliced.gg** (no `(dev)`, no `version_name`); everything above still holds | |
+| A6 | `bun run build` (release), load *that* `dist/` unpacked in a second profile | Card reads **sliced.sh** (no `(dev)`, no `version_name`); everything above still holds | |
 | A7 | On a chess.com tab's page console, run `fetch("chrome-extension://" + "<the extension id from chrome://extensions>" + "/assets/sounds/make_move.wav")` | **Rejects.** v2 declares no `web_accessible_resources`, so a page cannot confirm the extension is installed (§13.3). A success here is a critical finding | |
-| A8 | Same, with the engine: `.../assets/engine/sf_18_smallnet.wasm` | Rejects, same reason | |
+| A8 | Same, with the engine: `.../assets/engine/sf_18_smallnet_relaxed-simd.wasm` | Rejects, same reason | |
 
 ---
 
@@ -166,10 +166,104 @@ latency — happy-dom has no layout, no compositor and no frame clock.
 | B5.4 | Watch the arrow during the press and the release | It dips slightly (about the tip, not the box corner) exactly while the piece is held, and returns on the release | |
 | B5.5 | Watch the first appearance | It fades in over ~0.4 s rather than popping. No fade at all means the post-insert style flush did not take effect in this Chrome | |
 | B5.6 | Watch the motion during a drag with the naked eye first, then record `performance.now()` gaps between `cursorTo` arrivals in the page (temporarily, in a dev build) and compare them against the hand's own dispatch gaps in the service-worker log | **Judge the glide, not a threshold.** Visible stepping or stalling during a drag — not merely uneven numbers — is what would justify the reference's rAF smoothing. The hand itself dispatches at p50 ~7 ms / p90 ~25-33 ms with a tail of hundreds of ms at its deliberate pauses (measured offline, ten runs), so gaps in the tens of ms are the *hand*, not the port: only arrival gaps materially **larger than** the dispatch gaps for the same move indicate a transport problem. Record both series | |
-| B5.7 | Disarm, `Shift+X`, turn the assistant off, turn **Settings › Display › Show the hand's pointer** off, let a game end, navigate away | The arrow disappears and `document.querySelector` finds no leftover element in each case. All six are covered offline (`test/behavioral/game/virtual-cursor.test.ts`); this row is the confirmation that the page really does drop the node | |
-| B5.8 | Click **Cancel** on the debugger infobar while the arrow is parked between moves | The arrow disappears. §13.4 forbids the mid-game re-attach, so the hand owns no pointer for the rest of the game and a parked arrow would be a fossil; the session hides it on `DebuggerManager.onDetached` | |
-| B5.9 | With the mirror on screen, inspect `document.body.children`, record the element's `z-index` and the rate of `style` mutation records (`new MutationObserver(r => console.log(r.length)).observe(el, {attributes: true})`), and watch the site's own network payloads | Record whether anything the site sends changes. The element is a body child with a per-build class, no `id`, no `data-*` and no listeners — but it *is* an extra DOM node with a near-`INT32_MAX` `z-index` that changes its `style` attribute ~45×/s while the hand plays (§13.3 residual; the report's Fix-round §m3/m6 defence is what this row tests) | |
+| B5.7 | `Shift+X`, turn the assistant off, turn **Settings › Display › Show the hand's pointer** off, close the tab | The arrow disappears and `document.querySelector` finds no leftover element in each case (2026-09-13: these are the only hide reasons; all covered offline in `test/behavioral/game/virtual-cursor.test.ts`). This row is the confirmation that the page really does drop the node | |
+| B5.7b | Disarm, let a game end, let the auto-queue click New Game, navigate to the next game | The arrow **stays** parked where the hand stopped through all four, and the next game's first hand movement starts from it (no jump). While it is up the real mouse stays blocked (`docs/qa/pointer-ownership.md`); `Shift+X` or the switch gives it back | |
+| B5.8 | Click **Cancel** on the debugger infobar while the arrow is parked between moves | The arrow **stays** (2026-09-13). §13.4 forbids the mid-game re-attach, so the hand owns no pointer for the rest of this game; the next game re-arms from the parked point | |
+| B5.9 | With the mirror on screen, inspect `document.documentElement.children`, record the element's `z-index` and the rate of `style` mutation records (`new MutationObserver(r => console.log(r.length)).observe(el, {attributes: true})`), and watch the site's own network payloads | Record whether anything the site sends changes. The element is a direct child of `<html>` (after `<body>`) with a per-build class, no `id`, no `data-*` and no listeners — but it *is* an extra DOM node with `z-index: 2147483647` that changes its `style` attribute ~45×/s while the hand plays (§13.3 residual; the report's Fix-round §m3/m6 defence is what this row tests) | |
+| B5.11 | Let each of the site's popups appear while the arrow is up: the game-over modal, the play menu, a toast, the resign confirmation | The arrow paints **over** each of them. If one still covers it, run `document.querySelector("dialog[open], [popover]:popover-open")` — a hit means that popup is in the top layer, which no `z-index` reaches (`docs/qa/virtual-cursor-2026-09-13.md`); record which | |
 | B5.10 | Arm, play a move so the arrow is up, then force the service worker to restart (`chrome://serviceworker-internals` → Stop, or leave the tab idle past the worker's eviction) and press `Shift+X` | The arrow disappears. The worker that wakes has never drawn anything, and the hide is posted unconditionally for exactly this case — covered offline, but this is the real eviction | |
+
+---
+
+### B6. Board effects and the move-quality chip (`docs/qa/board-effects-2026-09-13.md`) — **answerable only in a browser**
+
+The effect layer is a second `<svg>` on the board host, one `z-index` above the recommendation
+mark. Everything about the *batch* is covered offline (`test/behavioral/game/board-effects.test.ts`)
+and everything about the *element* in happy-dom (`test/page/effects-overlay.test.ts`). What no
+simulator can answer is whether it renders on the live WebGL canvas board at all, whether the
+geometry lands on the right squares, whether the chip is legible, and how often the verdict search
+reaches a usable depth in a real game.
+
+| # | Do | Expect | Observed |
+|---|---|---|---|
+| B6.1 | Settings › Display: confirm **Board effects** sits directly beneath **Highlight moves** and ships on. Turn it off, play a move, turn it on | Nothing is drawn while it is off; whatever was drawn disappears on the flip. Turning it on draws from the *next* move, not retroactively | |
+| B6.2 | Live game (`/play/online`, WebGL board). Let the opponent capture, check or fork | The rays appear on the board over the canvas, red-toned. If nothing appears, check `document.querySelector("wc-chess-board > svg")` — a hit with nothing visible means the canvas paints over it (a finding) | |
+| B6.3 | Same on `/play/computer` (DOM renderer) | Identical rays. A difference between the two renderers is a finding | |
+| B6.4 | Make a move yourself; compare its rays with the opponent's | Ours are blue (`effect.mine`, #3B82F6 family), theirs red (`effect.theirs`, #EF4444 family). Both are drawn; the chip's disc keeps its own category colour | |
+| B6.5 | Play through a castle, a promotion, an en-passant capture and a discovered check | Each draws its own shape: two slide traces, a ray onto the captured pawn's real square, a dashed ray from the *checker* rather than from the piece that moved. The promotion itself draws nothing (its pulses were the rings the owner removed); any other effect the promoting move produced still draws | |
+| B6.6 | Watch a fork (a knight hitting two pieces) | The rays fan out one after another, not all at once | |
+| B6.7 | Record the ray endpoints against the squares they name (screenshot, or read the `<path d>` and compare with the board rect) | Each ray starts and ends inside the squares it names. A constant offset means the overlay's 8×8 viewBox and the host element disagree — the same assumption the recommendation mark makes | |
+| B6.8 | Watch the bottom-left of the destination square after each move, on a large board and then with the side panel widened so the board is small | The chip (0.345 board units, 0.8 opacity) scales in, holds ~1.2 s and fades. Record whether the glyph is still readable on the small board and whether it collides with chess.com's rank/file labels on `a`-file and rank-1 squares | |
+| B6.9 | Play a full blitz game with Engine view › Log at `debug` and count: moves played vs chips shown, **per side** | Both sides should chip on nearly every move: ours from the referee lines during the think time, theirs from the ponder lines plus our own-move search, neither needing a search of its own. Every move without a chip has a `board effects: no chip for the landed move` line with a `reason`; record the reasons per side. A run of `superseded` or `shallow` is a finding; `unscored` on the opponent's moves after a fast reply or a hold is the known gap | |
+| B6.15 | Play a fast exchange (bullet or premoves): three or four moves inside ~2 s | Every move's rays and chip run their full life; a new move never cuts the previous one short. Several chips may be on the board at once (at most `maxLiveChips` = 4; a recapture on the same square replaces that square's chip). Record whether the stacking reads as a burst or as clutter | |
+| B6.16 | Watch a capture, a check and a threat side by side | The capture is a diagonal pill sweeping across the *taken* piece's square (no line from the origin), entering from the mover's side. The check and threat are thicker pill-shaped rays whose base fades in and whose arrowhead fades to its point; no hard end on either. **No rings or pulses anywhere** — a circle expanding from a square is a finding (they were removed on 2026-09-13) | |
+| B6.17 | Let a move produce rays (a capture, a check, a fork) and wait for its chip | The chip appears beside the rays on the destination square — for our own moves in the same instant as the rays, for the opponent's a moment later — and neither disturbs the other. A move with rays and no chip, where a quiet move chips, is a finding | |
+| B6.18 | Play a move whose recommendation you then override by hand (arm nothing, move a different piece than the arrow shows) | The chip is for the move you played and sits on its destination; nothing is drawn for the planned move. A chip on the arrow's square is a finding | |
+| B6.19 | Bullet or blitz with autoplay armed and chess.com premoves on: wait for the log's `entering a premove on the site`, then let the opponent play the predicted reply | Two batches in the same instant — their move's rays (red), then our premove's (blue) — and a chip for each. For a recapture both chips land on the same square and ours replaces theirs. A fired premove with rays and no chip is a finding; look for `no chip for the landed move` and its reason | |
+| B6.20 | Autoplay **off** (panel-only mode), play a few moves by hand | Our chips still appear — at landing, from the panel ponder's lines, since the referee search at a limited Elo cannot be classified before landing and the panel ponder supersedes the fallback. A move by hand with no chip and no logged reason is a finding | |
+| B6.10 | Watch the categories over a whole game | Record which fire. Blunder / Mistake / Inaccuracy / Good / Excellent / Best should all appear; Book early; Great and Brilliant rarely. A category that never fires, or Brilliant firing on ordinary moves, is a calibration finding | |
+| B6.11 | Arm and let the hand play with effects on. Compare move timing against a game with effects off (the Engine view's log has the think times) | No visible delay to our own moves. In the common case the lane adds no search at all; the dedicated fallback runs only from `prepare()` during the think time, and the landing-time cache probe is free on a hit. The claim it cannot delay a move rests on the engine queue's supersede rule | |
+| B6.12 | Turn the OS reduced-motion setting on and play a few moves | The rays are drawn statically and stay until the next move replaces them; the chip appears without the scale-in. Judge whether a static ray set through a whole opponent turn is wanted | |
+| B6.13 | With the assistant armed and a recommendation marked, let the opponent move | The mark and the effect layer coexist; the effects sit above the mark and neither clear erases the other | |
+| B6.14 | End a game, start a new one, `Shift+X`, navigate away | The effect layer disappears in each case and `document.querySelector("wc-chess-board > svg")` finds no leftover beyond the recommendation mark's | |
+
+### B7. Session-side Maia: pre-inference, the per-game size, the repertoire and the fast moves (`docs/qa/session-maia-2026-09-13.md`) — **answerable only in a browser**
+
+Everything about the *decision* is covered on the simulator (`test/service/game-session/session-maia.test.ts`,
+`maia-session.test.ts`, `repertoire.test.ts`). What no simulator can answer is how often the
+pre-inference actually lands before the reply on real hardware, whether the offscreen document
+keeps up with one extra query per opponent turn, and whether the repertoire survives the worker's
+restarts. Engine view › Log at `debug`; the Human-model block is the display.
+
+| # | Do | Expect | Observed |
+|---|---|---|---|
+| B7.1 | Blitz game, target 1200, autoplay on. Watch the log on each opponent turn | One `game-session: pre-inferred the predicted position` per opponent turn with `reply`, `size 5m`, `selfElo` and `historyPlies`. Record how many opponent turns produce one (the ponder must settle first — at rapid there is no harvest and no pre-inference; that is by design) | |
+| B7.2 | Same game: count opponent replies that matched the prediction vs those that did not (the `reply` in B7.1 against the move that came) | Record the hit rate. On a hit the own-move query is answered from the pre-inference (no second Maia query in the log for that ply); on a miss the Human-model block still shows an answer, from the fresh query | |
+| B7.3 | Human-model block during play | History reads `8/8 plies` from ply 8 on; the "History unavailable" line never appears on a live WebGL board once the move list exists. If it appears mid-game, note the ply — the move list was unreadable there (CLAUDE.md's "no move list until the first move" case) | |
+| B7.4 | Entropy / railed / unscored / KL / rank rows | Present on every move Maia drew (`source: maia`), hidden on a book move, a premove or an engine-policy fallback. KL is `0.000` on a move where no rail fired; railed mass is non-zero exactly when the rationale says `maia never-play: … excluded` | |
+| B7.5 | Settings › Strength: match opponent rating on, target 1200. Play against an opponent rated 2100+ | The block's size stays the one the game started with (`Maia-3 · 5M` if the rating arrived after the first move; `79M` if it arrived before). The log shows no re-warm mid-game. Change the target by hand mid-game: one re-warm, the new size from the next move | |
+| B7.6 | Play white twice from the same start (two games, same profile) | The book's first move is the same both games; the rationale in the log reads `polyglot … · repertoire`. Play black twice against 1.e4: same reply. Reload the extension between the games — the repertoire persists (`chrome.storage.local["sl::repertoire"]`) | |
+| B7.7 | Remove `sl::repertoire` in DevTools › Application › Storage, play again | A new pair is created (`repertoire: created the opening repertoire keys`) and the first move may differ | |
+| B7.8 | Bullet or a blitz scramble with autoplay on: let the hand hold a piece (the log says `holding the piece over its square`) | When a pre-inference had landed for the predicted position, the released move's rationale reads `ready move: a Maia draw over the pre-analysed lines`; otherwise the old `chosen for a hold` line. Record the share | |
+| B7.9 | Bullet, a recapture premove situation (the log says `premove armed`) | Occasionally `premove dropped — the human model would not play it here` follows the pre-inference, and no premove is entered for that turn; the fast reply still plays after the real reply. A premove already `entering … on the site` is never retracted | |
+| B7.10 | Offscreen document memory (Task Manager) over a 20-move blitz game | One extra inference per opponent turn: no growth beyond the size's resident set, no `maia query failed` in the log. If the 79M size is committed (target ≥ 2000) note the p95 of the pre-inference `ms` against the opponent's think time | |
+
+### B8. The lobby hold (`docs/qa/lobby-hold-2026-09-13.md`) — **answerable only in a browser**
+
+`/play/online` shows a board with still clocks before any game is queued, and the page calls it
+`playing`. The session now withholds the hand there until a clock ticks, a move lands, an opponent
+rating is read or the URL moves on to a game id. The simulator covers the wiring; what it cannot
+see is what the real lobby page reports. Engine view › Log at `info`; auto-move **on** in Settings.
+
+| # | Do | Expect | Observed |
+|---|---|---|---|
+| B8.1 | Open `https://www.chess.com/play/online` in a tab with auto-move on, side panel open, and do nothing for 5 s | Your real mouse works on the page (no shield, no arrow); the Live view's eyebrow reads `Lobby · no game queued`; the log shows `lobby suspected — the hand stays off the mouse` then `lobby confirmed — the clocks have not moved`. **A finding:** an `opponent` message with a numeric `ratingEstimate` on the lobby (the hold never engages), or a `lobby over` line with no game — record the top player card's text and whether the bottom clock carries `clock-player-turn` | |
+| B8.2 | Click **Play** with your own mouse and let a game be found | Record the URL at the moment the game starts (`/game/<id>` at once, or `/play/online` for a while). The log shows `lobby over — a game is on the board` with its `reason` (`hello` / `gameStarted` / `an opponent was read` / `a clock reading`), then `executor: armed`; the arrow appears and the shield goes up only now | |
+| B8.3 | Same as B8.2, playing **white** | The first move plays. If the log shows the hold still on after the game started (no `lobby over`), record whether the URL was rewritten and whether the opponent's rating rendered — those are the two releases that do not need a clock tick before white's first move | |
+| B8.4 | While on the lobby in B8.1, look at the infobar | The "… is debugging this browser" bar is already up (the attach happened on the lobby, outside any move window); after the game starts no second layout shift lands in the first move window. Stay on the lobby > 3 min and note the idle detach, then start a game: the re-attach's shift is at ply 0, before your first move | |
+| B8.5 | On the lobby, press Shift+A (auto-move **off** in Settings) | Nothing locks the mouse; the log reads `arm deferred — this is the lobby`; once a game starts the hand arms on its own. The toggle showing "off" until then is the known follow-up | |
+| B8.6 | On the lobby, change the time control in the selector (3 min → 5 min) | The clocks jump to 5:00 / 5:00 and the hold stays on (no `lobby over`, no arm); a game on 5 min then releases it as in B8.2 | |
+| B8.7 | Open a game link directly (`/game/<id>`) as **black** and wait, before white moves | No hold: the hand arms at once as before (this URL is "no other url"). The eyebrow reads `Live` | |
+
+### B9. Rematching titled players (`docs/qa/rematch-titled-2026-09-13.md`) — **answerable only in a browser**
+
+After a game against a titled opponent the auto-queue offers one rematch (or accepts theirs)
+before it queues a regular game; an offer not taken within 15 s is withdrawn and the ordinary
+new-game click follows. The simulator covers the flow against the owner's captured markup; what
+it cannot see is what the real game-over panel does after our Rematch click, when the incoming
+panel appears, and where an accepted rematch takes the tab. Auto-queue **on**, "Rematch titled
+players" **on** (Settings › Execution), Engine view › Log at `info`.
+
+| # | Do | Expect | Observed |
+|---|---|---|---|
+| B9.1 | Play (or lose quickly) against a titled player — one whose card shows `FM` / `NM` / `CM` / `GM` — and let the game end | The waiting view names the opponent; the log shows `auto-queue: scheduled` with `rematch: "<username>"`. After 0.9–2.6 s the arrow walks to **Rematch** and presses it (`rematch: offer sent { action: "rematch" }`); the status reads `Rematch offered · queueing in 14s` counting down. **A finding:** a titled card whose title was not read (`opponent` in the log without `title`) — record the card's exact markup | |
+| B9.2 | In B9.1, have the opponent accept within 15 s | The rematch game starts on the same tab (`gameStarted` with a new `/game/<id>`); no new-game click; the log shows `auto-queue: rematch step finished { outcome: "started" }`. **Record the URL** at the moment the rematch starts — whether the game id changed on this tab (the wait ends on a new id; a rematch that keeps the id or opens elsewhere would expire at 15 s and is the open item) | |
+| B9.3 | In B9.1, let the offer sit untaken | At 15 s the log shows `rematch: not taken in time { withdrawn: true / false }`. **Record what the game-over buttons show after the Rematch press** (a "Cancel" button? its `aria-label`, class, container) — the cancel markup was not captured; with `withdrawn: false` and `content: no rematch control found for this action { action: "cancel" }` the new-game click simply navigates away. Either way the new-game click follows *immediately* (no second delay) and matchmaking starts | |
+| B9.4 | Have a titled opponent send **their** rematch first (before or during the queue delay) | `Good game! Rematch?` replaces the two buttons; the arrow presses **Accept** (never Rematch, never Decline); the log shows `offer sent { action: "accept" }`. **Record whether the panel can appear before the game-over modal / before the result is shown** (the step reads it every second from the game's end) | |
+| B9.5 | Play the same titled opponent a second time in the same playing session (after B9.2) | No second offer and no `rematch` read: the ordinary new-game click at the ordinary delay. Reload the extension between the two games: still no second offer (the mark is persisted with the queue session) | |
+| B9.6 | Have an **untitled** opponent send a rematch | Nothing is pressed on the panel; the status shows `Retrying…` while the panel hides the new-game button, then the ordinary new-game click once the panel goes | |
+| B9.7 | With a 1-minute session and a 1-minute break configured, end a game against a titled opponent after the session expired | The rematch step runs first (status `Next game in …` then `Rematch offered …`, the mouse **not** released); if the rematch starts, the break follows *that* game (`Session break · …` on its end, a freshly sampled length); if the offer lapses, the break starts at 15 s and the mouse is released then (`session break — the mouse is released`) | |
+| B9.8 | Turn "Rematch titled players" off and repeat B9.1 | No offer, no `rematch` read; the ordinary queue as before | |
 
 ---
 
@@ -512,7 +606,9 @@ retain the verified cache/download fallback. See D7–D8 and
 **L3 — `bun run dev` does not watch.** `--watch` is parsed but there is no watch loop; it is one
 build. Re-run `bun run build --dev` and reload the extension.
 
-**L4 — the release zip is ~63 MB.** Three 18 MB ChessMimic bands plus a 16 MB engine. Fine for
+**L4 — the release zip is ~270 MiB.** The Maia-3 79M model, the full Stockfish net, three 18 MB
+ChessMimic bands and onnxruntime, all bundled so the product works offline out of the box
+(per-asset table in [`qa/package-size-2026-09-13.md`](qa/package-size-2026-09-13.md)). Fine for
 zip + unpacked distribution; it would not fit the Chrome Web Store, which §12.2 does not use.
 
 **L5 — a data: URL export.** The Engine view's timing-log export opens a

@@ -6,9 +6,13 @@ import type { PreparedPointer } from "./cdp";
  * `src/core/messaging/typed-messages.ts` (Task 4).
  */
 
+import type { BoardEffect } from "@core/constants/board-effects";
+import type { MaiaSize } from "@core/constants/maia";
+import type { MoveQualityMark } from "@core/constants/move-quality";
 import type { TOAST_KEYS } from "@core/constants/toasts";
 import type { LogEntry } from "@core/logger";
 import type { Occupancy, Pt, Rect } from "@core/motor/types";
+import type { PolicyInferenceInputs } from "@core/policy/types";
 import type { EngineStatus, EngineVariant, EvalLine } from "@typedefs/engine";
 import type {
 	ChosenMove,
@@ -38,6 +42,25 @@ export interface NewGameTarget {
 export type NewGameTargetResult =
 	| { status: "ready"; target: NewGameTarget }
 	| { status: "searching" | "not-ready" | "in-game" };
+
+/**
+ * The two native clicks of a resignation (2026-09-12): the site's resign control, then its
+ * confirmation. Read and revalidated the way `NewGameTarget` is; the content script never clicks.
+ */
+export type ResignStep = "resign" | "confirm";
+export type ResignTargetResult =
+	| { status: "ready"; target: NewGameTarget }
+	| { status: "not-ready" };
+
+/**
+ * The post-game rematch controls (2026-09-13): our outgoing offer (`rematch`), the answer to an
+ * incoming one (`accept` / `decline`), and the withdrawal of a pending offer (`cancel`). Read and
+ * revalidated the way `NewGameTarget` is; the content script never clicks.
+ */
+export type RematchAction = "rematch" | "accept" | "decline" | "cancel";
+export type RematchTargetResult =
+	| { status: "ready"; target: NewGameTarget }
+	| { status: "not-ready" | "in-game" };
 
 export const MSG = {
 	// panel → SW (request/response)
@@ -105,6 +128,8 @@ export interface PanelSnapshot {
 		name: string;
 		ratingEstimate: number | null;
 		derivedTargetElo: number;
+		/** The card's title ("FM", "GM", …) when the opponent is titled (2026-09-13). */
+		title?: string;
 	};
 }
 
@@ -159,17 +184,28 @@ export type PanelPortCommand = { kind: "hello"; windowId: number };
 
 /** content → SW */
 export type GamePortMessage =
-	| { kind: "hello"; site: Site; pageKind: PageKind; adapterVersion: string }
+	/** `lobby` (sent only when true): the exact `/play/online` queue screen — see `GameMeta.lobby`. */
+	| { kind: "hello"; site: Site; pageKind: PageKind; adapterVersion: string; lobby?: boolean }
 	| { kind: "position"; snapshot: PositionSnapshot }
 	| { kind: "gameStarted"; game: GameMeta }
 	| { kind: "gameEnded"; result: GameResult; gameId?: string; eventId?: string; replayed?: boolean }
 	| ({ kind: "startNewGameResult"; id: string } & NewGameTargetResult)
+	/** Reply to `resign`: the step's control, or `not-ready` when the page shows none. */
+	| ({ kind: "resignResult"; id: string } & ResignTargetResult)
+	/**
+	 * Reply to `rematch`: the action's control (or `not-ready` / `in-game`), plus `incoming` —
+	 * whether the opponent's own offer is showing right now, whatever the action asked about.
+	 */
+	| ({ kind: "rematchResult"; id: string; incoming: boolean } & RematchTargetResult)
 	| { kind: "cursor"; x: number; y: number; t: number; real: true }
 	| { kind: "selectorMiss"; selector: string }
 	/** V2 §13.4: every window focus/blur/visibilitychange edge */
 	| { kind: "focus"; hasFocus: boolean; visibility: "visible" | "hidden"; at: number }
-	/** V2 §13.6: opponent identity for matchOpponentRating */
-	| { kind: "opponent"; isBot: boolean; name: string; ratingEstimate: number | null }
+	/**
+	 * V2 §13.6: opponent identity for matchOpponentRating. `title` (2026-09-13) is the player
+	 * card's title ("FM", "GM", …), present only when the opponent is titled.
+	 */
+	| { kind: "opponent"; isBot: boolean; name: string; ratingEstimate: number | null; title?: string }
 	/**
 	 * §9.5: the 8×8 board's viewport rect moved or resized (a `ResizeObserver` on the board plus
 	 * the window's own `resize` / `scroll` — all passive reads, §13.3). Sent only when the rect
@@ -217,10 +253,36 @@ export type GamePortCommand =
 	| { kind: "arrow"; lines: Array<{ from: Square; to: Square; weight: number }> }
 	| { kind: "keybinds"; keybinds: Keybinds }
 	| { kind: "startNewGame"; id: string; gameId: string | null; targetId?: string; point?: Pt }
+	/**
+	 * Read (no `targetId`) or revalidate (`targetId` + `point`: the same element, under that
+	 * point) the resign control of `step` — a passive read, exactly like `startNewGame`; the
+	 * service worker's `ResignInput` performs the click.
+	 */
+	| { kind: "resign"; id: string; step: ResignStep; targetId?: string; point?: Pt }
+	/**
+	 * Read (no `targetId`) or revalidate (`targetId` + `point`) the rematch control of `action`
+	 * (2026-09-13) — a passive read, exactly like `startNewGame`; the service worker's
+	 * `NewGameInput` performs the click.
+	 */
+	| { kind: "rematch"; id: string; action: RematchAction; targetId?: string; point?: Pt }
 	| { kind: "gameEndReceived"; eventId: string }
 	| { kind: "speak"; text: string }
-	/** Settings the content script acts on (`automation.highlightMoves`, §13.3 rule 4); default off until sent. */
-	| { kind: "settings"; highlightMoves: boolean }
+	/**
+	 * Settings the content script acts on (`automation.highlightMoves`, `automation.boardEffects`,
+	 * §13.3 rule 4); default off until sent. `boardEffects` is optional so a caller that predates
+	 * it — every existing fixture — still means "off", which is what "default off until sent" says.
+	 */
+	| { kind: "settings"; highlightMoves: boolean; boardEffects?: boolean }
+	/**
+	 * The board-effect batch for the move that has just landed, either side's (owner's brief,
+	 * 2026-09-13). `mine` picks the colour family — the accent for the owner's moves, the cool
+	 * tone for the opponent's — and `quality` carries the chip when the verdict is ready in time;
+	 * a verdict that arrives later comes as a second command with an empty `effects` list, and one
+	 * that arrives after the board has moved on is dropped by the service worker rather than sent.
+	 */
+	| { kind: "effects"; effects: BoardEffect[]; mine: boolean; quality?: MoveQualityMark }
+	/** Remove the effect overlay (a fade-out, like `clearHighlight`). */
+	| { kind: "clearEffects" }
 	/** Task 18: MutationObserver on board + move list; `ok` early, `false` if the piece snapped back. */
 	| { kind: "observeMove"; id: string; expected: ExpectedMove; timeoutMs: number }
 	/**
@@ -245,7 +307,14 @@ export type GamePortCommand =
 	 * content script relays it to the MAIN-world bridge, which is the only world allowed to insert
 	 * the element (§13.3). `cursorHide` removes it.
 	 */
-	| { kind: "cursorTo"; x: number; y: number; down: boolean }
+	| {
+			kind: "cursorTo";
+			x: number;
+			y: number;
+			down: boolean;
+			/** `Settings.display.cursorEffects` — absent means on; `false` draws the plain arrow only. */
+			effects?: boolean;
+	  }
 	| { kind: "cursorHide" }
 	/** Physical page input is exclusive to the hand, independent of cursor display. */
 	| { kind: "inputOwnership"; owned: boolean }
@@ -286,6 +355,23 @@ export type ModelChunk =
 	| { kind: "model-chunk"; name: string; index: number; total: number; bytes: string }
 	| { kind: "model-chunk"; name: string; error: string };
 
+/**
+ * Maia-3 policy inference (2026-09-11). The SW sends the position, its history and both
+ * ratings; the offscreen host encodes, runs the size's session and answers with the legal-move
+ * distribution — small in both directions, and the encoder lives in `@core/policy` where both
+ * sides can reach it.
+ */
+export type PolicyResultMessage =
+	| {
+			kind: "policy-result";
+			id: string;
+			moves: Array<[string, number]>;
+			wdl: [number, number, number];
+			size: MaiaSize;
+			ms?: number;
+	  }
+	| { kind: "policy-result"; id: string; moves: null; size?: MaiaSize; error: string };
+
 /** offscreen → SW */
 export type EnginePortMessage =
 	| { kind: "line"; line: string }
@@ -309,7 +395,11 @@ export type EnginePortMessage =
 			band?: string;
 			ms?: number;
 			error?: string;
-	  };
+	  }
+	/** Reply to a `policy` command (Maia-3); `moves: null` + `error` when unavailable. */
+	| PolicyResultMessage
+	/** Which Maia size is resident and warm (after `policy-warm` or a first query); diagnostics. */
+	| { kind: "policy-status"; size: MaiaSize | null; loadMs?: number; error?: string };
 
 /** SW → offscreen */
 export type EnginePortCommand =
@@ -323,13 +413,24 @@ export type EnginePortCommand =
 	 * warming costs ~200 ms of main-thread wasm work plus an 18 MB session, so it stays off
 	 * unless the SW asks. Absent/false → no pre-warm.
 	 */
-	| { kind: "configure"; variant: EngineVariant; threads: number; warmTiming?: boolean }
+	| {
+			kind: "configure";
+			variant: EngineVariant;
+			threads: number;
+			warmTiming?: boolean;
+			/** Pre-load this Maia-3 size (`MAIA.defaultSize` before the target is known). */
+			warmPolicy?: MaiaSize;
+	  }
 	| NnueChunk
 	| ModelChunk
 	/** Timing-head inference request (Task 34); answered with `timing-result`. */
 	| { kind: "timing"; id: string; inputs: TimingInferenceInputs }
 	/** Load and warm the band's session ahead of the first move (Task 34); no reply. */
-	| { kind: "timing-warm"; band: string };
+	| { kind: "timing-warm"; band: string }
+	/** Maia-3 policy request; answered with `policy-result`. */
+	| { kind: "policy"; id: string; inputs: PolicyInferenceInputs }
+	/** Load and warm a Maia-3 size (evicting the other; one resident session); answered with `policy-status`. */
+	| { kind: "policy-warm"; size: MaiaSize };
 
 // Task 26: log stream port (`PORT_NAMES.logStream`, Appendix H.2)
 

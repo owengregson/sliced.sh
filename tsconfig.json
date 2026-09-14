@@ -32,5 +32,6 @@
 		}
 	},
 	"include": ["src/**/*.ts", "scripts/**/*.ts", "test/**/*.ts", "tools/**/*.ts"],
-	"exclude": ["node_modules", "dist"]
+	"//exclude": "`tools/data/upstream/` is the git-ignored scratch the ChessMimic and Maia exports clone third-party repositories into (`tools/data/README.md` steps 8 and 9). It is not our code, it is not built, and when a clone is present its own TypeScript would otherwise fail `typecheck` on dependencies we do not install.",
+	"exclude": ["node_modules", "dist", "tools/data/upstream"]
 }
