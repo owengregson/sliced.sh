@@ -8,7 +8,7 @@ spec — this file is the map, not the territory. Section numbers below are that
 
 ## 1. What it is
 
-sliced.gg is a Manifest V3 Chrome extension that watches a live game on chess.com,
+sliced.sh is a Manifest V3 Chrome extension that watches a live game on chess.com,
 recommends a move at a chosen strength, and — when the user arms it — plays that move with a
 humanised pointer at a humanly-plausible time. Chrome 128+, side panel UI, no Firefox/Safari
 port, live games only (no puzzles or analysis boards), desktop layouts only (§1.4).

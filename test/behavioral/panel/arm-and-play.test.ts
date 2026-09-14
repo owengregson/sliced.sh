@@ -310,13 +310,17 @@ describe("panel ↔ service worker: arm and play", () => {
 		await sim.time.advance(0);
 		expect(executor.pendingMove()).toBeNull();
 		await settle();
-		expect(latest().autoMove.scheduledAt).toBeUndefined();
+		const running = executor.runningMove();
+		expect(running?.plan.mode).toBe("instant");
+		expect(latest().autoMove.plan).toEqual(running?.plan);
+		expect(latest().autoMove.scheduledAt).toBe(running?.plan.deadlineMs);
 		await sw.run(() => sim.time.advanceUntilIdle({ maxAdvanceMs: 30_000 }));
 		expect(presses()).toHaveLength(1);
 		expect(releases()).toHaveLength(1);
 		// well before the plan's deadline: the instant plan drops the pre-touch window
 		expect((releases()[0]?.at ?? 0) - at).toBeLessThan(deadlineMs - at - 1000);
 		expect(latest().session.lastExecution).toMatchObject({ ok: true, outcome: "executed" });
+		expect(latest().autoMove.scheduledAt).toBeUndefined();
 		expect(toasts).toHaveLength(0);
 	});
 

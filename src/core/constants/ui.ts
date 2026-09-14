@@ -15,6 +15,16 @@ export const UI_TIMINGS = {
 	tooltipDelayMs: 300,
 	/** §5.5: eval bar goes stale when the engine has been idle this long. */
 	engineStaleMs: 5_000,
+	/**
+	 * §5.3: after a slider commit, external values that disagree with it are ignored this long —
+	 * the store's next snapshot can still carry the value from *before* the write.
+	 */
+	sliderCommitGraceMs: 800,
+	/**
+	 * §5.3: the numeric readout under the thumb of a label-only slider (Variance, Motor speed)
+	 * fades out this long after the last change; every change restarts the timer.
+	 */
+	sliderReadoutFadeMs: 1_500,
 	/** §5.10: the armed play button's `aria-live` countdown updates per whole second. */
 	ariaCountdownStepMs: 1_000,
 	/** §7.4: `announce()` collapses a burst of live-region updates into the last one. */
@@ -72,6 +82,13 @@ export const STRENGTH_UI = {
 	glowElo: 3_200,
 	/** Minor gray divisions; the network boundary remains the taller primary marker. */
 	sliderTickStep: 200,
+	/**
+	 * Warm sweep cadence in the hot range, as the idle gap between two sweeps in units of the
+	 * sweep's own width (`--sl-slider-flow-gap`). The crossing speed never changes; the gap shrinks
+	 * linearly from `flowGapMax` at `glowElo` (rare) to `flowGapMin` at the maximum (frequent).
+	 */
+	flowGapMax: 3,
+	flowGapMin: 0.2,
 } as const;
 
 /** Task 24 — Live view height strategy (Appendix F §8.2). */

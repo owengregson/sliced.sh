@@ -168,10 +168,13 @@ export function createWaitingView(options: WaitingViewOptions = {}): View {
 						? snapshot.session.autoQueue
 						: undefined;
 				const remaining = queue ? queue.dueAt - Date.now() : 0;
+				// The rematch step (2026-09-13) counts down to the ordinary queue click, in seconds.
+				const rematching = queue?.status === "rematch" && remaining > 0;
 				const counting =
-					(queue?.status === "waiting" || queue?.status === "break") &&
-					queue.attempts === 0 &&
-					remaining > 0;
+					rematching ||
+					((queue?.status === "waiting" || queue?.status === "break") &&
+						queue.attempts === 0 &&
+						remaining > 0);
 				dot.dataset.state = assistantOff || reading || queue ? "warn" : "ok";
 				// The visible timer updates every second without announcing every tick.
 				status.setAttribute("role", counting ? "timer" : "status");
@@ -179,15 +182,17 @@ export function createWaitingView(options: WaitingViewOptions = {}): View {
 				const nextText = assistantOff
 					? COPY.move.disabled
 					: queue
-						? counting
-							? queue.status === "break"
-								? COPY.waiting.queueBreak(formatCountdown(remaining))
-								: COPY.waiting.queueDelay(formatCountdown(remaining))
-							: queue.status === "searching"
-								? COPY.waiting.queueSearching
-								: queue.status === "retrying"
-									? COPY.waiting.queueRetrying
-									: COPY.waiting.queueStarting
+						? rematching
+							? COPY.waiting.queueRematch(String(Math.ceil(remaining / 1000)))
+							: counting
+								? queue.status === "break"
+									? COPY.waiting.queueBreak(formatCountdown(remaining))
+									: COPY.waiting.queueDelay(formatCountdown(remaining))
+								: queue.status === "searching"
+									? COPY.waiting.queueSearching
+									: queue.status === "retrying"
+										? COPY.waiting.queueRetrying
+										: COPY.waiting.queueStarting
 						: reading
 							? COPY.waiting.reading
 							: COPY.waiting.watching;

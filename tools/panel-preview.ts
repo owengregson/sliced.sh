@@ -9,7 +9,7 @@ const build = await Bun.build({
 		__SL_VERSION__: '"2.0.0"',
 		__SL_BUILD__: '"ui-preview"',
 		__SL_SPOOF_SEED__: '"preview"',
-		__SL_LICENSE_URL__: '"https://sliced.gg"',
+		__SL_LICENSE_URL__: '"https://sliced.sh"',
 		__SL_LICENSE_ENFORCE__: "false",
 		__SL_DEBUG__: "true",
 	},

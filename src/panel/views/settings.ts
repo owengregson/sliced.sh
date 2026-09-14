@@ -1,18 +1,20 @@
 /**
- * Settings view (Appendix F §4.6, §7.2; Part I §4.4). Sections Strength · Timing · Execution ·
- * Keybinds · Display · Account · Advanced, each row built from the declarative table in
+ * Settings view (Appendix F §4.6, §7.2; Part I §4.4). Sections Strength · Automation · Timing ·
+ * Hand · Board · Panel · Keybinds · Engine · Account · Advanced (settings layout, 2026-09-13),
+ * each row built from the declarative table in
  * `settings/rows.ts` and laid out by `settings/sections.ts`. Every change writes through
  * `setSettings` (which normalises and clamps); the view clamps what it shows and re-renders from
- * the stored result and from every snapshot. Hands-off (§13.4): the whole view is disabled —
- * the shell locks the content root and the view mirrors it on its own root and controls.
- * Jump chips follow the scroll through an `IntersectionObserver` (disposed on unmount). The
- * view never calls `focus()`, `alert()` or opens tabs itself.
+ * the stored result and from every snapshot. Settings remain interactive during play;
+ * derived depth is read-only and opponent matching disables the fixed rating control.
+ * Category chips filter rows alongside the text search. The view never calls `focus()`,
+ * `alert()` or opens tabs itself.
  */
 
 import { ttsGetVoices as chromeTtsGetVoices } from "@core/chrome/tts";
 import { DEFAULT_SETTINGS } from "@core/constants/defaults";
 import { MSG, type PanelSnapshot } from "@core/constants/messages";
 import { UI_TIMINGS } from "@core/constants/ui";
+import { automaticDepthForElo } from "@core/engine/depth-policy";
 import { log } from "@core/logger";
 import { getLicenseKey as storedLicenseKey } from "@core/storage/license-storage";
 import { type SettingsPatch, setSettings as storeSettings } from "@core/storage/settings-storage";
@@ -35,6 +37,7 @@ import { createSelect, createStepper, type SelectOption } from "./settings/contr
 import {
 	clampRowValue,
 	formatTimeControl,
+	fromDisplayValue,
 	getAtPath,
 	type KeybindAction,
 	PROFILE_FOR_TC_CLASS,
@@ -44,8 +47,9 @@ import {
 	type SettingsLeafPath,
 	type TcClass,
 	tcClass,
+	toDisplayValue,
 } from "./settings/rows";
-import { SECTIONS, type SectionSpec } from "./settings/sections";
+import { isSectionId, SECTIONS, type SectionSpec } from "./settings/sections";
 import sectionHeaderHtml from "./templates/components/section.html?raw";
 import confirmHtml from "./templates/settings/confirm.html?raw";
 import licenseHtml from "./templates/settings/license.html?raw";
@@ -85,6 +89,7 @@ interface RowControl {
 
 interface RowHost {
 	settings(): Settings;
+	activeElo(): number;
 	write(patch: SettingsPatch): void;
 	detectedTc(): TcClass | null;
 	detectedLabel(): string | null;
@@ -162,6 +167,20 @@ function buildRow(spec: RowSpec, host: RowHost): RowControl {
 	const row = newRow(spec);
 	const value = (): unknown => getAtPath(host.settings(), spec.path);
 	switch (spec.kind) {
+		case "automatic-depth": {
+			const output = instantiate(valueHtml);
+			row.control.append(output);
+			const render = (): void => {
+				output.textContent = SETTINGS_COPY.format.depthAuto(automaticDepthForElo(host.activeElo()));
+			};
+			render();
+			return {
+				el: row.el,
+				setValue: render,
+				setDisabled: () => {},
+				dispose: () => output.remove(),
+			};
+		}
 		case "toggle": {
 			row.el.classList.add("sl-settings-row--toggle");
 			const toggle = createToggle(row.control, {
@@ -178,27 +197,32 @@ function buildRow(spec: RowSpec, host: RowHost): RowControl {
 		}
 		case "slider": {
 			row.el.classList.add("sl-settings-row--stack");
+			/** The stored leaf in the slider's own (display) unit, snapped to the row's range. */
+			const shown = (s: Settings): number =>
+				clampRowValue(spec.path, toDisplayValue(spec.path, Number(getAtPath(s, spec.path))));
 			const slider = createSlider(row.control, {
 				min: spec.min,
 				max: spec.max,
 				step: spec.step,
-				value: clampRowValue(spec.path, Number(value())),
+				value: shown(host.settings()),
 				label: spec.valueLabel,
 				format: spec.format,
 				ariaLabel: spec.label,
 				strength: spec.path === "strength.targetElo",
+				...(spec.readout ? { readout: spec.readout } : {}),
 				...(spec.scale ? { scale: spec.scale } : {}),
 				...(spec.threshold ? { threshold: spec.threshold } : {}),
+				...(spec.markers ? { markers: spec.markers } : {}),
 				...(spec.danger ? { danger: spec.danger } : {}),
 				...(spec.dangerHint ? { dangerHint: spec.dangerHint } : {}),
 				onChange: (v, commit) => {
-					if (commit) host.write(patchAtPath(spec.path, clampRowValue(spec.path, v)));
+					if (commit)
+						host.write(patchAtPath(spec.path, fromDisplayValue(spec.path, clampRowValue(spec.path, v))));
 				},
 			});
 			return {
 				el: row.el,
-				setValue: (s) =>
-					slider.update({ value: clampRowValue(spec.path, Number(getAtPath(s, spec.path))) }),
+				setValue: (s) => slider.update({ value: shown(s) }),
 				setDisabled: (d) => slider.update({ disabled: d }),
 				dispose: () => slider.dispose(),
 			};
@@ -432,6 +456,7 @@ export function createSettingsView(overrides: Partial<SettingsViewDeps> = {}): V
 			let locked = ctx.snapshot ? isHandsOff(ctx.snapshot) : false;
 			let detected: TcClass | null = null;
 			let detectedLabel: string | null = null;
+			let derivedTargetElo: number | undefined;
 			let voiceOptions: readonly SelectOption[] = [{ value: "", label: SETTINGS_COPY.voice.default }];
 			const controls = new Map<SettingsLeafPath, RowControl>();
 			const buttons: ButtonHandle[] = [];
@@ -488,26 +513,49 @@ export function createSettingsView(overrides: Partial<SettingsViewDeps> = {}): V
 				const tc = snapshot?.session.timeControl;
 				detected = tc ? tcClass(tc) : null;
 				detectedLabel = tc ? formatTimeControl(tc) : null;
+				derivedTargetElo = snapshot?.opponent?.derivedTargetElo;
 			}
 			readDetection(ctx.snapshot);
 
 			const host: RowHost = {
 				settings: () => settings,
+				activeElo: () =>
+					settings.strength.matchOpponentRating
+						? (derivedTargetElo ?? settings.strength.targetElo)
+						: settings.strength.targetElo,
 				write,
 				detectedTc: () => detected,
 				detectedLabel: () => detectedLabel,
 				voices: () => voiceOptions,
 			};
 
+			/**
+			 * A dependant is disabled while its switch is off (settings layout, 2026-09-13): the
+			 * rows sit directly beneath the control they depend on, and the dimming says why.
+			 */
 			function disabledFor(path: SettingsLeafPath): boolean {
 				if (locked) return true;
-				if (path === "strength.targetElo") return settings.strength.matchOpponentRating;
-				if (
-					path.startsWith("automation.autoQueueSession") ||
-					path.startsWith("automation.autoQueueBreak")
-				)
-					return !settings.automation.autoQueue;
-				return false;
+				const { strength, automation, display } = settings;
+				switch (path) {
+					case "strength.targetElo":
+						return strength.matchOpponentRating;
+					case "strength.personaEloOffset":
+						return !strength.matchOpponentRating;
+					case "automation.rematchTitled":
+						return !automation.autoQueue;
+					case "automation.highlightStyle":
+						return !automation.highlightMoves;
+					case "automation.moveQualityChips":
+						return !automation.boardEffects;
+					case "display.cursorEffects":
+						return !display.virtualCursor;
+					default:
+						return (
+							(path.startsWith("automation.autoQueueSession") ||
+								path.startsWith("automation.autoQueueBreak")) &&
+							!automation.autoQueue
+						);
+				}
 			}
 
 			function refreshValues(): void {
@@ -588,7 +636,10 @@ export function createSettingsView(overrides: Partial<SettingsViewDeps> = {}): V
 					filterSettings();
 				},
 			});
-			category = ctx.ui.settingsCategory ?? "all";
+			// A category remembered under an older layout (`execution`, `display`) is not a section
+			// any more; it falls back to All rather than filtering everything out.
+			const remembered = ctx.ui.settingsCategory;
+			category = remembered !== undefined && isSectionId(remembered) ? remembered : "all";
 			jump.update({ value: category });
 			filterSettings();
 

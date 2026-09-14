@@ -193,7 +193,7 @@ function mountLive(ctx: ViewContext): () => void {
 
 	// ── layout (§8.2, §4.5) ─────────────────────────────────────────────────
 	function computeCollapse(snap: PanelSnapshot): CollapseState {
-		const setting = Math.max(1, snap.settings.display.pvCount);
+		const setting = Math.max(1, snap.settings.engine.multiPv);
 		const pvCount = metrics.compact ? Math.min(setting, COMPACT_PV_MAX) : setting;
 		const extraHeight =
 			part(root, ".sl-live__heading").offsetHeight + part(root, ".sl-shortcuts").offsetHeight;
@@ -206,6 +206,9 @@ function mountLive(ctx: ViewContext): () => void {
 		const snap = snapshot;
 		if (!snap || disposed) return;
 		metrics = measureLayout(app); // cheap; a banner can appear without any resize
+		// The lobby hold (2026-09-13): the board is there, the game is not — say so instead of "Live".
+		part(root, ".sl-live__eyebrow").textContent =
+			snap.session.lobbyHold === true ? COPY.workspace.lobby : COPY.workspace.live;
 		const phase = moveProgressPhase(snap);
 		const phaseTitle = part(root, ".sl-live__title");
 		if (phaseTitle.textContent !== COPY.move.progress[phase].title)

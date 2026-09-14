@@ -5,16 +5,21 @@
  * literal shown to the user may live anywhere else under `src/panel/`.
  */
 
-import { LIMITS } from "@core/constants/limits";
+import { MAIA } from "@core/constants/maia";
+import { REMATCH } from "@core/constants/rematch";
+import { RESIGN } from "@core/constants/resign";
+import type { ChosenMove } from "@typedefs/game";
 import type { PersonaId } from "@typedefs/settings";
 
 /** The one supported site, as the panel names it — defined once, like every other string here. */
 const SITE = "chess.com";
+/** The play button's label while armed and on hover alike (the countdown lives on the ring). */
+const PLAY_NOW = "Play now";
 
 export const COPY = {
 	brand: {
 		name: "sliced",
-		product: "sliced.gg",
+		product: "sliced.sh",
 		tagline: `Chess assistant for ${SITE}`,
 	},
 	nav: { game: "Game", settings: "Settings", engine: "Engine", viewSwitch: "Panel navigation" },
@@ -22,6 +27,8 @@ export const COPY = {
 		connecting: "Connecting…",
 		connectingBody: "Loading session and settings.",
 		live: "Live",
+		/** The Live view's eyebrow while the lobby hold is on: a board, but no game queued yet. */
+		lobby: "Lobby · no game queued",
 		yourTurn: "Your move",
 		theirTurn: "Waiting…",
 		setup: "Session setup",
@@ -30,7 +37,7 @@ export const COPY = {
 		engineTitle: "Engine diagnostics",
 		engineBody: "Engine, input and timing status.",
 		shortcuts: "Page shortcuts",
-		playNow: "Play now",
+		playNow: PLAY_NOW,
 		autoPlay: "Auto-play",
 		stop: "Stop",
 		searchSettings: "Search settings",
@@ -76,6 +83,8 @@ export const COPY = {
 		queueStarting: "Starting next game…",
 		queueRetrying: "Retrying…",
 		queueSearching: "Matchmaking…",
+		/** The rematch step (2026-09-13): the offer is out; the ordinary queue follows at the deadline. */
+		queueRematch: (seconds: string): string => `Rematch offered · queueing in ${seconds}s`,
 		autoplayTooltip: "Turns on when a game starts",
 		preArmed: "Armed for next game",
 		/** §4.4: the master switch is off, so there is nothing to arm (`COPY.move.disabled` names it). */
@@ -109,6 +118,16 @@ export const COPY = {
 		noteOnly: "Only move",
 		noteMate: (n: number): string => `Mate in ${n}`,
 		noteForced: "Forced",
+		/** Where the recommended move came from (`ChosenMove.source`), one label per source. */
+		sources: {
+			"engine-elo": "Engine",
+			sampled: "Persona",
+			blunder: "Mistake",
+			mate: "Mate",
+			book: "Book",
+			premove: "Premove",
+			maia: "Maia",
+		} satisfies Record<ChosenMove["source"], string>,
 		/** Your move, a recommendation shown, but the hand is not armed: say how to arm it. */
 		noteUnarmed: (key: string): string => `Arm before the game; ${key} toggles auto-play.`,
 		// There is no "D" shortcut: the only control is the Settings view's Assistant toggle.
@@ -117,7 +136,8 @@ export const COPY = {
 			`Delay ${seconds}s · ${method}${premove ? " · premove" : ""}`,
 		play: "Play move",
 		playShort: "Play",
-		armed: (seconds: string): string => `Auto-playing in ${seconds}s`,
+		/** Owner's 2026-09-11 call: no countdown in the label — the ring and the spoken label carry it. */
+		armed: PLAY_NOW,
 		cancel: "Cancel this move",
 		executing: "Executing…",
 		ariaRecommended: (spoken: string, uci: string): string => `Recommended: ${spoken}, ${uci}`,
@@ -128,7 +148,7 @@ export const COPY = {
 	},
 	lines: { header: "Lines", empty: "No lines", depth: (d: number): string => `d${d}` },
 	strength: {
-		card: (elo: number, band: string, persona: string): string => `${elo} ${band} · ${persona}`,
+		card: (elo: number, band: string): string => `${elo} ${band}`,
 		popoverFooter: "Applies from next move",
 		bands: { casual: "Casual", club: "Club", expert: "Expert", master: "Master", elite: "Elite" },
 		warning: "High-strength range",
@@ -138,12 +158,7 @@ export const COPY = {
 		networkDescription: (cutoff: number, max: number): string =>
 			`Above ${cutoff}: bundled large NNUE. ${max}: maximum engine strength; approximate rating.`,
 	},
-	persona: {
-		cautious: "Solid moves; longer think times.",
-		balanced: "Balanced move selection and timing.",
-		aggressive: "Tactical lines; faster replies.",
-		blitz: "Fast timing; higher move variance.",
-	} satisfies Record<PersonaId, string>,
+	/** The persona is forced to `balanced`; the names remain for the Engine view's timing log. */
 	personaName: {
 		cautious: "Cautious",
 		balanced: "Balanced",
@@ -173,6 +188,8 @@ export const COPY = {
 		rows: {
 			version: (v: string, nnue: string): string => `Stockfish ${v} · ${nnue}`,
 			nnueLoaded: "NNUE loaded",
+			/** The host runs the small-net build because the requested full build crashed twice. */
+			fallback: "full build crashed · small net until restart",
 			resources: (threads: number, hashMb: number): string => `Threads ${threads} · Hash ${hashMb} MB`,
 		},
 		logKinds: { plan: "plan", exec: "exec", verify: "verify", warn: "warn" },
@@ -215,7 +232,7 @@ export const COPY = {
 		title: "License expired",
 		body: (date: string): string =>
 			`Assistance disabled since ${date}. Renewal required. Settings retained.`,
-		renew: "Renew at sliced.gg",
+		renew: "Renew at sliced.sh",
 		differentKey: "Enter a different key",
 		revokedTitle: "License invalid",
 		revokedBody: "Key revoked or replaced. Verify the key in Account.",
@@ -258,8 +275,6 @@ export const COPY = {
 		manualOnly: "Never auto-plays; shows recommendations only.",
 	},
 	execution: {
-		debugger:
-			"Chrome debugger required for input. Cancel detaches the debugger and pauses auto-play.",
 		verify: "After each move, checks the board matches the expected position.",
 		drag: "drag",
 	},
@@ -291,6 +306,12 @@ export const COPY = {
 		whiteName: "White",
 		blackName: "Black",
 	},
+	/** The second rail: a practical "how close to winning" blend, from the owner's side. */
+	advantage: {
+		label: "Advantage, you against your opponent",
+		valueText: (you: number, opponent: number): string =>
+			`Advantage · ${you}% you, ${opponent}% opponent`,
+	},
 	ring: { remaining: (seconds: string): string => `in ${seconds}s` },
 	footer: (version: string, build: string): string => `sliced v${version} · build ${build}`,
 	/** Third-party notices under the footer (Task 34; the full texts are in docs/third-party.md). */
@@ -320,6 +341,7 @@ export const COPY = {
 	engineView: {
 		sections: {
 			engine: "Engine",
+			policy: "Human model",
 			executor: "Executor",
 			timing: "Timing model",
 			session: "Session",
@@ -333,6 +355,48 @@ export const COPY = {
 		},
 		sparkline: "Nodes per second, last 60 seconds",
 		none: "—",
+		/** Which model picks the move at the current target rating (2026-09-11). */
+		selection: {
+			maia: (size: string): string => `Selection · Maia-3 · ${size}`,
+			stockfishSmall: "Selection · Stockfish 18 · small net",
+			stockfishFull: "Selection · Stockfish 18 · full net",
+			/** One shipped size since 2026-09-13; the map stays total over `MaiaSize`. */
+			maiaSizes: { "79m": "79M" },
+		},
+		/** The Maia-3 block: the active size, its last answer and the inference-time sparkline. */
+		policy: {
+			name: (size: string): string => `Maia-3 · ${size}`,
+			inactive: "Stockfish policy at this rating",
+			off: "Off",
+			waiting: "No answer yet",
+			answered: "Answering",
+			fallback: "Engine policy for this move",
+			sparkline: "Maia-3 inference time per move, last 60 moves",
+			latency: (ms: string): string => `${ms} ms`,
+			pick: (pct: string): string => `pick ${pct}%`,
+			wdl: (w: string, d: string, l: string): string => `W ${w} · D ${d} · L ${l} · side to move`,
+			/**
+			 * The fidelity meters (2026-09-13, §3.2 of the human-move-selection ideas): how much of
+			 * the move was Maia's and how much the wrapper's, per move, from `rec.maia`.
+			 */
+			meters: {
+				history: "History",
+				selfElo: "Asked at",
+				entropy: "Entropy",
+				railed: "Railed mass",
+				unscored: "Unscored mass",
+				kl: "KL from Maia",
+				rank: "Rank",
+				candidates: "Candidates",
+			},
+			historyValue: (plies: number, max: number): string => `${plies}/${max} plies`,
+			eloValue: (elo: number): string => `${elo} Elo`,
+			pctValue: (pct: string): string => `${pct}%`,
+			rankValue: (rank: number, survivors: number): string => `${rank} of ${survivors}`,
+			candidatesValue: (k: number, depth: number): string => `${k} @ depth ${depth}`,
+			/** H7.1: the query carried fewer plies than the model's window, past the opening. */
+			historyWarning: "History unavailable — the model sees one frame",
+		},
 		rows: {
 			debugger: "Debugger",
 			target: "Target",
@@ -467,13 +531,28 @@ export function viewTitle(
 
 type SettingsRowCopy = Readonly<{ label: string; help?: string }>;
 
+/** H2: the accuracy-offset row's help, with the span read from `MAIA.slider.eloSpan`. */
+export function accuracyOffsetHelp(eloSpan: number): string {
+	return `Plays up to ${eloSpan} Elo above or below the target — the rating's own kinds of mistakes, fewer or more of them. The engine strength and timing stay at the target.`;
+}
+
+/** Settings layout, 2026-09-13: why `timing.respectBudget` has no row (`FORCED_SETTINGS`). */
+export const RESPECT_BUDGET_FORCED =
+	"The clock budget is always respected; the clock-free schedule stays as a code path.";
+/** Settings layout, 2026-09-13: why `keybinds.global` has no row (`FORCED_SETTINGS`). */
+export const KEYBIND_SCOPE_FORCED =
+	"Chrome's own shortcuts (chrome://extensions/shortcuts) always work; the captured keybinds are page shortcuts, so there is no scope to switch.";
+
 export const SETTINGS_COPY = {
 	sections: {
 		strength: "Strength",
+		automation: "Automation",
 		timing: "Timing",
-		execution: "Execution",
+		hand: "Hand",
+		board: "Board",
+		panel: "Panel",
 		keybinds: "Keybinds",
-		display: "Display",
+		engine: "Engine",
 		account: "Account",
 		advanced: "Advanced",
 	},
@@ -495,38 +574,42 @@ export const SETTINGS_COPY = {
 			label: "Persona offset",
 			help: "Added to the opponent's rating when matching.",
 		},
-		"strength.persona": { label: "Persona" },
-		"strength.selectionMode": { label: "Move selection" },
+		/**
+		 * H2 (2026-09-13): the mistakes knob is an Elo offset on the rating the human model is asked
+		 * about — the population's own kinds of mistakes, more or fewer of them — not a temperature.
+		 * Shown in Elo with the intuitive sign (settings layout, 2026-09-13); the number comes from
+		 * `MAIA.slider.eloSpan`, never typed here.
+		 */
+		"strength.blunderScale": {
+			label: "Accuracy offset",
+			help: accuracyOffsetHelp(MAIA.slider.eloSpan),
+		},
 		"strength.useOpeningBook": {
 			label: "Opening book",
 			help: "Plays book moves for the first 8–12 moves.",
 		},
-		"strength.blunderScale": { label: "Blunder rate" },
 		"timing.profile": { label: "Preset" },
 		"timing.speedScale": { label: "Base speed" },
 		"timing.varianceScale": { label: "Variance" },
-		"timing.premoveTendency": { label: "Premove tendency" },
 		"timing.longThinkFrequency": { label: "Long-think frequency" },
-		"timing.respectBudget": {
-			label: "Respect clock budget",
-			help: "Plays faster as the clock runs low.",
+		"timing.premoveTendency": { label: "Premove tendency" },
+		"execution.inputMode": {
+			label: "Input",
+			help: "Drag pieces, click piece then square, or mix the two per move (mostly drags).",
 		},
 		"execution.motorSpeed": { label: "Motor speed" },
-		"execution.calibrateFromMyMouse": {
-			label: "Calibrate from my mouse",
-			help: "Calibrates input from mouse movement between games.",
-		},
-		"execution.keepDebuggerAttached": { label: "Keep debugger attached" },
-		"execution.verifyMoves": { label: "Verify moves after playing" },
-		"execution.backend": { label: "Input backend" },
-		"execution.previewSelects": {
+		"execution.previewSelectScale": {
 			label: "Preview selections",
-			help: "Sometimes selects a piece before moving, at a modelled rate.",
+			help: "Sometimes selects a piece before moving, at a modelled rate. Off never does.",
 		},
-		"execution.previewSelectScale": { label: "Preview rate" },
+		"execution.verifyMoves": { label: "Verify moves after playing" },
 		"automation.autoMove": {
 			label: "Auto-play",
 			help: "Armed when a game starts. Hold the toggle in Game to arm one game.",
+		},
+		"automation.resignLostGames": {
+			label: "Resign lost games",
+			help: `When armed, resigns a forced mate in ${RESIGN.maxMateIn} or fewer instead of playing it out.`,
 		},
 		"automation.autoQueue": {
 			label: "Auto-queue",
@@ -543,18 +626,32 @@ export const SETTINGS_COPY = {
 				"Break duration is sampled once between sessions. Games within a session queue after a short pause.",
 		},
 		"automation.autoQueueBreakMaxMinutes": { label: "Maximum session break" },
+		"automation.rematchTitled": {
+			label: "Rematch titled players",
+			help: `After a game against a titled opponent, offer one rematch (or accept theirs); if it is not taken within ${REMATCH.acceptTimeoutMs / 1000} s, queue normally.`,
+		},
 		"automation.highlightMoves": {
 			label: "Highlight moves",
 			help: "Marks the recommended move on the board.",
 		},
 		"automation.highlightStyle": { label: "Highlight style" },
+		"automation.boardEffects": {
+			label: "Board effects",
+			help: "After every move, shows what it did — threats, checks, forks, captures.",
+		},
+		"automation.moveQualityChips": {
+			label: "Move quality chips",
+			help: "Rates each move on its square — best, mistake, blunder. Off saves the extra searches.",
+		},
 		"keybinds.playMove": { label: COPY.keybind.actions.playMove },
 		"keybinds.toggleAutoMove": { label: COPY.keybind.actions.toggleAutoMove },
 		"keybinds.disable": { label: COPY.keybind.actions.disable },
 		"keybinds.speakMove": { label: COPY.keybind.actions.speakMove },
-		"keybinds.global": { label: "Scope" },
 		"display.evalBar": { label: "Eval bar" },
-		"display.pvCount": { label: "Lines shown" },
+		"engine.multiPv": {
+			label: "Lines",
+			help: "Lines shown in Game; the engine searches at least this many.",
+		},
 		"display.uiSounds": {
 			label: "Control sounds",
 			help: "Feedback for settings and controls. Moves are always silent.",
@@ -573,13 +670,18 @@ export const SETTINGS_COPY = {
 			label: "Virtual pointer",
 			help: "Blocks physical mouse input and shows a disabled system cursor while active.",
 		},
-		"engine.threads": { label: "Engine threads" },
-		"engine.hashMb": { label: "Hash" },
-		"engine.depthCap": { label: "Depth cap" },
-		"engine.multiPv": { label: "Engine lines" },
-		"engine.nnue": {
-			label: "Network",
-			help: COPY.strength.networkDescription(LIMITS.nnueSmallEloMax, LIMITS.eloMax),
+		"display.cursorEffects": {
+			label: "Pointer effects",
+			help: "Press feedback and the trail behind the virtual pointer.",
+		},
+		"engine.threads": {
+			label: "Engine threads",
+			help: "Auto uses 8 threads, or every core when the device has fewer.",
+		},
+		"engine.hashMb": { label: "Hash", help: "Transposition table; 64 MB is the default." },
+		"engine.depthCap": {
+			label: "Depth cap",
+			help: "Automatic from active Elo. Search time remains limited by the clock.",
 		},
 		"advanced.logLevel": { label: "Debug log level" },
 		"advanced.timingLogEnabled": {
@@ -589,18 +691,10 @@ export const SETTINGS_COPY = {
 	} satisfies Record<string, SettingsRowCopy>,
 	options: {
 		profile: { manual: "Manual", fast: "Fast", natural: "Natural", slow: "Slow", custom: "Custom" },
-		selectionMode: {
-			"engine-elo": "Engine rating",
-			"persona-sampling": "Persona sampling",
-			hybrid: "Hybrid",
-		},
-		backend: { cdp: "Chrome debugger", native: "Native" },
-		previewSelects: { auto: "Auto", off: "Off" },
+		inputMode: { auto: "Auto", drag: "Drag", click: "Click" },
 		highlightStyle: { squares: "Squares", arrows: "Arrows", both: "Both" },
-		scope: { page: "In page", global: "Global" },
 		theme: { dark: "Dark", light: "Light", system: "System" },
 		reducedMotion: { system: "System", on: "On", off: "Off" },
-		nnue: { small: "Small", big: "Large", auto: "Auto" },
 		logLevel: { silent: "Silent", error: "Error", warn: "Warn", info: "Info", debug: "Debug" },
 	},
 	format: {
@@ -610,8 +704,13 @@ export const SETTINGS_COPY = {
 		mb: (n: number): string => `${n} MB`,
 		minutes: (n: number): string => `${n} min`,
 		threadsAuto: "Auto",
+		depthAuto: (depth: number) => `Auto · ${depth}`,
 		variance: { low: "Low", medium: "Medium", high: "High" },
 		motor: { slow: "Slow", natural: "Natural", fast: "Fast" },
+		/** The preview-selection slider's 0 position. */
+		previewOff: "Off",
+		/** The accuracy offset in Elo: "+150", "0", "−150". */
+		elo: (n: number): string => (n > 0 ? `+${n}` : n < 0 ? `−${-n}` : "0"),
 		detected: "detected",
 	},
 	stepper: { decrease: "−", increase: "+", decreaseLabel: "Decrease", increaseLabel: "Increase" },
@@ -649,8 +748,6 @@ export const COPY_LIVE = {
 		header: "Active strength",
 		rating: "Target rating",
 		chip: (elo: number, persona: string): string => `${elo} · ${persona}`,
-		modes: { "engine-elo": "Engine", "persona-sampling": "Persona", hybrid: "Hybrid" },
-		modeLabel: "Selection",
 	},
 	lines: {
 		count: (n: number): string => `${n}`,

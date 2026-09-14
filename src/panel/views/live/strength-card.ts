@@ -1,20 +1,20 @@
 /**
  * Strength card (Appendix F §4.4 item 7, §5.12): one row — big Elo in `numeral-sm`, band label
- * + persona in `body`, a chevron that opens a popover anchored to the card with the rating
- * slider, the four persona chips and the selection-mode segment. Changes apply immediately
- * through `setSettings`; the footer says "Applies from next move". The card itself follows
- * the snapshot (never the popover's local value), so the SW's normalised settings win.
+ * in `body`, a chevron that opens a popover anchored to the card with the rating slider. Changes
+ * apply immediately through `setSettings`; the footer says "Applies from next move". The card
+ * itself follows the snapshot (never the popover's local value), so the SW's normalised settings
+ * win. The persona chips and the selection-mode segment the popover used to carry are gone: both
+ * settings are forced (`FORCED_SETTING_VALUES`, owner 2026-09-12).
  */
 
 import { LIMITS } from "@core/constants/limits";
+import { MAIA } from "@core/constants/maia";
 import type { PanelSnapshot } from "@core/constants/messages";
 import { STRENGTH_UI, UI_TIMINGS } from "@core/constants/ui";
 import { log } from "@core/logger";
 import { type SettingsPatch, setSettings } from "@core/storage/settings-storage";
-import type { PersonaId, Settings } from "@typedefs/settings";
-import { type ChipGroupHandle, createChipGroup } from "../../components/chip";
+import type { Settings } from "@typedefs/settings";
 import { openPopover, type PopoverHandle } from "../../components/popover";
-import { createSegment, type SegmentHandle } from "../../components/segment";
 import { createSlider, type SliderHandle } from "../../components/slider";
 import { STRENGTH_NETWORK_THRESHOLD } from "../../components/strength-threshold";
 import { COPY, COPY_LIVE } from "../../copy";
@@ -23,14 +23,11 @@ import { instantiate, part } from "../../template";
 import cardHtml from "../templates/live/strength-card.html?raw";
 import popoverHtml from "../templates/live/strength-popover.html?raw";
 
-type SelectionMode = Settings["strength"]["selectionMode"];
 type BandId = keyof typeof COPY.strength.bands;
 
 /** Appendix F §7.2 "Strength labels" (`STRENGTH_UI.bandFloors`), typed against the copy keys. */
 const BAND_FLOORS: ReadonlyArray<readonly [number, BandId]> = STRENGTH_UI.bandFloors;
 const SLIDER_STEP = STRENGTH_UI.sliderStep;
-const PERSONAS: readonly PersonaId[] = ["cautious", "balanced", "aggressive", "blitz"];
-const MODES: readonly SelectionMode[] = ["engine-elo", "persona-sampling", "hybrid"];
 
 export function strengthBand(elo: number): BandId {
 	for (const [floor, band] of BAND_FLOORS) if (elo >= floor) return band;
@@ -71,8 +68,6 @@ export function createStrengthCard(host: HTMLElement): StrengthCardHandle {
 	let handsOff = false;
 	let popover: PopoverHandle | null = null;
 	let slider: SliderHandle | null = null;
-	let chips: ChipGroupHandle<PersonaId> | null = null;
-	let segment: SegmentHandle<SelectionMode> | null = null;
 
 	function closePopover(): void {
 		popover?.close();
@@ -86,11 +81,7 @@ export function createStrengthCard(host: HTMLElement): StrengthCardHandle {
 
 	function disposeContent(): void {
 		slider?.dispose();
-		chips?.dispose();
-		segment?.dispose();
 		slider = null;
-		chips = null;
-		segment = null;
 	}
 
 	function openStrength(): void {
@@ -106,29 +97,13 @@ export function createStrengthCard(host: HTMLElement): StrengthCardHandle {
 			dangerHint: COPY.strength.warning,
 			ariaLabel: COPY_LIVE.strength.rating,
 			threshold: STRENGTH_NETWORK_THRESHOLD,
+			// The Maia-3 → Stockfish switch at 2600, unlabelled, the same as the Settings slider.
+			markers: [MAIA.eloMax],
 			strength: true,
 			disabled: strength.matchOpponentRating,
 			onChange: (value, commit) => {
 				if (commit && !strength?.matchOpponentRating) write({ strength: { targetElo: value } });
 			},
-		});
-		chips = createChipGroup<PersonaId>(part(content, ".sl-live__strength-personas"), {
-			items: PERSONAS.map((id) => ({
-				id,
-				label: COPY.personaName[id],
-				icon: `persona.${id}` as const,
-			})),
-			value: strength.persona,
-			onChange: (value) => {
-				if (value) write({ strength: { persona: value } });
-			},
-		});
-		part(content, ".sl-live__strength-mode-label").textContent = COPY_LIVE.strength.modeLabel;
-		segment = createSegment<SelectionMode>(part(content, ".sl-live__strength-mode-segment"), {
-			items: MODES.map((id) => ({ id, label: COPY_LIVE.strength.modes[id] })),
-			value: strength.selectionMode,
-			ariaLabel: COPY_LIVE.strength.modeLabel,
-			onChange: (value) => write({ strength: { selectionMode: value } }),
 		});
 		popover = openPopover(open, content, {
 			title: COPY_LIVE.strength.header,
@@ -156,19 +131,14 @@ export function createStrengthCard(host: HTMLElement): StrengthCardHandle {
 		const activeElo = state.snapshot.opponent?.derivedTargetElo ?? strength.targetElo;
 		el.classList.toggle("sl-strength--hot", activeElo >= STRENGTH_UI.glowElo);
 		elo.textContent = String(activeElo);
-		label.textContent = `${bandLabel(activeElo)} · ${COPY.personaName[strength.persona]}`;
-		el.setAttribute(
-			"aria-label",
-			COPY.strength.card(activeElo, bandLabel(activeElo), COPY.personaName[strength.persona])
-		);
+		label.textContent = bandLabel(activeElo);
+		el.setAttribute("aria-label", COPY.strength.card(activeElo, bandLabel(activeElo)));
 		if (handsOff) {
 			open.setAttribute("aria-disabled", "true");
 			closePopover();
 		} else open.removeAttribute("aria-disabled");
 		// The open popover follows external changes (another view, the SW's normalisation).
 		slider?.update({ value: strength.targetElo, disabled: strength.matchOpponentRating });
-		chips?.update({ value: strength.persona });
-		segment?.update({ value: strength.selectionMode });
 	}
 
 	return {

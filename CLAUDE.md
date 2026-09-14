@@ -1,4 +1,4 @@
-# CLAUDE.md — sliced.gg (v2)
+# CLAUDE.md — sliced.sh (v2)
 
 Manifest V3 chess assistant for chess.com. Read this before touching anything;
 `docs/ARCHITECTURE.md` has the shape of the system, `docs/DEVELOPMENT.md` the workflow and the
@@ -93,7 +93,7 @@ as `ICONS` names in `src/design/icons.ts`; `gen-icons` fails on an unknown Font 
 Animation timings mirror the CSS custom properties, so they cannot drift.
 
 **C5 — brand assets are byte-unchanged.** The logo (`assets/images/sliced_*.png`) and the 13
-sounds in `assets/sounds/` are the v1 files, copied bit for bit. Product name `sliced.gg`, short
+sounds in `assets/sounds/` are the v1 files, copied bit for bit. Product name `sliced.sh`, short
 name `sliced`, accent `#ffa71f`, dark-first. All user-facing strings live once in
 `src/panel/copy.ts` — never a literal in a view.
 

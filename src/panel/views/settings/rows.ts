@@ -1,11 +1,13 @@
 /**
  * Settings rows as a typed declarative table (Task 25). Every leaf of `Settings` (Part I §4.4)
- * maps to exactly one row: a control kind, its copy (looked up by path in `SETTINGS_COPY`) and
- * the clamp range from `LIMITS` / `SETTINGS_RANGES`. `test/panel/views/settings.test.ts` walks
- * `DEFAULT_SETTINGS` and fails when a leaf has no row here.
+ * maps to exactly one row — a control kind, its copy (looked up by path in `SETTINGS_COPY`) and
+ * the clamp range from `LIMITS` / `SETTINGS_RANGES` — except the leaves the extension decides
+ * (`FORCED_SETTINGS` in `sections.ts`). `test/panel/views/settings.test.ts` walks
+ * `DEFAULT_SETTINGS` and fails when any other leaf has no row here.
  */
 
 import { LIMITS, SETTINGS_RANGES } from "@core/constants/limits";
+import { MAIA } from "@core/constants/maia";
 import { STRENGTH_LABEL_BANDS, type StrengthBand, UI_TIMINGS } from "@core/constants/ui";
 import { clamp, clampInt } from "@core/util/clamp";
 import type { TimeControl } from "@typedefs/game";
@@ -16,7 +18,7 @@ import { COPY, SETTINGS_COPY } from "../../copy";
 
 // ── paths ───────────────────────────────────────────────────────────────────────────────────
 
-type LeafPaths<T, P extends string = ""> = {
+export type LeafPaths<T, P extends string = ""> = {
 	[K in keyof T & string]: NonNullable<T[K]> extends Keybind
 		? `${P}${K}`
 		: NonNullable<T[K]> extends object
@@ -41,6 +43,15 @@ export interface ToggleRow extends RowBase {
 	kind: "toggle";
 }
 
+/**
+ * A slider whose stored unit differs from the one shown (the accuracy offset: 0–2 in storage,
+ * Elo on the slider). `min` / `max` / `step` and every formatter are in the display unit.
+ */
+export interface SliderDisplayMap {
+	toDisplay: (stored: number) => number;
+	fromDisplay: (display: number) => number;
+}
+
 export interface SliderRow extends RowBase {
 	kind: "slider";
 	min: number;
@@ -48,10 +59,18 @@ export interface SliderRow extends RowBase {
 	step: number;
 	/** Human label for the bubble / `aria-valuetext`. */
 	valueLabel: (value: number) => string;
-	/** Resting numeric text. */
+	/** Resting text on the right — a number, or a label ("Natural") when `readout` is set. */
 	format: (value: number) => string;
+	/**
+	 * The numeric readout under the thumb while the slider is changing, for rows whose resting
+	 * text is a label (settings layout, 2026-09-13).
+	 */
+	readout?: (value: number) => string;
+	display?: SliderDisplayMap;
 	scale?: readonly string[];
 	threshold?: SliderThreshold;
+	/** Unlabelled hairline markers on the track (the model switches the slider crosses). */
+	markers?: readonly number[];
 	danger?: (value: number) => boolean;
 	dangerHint?: string;
 }
@@ -64,7 +83,7 @@ export interface OptionItem {
 export interface ChipsRow extends RowBase {
 	kind: "chips";
 	items: readonly OptionItem[];
-	/** Per-option description shown under the chips (personas). */
+	/** Per-option description shown under the chips (the timing presets' manual note). */
 	descriptions?: Readonly<Record<string, string>>;
 }
 
@@ -94,6 +113,10 @@ export interface KeybindRow extends RowBase {
 	action: KeybindAction;
 }
 
+export interface AutomaticDepthRow extends RowBase {
+	kind: "automatic-depth";
+}
+
 export type RowSpec =
 	| ToggleRow
 	| SliderRow
@@ -101,12 +124,15 @@ export type RowSpec =
 	| SegmentRow
 	| StepperRow
 	| SelectRow
-	| KeybindRow;
+	| KeybindRow
+	| AutomaticDepthRow;
 
 // ── helpers ─────────────────────────────────────────────────────────────────────────────────
 
-const rowCopy = (path: SettingsLeafPath): { label: string; help?: string } =>
-	SETTINGS_COPY.rows[path];
+/** A leaf that has row copy — the forced leaves (`FORCED_SETTINGS`) deliberately have none. */
+type CopiedPath = SettingsLeafPath & keyof typeof SETTINGS_COPY.rows;
+
+const rowCopy = (path: CopiedPath): { label: string; help?: string } => SETTINGS_COPY.rows[path];
 
 function items<T extends string>(labels: Readonly<Record<T, string>>): OptionItem[] {
 	return (Object.keys(labels) as T[]).map((id) => ({ id, label: labels[id] }));
@@ -139,6 +165,23 @@ function motorLabel(scale: number): string {
 	if (scale <= MOTOR_NATURAL_MAX) return SETTINGS_COPY.format.motor.natural;
 	return SETTINGS_COPY.format.motor.fast;
 }
+
+/** The preview-selection slider: its 0 is Off, everything above is a rate. */
+function previewLabel(scale: number): string {
+	return scale <= LIMITS.previewSelectScaleMin
+		? SETTINGS_COPY.format.previewOff
+		: SETTINGS_COPY.format.times(scale);
+}
+
+/**
+ * H2: `strength.blunderScale` (0–2) shown as an Elo offset with the intuitive sign — +150 plays
+ * as a 150-higher rating would (`sliderEloOffset` counts *below* the target, hence the flip).
+ */
+const ACCURACY_SCALE_DECIMALS = 4;
+export const ACCURACY_OFFSET_DISPLAY: SliderDisplayMap = {
+	toDisplay: (scale) => Math.round(MAIA.slider.eloSpan * (1 - scale)),
+	fromDisplay: (elo) => Number((1 - elo / MAIA.slider.eloSpan).toFixed(ACCURACY_SCALE_DECIMALS)),
+};
 
 /** Power-of-two hash sizes inside `LIMITS.hashMbMin..hashMbMax`. */
 function hashSizes(): OptionItem[] {
@@ -184,9 +227,9 @@ export function formatTimeControl(tc: TimeControl): string {
 
 // ── the table ───────────────────────────────────────────────────────────────────────────────
 
-const toggle = (path: SettingsLeafPath): ToggleRow => ({ kind: "toggle", path, ...rowCopy(path) });
+const toggle = (path: CopiedPath): ToggleRow => ({ kind: "toggle", path, ...rowCopy(path) });
 
-const keybind = (path: SettingsLeafPath, action: KeybindAction): KeybindRow => ({
+const keybind = (path: CopiedPath, action: KeybindAction): KeybindRow => ({
 	kind: "keybind",
 	path,
 	action,
@@ -194,17 +237,7 @@ const keybind = (path: SettingsLeafPath, action: KeybindAction): KeybindRow => (
 });
 
 export const ROWS: readonly RowSpec[] = [
-	toggle("enabled"),
 	// strength
-	toggle("strength.matchOpponentRating"),
-	{
-		kind: "slider",
-		path: "strength.personaEloOffset",
-		...rowCopy("strength.personaEloOffset"),
-		...SETTINGS_RANGES.personaEloOffset,
-		valueLabel: SETTINGS_COPY.format.offset,
-		format: SETTINGS_COPY.format.offset,
-	},
 	{
 		kind: "slider",
 		path: "strength.targetElo",
@@ -216,76 +249,39 @@ export const ROWS: readonly RowSpec[] = [
 		format: String,
 		scale: STRENGTH_LABEL_BANDS.map((b) => COPY.strength.bands[b.band]),
 		threshold: STRENGTH_NETWORK_THRESHOLD,
+		// The Maia-3 → Stockfish selection switch: a second, unlabelled divider (2026-09-11).
+		markers: [MAIA.eloMax],
 		danger: (v) => v >= UI_TIMINGS.strengthDangerElo,
 		dangerHint: COPY.strength.warning,
 	},
+	toggle("strength.matchOpponentRating"),
 	{
-		kind: "chips",
-		path: "strength.persona",
-		...rowCopy("strength.persona"),
-		items: items(COPY.personaName),
-		descriptions: COPY.persona,
-	},
-	{
-		kind: "chips",
-		path: "strength.selectionMode",
-		...rowCopy("strength.selectionMode"),
-		items: items(SETTINGS_COPY.options.selectionMode),
+		kind: "slider",
+		path: "strength.personaEloOffset",
+		...rowCopy("strength.personaEloOffset"),
+		...SETTINGS_RANGES.personaEloOffset,
+		valueLabel: SETTINGS_COPY.format.offset,
+		format: SETTINGS_COPY.format.offset,
+		// The even point (owner, 2026-09-12): an unlabelled hairline at ±0.
+		markers: [0],
 	},
 	{
 		kind: "slider",
 		path: "strength.blunderScale",
 		...rowCopy("strength.blunderScale"),
-		min: LIMITS.blunderScaleMin,
-		max: LIMITS.blunderScaleMax,
-		step: 0.05,
-		valueLabel: SETTINGS_COPY.format.times,
-		format: SETTINGS_COPY.format.times,
+		min: -MAIA.slider.eloSpan,
+		max: MAIA.slider.eloSpan,
+		step: SETTINGS_RANGES.accuracyOffsetStepElo,
+		valueLabel: SETTINGS_COPY.format.elo,
+		format: SETTINGS_COPY.format.elo,
+		display: ACCURACY_OFFSET_DISPLAY,
+		markers: [0],
 	},
 	toggle("strength.useOpeningBook"),
-	// timing
-	{
-		kind: "chips",
-		path: "timing.profile",
-		...rowCopy("timing.profile"),
-		items: items(SETTINGS_COPY.options.profile),
-		descriptions: { manual: COPY.timing.manualOnly },
-	},
-	{
-		kind: "slider",
-		path: "timing.speedScale",
-		...rowCopy("timing.speedScale"),
-		...SETTINGS_RANGES.speedScale,
-		valueLabel: SETTINGS_COPY.format.times,
-		format: SETTINGS_COPY.format.times,
-	},
-	{
-		kind: "slider",
-		path: "timing.varianceScale",
-		...rowCopy("timing.varianceScale"),
-		...SETTINGS_RANGES.varianceScale,
-		valueLabel: varianceLabel,
-		format: varianceLabel,
-	},
-	{
-		kind: "slider",
-		path: "timing.premoveTendency",
-		...rowCopy("timing.premoveTendency"),
-		...SETTINGS_RANGES.premoveTendency,
-		valueLabel: SETTINGS_COPY.format.percent,
-		format: SETTINGS_COPY.format.percent,
-	},
-	{
-		kind: "slider",
-		path: "timing.longThinkFrequency",
-		...rowCopy("timing.longThinkFrequency"),
-		...SETTINGS_RANGES.longThinkFrequency,
-		valueLabel: SETTINGS_COPY.format.times,
-		format: SETTINGS_COPY.format.times,
-	},
-	toggle("timing.respectBudget"),
-	// execution
+	// automation
+	toggle("enabled"),
 	toggle("automation.autoMove"),
+	toggle("automation.resignLostGames"),
 	toggle("automation.autoQueue"),
 	{
 		kind: "stepper",
@@ -319,6 +315,55 @@ export const ROWS: readonly RowSpec[] = [
 		max: LIMITS.autoQueueBreakMinutesMax,
 		format: SETTINGS_COPY.format.minutes,
 	},
+	toggle("automation.rematchTitled"),
+	// timing
+	{
+		kind: "chips",
+		path: "timing.profile",
+		...rowCopy("timing.profile"),
+		items: items(SETTINGS_COPY.options.profile),
+		descriptions: { manual: COPY.timing.manualOnly },
+	},
+	{
+		kind: "slider",
+		path: "timing.speedScale",
+		...rowCopy("timing.speedScale"),
+		...SETTINGS_RANGES.speedScale,
+		valueLabel: SETTINGS_COPY.format.times,
+		format: SETTINGS_COPY.format.times,
+	},
+	{
+		kind: "slider",
+		path: "timing.varianceScale",
+		...rowCopy("timing.varianceScale"),
+		...SETTINGS_RANGES.varianceScale,
+		valueLabel: varianceLabel,
+		format: varianceLabel,
+		readout: SETTINGS_COPY.format.times,
+	},
+	{
+		kind: "slider",
+		path: "timing.longThinkFrequency",
+		...rowCopy("timing.longThinkFrequency"),
+		...SETTINGS_RANGES.longThinkFrequency,
+		valueLabel: SETTINGS_COPY.format.times,
+		format: SETTINGS_COPY.format.times,
+	},
+	{
+		kind: "slider",
+		path: "timing.premoveTendency",
+		...rowCopy("timing.premoveTendency"),
+		...SETTINGS_RANGES.premoveTendency,
+		valueLabel: SETTINGS_COPY.format.percent,
+		format: SETTINGS_COPY.format.percent,
+	},
+	// hand
+	{
+		kind: "segment",
+		path: "execution.inputMode",
+		...rowCopy("execution.inputMode"),
+		items: items(SETTINGS_COPY.options.inputMode),
+	},
 	{
 		kind: "slider",
 		path: "execution.motorSpeed",
@@ -326,35 +371,15 @@ export const ROWS: readonly RowSpec[] = [
 		...SETTINGS_RANGES.motorSpeed,
 		valueLabel: motorLabel,
 		format: motorLabel,
-	},
-	toggle("execution.calibrateFromMyMouse"),
-	{
-		kind: "segment",
-		path: "execution.previewSelects",
-		...rowCopy("execution.previewSelects"),
-		items: items(SETTINGS_COPY.options.previewSelects),
+		readout: SETTINGS_COPY.format.times,
 	},
 	{
 		kind: "slider",
 		path: "execution.previewSelectScale",
 		...rowCopy("execution.previewSelectScale"),
-		min: LIMITS.previewSelectScaleMin,
-		max: LIMITS.previewSelectScaleMax,
-		step: 0.05,
-		valueLabel: SETTINGS_COPY.format.times,
-		format: SETTINGS_COPY.format.times,
-	},
-	{
-		kind: "segment",
-		path: "execution.backend",
-		...rowCopy("execution.backend"),
-		items: items(SETTINGS_COPY.options.backend),
-	},
-	{
-		kind: "toggle",
-		path: "execution.keepDebuggerAttached",
-		label: rowCopy("execution.keepDebuggerAttached").label,
-		help: COPY.execution.debugger,
+		...SETTINGS_RANGES.previewSelectScale,
+		valueLabel: previewLabel,
+		format: previewLabel,
 	},
 	{
 		kind: "toggle",
@@ -362,20 +387,7 @@ export const ROWS: readonly RowSpec[] = [
 		label: rowCopy("execution.verifyMoves").label,
 		help: COPY.execution.verify,
 	},
-	// keybinds
-	keybind("keybinds.playMove", "playMove"),
-	keybind("keybinds.toggleAutoMove", "toggleAutoMove"),
-	keybind("keybinds.disable", "disable"),
-	keybind("keybinds.speakMove", "speakMove"),
-	{
-		kind: "segment",
-		path: "keybinds.global",
-		label: rowCopy("keybinds.global").label,
-		help: COPY.keybind.global,
-		items: items(SETTINGS_COPY.options.scope),
-		boolean: ["page", "global"],
-	},
-	// display
+	// board
 	toggle("automation.highlightMoves"),
 	{
 		kind: "chips",
@@ -383,16 +395,19 @@ export const ROWS: readonly RowSpec[] = [
 		...rowCopy("automation.highlightStyle"),
 		items: items(SETTINGS_COPY.options.highlightStyle),
 	},
+	toggle("automation.boardEffects"),
+	toggle("automation.moveQualityChips"),
+	toggle("display.virtualCursor"),
+	toggle("display.cursorEffects"),
+	// panel
 	toggle("display.evalBar"),
 	{
 		kind: "stepper",
-		path: "display.pvCount",
-		...rowCopy("display.pvCount"),
+		path: "engine.multiPv",
+		...rowCopy("engine.multiPv"),
 		min: LIMITS.multiPvMin,
 		max: LIMITS.multiPvMax,
 	},
-	toggle("display.uiSounds"),
-	{ kind: "select", path: "display.ttsVoice", ...rowCopy("display.ttsVoice"), options: "voices" },
 	{
 		kind: "chips",
 		path: "display.theme",
@@ -405,8 +420,14 @@ export const ROWS: readonly RowSpec[] = [
 		...rowCopy("display.reducedMotion"),
 		items: items(SETTINGS_COPY.options.reducedMotion),
 	},
-	toggle("display.virtualCursor"),
-	// advanced
+	toggle("display.uiSounds"),
+	{ kind: "select", path: "display.ttsVoice", ...rowCopy("display.ttsVoice"), options: "voices" },
+	// keybinds
+	keybind("keybinds.playMove", "playMove"),
+	keybind("keybinds.toggleAutoMove", "toggleAutoMove"),
+	keybind("keybinds.disable", "disable"),
+	keybind("keybinds.speakMove", "speakMove"),
+	// engine
 	{
 		kind: "stepper",
 		path: "engine.threads",
@@ -417,28 +438,11 @@ export const ROWS: readonly RowSpec[] = [
 	},
 	{ kind: "select", path: "engine.hashMb", ...rowCopy("engine.hashMb"), options: hashSizes() },
 	{
-		kind: "slider",
+		kind: "automatic-depth",
 		path: "engine.depthCap",
 		...rowCopy("engine.depthCap"),
-		min: LIMITS.depthMin,
-		max: LIMITS.depthMax,
-		step: 1,
-		valueLabel: String,
-		format: String,
 	},
-	{
-		kind: "stepper",
-		path: "engine.multiPv",
-		...rowCopy("engine.multiPv"),
-		min: LIMITS.multiPvMin,
-		max: LIMITS.multiPvMax,
-	},
-	{
-		kind: "chips",
-		path: "engine.nnue",
-		...rowCopy("engine.nnue"),
-		items: items(SETTINGS_COPY.options.nnue),
-	},
+	// advanced
 	{
 		kind: "select",
 		path: "advanced.logLevel",
@@ -456,9 +460,21 @@ export function rowFor(path: SettingsLeafPath): RowSpec {
 	return row;
 }
 
+/** A slider row's stored value in its display unit (identity unless the row maps units). */
+export function toDisplayValue(path: SettingsLeafPath, stored: number): number {
+	const row = rowFor(path);
+	return row.kind === "slider" && row.display ? row.display.toDisplay(stored) : stored;
+}
+
+/** A slider row's display value in its stored unit (identity unless the row maps units). */
+export function fromDisplayValue(path: SettingsLeafPath, display: number): number {
+	const row = rowFor(path);
+	return row.kind === "slider" && row.display ? row.display.fromDisplay(display) : display;
+}
+
 /**
- * Clamp a numeric value to the row's display range: sliders snap to their step, steppers are
- * integers, numeric selects (hash sizes) snap to the nearest option.
+ * Clamp a numeric value to the row's display range: sliders snap to their step (in the display
+ * unit), steppers are integers, numeric selects (hash sizes) snap to the nearest option.
  */
 export function clampRowValue(path: SettingsLeafPath, value: number): number {
 	const row = rowFor(path);

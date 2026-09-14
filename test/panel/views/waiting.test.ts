@@ -117,6 +117,23 @@ describe("waitingView", () => {
 		expect(text(".sl-waiting__status-text")).toBe(COPY.waiting.watching);
 	});
 
+	it("the rematch step counts down in seconds to the ordinary queue click (2026-09-13)", async () => {
+		const snapshot = makeSnapshot({
+			state: "game-over",
+			settings: { automation: { ...DEFAULT_SETTINGS.automation, autoQueue: true } },
+		});
+		snapshot.session.autoQueue = { dueAt: Date.now() + 15_000, attempts: 0, status: "rematch" };
+		await mountWaiting(snapshot);
+		const status = container.querySelector<HTMLElement>(".sl-waiting__status");
+		expect(text(".sl-waiting__status-text")).toBe(COPY.waiting.queueRematch("15"));
+		expect(status?.getAttribute("role")).toBe("timer");
+		await dom.tick(4_000);
+		expect(text(".sl-waiting__status-text")).toBe(COPY.waiting.queueRematch("11"));
+		await dom.tick(11_000);
+		expect(text(".sl-waiting__status-text")).toBe(COPY.waiting.queueStarting);
+		expect(status?.getAttribute("role")).toBe("status");
+	});
+
 	it("does not display an old pending queue when disabled and disposes its timer", async () => {
 		const snapshot = makeSnapshot({
 			settings: { automation: { ...DEFAULT_SETTINGS.automation, autoQueue: true } },

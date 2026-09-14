@@ -20,7 +20,9 @@
 .sl-live__rail {
 	flex: none;
 	display: flex;
+	flex-direction: column;
 	align-items: stretch;
+	gap: var(--sl-space-1);
 	width: var(--sl-size-rail);
 }
 
@@ -174,10 +176,6 @@
 
 .sl-live__strength-popover {
 	min-width: calc(var(--sl-layout-panel-min) - var(--sl-space-12));
-}
-
-.sl-live__strength-personas {
-	display: flex;
 }
 
 /* ---- toggles row ----------------------------------------------------------------------- */

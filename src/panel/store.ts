@@ -144,6 +144,20 @@ export function createPanelStore(): PanelStore {
 		if (!disposed) connected = true;
 	});
 	requestSnapshot();
+	// Backstop (owner, 2026-09-13): the Live view sometimes did not learn a game had started until
+	// the side panel was closed and reopened — the reopen's own `PANEL_GET_SNAPSHOT` is what put it
+	// right, so the store repeats that request whenever its document becomes visible or regains
+	// focus, and every `TIMINGS.panelSnapshotPollMs` while it is visible. A push that does arrive
+	// supersedes the in-flight request (`generation`), so the two never fight.
+	const doc = typeof document === "undefined" ? null : document;
+	const visible = (): boolean => doc === null || doc.visibilityState === "visible";
+	const refreshIfVisible = (): void => {
+		if (!disposed && visible()) requestSnapshot();
+	};
+	const win = doc?.defaultView ?? null;
+	doc?.addEventListener("visibilitychange", refreshIfVisible);
+	win?.addEventListener("focus", refreshIfVisible);
+	const pollTimer = setInterval(refreshIfVisible, TIMINGS.panelSnapshotPollMs);
 	void windowsGetCurrent().then(
 		(win) => {
 			if (disposed || typeof win.id !== "number") return;
@@ -179,6 +193,9 @@ export function createPanelStore(): PanelStore {
 			if (disposed) return;
 			disposed = true;
 			cancelRetry();
+			clearInterval(pollTimer);
+			doc?.removeEventListener("visibilitychange", refreshIfVisible);
+			win?.removeEventListener("focus", refreshIfVisible);
 			listeners.clear();
 			portListeners.clear();
 			live = null;

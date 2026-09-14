@@ -8,9 +8,11 @@
 
 import { sideToMove } from "@core/chess/fen";
 import type { PanelSnapshot } from "@core/constants/messages";
+import { advantageIndex } from "@core/engine/advantage";
 import { toWhitePov } from "@core/engine/snapshot";
 import type { Eval } from "@typedefs/engine";
 import type { Color } from "@typedefs/game";
+import { type AdvantageBarHandle, createAdvantageBar } from "../../components/advantage-bar";
 import { type ClockHandle, createClock } from "../../components/clock";
 import {
 	createEvalBar,
@@ -98,6 +100,7 @@ const other = (c: Color): Color => (c === "w" ? "b" : "w");
 
 export function createEvalSection(options: EvalSectionOptions): EvalSectionHandle {
 	const bar: EvalBarHandle = createEvalBar(options.rail);
+	const advantage: AdvantageBarHandle = createAdvantageBar(options.rail);
 	const opponent = makeRow(options.opponentSlot, "opponent");
 	const me = makeRow(options.meSlot, "me");
 	const score = part(options.evalRow, ".sl-live__eval-score");
@@ -168,6 +171,24 @@ export function createEvalSection(options: EvalSectionOptions): EvalSectionHandl
 		if (view.score) {
 			bar.update({ score: view.score, ...(view.wdl ? { wdl: view.wdl } : {}), stale });
 		} else bar.update({ neutral: true });
+		// The advantage rail reads the board itself (material) and the clocks, so it has something to
+		// say from the first position, before any evaluation; the score joins in once one exists.
+		// Unlike the eval rail it is from the *owner's* point of view: your share fills from the left.
+		const fen = snap.session.evaluation?.fen ?? snap.recommendation?.fen ?? null;
+		const clocks = snap.session.clocks;
+		const whiteIndex =
+			fen === null
+				? null
+				: advantageIndex({
+						fen,
+						score: view.score,
+						clocks: clocks ? { w: clocks.w.ms, b: clocks.b.ms } : null,
+					});
+		advantage.el.hidden = !evalBarOn;
+		advantage.update({
+			index: whiteIndex === null ? null : myColor === "b" ? -whiteIndex : whiteIndex,
+			stale,
+		});
 
 		const text = view.score ? formatScore(view.score) : COPY.eval.pending;
 		if (text !== lastScoreText) {
@@ -202,6 +223,7 @@ export function createEvalSection(options: EvalSectionOptions): EvalSectionHandl
 		update,
 		dispose() {
 			bar.dispose();
+			advantage.dispose();
 			opponent.clock.dispose();
 			me.clock.dispose();
 			opponent.el.remove();

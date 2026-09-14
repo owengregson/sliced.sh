@@ -2,7 +2,7 @@
  * Move section (Appendix F §4.4 items 4–5, §5.6, §6.2, §6.3): the move card as a projection of
  * the snapshot (your-move / opponent-to-move with the expected reply / thinking / armed /
  * disabled / engine-stopped), the play button's label transitions (`Play move` →
- * `Auto-playing in 4.2s` → hover `Play now` → `Playing…`), the countdown driven from
+ * `Play now` (ring counting down) → `Playing…`), the countdown driven from
  * `autoMove.scheduledAt` (the absolute execution time) against `plan.thinkMs`, and the §6.3
  * "played" flash when `session.lastExecution` reports an executed move (the "Played …"
  * notification is intentionally suppressed).

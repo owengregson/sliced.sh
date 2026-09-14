@@ -42,6 +42,26 @@
 	fill: var(--sl-color-brand-tint);
 }
 
+/* The human model's inference-time series, told apart from the engine's nps by colour. */
+.sl-engine__spark--policy .sl-engine__spark-line {
+	stroke: var(--sl-color-success);
+}
+
+.sl-engine__spark--policy .sl-engine__spark-area {
+	fill: var(--sl-color-success-tint);
+}
+
+/* The human model's fidelity meters (§3.2): the executor's key/value grid, one type step down. */
+.sl-engine__policy-meters {
+	margin-top: var(--sl-space-1);
+}
+
+/* H7.1: the query carried fewer plies than the model's window, past the opening. */
+.sl-engine__policy-warning {
+	margin: 0;
+	color: var(--sl-color-warn);
+}
+
 /* ---- executor key/value rows -------------------------------------------------------------- */
 
 .sl-engine__kv {

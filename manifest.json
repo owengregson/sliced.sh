@@ -1,7 +1,7 @@
 {
 	"manifest_version": 3,
 	"minimum_chrome_version": "128",
-	"name": "sliced.gg",
+	"name": "sliced.sh",
 	"short_name": "sliced",
 	"description": "A powerful chess assistant that runs in your browser.",
 	"version": "2.0.0",
@@ -11,7 +11,7 @@
 		"256": "assets/images/sliced_256.png"
 	},
 	"action": {
-		"default_title": "sliced.gg",
+		"default_title": "sliced.sh",
 		"default_icon": {
 			"128": "assets/images/sliced_128.png"
 		}

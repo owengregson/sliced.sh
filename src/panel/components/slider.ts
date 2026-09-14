@@ -3,11 +3,14 @@
  * scale / resting value. Arrow keys step, Shift ×10, PageUp/Down ×10, Home/End. Pointer drags
  * follow the track; `onChange(value, commit)` fires live while dragging and once with
  * `commit = true` on release (keyboard steps always commit). Danger zone past a threshold.
+ * Scrub sounds come from a per-slider detent scheduler (`createDetentScheduler`); a `readout`
+ * shows the numeric value under the thumb while the slider changes and fades
+ * `UI_TIMINGS.sliderReadoutFadeMs` after the last change.
  */
 
 import { STRENGTH_UI, UI_TIMINGS } from "@core/constants/ui";
 import { clamp } from "@core/util/clamp";
-import { playSliderSound } from "../sounds";
+import { createDetentScheduler, playSliderSound } from "../sounds";
 import { instantiate, part } from "../template";
 import html from "../views/templates/components/slider.html?raw";
 
@@ -28,9 +31,20 @@ export interface SliderOptions {
 	label: (value: number) => string;
 	/** Resting numeric text on the right (default: the number). */
 	format?: (value: number) => string;
+	/**
+	 * Numeric readout under the thumb for sliders whose resting text is a label ("Natural"):
+	 * shown while the value changes, faded out `UI_TIMINGS.sliderReadoutFadeMs` after the last
+	 * change. `aria-hidden` — the bubble already carries `aria-valuetext`.
+	 */
+	readout?: (value: number) => string;
 	/** Optional marks row under the track. */
 	scale?: readonly string[];
 	threshold?: SliderThreshold;
+	/**
+	 * Unlabelled hairline markers at these values (no title, no label row): the places a model
+	 * switch happens that are not the primary `threshold`.
+	 */
+	markers?: readonly number[];
 	/** Continuous orange-to-red rating fill, with a glow at very high strength. */
 	strength?: boolean;
 	danger?: (value: number) => boolean;
@@ -60,12 +74,22 @@ export function createSlider(host: HTMLElement | null, options: SliderOptions): 
 	const fill = part(el, ".sl-slider__fill");
 	const thumb = part(el, ".sl-slider__thumb");
 	const bubble = part(el, ".sl-slider__bubble");
+	const readoutEl = part(el, ".sl-slider__readout");
 	const valueEl = part(el, ".sl-slider__value");
 	const scale = part(el, ".sl-slider__scale");
 	const hint = part(el, ".sl-slider__hint");
 	const divider = part(el, ".sl-slider__divider");
 	const ticks = part(el, ".sl-slider__ticks");
+	const markers = part(el, ".sl-slider__markers");
 	const boundary = part(el, ".sl-slider__boundary");
+	const markerEls: Array<{ value: number; el: HTMLElement }> = [];
+	for (const markerValue of options.markers ?? []) {
+		const marker = document.createElement("span");
+		marker.className = "sl-slider__marker";
+		marker.dataset.value = String(markerValue);
+		markers.append(marker);
+		markerEls.push({ value: markerValue, el: marker });
+	}
 	if (options.threshold) {
 		divider.hidden = false;
 		boundary.hidden = true;
@@ -79,7 +103,36 @@ export function createSlider(host: HTMLElement | null, options: SliderOptions): 
 	let value = options.value;
 	let disabled = options.disabled ?? false;
 	let dragging: number | null = null;
+	/** When the last pointer commit happened (`UI_TIMINGS.sliderCommitGraceMs`). */
+	let committedAt: number | null = null;
 	let tickRange = "";
+	const sounds = createDetentScheduler({ min, max, step: options.step });
+	const readout = options.readout ?? null;
+	let readoutTimer: ReturnType<typeof setTimeout> | null = null;
+	if (readout) {
+		el.classList.add("sl-slider--has-readout");
+		readoutEl.hidden = false;
+	}
+
+	function hideReadout(): void {
+		if (readoutTimer !== null) {
+			clearTimeout(readoutTimer);
+			readoutTimer = null;
+		}
+		el.classList.remove("sl-slider--readout");
+	}
+
+	/** Show the numeric readout for this change and (re)start its fade-out timer. */
+	function showReadout(): void {
+		if (!readout) return;
+		if (readoutTimer !== null) clearTimeout(readoutTimer);
+		readoutEl.textContent = readout(value);
+		el.classList.add("sl-slider--readout");
+		readoutTimer = setTimeout(() => {
+			readoutTimer = null;
+			el.classList.remove("sl-slider--readout");
+		}, UI_TIMINGS.sliderReadoutFadeMs);
+	}
 
 	if (options.ariaLabel) thumb.setAttribute("aria-label", options.ariaLabel);
 	if (options.scale?.length) {
@@ -98,9 +151,14 @@ export function createSlider(host: HTMLElement | null, options: SliderOptions): 
 		return clamp(Number(stepped.toFixed(decimals)), min, max);
 	}
 
+	/** Track position of `at`, clamped to the range. */
+	const percentOf = (at: number): string =>
+		`${(max > min ? clamp((at - min) / (max - min), 0, 1) * 100 : 0).toFixed(3)}%`;
+
 	function render(): void {
 		const pct = max > min ? ((value - min) / (max - min)) * 100 : 0;
 		const range = `${min}:${max}`;
+		for (const marker of markerEls) marker.el.style.left = percentOf(marker.value);
 		if (options.strength && range !== tickRange) {
 			tickRange = range;
 			ticks.replaceChildren();
@@ -118,23 +176,29 @@ export function createSlider(host: HTMLElement | null, options: SliderOptions): 
 			}
 		}
 		if (options.threshold) {
-			const thresholdPct =
-				max > min ? clamp((options.threshold.value - min) / (max - min), 0, 1) * 100 : 0;
-			divider.style.left = `${thresholdPct.toFixed(3)}%`;
+			divider.style.left = percentOf(options.threshold.value);
 			divider.dataset.value = String(options.threshold.value);
 		}
 		fill.style.width = `${pct.toFixed(3)}%`;
 		el.classList.toggle("sl-slider--strength", options.strength === true);
 		el.classList.toggle("sl-slider--hot", options.strength === true && value >= STRENGTH_UI.glowElo);
 		el.style.setProperty("--sl-slider-heat", String(clamp(pct / 100, 0, 1)));
-		el.style.setProperty(
-			"--sl-slider-energy",
-			String(
-				max > STRENGTH_UI.glowElo
-					? clamp((value - STRENGTH_UI.glowElo) / (max - STRENGTH_UI.glowElo), 0, 1)
-					: 0
-			)
-		);
+		const energy =
+			max > STRENGTH_UI.glowElo
+				? clamp((value - STRENGTH_UI.glowElo) / (max - STRENGTH_UI.glowElo), 0, 1)
+				: 0;
+		el.style.setProperty("--sl-slider-energy", String(energy));
+		// The warm sweep crosses at one speed; only the idle gap between sweeps follows the energy,
+		// so the cadence rises towards the maximum without the crossing ever getting faster. The gap
+		// is the sweep's animation *duration*, and a running CSS animation re-maps its elapsed time
+		// when its duration changes — so it is only written once the pointer lets go (and on
+		// keyboard / external changes), never on every pointer move: writing it live made the sweep
+		// skip back and forth under the drag (owner, 2026-09-11).
+		if (dragging === null)
+			el.style.setProperty(
+				"--sl-slider-flow-gap",
+				(STRENGTH_UI.flowGapMax - (STRENGTH_UI.flowGapMax - STRENGTH_UI.flowGapMin) * energy).toFixed(3)
+			);
 		thumb.style.left = `${pct.toFixed(3)}%`;
 		thumb.setAttribute("aria-valuemin", String(min));
 		thumb.setAttribute("aria-valuemax", String(max));
@@ -153,12 +217,20 @@ export function createSlider(host: HTMLElement | null, options: SliderOptions): 
 		else thumb.removeAttribute("aria-disabled");
 	}
 
-	function set(next: number, commit: boolean): void {
+	/**
+	 * Apply a user change. A pointer move ticks when it crosses a detent (rate-limited); a
+	 * keyboard step always ticks; both show the readout.
+	 */
+	function set(next: number, commit: boolean, source: "pointer" | "keyboard"): void {
 		const snapped = snap(next);
 		const changed = snapped !== value;
 		value = snapped;
 		render();
-		if (changed && dragging !== null && max > min) playSliderSound((value - min) / (max - min));
+		if (changed) {
+			showReadout();
+			const tick = source === "pointer" ? sounds.move(value) : sounds.key(value);
+			if (tick) playSliderSound(tick);
+		}
 		if (changed || commit) options.onChange(value, commit);
 	}
 
@@ -191,7 +263,7 @@ export function createSlider(host: HTMLElement | null, options: SliderOptions): 
 		}
 		if (next === null) return;
 		event.preventDefault();
-		set(next, true);
+		set(next, true, "keyboard");
 	};
 
 	function valueAt(clientX: number): number {
@@ -211,24 +283,28 @@ export function createSlider(host: HTMLElement | null, options: SliderOptions): 
 		} catch {
 			// happy-dom / unsupported: fall back to track-scoped events
 		}
-		set(valueAt(event.clientX), false);
+		sounds.press(value);
+		set(valueAt(event.clientX), false, "pointer");
 	};
 	const onPointerMove = (event: PointerEvent): void => {
 		if (dragging === null || event.pointerId !== dragging) return;
-		set(valueAt(event.clientX), false);
+		set(valueAt(event.clientX), false, "pointer");
 	};
 	const onPointerUp = (event: PointerEvent): void => {
 		if (dragging === null || event.pointerId !== dragging) return;
 		dragging = null;
 		el.classList.remove("sl-slider--active");
-		set(valueAt(event.clientX), true);
-		if (max > min) playSliderSound((value - min) / (max - min), "release");
+		set(valueAt(event.clientX), true, "pointer");
+		committedAt = Date.now();
+		const settle = sounds.release(value);
+		if (settle) playSliderSound(settle);
 	};
 	const onPointerCancel = (event: PointerEvent): void => {
 		if (dragging === null || event.pointerId !== dragging) return;
 		dragging = null;
 		el.classList.remove("sl-slider--active");
-		set(value, true);
+		sounds.release(value);
+		set(value, true, "pointer");
 	};
 
 	thumb.addEventListener("keydown", onKeyDown);
@@ -249,6 +325,8 @@ export function createSlider(host: HTMLElement | null, options: SliderOptions): 
 		update(patch) {
 			if (patch.min !== undefined) min = patch.min;
 			if (patch.max !== undefined) max = patch.max;
+			if (patch.min !== undefined || patch.max !== undefined)
+				sounds.setRange({ min, max, step: options.step });
 			if (patch.disabled !== undefined) disabled = patch.disabled;
 			if (disabled && dragging !== null) {
 				try {
@@ -258,12 +336,25 @@ export function createSlider(host: HTMLElement | null, options: SliderOptions): 
 				}
 				dragging = null;
 				el.classList.remove("sl-slider--active");
+				sounds.release(value);
+				hideReadout();
 			}
-			if (patch.value !== undefined) value = snap(patch.value);
+			// While the pointer owns the thumb, an external value is ignored: the settings view
+			// re-applies the *stored* value on every store snapshot, and one snapshot behind the live
+			// drag (they come thick and fast while the hand is moving) yanked the thumb back until the
+			// next pointer move — the "snapping back and forth" the owner saw (2026-09-11). The
+			// commit on release writes the final value, and the snapshots that follow agree with it.
+			const settling =
+				committedAt !== null &&
+				Date.now() - committedAt < UI_TIMINGS.sliderCommitGraceMs &&
+				patch.value !== undefined &&
+				snap(patch.value) !== value;
+			if (patch.value !== undefined && dragging === null && !settling) value = snap(patch.value);
 			else value = snap(value);
 			render();
 		},
 		dispose() {
+			hideReadout();
 			thumb.removeEventListener("keydown", onKeyDown);
 			track.removeEventListener("pointerdown", onPointerDown);
 			track.removeEventListener("pointermove", onPointerMove);

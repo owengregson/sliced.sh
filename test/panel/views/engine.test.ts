@@ -10,10 +10,12 @@ import {
 	type PanelSnapshot,
 	UI_TIMINGS,
 } from "@core/constants";
+import { DEFAULT_SETTINGS } from "@core/constants/defaults";
+import { MAIA, MAIA_INPUT } from "@core/constants/maia";
 import { TIMING_STATISTICS } from "@core/constants/telemetry";
 import type { LogEntry } from "@core/logger";
 import type { TypedMessage } from "@core/messaging/typed-messages";
-import { COPY } from "@panel/copy";
+import { COPY, SETTINGS_COPY } from "@panel/copy";
 import type { LoggingBridge, LogStreamListener } from "@panel/logging-bridge";
 import { bootShell, type PanelShell } from "@panel/shell";
 import type { PanelStore } from "@panel/store";
@@ -263,6 +265,166 @@ describe("engine view — engine rows", () => {
 		expect(text(root, ".sl-engine__status .sl-pill__text")).toBe(COPY.engine.idle);
 	});
 
+	it("names the selection model from the snapshot: Maia-3 79M at every target below 2600", async () => {
+		// 2026-09-13: one shipped size, so the label reads 79M across the whole human range.
+		const s = engineSnapshot();
+		s.settings = { ...s.settings, strength: { ...s.settings.strength, targetElo: 1200 } };
+		const root = await mountView(s);
+		expect(text(root, ".sl-engine__selection")).toBe(COPY.engineView.selection.maia("79M"));
+		const t = engineSnapshot();
+		t.settings = { ...t.settings, strength: { ...t.settings.strength, targetElo: 1650 } };
+		store.emit(t);
+		await dom.tick(0);
+		expect(text(root, ".sl-engine__selection")).toBe(COPY.engineView.selection.maia("79M"));
+		const u = engineSnapshot();
+		u.settings = { ...u.settings, strength: { ...u.settings.strength, targetElo: 2550 } };
+		store.emit(u);
+		await dom.tick(0);
+		expect(text(root, ".sl-engine__selection")).toBe(COPY.engineView.selection.maia("79M"));
+	});
+
+	it("names Stockfish on the small net from 2600 and the full net above 3200", async () => {
+		const s = engineSnapshot();
+		s.settings = { ...s.settings, strength: { ...s.settings.strength, targetElo: MAIA.eloMax } };
+		const root = await mountView(s);
+		expect(text(root, ".sl-engine__selection")).toBe(COPY.engineView.selection.stockfishSmall);
+		const t = engineSnapshot();
+		t.settings = {
+			...t.settings,
+			strength: { ...t.settings.strength, targetElo: LIMITS.nnueSmallEloMax },
+		};
+		store.emit(t);
+		await dom.tick(0);
+		expect(text(root, ".sl-engine__selection")).toBe(COPY.engineView.selection.stockfishSmall);
+		const u = engineSnapshot();
+		u.settings = {
+			...u.settings,
+			strength: { ...u.settings.strength, targetElo: LIMITS.nnueSmallEloMax + 50 },
+		};
+		store.emit(u);
+		await dom.tick(0);
+		expect(text(root, ".sl-engine__selection")).toBe(COPY.engineView.selection.stockfishFull);
+	});
+
+	it("follows the derived target: a matched opponent decides the model, not the slider", async () => {
+		const s = engineSnapshot();
+		s.settings = { ...s.settings, strength: { ...s.settings.strength, targetElo: 3400 } };
+		const root = await mountView(s);
+		expect(text(root, ".sl-engine__selection")).toBe(COPY.engineView.selection.stockfishFull);
+		// A matched opponent moves the target the session actually plays at.
+		const t = engineSnapshot();
+		t.settings = { ...t.settings, strength: { ...t.settings.strength, targetElo: 3400 } };
+		t.opponent = { isBot: false, name: "opp", ratingEstimate: 1500, derivedTargetElo: 1500 };
+		store.emit(t);
+		await dom.tick(0);
+		expect(text(root, ".sl-engine__selection")).toBe(COPY.engineView.selection.maia("79M"));
+	});
+
+	/** A snapshot whose recommendation carries a Maia-3 answer (a new `computedAt` = a new move). */
+	function policySnapshot(
+		ms: number,
+		computedAt: number,
+		overrides: { targetElo?: number; p?: number; source?: "maia" | "sampled" } = {}
+	): PanelSnapshot {
+		const s = engineSnapshot();
+		s.settings = {
+			...s.settings,
+			strength: { ...s.settings.strength, targetElo: overrides.targetElo ?? 1650 },
+		};
+		if (s.recommendation) {
+			s.recommendation.computedAt = computedAt;
+			s.recommendation.fen = "fen";
+			s.recommendation.chosen.source = overrides.source ?? "maia";
+			const p = overrides.p ?? 0.42;
+			s.recommendation.chosen.maiaProb = p;
+			s.recommendation.maia = { size: "79m", wdl: [0.28, 0.4, 0.32], ms, p };
+		}
+		return s;
+	}
+
+	it("the human-model block: Off outside Maia's range, waiting without an answer, the answer's pick/WDL/latency", async () => {
+		const off = engineSnapshot();
+		off.settings = { ...off.settings, strength: { ...off.settings.strength, targetElo: 2800 } };
+		const root = await mountView(off);
+		expect(text(root, ".sl-engine__policy-name")).toBe(COPY.engineView.policy.inactive);
+		expect(text(root, ".sl-engine__policy-status .sl-pill__text")).toBe(COPY.engineView.policy.off);
+		expect(text(root, ".sl-engine__policy-latency")).toBe(COPY.engineView.none);
+		const waiting = engineSnapshot();
+		waiting.settings = {
+			...waiting.settings,
+			strength: { ...waiting.settings.strength, targetElo: 1650 },
+		};
+		store.emit(waiting);
+		await dom.tick(0);
+		expect(text(root, ".sl-engine__policy-name")).toBe(COPY.engineView.policy.name("79M"));
+		expect(text(root, ".sl-engine__policy-status .sl-pill__text")).toBe(
+			COPY.engineView.policy.waiting
+		);
+		store.emit(policySnapshot(48, 10));
+		await dom.tick(0);
+		expect(text(root, ".sl-engine__policy-status .sl-pill__text")).toBe(
+			COPY.engineView.policy.answered
+		);
+		expect(text(root, ".sl-engine__policy-latency")).toBe(COPY.engineView.policy.latency("48"));
+		expect(text(root, ".sl-engine__policy-meta")).toBe(COPY.engineView.policy.pick("42"));
+		expect(text(root, ".sl-engine__policy-detail")).toBe(
+			COPY.engineView.policy.wdl("32", "40", "28")
+		);
+		// The model answered but the selector fell back to the engine policy for this move.
+		store.emit(policySnapshot(48, 11, { source: "sampled" }));
+		await dom.tick(0);
+		expect(text(root, ".sl-engine__policy-detail")).toBe(COPY.engineView.policy.fallback);
+		expect(text(root, ".sl-engine__policy-meta")).toBe(COPY.engineView.none);
+	});
+
+	it("the human-model sparkline takes one inference-time point per answered recommendation, capped", async () => {
+		const root = await mountView(policySnapshot(48, 1));
+		const line = (): SVGPolylineElement | null =>
+			root.querySelector(".sl-engine__spark--policy .sl-engine__spark-line");
+		const points = (): string[] => (line()?.getAttribute("points") ?? "").split(" ").filter(Boolean);
+		expect(root.querySelector(".sl-engine__policy-spark svg.sl-engine__spark-svg")).not.toBeNull();
+		expect(root.querySelector(".sl-engine__policy-spark")?.getAttribute("aria-label")).toBe(
+			COPY.engineView.policy.sparkline
+		);
+		expect(points()).toHaveLength(1);
+		// The same recommendation re-broadcast (snapshots repeat it) adds nothing.
+		store.emit(policySnapshot(48, 1));
+		await dom.tick(0);
+		expect(points()).toHaveLength(1);
+		// A recommendation without a Maia answer adds nothing either.
+		const plain = engineSnapshot();
+		plain.settings = { ...plain.settings, strength: { ...plain.settings.strength, targetElo: 1650 } };
+		if (plain.recommendation) plain.recommendation.computedAt = 2;
+		store.emit(plain);
+		await dom.tick(0);
+		expect(points()).toHaveLength(1);
+		for (let i = 0; i < LIMITS.policySparklineSamples + 10; i += 1) {
+			store.emit(policySnapshot(40 + i, 100 + i));
+			await dom.tick(0);
+		}
+		expect(points()).toHaveLength(LIMITS.policySparklineSamples);
+		// The engine's own sparkline is untouched by the policy samples.
+		const engineLine = root.querySelector(
+			".sl-engine__spark:not(.sl-engine__spark--policy) .sl-engine__spark-line"
+		);
+		expect((engineLine?.getAttribute("points") ?? "").split(" ").filter(Boolean)).toHaveLength(1);
+		expect(line()?.getAttribute("stroke")).toBeNull();
+	});
+
+	it("names the small-net fallback on the version row while the full build is crashed out", async () => {
+		const s = engineSnapshot();
+		s.engine = {
+			...s.engine,
+			variant: "smallnet",
+			nnue: ["nn-4ca89e4b3abf.nnue"],
+			fallbackFrom: "full",
+		};
+		const root = await mountView(s);
+		expect(text(root, ".sl-engine__version")).toBe(
+			`${COPY.engine.rows.version("17", "nn-4ca89e4b3abf")} · ${COPY.engine.rows.fallback}`
+		);
+	});
+
 	it("formatNps renders Mn/s, kn/s and n/s", () => {
 		expect(formatNps(1_420_000)).toBe("1.42 Mn/s");
 		expect(formatNps(12_500)).toBe("13 kn/s");
@@ -325,7 +487,10 @@ describe("engine view — executor", () => {
 		expect(value(root, "debugger")).toBe(COPY.executor.attached);
 		expect(value(root, "target")).toBe(COPY.engineView.target("abc123"));
 		expect(value(root, "input")).toBe(
-			COPY.engineView.inputMode(COPY.execution.drag, COPY.engineView.profiles.natural)
+			COPY.engineView.inputMode(
+				SETTINGS_COPY.options.inputMode[DEFAULT_SETTINGS.execution.inputMode],
+				COPY.engineView.profiles.natural
+			)
 		);
 		expect(value(root, "last")).toBe(COPY.engineView.lastAction("drag", "3.9", "executed"));
 		const phases = [...root.querySelectorAll(".sl-engine__phase")].map((p) => p.textContent?.trim());
@@ -624,5 +789,138 @@ describe("engine view — live log pane", () => {
 		store.emit(engineSnapshot(999_000));
 		await dom.tick(0);
 		expect(text(root, ".sl-engine__nps")).toBe("");
+	});
+});
+
+// ── 2026-09-13: the Human-model block's fidelity meters (§3.2) and the H7.1 history warning ────
+describe("engine view — human-model meters", () => {
+	/** A live snapshot at `ply` whose recommendation carries the given `rec.maia` fields. */
+	function metersSnapshot(
+		maia: NonNullable<NonNullable<PanelSnapshot["recommendation"]>["maia"]>,
+		ply = 20,
+		source: "maia" | "sampled" = "maia"
+	): PanelSnapshot {
+		const s = engineSnapshot();
+		s.settings = { ...s.settings, strength: { ...s.settings.strength, targetElo: 1650 } };
+		s.session = { ...s.session, state: "live:my-turn:recommended", ply };
+		if (s.recommendation) {
+			s.recommendation.computedAt = ply;
+			s.recommendation.fen = "fen";
+			s.recommendation.chosen.source = source;
+			s.recommendation.chosen.maiaProb = maia.p ?? 0.4;
+			s.recommendation.maia = maia;
+		}
+		return s;
+	}
+	const meter = (root: ParentNode, row: string): HTMLElement | null =>
+		root.querySelector<HTMLElement>(`[data-meter="${row}"]`);
+	const meterValue = (root: ParentNode, row: string): string =>
+		text(root, `[data-meter="${row}"] .sl-engine__value`);
+
+	it("hides the list without an answer and shows history and the rating asked at with one", async () => {
+		const root = await mountView(engineSnapshot());
+		const list = root.querySelector<HTMLElement>(".sl-engine__policy-meters");
+		expect(list?.hidden).toBe(true);
+		expect(root.querySelector<HTMLElement>(".sl-engine__policy-warning")?.hidden).toBe(true);
+		store.emit(
+			metersSnapshot({
+				size: "79m",
+				wdl: [0.28, 0.4, 0.32],
+				ms: 48,
+				p: 0.4,
+				historyPlies: 8,
+				selfElo: 1587.4,
+			})
+		);
+		await dom.tick(0);
+		expect(list?.hidden).toBe(false);
+		const { meters } = COPY.engineView.policy;
+		expect(text(root, '[data-meter="history"] .sl-engine__key')).toBe(meters.history);
+		expect(meterValue(root, "history")).toBe(
+			COPY.engineView.policy.historyValue(8, MAIA_INPUT.history)
+		);
+		expect(meterValue(root, "selfElo")).toBe(COPY.engineView.policy.eloValue(1587));
+		// The draw's own meters are absent: their rows are hidden, not blank.
+		for (const row of ["entropy", "railed", "unscored", "kl", "rank", "candidates"])
+			expect(meter(root, row)?.hidden, row).toBe(true);
+	});
+
+	it("renders the draw's meters — entropy, railed and unscored mass, KL, rank of survivors — and the H3 pair when present", async () => {
+		const root = await mountView(
+			metersSnapshot({
+				size: "79m",
+				wdl: [0.28, 0.4, 0.32],
+				p: 0.4,
+				historyPlies: 8,
+				selfElo: 1600,
+				meters: {
+					selfElo: 1600,
+					entropy: 0.4567,
+					railedMass: 0.123,
+					unscoredMass: 0.05,
+					klFromMaia: 0.01234,
+					rank: 2,
+					survivors: 9,
+				},
+			})
+		);
+		const { policy } = COPY.engineView;
+		expect(meterValue(root, "entropy")).toBe("0.46");
+		expect(meterValue(root, "railed")).toBe(policy.pctValue("12"));
+		expect(meterValue(root, "unscored")).toBe(policy.pctValue("5"));
+		expect(meterValue(root, "kl")).toBe("0.012");
+		expect(meterValue(root, "rank")).toBe(policy.rankValue(2, 9));
+		expect(meter(root, "candidates")?.hidden).toBe(true);
+		store.emit(
+			metersSnapshot({
+				size: "79m",
+				wdl: [0.28, 0.4, 0.32],
+				p: 0.4,
+				historyPlies: 8,
+				selfElo: 1600,
+				meters: {
+					selfElo: 1600,
+					entropy: 0.2,
+					railedMass: 0,
+					unscoredMass: 0,
+					klFromMaia: 0,
+					rank: 0,
+					survivors: 4,
+					candidates: 3,
+					verifyDepth: 10,
+				},
+			})
+		);
+		await dom.tick(0);
+		expect(meter(root, "candidates")?.hidden).toBe(false);
+		expect(meterValue(root, "candidates")).toBe(policy.candidatesValue(3, 10));
+		expect(meterValue(root, "rank")).toBe(COPY.engineView.none);
+	});
+
+	it("warns when the query carried fewer plies than the model's window past the opening, and not before", async () => {
+		const short = {
+			size: "79m" as const,
+			wdl: [0.3, 0.4, 0.3] as [number, number, number],
+			historyPlies: 1,
+			selfElo: 1200,
+		};
+		const root = await mountView(metersSnapshot(short, MAIA_INPUT.history + 4));
+		const warning = root.querySelector<HTMLElement>(".sl-engine__policy-warning");
+		expect(warning?.hidden).toBe(false);
+		expect(warning?.textContent).toBe(COPY.engineView.policy.historyWarning);
+		// Inside the opening a short window is expected.
+		store.emit(metersSnapshot(short, MAIA_INPUT.history));
+		await dom.tick(0);
+		expect(warning?.hidden).toBe(true);
+		// A full window past the opening: no warning.
+		store.emit(metersSnapshot({ ...short, historyPlies: MAIA_INPUT.history }, 30));
+		await dom.tick(0);
+		expect(warning?.hidden).toBe(true);
+		// The rows render when the model answered but the engine policy chose (H15's prior, a fallback).
+		store.emit(metersSnapshot({ ...short, historyPlies: MAIA_INPUT.history }, 30, "sampled"));
+		await dom.tick(0);
+		expect(meterValue(root, "history")).toBe(
+			COPY.engineView.policy.historyValue(MAIA_INPUT.history, MAIA_INPUT.history)
+		);
 	});
 });

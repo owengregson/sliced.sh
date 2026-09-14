@@ -19,9 +19,11 @@
 import { tabsQuery } from "@core/chrome/tabs";
 import { DEFAULT_SETTINGS } from "@core/constants/defaults";
 import { LIMITS } from "@core/constants/limits";
+import { MAIA_INPUT } from "@core/constants/maia";
 import { type LogStreamMessage, MSG, type PanelSnapshot } from "@core/constants/messages";
 import { UI_TIMINGS } from "@core/constants/ui";
 import { LOG_LEVELS, type LogEntry, levelAllows, log } from "@core/logger";
+import { maiaSizeFor, usesMaia } from "@core/policy/maia-size";
 import { normalizeTimingStats } from "@core/timing/session-stats";
 import { TOKENS } from "@design/tokens.generated";
 import type { ExecutionResult } from "@typedefs/game";
@@ -31,7 +33,7 @@ import { JSON_DATA_URL_PREFIX } from "../actions";
 import { type ButtonHandle, createButton } from "../components/button";
 import { createPill, type PillHandle, type PillVariant } from "../components/pill";
 import { showToast } from "../components/toast";
-import { COPY } from "../copy";
+import { COPY, SETTINGS_COPY } from "../copy";
 import { mountIcons } from "../icons-mount";
 import { createLoggingBridge, type LoggingBridge } from "../logging-bridge";
 import { isHandsOff } from "../router";
@@ -139,6 +141,137 @@ function enginePill(snapshot: PanelSnapshot): { variant: PillVariant; text: stri
 	}
 }
 
+/**
+ * The model that picks the move at the target rating, from the snapshot alone: Maia-3 (sized by
+ * the target) below `MAIA.eloMax` while the human model is on, else Stockfish on the small net up
+ * to `LIMITS.nnueSmallEloMax` and the full net above it. The derived target (a matched opponent)
+ * wins over the stored slider value, as it does in the session.
+ */
+export function selectionModel(snapshot: PanelSnapshot): string {
+	const { strength } = snapshot.settings;
+	const target = snapshot.opponent?.derivedTargetElo ?? strength.targetElo;
+	const { selection } = COPY.engineView;
+	if (usesMaia(target)) return selection.maia(selection.maiaSizes[maiaSizeFor(target)]);
+	return target > LIMITS.nnueSmallEloMax ? selection.stockfishFull : selection.stockfishSmall;
+}
+
+/** What the Human-model block shows for a snapshot (exported for the view's tests). */
+export interface PolicyBlock {
+	name: string;
+	pill: { variant: PillVariant; text: string };
+	/** The last answer's pick probability and WDL, or why there is none. */
+	detail: string;
+	latency: string;
+	meta: string;
+	/** Identity of the recommendation the answer belongs to; a new one adds a sparkline sample. */
+	sampleKey: string | null;
+	sampleMs: number | null;
+	/** The fidelity meters (§3.2) present on `rec.maia`, in template order; empty → the list hides. */
+	meters: Array<{ row: PolicyMeterRow; value: string }>;
+	/** H7.1: the history warning, or `null`. */
+	warning: string | null;
+}
+
+export type PolicyMeterRow = keyof typeof COPY.engineView.policy.meters;
+
+const PERCENT = 100;
+const pct = (v: number): string => String(Math.round(v * PERCENT));
+const ENTROPY_DIGITS = 2;
+const KL_DIGITS = 3;
+
+/**
+ * The meters `rec.maia` carries, as rows: the history window and the rating asked at come with
+ * every answer; the draw's own meters only when the selector drew from the model
+ * (`rec.maia.meters`); the generate-and-verify pair only when that path ran.
+ */
+export function policyMeters(maia: NonNullable<PanelSnapshot["recommendation"]>["maia"]): {
+	rows: PolicyBlock["meters"];
+} {
+	const { policy: copy } = COPY.engineView;
+	const rows: PolicyBlock["meters"] = [];
+	if (!maia) return { rows };
+	if (maia.historyPlies !== undefined)
+		rows.push({ row: "history", value: copy.historyValue(maia.historyPlies, MAIA_INPUT.history) });
+	if (maia.selfElo !== undefined)
+		rows.push({ row: "selfElo", value: copy.eloValue(Math.round(maia.selfElo)) });
+	const m = maia.meters;
+	if (m) {
+		rows.push({ row: "entropy", value: m.entropy.toFixed(ENTROPY_DIGITS) });
+		rows.push({ row: "railed", value: copy.pctValue(pct(m.railedMass)) });
+		rows.push({ row: "unscored", value: copy.pctValue(pct(m.unscoredMass)) });
+		rows.push({ row: "kl", value: m.klFromMaia.toFixed(KL_DIGITS) });
+		rows.push({
+			row: "rank",
+			value: m.rank > 0 ? copy.rankValue(m.rank, m.survivors) : COPY.engineView.none,
+		});
+		if (m.candidates !== undefined && m.verifyDepth !== undefined)
+			rows.push({ row: "candidates", value: copy.candidatesValue(m.candidates, m.verifyDepth) });
+	}
+	return { rows };
+}
+
+/** H7.1: the query carried fewer plies than the model's window, and the game is past that window. */
+export function policyHistoryWarning(historyPlies: number | undefined, ply: number): string | null {
+	if (historyPlies === undefined) return null;
+	if (historyPlies >= MAIA_INPUT.history || ply <= MAIA_INPUT.history) return null;
+	return COPY.engineView.policy.historyWarning;
+}
+
+/**
+ * The Maia-3 block from the snapshot alone: the size the target maps to (or that Stockfish's own
+ * policy applies at this rating), whether the last recommendation carried an answer, that
+ * answer's pick probability and WDL, and its inference time — the value the sparkline tracks,
+ * one point per recommendation the model answered (not per snapshot, which repeat it).
+ */
+export function policyBlock(snapshot: PanelSnapshot): PolicyBlock {
+	const { strength } = snapshot.settings;
+	const target = snapshot.opponent?.derivedTargetElo ?? strength.targetElo;
+	const { policy: copy, selection, none } = COPY.engineView;
+	const active = usesMaia(target);
+	const rec = snapshot.recommendation;
+	const maia = rec?.maia;
+	// H15: above `MAIA.eloMax` the model still answers as the engine's prior, so an answer on the
+	// recommendation is shown whatever the target; without one the block says what selects.
+	if (!active && !maia)
+		return {
+			name: copy.inactive,
+			pill: { variant: "idle", text: copy.off },
+			detail: none,
+			latency: none,
+			meta: none,
+			sampleKey: null,
+			sampleMs: null,
+			meters: [],
+			warning: null,
+		};
+	const name = copy.name(selection.maiaSizes[maia?.size ?? maiaSizeFor(target)]);
+	if (!maia || !rec)
+		return {
+			name,
+			pill: { variant: "idle", text: copy.waiting },
+			detail: none,
+			latency: none,
+			meta: none,
+			sampleKey: null,
+			sampleMs: null,
+			meters: [],
+			warning: null,
+		};
+	const [loss, draw, win] = maia.wdl;
+	const used = rec.chosen.source === "maia" && maia.p !== undefined;
+	return {
+		name,
+		pill: { variant: "ok", text: copy.answered },
+		detail: used ? copy.wdl(pct(win), pct(draw), pct(loss)) : copy.fallback,
+		latency: maia.ms === undefined ? none : copy.latency(String(Math.round(maia.ms))),
+		meta: used && maia.p !== undefined ? copy.pick(pct(maia.p)) : none,
+		sampleKey: `${rec.fen}:${rec.computedAt}`,
+		sampleMs: maia.ms ?? null,
+		meters: policyMeters(maia).rows,
+		warning: policyHistoryWarning(maia.historyPlies, snapshot.session.ply),
+	};
+}
+
 function nnueNames(names: readonly string[]): string {
 	const short = names.map((n) => n.replace(/\.nnue$/, "")).filter(Boolean);
 	return short.length > 0 ? short.join(" + ") : COPY.engine.rows.nnueLoaded;
@@ -179,8 +312,12 @@ async function defaultClipboard(text: string): Promise<void> {
  * The nps sparkline: a ring of ≤ `LIMITS.npsSparklineSamples` samples drawn as an SVG polyline.
  * Geometry is token-sized here; colours come from `css/views/engine.css` (theme tokens).
  */
-function createSparkline(host: HTMLElement): { push(nps: number): void; dispose(): void } {
-	const width = LIMITS.npsSparklineSamples * TOKENS.unit;
+function createSparkline(
+	host: HTMLElement,
+	label: string = COPY.engineView.sparkline,
+	capacity: number = LIMITS.npsSparklineSamples
+): { push(value: number): void; dispose(): void } {
+	const width = capacity * TOKENS.unit;
 	const height = TOKENS.space[8];
 	const svg = document.createElementNS(SVG_NS, "svg");
 	svg.setAttribute("class", "sl-engine__spark-svg");
@@ -194,7 +331,7 @@ function createSparkline(host: HTMLElement): { push(nps: number): void; dispose(
 	line.setAttribute("class", "sl-engine__spark-line");
 	svg.append(area, line);
 	host.replaceChildren(svg);
-	host.setAttribute("aria-label", COPY.engineView.sparkline);
+	host.setAttribute("aria-label", label);
 	const samples: number[] = [];
 
 	function render(): void {
@@ -217,9 +354,9 @@ function createSparkline(host: HTMLElement): { push(nps: number): void; dispose(
 	}
 
 	return {
-		push(nps) {
-			samples.push(Math.max(0, nps));
-			if (samples.length > LIMITS.npsSparklineSamples) samples.shift();
+		push(value) {
+			samples.push(Math.max(0, value));
+			if (samples.length > capacity) samples.shift();
 			render();
 		},
 		dispose() {
@@ -251,6 +388,7 @@ export function createEngineView(deps: EngineViewDeps = {}): View {
 
 			// ── headings & labels ──────────────────────────────────────────────────
 			part(el, '[data-part="title-engine"]').textContent = COPY.engineView.sections.engine;
+			part(el, '[data-part="title-policy"]').textContent = COPY.engineView.sections.policy;
 			part(el, '[data-part="title-executor"]').textContent = COPY.engineView.sections.executor;
 			part(el, '[data-part="title-timing"]').textContent = COPY.engineView.sections.timing;
 			part(el, '[data-part="title-session"]').textContent = COPY.engineView.sections.session;
@@ -269,14 +407,39 @@ export function createEngineView(deps: EngineViewDeps = {}): View {
 			// ── parts ──────────────────────────────────────────────────────────────
 			const version = part(el, ".sl-engine__version");
 			const resources = part(el, ".sl-engine__resources");
+			const selection = part(el, ".sl-engine__selection");
 			const nps = part(el, ".sl-engine__nps");
 			const depth = part(el, ".sl-engine__depth");
-			const sparkline = createSparkline(part(el, ".sl-engine__spark"));
+			const sparkline = createSparkline(part(el, ".sl-engine__spark:not(.sl-engine__spark--policy)"));
 			const statusPill: PillHandle = createPill(part(el, ".sl-engine__status"), {
 				variant: "idle",
 				icon: "status.idle",
 				text: COPY.engine.loading,
 			});
+			const policyName = part(el, ".sl-engine__policy-name");
+			const policyDetail = part(el, ".sl-engine__policy-detail");
+			const policyLatency = part(el, ".sl-engine__policy-latency");
+			const policyMeta = part(el, ".sl-engine__policy-meta");
+			const policySparkline = createSparkline(
+				part(el, ".sl-engine__policy-spark"),
+				COPY.engineView.policy.sparkline,
+				LIMITS.policySparklineSamples
+			);
+			const policyPill: PillHandle = createPill(part(el, ".sl-engine__policy-status"), {
+				variant: "idle",
+				icon: "status.idle",
+				text: COPY.engineView.policy.off,
+			});
+			const policyMetersList = part(el, ".sl-engine__policy-meters");
+			const policyWarning = part(el, ".sl-engine__policy-warning");
+			const meterRows = Object.keys(COPY.engineView.policy.meters) as PolicyMeterRow[];
+			const meterCells = new Map<PolicyMeterRow, { row: HTMLElement; value: HTMLElement }>();
+			for (const row of meterRows) {
+				const rowEl = part(policyMetersList, `[data-meter="${row}"]`);
+				part(rowEl, ".sl-engine__key").textContent = COPY.engineView.policy.meters[row];
+				meterCells.set(row, { row: rowEl, value: part(rowEl, ".sl-engine__value") });
+			}
+			let lastPolicySample: string | null = null;
 			const valueCell = (row: string): HTMLElement =>
 				part(el, `[data-row="${row}"] .sl-engine__value`);
 			const debuggerFlag = part(el, '[data-row="debugger"] .sl-engine__flag');
@@ -403,8 +566,11 @@ export function createEngineView(deps: EngineViewDeps = {}): View {
 				const { engine, settings } = snapshot;
 				handsOff = isHandsOff(snapshot);
 				attached = snapshot.executor.debuggerAttached;
-				version.textContent = COPY.engine.rows.version(engine.version, nnueNames(engine.nnue));
+				version.textContent = engine.fallbackFrom
+					? `${COPY.engine.rows.version(engine.version, nnueNames(engine.nnue))} · ${COPY.engine.rows.fallback}`
+					: COPY.engine.rows.version(engine.version, nnueNames(engine.nnue));
 				resources.textContent = COPY.engine.rows.resources(engine.threads, settings.engine.hashMb);
+				selection.textContent = selectionModel(snapshot);
 				const npsValue = engine.nps ?? snapshot.recommendation?.nps;
 				nps.textContent = formatNps(npsValue);
 				depth.textContent = COPY.engineView.depth(snapshot.recommendation?.depth ?? 0);
@@ -426,6 +592,33 @@ export function createEngineView(deps: EngineViewDeps = {}): View {
 					lastSampleAt = now;
 					sparkline.push(npsValue);
 				}
+				const policy = policyBlock(snapshot);
+				policyName.textContent = policy.name;
+				policyDetail.textContent = policy.detail;
+				policyLatency.textContent = policy.latency;
+				policyMeta.textContent = policy.meta;
+				policyPill.update({
+					variant: policy.pill.variant,
+					icon: policy.pill.variant === "ok" ? "status.ok" : "status.idle",
+					text: policy.pill.text,
+				});
+				const shown = new Map(policy.meters.map((m) => [m.row, m.value]));
+				for (const [row, cells] of meterCells) {
+					const value = shown.get(row);
+					cells.row.hidden = value === undefined;
+					cells.value.textContent = value ?? "";
+				}
+				policyMetersList.hidden = policy.meters.length === 0;
+				policyWarning.hidden = policy.warning === null;
+				policyWarning.textContent = policy.warning ?? "";
+				if (
+					policy.sampleKey !== null &&
+					policy.sampleMs !== null &&
+					policy.sampleKey !== lastPolicySample
+				) {
+					lastPolicySample = policy.sampleKey;
+					policySparkline.push(policy.sampleMs);
+				}
 
 				valueCell("debugger").textContent = attached ? COPY.executor.attached : COPY.executor.detached;
 				debuggerFlag.hidden = !attached;
@@ -438,10 +631,8 @@ export function createEngineView(deps: EngineViewDeps = {}): View {
 							? COPY.engineView.site
 							: COPY.engineView.none;
 				const execution = snapshot.session.lastExecution;
-				// Every committed move is a drag (there is no click-to-move), so the row names the
-				// timing profile against the one input method the hand has.
 				valueCell("input").textContent = COPY.engineView.inputMode(
-					COPY.execution.drag,
+					SETTINGS_COPY.options.inputMode[settings.execution.inputMode],
 					COPY.engineView.profiles[settings.timing.profile]
 				);
 				valueCell("last").textContent = execution
@@ -605,6 +796,8 @@ export function createEngineView(deps: EngineViewDeps = {}): View {
 				logging.dispose();
 				sparkline.dispose();
 				statusPill.dispose();
+				policySparkline.dispose();
+				policyPill.dispose();
 				for (const b of commands) b.dispose();
 				el.remove();
 			};

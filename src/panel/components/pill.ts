@@ -44,7 +44,12 @@ export function createPill(host: HTMLElement | null, initial: PillState = {}): P
 			});
 		if (state.text !== undefined && state.text !== text.textContent) {
 			text.textContent = state.text;
-			void ANIM.fade(text, "in");
+			// Only once the pill is in the document. A fade started on a detached node has no
+			// timeline: it stays play-pending at its first keyframe and `fill: "both"` pins the text at
+			// opacity 0 for good — the live view's first render happens before the view is appended
+			// (the store replays its snapshot synchronously on subscribe), and a label set there that
+			// never changes again (telemetry, debugger) stayed invisible.
+			if (text.isConnected) void ANIM.fade(text, "in");
 		}
 		if (state.ariaLabel !== undefined) {
 			if (state.ariaLabel) el.setAttribute("aria-label", state.ariaLabel);

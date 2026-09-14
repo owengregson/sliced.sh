@@ -19,11 +19,71 @@
 		<div class="sl-engine__row">
 			<span class="sl-engine__resources sl-type-body sl-text-secondary"></span>
 		</div>
+		<div class="sl-engine__row">
+			<span class="sl-engine__selection sl-type-body sl-text-secondary"></span>
+		</div>
 		<div class="sl-engine__row sl-row sl-row--between sl-row--baseline">
 			<span class="sl-engine__nps sl-type-numeral-sm sl-text-numerals sl-text-primary"></span>
 			<span class="sl-engine__depth sl-type-label sl-text-secondary"></span>
 		</div>
 		<div class="sl-engine__spark" role="img"></div>
+	</div>
+
+	<header class="sl-section">
+		<hr class="sl-section__rule" />
+		<div class="sl-section__row">
+			<!-- biome-ignore lint/a11y/useHeadingContent: filled from copy.ts at mount -->
+			<h2 class="sl-section__title sl-type-title" data-part="title-policy"></h2>
+		</div>
+	</header>
+	<div class="sl-engine__block sl-stack sl-gap-1" data-block="policy">
+		<div class="sl-engine__row sl-row sl-row--between">
+			<span class="sl-engine__policy-name sl-type-body sl-text-primary sl-text-truncate"></span>
+			<span class="sl-engine__policy-status sl-shrink-0"></span>
+		</div>
+		<div class="sl-engine__row">
+			<span class="sl-engine__policy-detail sl-type-body sl-text-secondary sl-text-numerals"></span>
+		</div>
+		<div class="sl-engine__row sl-row sl-row--between sl-row--baseline">
+			<span class="sl-engine__policy-latency sl-type-numeral-sm sl-text-numerals sl-text-primary"></span>
+			<span class="sl-engine__policy-meta sl-type-label sl-text-secondary sl-text-numerals"></span>
+		</div>
+		<dl class="sl-engine__kv sl-engine__policy-meters" hidden>
+			<div class="sl-engine__kv-row" data-meter="history">
+				<dt class="sl-engine__key sl-type-label sl-text-secondary"></dt>
+				<dd class="sl-engine__value sl-type-label sl-text-primary sl-text-numerals"></dd>
+			</div>
+			<div class="sl-engine__kv-row" data-meter="selfElo">
+				<dt class="sl-engine__key sl-type-label sl-text-secondary"></dt>
+				<dd class="sl-engine__value sl-type-label sl-text-primary sl-text-numerals"></dd>
+			</div>
+			<div class="sl-engine__kv-row" data-meter="entropy">
+				<dt class="sl-engine__key sl-type-label sl-text-secondary"></dt>
+				<dd class="sl-engine__value sl-type-label sl-text-primary sl-text-numerals"></dd>
+			</div>
+			<div class="sl-engine__kv-row" data-meter="railed">
+				<dt class="sl-engine__key sl-type-label sl-text-secondary"></dt>
+				<dd class="sl-engine__value sl-type-label sl-text-primary sl-text-numerals"></dd>
+			</div>
+			<div class="sl-engine__kv-row" data-meter="unscored">
+				<dt class="sl-engine__key sl-type-label sl-text-secondary"></dt>
+				<dd class="sl-engine__value sl-type-label sl-text-primary sl-text-numerals"></dd>
+			</div>
+			<div class="sl-engine__kv-row" data-meter="kl">
+				<dt class="sl-engine__key sl-type-label sl-text-secondary"></dt>
+				<dd class="sl-engine__value sl-type-label sl-text-primary sl-text-numerals"></dd>
+			</div>
+			<div class="sl-engine__kv-row" data-meter="rank">
+				<dt class="sl-engine__key sl-type-label sl-text-secondary"></dt>
+				<dd class="sl-engine__value sl-type-label sl-text-primary sl-text-numerals"></dd>
+			</div>
+			<div class="sl-engine__kv-row" data-meter="candidates">
+				<dt class="sl-engine__key sl-type-label sl-text-secondary"></dt>
+				<dd class="sl-engine__value sl-type-label sl-text-primary sl-text-numerals"></dd>
+			</div>
+		</dl>
+		<p class="sl-engine__policy-warning sl-type-label" hidden></p>
+		<div class="sl-engine__spark sl-engine__spark--policy sl-engine__policy-spark" role="img"></div>
 	</div>
 
 	<header class="sl-section">

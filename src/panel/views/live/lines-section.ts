@@ -1,13 +1,15 @@
 /**
- * Lines section (Appendix F §4.4 item 6, §5.7): header with a count chip that opens the 1–5
- * stepper (`display.pvCount` via `setSettings`), and the PV rows. Row count = the setting,
- * capped by the collapse state (§8.2 step 2) and by 2 at the compact breakpoint (§4.5).
+ * Lines section (Appendix F §4.4 item 6, §5.7): header with a count chip that opens the
+ * 1–`LIMITS.multiPvMax` stepper (`engine.multiPv` via `setSettings` — the lines the engine
+ * searches are the lines shown, one knob since 2026-09-13), and the PV rows. Row count = the
+ * setting, capped by the collapse state (§8.2 step 2) and by 2 at the compact breakpoint (§4.5).
  * Hover previews the line's first move on the board (`PANEL_PREVIEW_LINE {tabId, multipv}`,
  * `null` on leave); click pins the preview until another click or the position changes.
  * Scores come from the side to move and are shown from White's point of view.
  */
 
 import { sideToMove } from "@core/chess/fen";
+import { LIMITS } from "@core/constants/limits";
 import type { PanelSnapshot } from "@core/constants/messages";
 import { toWhitePov } from "@core/engine/snapshot";
 import { log } from "@core/logger";
@@ -22,8 +24,8 @@ import { part } from "../../template";
 
 /** §8.1: compact shows at most two rows. */
 const COMPACT_PV_MAX = 2;
-const PV_COUNT_MIN = 1;
-const PV_COUNT_MAX = 5;
+const PV_COUNT_MIN = LIMITS.multiPvMin;
+const PV_COUNT_MAX = LIMITS.multiPvMax;
 
 export interface LinesSectionOptions {
 	root: HTMLElement;
@@ -102,8 +104,8 @@ export function createLinesSection(options: LinesSectionOptions): LinesSectionHa
 			value: current,
 			onChange: (value) => {
 				if (value === null) return;
-				setSettings({ display: { pvCount: Number(value) } }).catch((error: unknown) =>
-					log.warn("live: pvCount write failed", error)
+				setSettings({ engine: { multiPv: Number(value) } }).catch((error: unknown) =>
+					log.warn("live: lines write failed", error)
 				);
 				closeStepper();
 			},
@@ -124,7 +126,7 @@ export function createLinesSection(options: LinesSectionOptions): LinesSectionHa
 	function update(state: LinesSectionState): void {
 		handsOff = state.handsOff;
 		const snap = state.snapshot;
-		const setting = Math.min(PV_COUNT_MAX, Math.max(PV_COUNT_MIN, snap.settings.display.pvCount));
+		const setting = Math.min(PV_COUNT_MAX, Math.max(PV_COUNT_MIN, snap.settings.engine.multiPv));
 		count.textContent = COPY_LIVE.lines.count(setting);
 		count.dataset.count = String(setting);
 		const max = Math.min(setting, state.pvMax, state.compact ? COMPACT_PV_MAX : PV_COUNT_MAX);

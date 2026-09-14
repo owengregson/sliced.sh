@@ -134,3 +134,33 @@ it("mirrors the running player clock between snapshots and switches on a new sit
 	expect(mine()).toBe("03:11");
 	expect(theirs()).toBe("02:56");
 });
+
+it("shows instant-plan progress before commitment while manual and disarmed recommendations await a command", async () => {
+	const rec = makeRecommendation();
+	const plan = { ...rec.plan, mode: "instant" as const, thinkMs: 600, deadlineMs: Date.now() + 600 };
+	const preparing = liveSnapshot({
+		state: "live:my-turn:executing",
+		autoMove: { armed: true, scheduledAt: plan.deadlineMs, plan },
+	});
+	preparing.session.canPlayNow = true;
+	h = await mountLive(dom.sim, preparing);
+	const button = h.q(".sl-move__action .sl-button");
+	expect(h.root.dataset.phase).toBe("thinking");
+	expect(h.q(".sl-move__progress-value").textContent).not.toBe(COPY.move.progress.ready.value);
+	expect(h.q(".sl-move__progress-track").hidden).toBe(false);
+	expect(button.getAttribute("aria-disabled")).toBeNull();
+	expect(button.getAttribute("aria-busy")).toBe("false");
+	preparing.session.canPlayNow = false;
+	h.store.emit(preparing);
+	expect(h.root.dataset.phase).toBe("executing");
+	expect(button.getAttribute("aria-disabled")).toBe("true");
+	expect(button.getAttribute("aria-busy")).toBe("true");
+	for (const armed of [false, true]) {
+		const held = liveSnapshot({ autoMove: { armed } });
+		held.settings.timing = { ...held.settings.timing, profile: armed ? "manual" : "natural" };
+		h.store.emit(held);
+		expect(h.root.dataset.phase).toBe("ready");
+		expect(h.q(".sl-move__progress-value").textContent).toBe(COPY.move.progress.ready.value);
+		expect(h.q(".sl-move__progress-track").hidden).toBe(true);
+	}
+});

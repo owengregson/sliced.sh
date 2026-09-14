@@ -539,6 +539,31 @@
 	opacity: 1;
 }
 
+/*
+ * numeric readout under the thumb of a label-only slider: muted, shown while the value changes,
+ * faded out after `UI_TIMINGS.sliderReadoutFadeMs`; the slider reserves the line beneath it
+ */
+.sl-slider--has-readout {
+	padding-bottom: var(--sl-space-4);
+}
+
+.sl-slider__readout {
+	position: absolute;
+	top: calc(100% + var(--sl-space-1));
+	left: 50%;
+	transform: translateX(-50%);
+	color: var(--sl-color-text-tertiary);
+	white-space: nowrap;
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity var(--sl-motion-duration-4) var(--sl-motion-easing-exit);
+}
+
+.sl-slider--readout .sl-slider__readout {
+	opacity: 1;
+	transition-duration: var(--sl-motion-duration-1);
+}
+
 .sl-slider__scale {
 	display: flex;
 	justify-content: space-between;
@@ -759,6 +784,19 @@
 
 .sl-evalbar--mate .sl-evalbar__divider {
 	opacity: 0.48;
+}
+
+/* advantage: the same anatomy, thinner, the accent for White's share, under the eval rail */
+.sl-evalbar--advantage {
+	height: var(--sl-space-3);
+}
+
+.sl-evalbar--advantage .sl-evalbar__track {
+	background: var(--sl-color-brand-tint);
+}
+
+.sl-evalbar--advantage .sl-evalbar__white {
+	background: var(--sl-color-brand);
 }
 
 /* ==== 5.6 Move card ========================================================================== */
@@ -1742,6 +1780,10 @@
 		transform: none;
 	}
 
+	.sl-slider__readout {
+		transition: none;
+	}
+
 	.sl-toggle--armed .sl-toggle__track::after {
 		animation-name: none;
 		opacity: 0.32;
@@ -1779,6 +1821,10 @@
 [data-reduced-motion="true"] .sl-slider__track:hover .sl-slider__thumb,
 [data-reduced-motion="true"] .sl-slider--active .sl-slider__thumb {
 	transform: none;
+}
+
+[data-reduced-motion="true"] .sl-slider__readout {
+	transition: none;
 }
 
 [data-reduced-motion="true"] .sl-toggle--armed .sl-toggle__track::after {

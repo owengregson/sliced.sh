@@ -9,6 +9,7 @@ import path from "node:path";
 import { chromeLocalGet } from "@core/chrome/storage";
 import { LOCAL_KEYS, MSG, TOAST_KEYS, UI_TIMINGS } from "@core/constants";
 import { LIMITS } from "@core/constants/limits";
+import { MAIA } from "@core/constants/maia";
 import { QUALITY_STATISTICS, TIMING_STATISTICS } from "@core/constants/telemetry";
 import { qualityCohortKey } from "@core/strength/session-quality";
 import { TOKENS } from "@design/tokens.generated";
@@ -285,7 +286,7 @@ describe("move card states (§5.6)", () => {
 		expect(h.q(".sl-move__note").textContent).not.toBe(COPY.move.noteUnarmed("Shift+A"));
 	});
 
-	it("play button: disabled until armed → Play move → Auto-playing in 4.2s → hover Play now → Playing…; flash on executed", async () => {
+	it("play button: disabled until armed → Play move → Play now with the ring counting down → Playing…; flash on executed", async () => {
 		h = await mountLive(dom.sim, idleSnapshot());
 		// §13.4: the hand plays only once armed (the debugger attaches at arm time, never
 		// mid-game) — until then the button is a label and a keybind hint.
@@ -303,19 +304,19 @@ describe("move card states (§5.6)", () => {
 		h.store.emit(
 			idleSnapshot({ autoMove: { armed: true, scheduledAt: Date.now() + THINK_MS, plan } })
 		);
-		expect(playLabel()).toBe(COPY.move.armed("4.2"));
+		expect(playLabel()).toBe(COPY.move.armed);
 		expect(playButton().classList.contains("sl-button--armed")).toBe(true);
 		await dom.tick(1000);
-		expect(playLabel()).toBe(COPY.move.armed("3.2"));
+		expect(playLabel()).toBe(COPY.move.armed);
 		pointer(playButton(), "pointerenter");
 		expect(playLabel()).toBe(COPY.workspace.playNow);
 		await dom.tick(500);
 		expect(playLabel()).toBe(COPY.workspace.playNow); // play-now stays available while hovering
 		pointer(playButton(), "pointerleave");
 		await dom.tick(100);
-		expect(playLabel()).toBe(COPY.move.armed("2.6"));
+		expect(playLabel()).toBe(COPY.move.armed);
 		await dom.tick(2000);
-		expect(playLabel()).toBe(COPY.move.armed("1")); // whole seconds at ≤ 1 s
+		expect(playLabel()).toBe(COPY.move.armed); // whole seconds at ≤ 1 s
 
 		// Click fast-forwards the pending move; Escape remains the cancel action.
 		pointer(playButton(), "pointerenter");
@@ -415,7 +416,7 @@ describe("move card states (§5.6)", () => {
 				autoMove: { armed: true, scheduledAt: Date.now() + THINK_MS, plan: makeRecommendation().plan },
 			})
 		);
-		expect(playLabel()).toBe(COPY.move.armed("4.2"));
+		expect(playLabel()).toBe(COPY.move.armed);
 		key(document, "keydown", { key: "Escape", code: "Escape" });
 		expect(h.store.calls.at(-1)).toEqual({ type: MSG.PANEL_CANCEL_PENDING, tabId: h.tabId });
 		await dom.tick(0); // the skip is confirmed → "Skipped Nf3 · auto-play stays on"
@@ -447,10 +448,11 @@ describe("lines (§5.7)", () => {
 	it("row count from settings, stripe colours by index, hover previews, click pins", async () => {
 		h = await mountLive(dom.sim, idleSnapshot());
 		expect(h.q(".sl-live__lines-title").textContent).toBe(COPY.lines.header);
-		expect(h.q(".sl-live__count").textContent).toBe("3");
+		// The engine's `multiPv` is the one lines knob (2026-09-13): four by default.
+		expect(h.q(".sl-live__count").textContent).toBe("4");
 		let rows = h.qa(".sl-pv");
-		expect(rows).toHaveLength(3);
-		expect(rows.map((r) => r.dataset.index)).toEqual(["1", "2", "3"]);
+		expect(rows).toHaveLength(4);
+		expect(rows.map((r) => r.dataset.index)).toEqual(["1", "2", "3", "4"]);
 		expect(rows[0]?.querySelector(".sl-pv__score")?.textContent).toBe("+1.34");
 		expect(rows[0]?.querySelector(".sl-pv__moves")?.textContent).toBe("Nf3 Nc6 Bb5");
 		for (const n of ["", "-2", "-3"]) expect(LIVE_CSS).toContain(`--sl-color-hl-arrow${n}`);
@@ -458,7 +460,7 @@ describe("lines (§5.7)", () => {
 			idleSnapshot({
 				settings: {
 					...idleSnapshot().settings,
-					display: { ...idleSnapshot().settings.display, pvCount: 2 },
+					engine: { ...idleSnapshot().settings.engine, multiPv: 2 },
 				},
 			})
 		);
@@ -509,18 +511,20 @@ describe("lines (§5.7)", () => {
 		expect(h.q(".sl-pv-list__empty").hidden).toBe(false);
 	});
 
-	it("the count chip opens the 1–5 stepper and writes display.pvCount", async () => {
+	it("the count chip opens the 1–8 stepper and writes engine.multiPv (the one lines knob, 2026-09-13)", async () => {
 		h = await mountLive(dom.sim, idleSnapshot());
 		click(h.q(".sl-live__count"));
 		const pop = document.querySelector<HTMLElement>(".sl-popover");
 		expect(pop).not.toBeNull();
 		const chips = [...(pop?.querySelectorAll<HTMLElement>(".sl-chip") ?? [])];
-		expect(chips.map((c) => c.textContent?.trim())).toEqual(["1", "2", "3", "4", "5"]);
+		expect(chips.map((c) => c.textContent?.trim())).toEqual(
+			Array.from({ length: LIMITS.multiPvMax }, (_, i) => String(i + 1))
+		);
 		const five = chips[4];
 		if (five) click(five);
 		await dom.tick(0);
 		const settings = await chromeLocalGet(LOCAL_KEYS.settings);
-		expect(settings?.display.pvCount).toBe(5);
+		expect(settings?.engine.multiPv).toBe(5);
 	});
 });
 
@@ -528,8 +532,9 @@ describe("strength card (§4.4 item 7, §5.12)", () => {
 	it("shows active derived Elo and enables the fixed target only after opponent matching is disabled", async () => {
 		h = await mountLive(dom.sim, idleSnapshot());
 		expect(h.q(".sl-live__strength-elo").textContent).toBe("1893");
-		expect(h.q(".sl-live__strength-label").textContent).toBe(
-			`${COPY.strength.bands.expert} · ${COPY.personaName.balanced}`
+		expect(h.q(".sl-live__strength-label").textContent).toBe(COPY.strength.bands.expert);
+		expect(h.q(".sl-live__strength-card").getAttribute("aria-label")).toBe(
+			COPY.strength.card(1893, COPY.strength.bands.expert)
 		);
 		click(h.q(".sl-live__strength-open"));
 		const pop = document.querySelector<HTMLElement>(".sl-popover");
@@ -542,6 +547,10 @@ describe("strength card (§4.4 item 7, §5.12)", () => {
 		expect(pop?.querySelector<HTMLElement>(".sl-slider__divider")?.dataset.value).toBe(
 			String(LIMITS.nnueSmallEloMax)
 		);
+		// The unlabelled Maia-3 → Stockfish marker at 2600, the same as the Settings slider.
+		const markers = [...(pop?.querySelectorAll<HTMLElement>(".sl-slider__marker") ?? [])];
+		expect(markers.map((m) => m.dataset.value)).toEqual([String(MAIA.eloMax)]);
+		expect(markers[0]?.textContent).toBe("");
 		expect(thumb?.getAttribute("aria-valuenow")).toBe("1500");
 		expect(thumb?.getAttribute("aria-disabled")).toBe("true");
 		if (thumb) key(thumb, "keydown", { key: "ArrowRight", code: "ArrowRight" });
@@ -553,30 +562,23 @@ describe("strength card (§4.4 item 7, §5.12)", () => {
 		if (thumb) key(thumb, "keydown", { key: "ArrowRight", code: "ArrowRight" });
 		await dom.tick(0);
 		expect((await chromeLocalGet(LOCAL_KEYS.settings))?.strength.targetElo).toBe(1550);
-		const chips = [...(pop?.querySelectorAll<HTMLElement>(".sl-chip") ?? [])];
-		expect(chips).toHaveLength(4);
-		const aggressive = chips.find((c) => c.dataset.value === "aggressive");
-		if (aggressive) click(aggressive);
-		await dom.tick(0);
-		expect((await chromeLocalGet(LOCAL_KEYS.settings))?.strength.persona).toBe("aggressive");
-		const mode = pop?.querySelector<HTMLElement>('.sl-segment__item[data-value="engine-elo"]');
-		if (mode) click(mode);
-		await dom.tick(0);
-		expect((await chromeLocalGet(LOCAL_KEYS.settings))?.strength.selectionMode).toBe("engine-elo");
+		// The popover is the slider alone: the persona chips and the selection-mode segment are
+		// gone (both settings are forced, owner 2026-09-12).
+		expect(pop?.querySelectorAll(".sl-chip")).toHaveLength(0);
+		expect(pop?.querySelectorAll(".sl-segment__item")).toHaveLength(0);
+		expect(pop?.querySelectorAll('[role="slider"]')).toHaveLength(1);
 		// The card follows the snapshot, not the popover.
 		h.store.emit(
 			idleSnapshot({
 				opponent: { isBot: false, name: "Peer", ratingEstimate: 3300, derivedTargetElo: 3350 },
 				settings: {
 					...idleSnapshot().settings,
-					strength: { ...idleSnapshot().settings.strength, targetElo: 2650, persona: "blitz" },
+					strength: { ...idleSnapshot().settings.strength, targetElo: 2650 },
 				},
 			})
 		);
 		expect(h.q(".sl-live__strength-elo").textContent).toBe("3350");
-		expect(h.q(".sl-live__strength-label").textContent).toBe(
-			`${COPY.strength.bands.elite} · ${COPY.personaName.blitz}`
-		);
+		expect(h.q(".sl-live__strength-label").textContent).toBe(COPY.strength.bands.elite);
 		key(document, "keydown", { key: "Escape", code: "Escape" });
 		await dom.tick(0);
 		expect(document.querySelector('.sl-popover[data-state="open"]')).toBeNull();

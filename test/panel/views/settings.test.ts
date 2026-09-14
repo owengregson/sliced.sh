@@ -1,5 +1,6 @@
 // test/panel/views/settings.test.ts — Task 25: the Settings view (Appendix F §4.6 / §7.2).
-// Every `Settings` leaf has a row; live controls remain available; a row change writes the
+// Every `Settings` leaf has a row (except the forced leaves in `FORCED_SETTINGS`, which have
+// none); live controls remain available; a row change writes the
 // clamped value through `setSettings`; category chips intersect with the text search;
 // strength labels per band and the ≥ 2600 warning; timing presets pre-select the detected time
 // control; keybind rows swap on conflict; the TTS voice select follows `display.tts`; the license
@@ -8,28 +9,40 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
 	DEFAULT_KEYBINDS,
 	DEFAULT_SETTINGS,
+	FORCED_SETTING_VALUES,
 	LIMITS,
 	LOCAL_KEYS,
+	MAIA,
 	MSG,
 	type PanelSnapshot,
 	STRENGTH_LABEL_BANDS,
 	UI_TIMINGS,
 } from "@core/constants";
 import { normalizeSettings, type SettingsPatch } from "@core/storage/settings-storage";
-import { COPY, SETTINGS_COPY } from "@panel/copy";
+import {
+	accuracyOffsetHelp,
+	COPY,
+	KEYBIND_SCOPE_FORCED,
+	RESPECT_BUDGET_FORCED,
+	SETTINGS_COPY,
+} from "@panel/copy";
 import type { PanelStore } from "@panel/store";
 import type { PanelUiState, Router, View, ViewContext } from "@panel/view";
 import { VIEWS } from "@panel/views";
 import { createSettingsView } from "@panel/views/settings";
 import {
+	ACCURACY_OFFSET_DISPLAY,
 	clampRowValue,
+	fromDisplayValue,
+	getAtPath,
 	ROWS,
 	type SettingsLeafPath,
 	strengthBand,
 	strengthLabel,
 	tcClass,
+	toDisplayValue,
 } from "@panel/views/settings/rows";
-import { SECTIONS } from "@panel/views/settings/sections";
+import { FORCED_SETTINGS, isSectionId, SECTIONS } from "@panel/views/settings/sections";
 import type { Keybind, Settings } from "@typedefs/settings";
 import { bootPanelDom, click, key, type PanelDom } from "../dom";
 import { makeSnapshot } from "../fixtures";
@@ -185,8 +198,24 @@ function leafPaths(value: unknown, prefix = ""): string[] {
 describe("settings view · rows", () => {
 	it("every setting in DEFAULT_SETTINGS has a row (a new setting without one fails here)", async () => {
 		const h = await mountSettings();
+		// The forced leaves (owner, 2026-09-12) are exactly the leaves of `FORCED_SETTING_VALUES`,
+		// each forced to its shipped default, and none of them is rendered.
+		const forced = Object.keys(FORCED_SETTINGS).sort();
+		expect(forced).toEqual(leafPaths(FORCED_SETTING_VALUES).sort());
+		expect(forced.length).toBe(8);
+		expect(FORCED_SETTINGS["timing.respectBudget"]).toBe(RESPECT_BUDGET_FORCED);
+		expect(FORCED_SETTINGS["keybinds.global"]).toBe(KEYBIND_SCOPE_FORCED);
+		for (const path of forced as SettingsLeafPath[]) {
+			expect(getAtPath(FORCED_SETTING_VALUES as Settings, path), `forced ${path}`).toEqual(
+				getAtPath(DEFAULT_SETTINGS, path)
+			);
+			expect(h.root.querySelector(`[data-path="${path}"]`), `no row for ${path}`).toBeNull();
+			expect(FORCED_SETTINGS[path as keyof typeof FORCED_SETTINGS].length).toBeGreaterThan(0);
+		}
 		// Legacy automatic speech is retained in storage, but deliberately has no UI control.
-		const paths = leafPaths(DEFAULT_SETTINGS).filter((path) => path !== "display.tts");
+		const paths = leafPaths(DEFAULT_SETTINGS).filter(
+			(path) => path !== "display.tts" && !forced.includes(path)
+		);
 		expect(h.root.querySelector('[data-path="display.tts"]')).toBeNull();
 		expect(paths.length).toBeGreaterThan(40);
 		for (const path of paths) {
@@ -197,26 +226,84 @@ describe("settings view · rows", () => {
 		expect([...tablePaths].sort()).toEqual([...paths].sort());
 		const laidOut: string[] = SECTIONS.flatMap((s) => s.rows);
 		expect([...laidOut].sort()).toEqual([...tablePaths].sort());
+		// Settings layout, 2026-09-13 (`docs/qa/settings-layout-2026-09-13.md`): the ten sections,
+		// Strength first with the target rating as its first row, the master switch first in
+		// Automation, dependants directly beneath their switch, paired ranges adjacent.
 		expect(SECTIONS.map((s) => s.id)).toEqual([
 			"strength",
+			"automation",
 			"timing",
-			"execution",
+			"hand",
+			"board",
+			"panel",
 			"keybinds",
-			"display",
+			"engine",
 			"account",
 			"advanced",
 		]);
+		const rowsOf = (id: string): readonly string[] => SECTIONS.find((s) => s.id === id)?.rows ?? [];
+		expect(rowsOf("strength")).toEqual([
+			"strength.targetElo",
+			"strength.matchOpponentRating",
+			"strength.personaEloOffset",
+			"strength.blunderScale",
+			"strength.useOpeningBook",
+		]);
+		expect(rowsOf("automation")).toEqual([
+			"enabled",
+			"automation.autoMove",
+			"automation.resignLostGames",
+			"automation.autoQueue",
+			"automation.autoQueueSessionMinMinutes",
+			"automation.autoQueueSessionMaxMinutes",
+			"automation.autoQueueBreakMinMinutes",
+			"automation.autoQueueBreakMaxMinutes",
+			"automation.rematchTitled",
+		]);
+		expect(rowsOf("timing")[0]).toBe("timing.profile");
+		expect(rowsOf("hand")).toEqual([
+			"execution.inputMode",
+			"execution.motorSpeed",
+			"execution.previewSelectScale",
+			"execution.verifyMoves",
+		]);
+		expect(rowsOf("board")).toEqual([
+			"automation.highlightMoves",
+			"automation.highlightStyle",
+			"automation.boardEffects",
+			"automation.moveQualityChips",
+			"display.virtualCursor",
+			"display.cursorEffects",
+		]);
+		expect(rowsOf("panel")).toEqual([
+			"display.evalBar",
+			"engine.multiPv",
+			"display.theme",
+			"display.reducedMotion",
+			"display.uiSounds",
+			"display.ttsVoice",
+		]);
+		expect(rowsOf("engine")).toEqual(["engine.threads", "engine.hashMb", "engine.depthCap"]);
+		expect(rowsOf("advanced")).toEqual(["advanced.logLevel", "advanced.timingLogEnabled"]);
 		for (const section of SECTIONS) {
 			const el = h.root.querySelector(`[data-section="${section.id}"]`);
 			expect(el?.querySelector(".sl-section__title")?.textContent).toBe(section.title);
 		}
+		// The DOM follows the table: the target rating is the first row on the page.
+		expect(h.root.querySelector<HTMLElement>(".sl-settings-row[data-path]")?.dataset.path).toBe(
+			"strength.targetElo"
+		);
 		// V2.1 additions and their copy.
 		expect(row(h.root, "strength.matchOpponentRating").querySelector("[role=switch]")).not.toBeNull();
 		expect(row(h.root, "strength.personaEloOffset").querySelector("[role=slider]")).not.toBeNull();
-		expect(
-			row(h.root, "execution.previewSelects").querySelectorAll(".sl-segment__item")
-		).toHaveLength(2);
+		// The preview segment folded into the rate slider (one control with an Off position).
+		expect(h.root.querySelector('[data-path="execution.previewSelects"]')).toBeNull();
 		expect(row(h.root, "execution.previewSelectScale").querySelector("[role=slider]")).not.toBeNull();
+		expect(row(h.root, "automation.resignLostGames").querySelector("[role=switch]")).not.toBeNull();
+		expect(row(h.root, "automation.moveQualityChips").querySelector("[role=switch]")).not.toBeNull();
+		expect(h.root.querySelector('[data-path="display.pvCount"]')).toBeNull();
+		expect(h.root.querySelector('[data-path="keybinds.global"]')).toBeNull();
+		expect(h.root.querySelector('[data-path="timing.respectBudget"]')).toBeNull();
 		const highlight = row(h.root, "automation.highlightMoves");
 		expect(highlight.querySelector("[role=switch]")?.getAttribute("aria-checked")).toBe(
 			String(DEFAULT_SETTINGS.automation.highlightMoves)
@@ -224,13 +311,20 @@ describe("settings view · rows", () => {
 		expect(highlight.querySelector(".sl-settings-row__help")?.textContent).toBe(
 			SETTINGS_COPY.rows["automation.highlightMoves"].help
 		);
+		// Board effects (owner's brief, 2026-09-13): a toggle directly beneath "Highlight moves".
+		const boardEffects = row(h.root, "automation.boardEffects");
+		expect(boardEffects.querySelector("[role=switch]")?.getAttribute("aria-checked")).toBe(
+			String(DEFAULT_SETTINGS.automation.boardEffects)
+		);
+		expect(boardEffects.querySelector(".sl-settings-row__help")?.textContent).toBe(
+			SETTINGS_COPY.rows["automation.boardEffects"].help
+		);
 		expect(
-			row(h.root, "execution.calibrateFromMyMouse").querySelector("[role=switch]")
-		).not.toBeNull();
+			highlight.compareDocumentPosition(boardEffects) & Node.DOCUMENT_POSITION_FOLLOWING
+		).toBeGreaterThan(0);
 		expect(
-			row(h.root, "execution.keepDebuggerAttached").querySelector(".sl-settings-row__help")
-				?.textContent
-		).toBe(COPY.execution.debugger);
+			row(h.root, "execution.verifyMoves").querySelector(".sl-settings-row__help")?.textContent
+		).toBe(COPY.execution.verify);
 		// The registry entry is the real view.
 		expect(VIEWS.settings).not.toBeUndefined();
 		const content = document.createElement("div");
@@ -259,20 +353,32 @@ describe("settings view · rows", () => {
 		await dom.tick(0);
 		expect(h.patches[1]).toEqual({ strength: { targetElo: LIMITS.eloMax } });
 		// Stepper: + at the max is a no-op write-wise; − steps down by one.
-		const pv = row(h.root, "display.pvCount");
+		const pv = row(h.root, "engine.multiPv");
 		for (let i = 0; i < LIMITS.multiPvMax + 2; i++) click(q(pv, ".sl-stepper__button--inc"));
 		await dom.tick(0);
-		expect(h.settings().display.pvCount).toBe(LIMITS.multiPvMax);
+		expect(h.settings().engine.multiPv).toBe(LIMITS.multiPvMax);
 		expect(q(pv, ".sl-stepper__value").textContent).toBe(String(LIMITS.multiPvMax));
 		click(q(pv, ".sl-stepper__button--dec"));
 		await dom.tick(0);
-		expect(h.patches.at(-1)).toEqual({ display: { pvCount: LIMITS.multiPvMax - 1 } });
+		expect(h.patches.at(-1)).toEqual({ engine: { multiPv: LIMITS.multiPvMax - 1 } });
 		// Chips and segments → enum patches.
-		click(q(row(h.root, "strength.persona"), '.sl-chip[data-value="aggressive"]'));
-		click(q(row(h.root, "execution.backend"), '.sl-segment__item[data-value="native"]'));
+		click(q(row(h.root, "automation.highlightStyle"), '.sl-chip[data-value="arrows"]'));
+		click(q(row(h.root, "execution.inputMode"), '.sl-segment__item[data-value="click"]'));
 		await dom.tick(0);
-		expect(h.patches.at(-2)).toEqual({ strength: { persona: "aggressive" } });
-		expect(h.patches.at(-1)).toEqual({ execution: { backend: "native" } });
+		expect(h.patches.at(-2)).toEqual({ automation: { highlightStyle: "arrows" } });
+		expect(h.patches.at(-1)).toEqual({ execution: { inputMode: "click" } });
+		// The preview slider's Home is its Off position (0), labelled as such.
+		const preview = row(h.root, "execution.previewSelectScale");
+		expect(q(preview, ".sl-slider__value").textContent).toBe(
+			SETTINGS_COPY.format.times(DEFAULT_SETTINGS.execution.previewSelectScale)
+		);
+		key(q(preview, "[role=slider]"), "keydown", { key: "Home" });
+		await dom.tick(0);
+		expect(h.patches.at(-1)).toEqual({ execution: { previewSelectScale: 0 } });
+		expect(q(preview, ".sl-slider__value").textContent).toBe(SETTINGS_COPY.format.previewOff);
+		expect(q(preview, "[role=slider]").getAttribute("aria-valuetext")).toBe(
+			SETTINGS_COPY.format.previewOff
+		);
 		// Select → string patch; threads stepper below 1 means "auto".
 		const level = q<HTMLSelectElement>(row(h.root, "advanced.logLevel"), "select");
 		level.value = "debug";
@@ -291,15 +397,18 @@ describe("settings view · rows", () => {
 		expect(clampRowValue("strength.targetElo", 99_999)).toBe(LIMITS.eloMax);
 		expect(clampRowValue("strength.targetElo", -5)).toBe(LIMITS.eloMin);
 		expect(clampRowValue("engine.hashMb", 1)).toBe(LIMITS.hashMbMin);
-		expect(clampRowValue("display.pvCount", 3.4)).toBe(3);
+		expect(clampRowValue("engine.multiPv", 3.4)).toBe(3);
 		// A snapshot from the SW re-renders the controls.
 		h.store.emit(
 			makeSnapshot({
-				settings: { display: { ...DEFAULT_SETTINGS.display, pvCount: 2, evalBar: false } },
+				settings: {
+					display: { ...DEFAULT_SETTINGS.display, evalBar: false },
+					engine: { ...DEFAULT_SETTINGS.engine, multiPv: 2 },
+				},
 			})
 		);
 		await dom.tick(0);
-		expect(q(row(h.root, "display.pvCount"), ".sl-stepper__value").textContent).toBe("2");
+		expect(q(row(h.root, "engine.multiPv"), ".sl-stepper__value").textContent).toBe("2");
 		expect(q(row(h.root, "display.evalBar"), "[role=switch]").getAttribute("aria-checked")).toBe(
 			"false"
 		);
@@ -383,6 +492,43 @@ describe("settings view · playing sessions", () => {
 });
 
 describe("settings view · live interaction", () => {
+	it("derives read-only depth from live matched Elo and updates when strength changes", async () => {
+		const snapshot = makeSnapshot({
+			state: "live:opponent-turn",
+			settings: {
+				strength: { ...DEFAULT_SETTINGS.strength, targetElo: 3800, matchOpponentRating: true },
+				engine: { ...DEFAULT_SETTINGS.engine, depthCap: 6 },
+			},
+		});
+		snapshot.opponent = {
+			isBot: false,
+			name: "opponent",
+			ratingEstimate: 1600,
+			derivedTargetElo: 1650,
+		};
+		const h = await mountSettings(snapshot);
+		const depth = row(h.root, "engine.depthCap");
+		const output = q(depth, ".sl-settings-row__value");
+		expect(output.textContent).toBe("Auto · 16");
+		expect(depth.querySelector("button, input, [role=slider]")).toBeNull();
+		key(output, "keydown", { key: "End" });
+		expect(h.patches).toHaveLength(0);
+		h.store.emit({
+			...snapshot,
+			opponent: { ...snapshot.opponent, derivedTargetElo: 3250 },
+		});
+		expect(output.textContent).toBe("Auto · 30");
+		h.store.emit(snapshot);
+		expect(output.textContent).toBe("Auto · 16");
+		click(q(row(h.root, "strength.matchOpponentRating"), "[role=switch]"));
+		await dom.tick(0);
+		expect(output.textContent).toBe("Auto · 30");
+		key(q(row(h.root, "strength.targetElo"), "[role=slider]"), "keydown", { key: "Home" });
+		await dom.tick(0);
+		expect(output.textContent).toBe("Auto · 6");
+		expect(h.patches.every((patch) => patch.engine === undefined)).toBe(true);
+	});
+
 	it("disables and dims the fixed target while matching the opponent, retaining its saved value", async () => {
 		const h = await mountSettings();
 		const target = row(h.root, "strength.targetElo");
@@ -533,14 +679,6 @@ describe("settings view · strength", () => {
 		expect(q(slider, ".sl-slider__hint").textContent).toBe(COPY.strength.warning);
 		key(thumb, "keydown", { key: "Home" });
 		expect(q(slider, ".sl-slider__hint").hidden).toBe(true);
-		// The persona chips carry their descriptions.
-		expect(row(h.root, "strength.persona").querySelector(".sl-settings-row__help")?.textContent).toBe(
-			COPY.persona.balanced
-		);
-		click(q(row(h.root, "strength.persona"), '.sl-chip[data-value="cautious"]'));
-		expect(row(h.root, "strength.persona").querySelector(".sl-settings-row__help")?.textContent).toBe(
-			COPY.persona.cautious
-		);
 		expect(UI_TIMINGS.strengthDangerElo).toBe(2600);
 	});
 });
@@ -646,11 +784,9 @@ describe("settings view · keybinds", () => {
 				},
 			},
 		});
-		click(q(row(h.root, "keybinds.global"), '.sl-segment__item[data-value="global"]'));
-		await dom.tick(0);
-		expect(h.patches.at(-1)).toEqual({ keybinds: { global: true } });
-		expect(play.querySelector<HTMLElement>(".sl-keybind")?.dataset.invalid).toBe("true");
-		expect(q(play, ".sl-keybind__hint").textContent).toBe(COPY.keybind.global);
+		// The scope row is gone (2026-09-13): page shortcuts never need a modifier.
+		expect(h.root.querySelector('[data-path="keybinds.global"]')).toBeNull();
+		expect(play.querySelector<HTMLElement>(".sl-keybind")?.dataset.invalid).toBeUndefined();
 	});
 });
 
@@ -759,7 +895,7 @@ describe("settings view · advanced and footer", () => {
 		click(q(h.root, ".sl-settings-advanced__export"));
 		await dom.tick(0);
 		expect(h.store.dispatched).toEqual([MSG.PANEL_EXPORT_TIMING_LOG]);
-		// Hash is a select over the power-of-two sizes inside LIMITS; depth cap a slider.
+		// Hash remains editable; depth is derived automatically from active strength.
 		const hash = q<HTMLSelectElement>(row(h.root, "engine.hashMb"), "select");
 		expect([...hash.querySelectorAll("option")].map((o) => o.value)).toEqual([
 			"16",
@@ -768,9 +904,9 @@ describe("settings view · advanced and footer", () => {
 			"128",
 		]);
 		expect(hash.value).toBe(String(DEFAULT_SETTINGS.engine.hashMb));
-		const depth = q(row(h.root, "engine.depthCap"), "[role=slider]");
-		expect(depth.getAttribute("aria-valuemin")).toBe(String(LIMITS.depthMin));
-		expect(depth.getAttribute("aria-valuemax")).toBe(String(LIMITS.depthMax));
+		const depth = row(h.root, "engine.depthCap");
+		expect(depth.querySelector("[role=slider]")).toBeNull();
+		expect(q(depth, ".sl-settings-row__value").textContent).toContain("Auto · ");
 		expect(q(h.root, ".sl-settings__footer-version").textContent).toBe(COPY.footer("test", "test"));
 		expect(q(h.root, ".sl-settings__footer-version").textContent).toBe("sliced vtest · build test");
 		// Task 34: third-party notices next to the version (strings only in copy.ts).
@@ -796,7 +932,7 @@ describe("settings search and save feedback", () => {
 		expect(q<HTMLElement>(h.root, ".sl-settings__jump").hidden).toBe(false);
 		search.value = "Timing";
 		search.dispatchEvent(new Event("input", { bubbles: true }));
-		expect(row(h.root, "timing.respectBudget").hidden).toBe(false);
+		expect(row(h.root, "timing.varianceScale").hidden).toBe(false);
 		expect(row(h.root, "timing.speedScale").hidden).toBe(false);
 		search.value = "no setting could match this";
 		search.dispatchEvent(new Event("input", { bubbles: true }));
@@ -848,4 +984,148 @@ it("keeps the save indicator pending until the final queued write finishes", asy
 	finishes[1]?.(normalizeSettings(DEFAULT_SETTINGS));
 	await dom.tick(0);
 	expect(q(h.root, ".sl-settings__save").textContent).toBe(COPY.workspace.saved);
+});
+
+// ── H2 (2026-09-13): the mistakes knob is an accuracy offset, shown in Elo ──────────────────
+describe("settings view · accuracy offset (H2, exposed 2026-09-13)", () => {
+	it("maps the 0–2 leaf to ±eloSpan Elo with the intuitive sign, and the copy says so", () => {
+		const span = MAIA.slider.eloSpan;
+		expect(ACCURACY_OFFSET_DISPLAY.toDisplay(1)).toBe(0);
+		expect(ACCURACY_OFFSET_DISPLAY.toDisplay(0)).toBe(span);
+		expect(ACCURACY_OFFSET_DISPLAY.toDisplay(2)).toBe(-span);
+		expect(ACCURACY_OFFSET_DISPLAY.fromDisplay(span)).toBe(0);
+		expect(ACCURACY_OFFSET_DISPLAY.fromDisplay(-span)).toBe(2);
+		expect(ACCURACY_OFFSET_DISPLAY.fromDisplay(0)).toBe(1);
+		// Round trip on every slider step.
+		for (let elo = -span; elo <= span; elo += 25)
+			expect(
+				toDisplayValue("strength.blunderScale", fromDisplayValue("strength.blunderScale", elo))
+			).toBe(elo);
+		// Rows without a display map are the identity.
+		expect(toDisplayValue("timing.speedScale", 1.5)).toBe(1.5);
+		expect(fromDisplayValue("timing.speedScale", 1.5)).toBe(1.5);
+		const copy = SETTINGS_COPY.rows["strength.blunderScale"];
+		expect(copy.label).toBe("Accuracy offset");
+		expect(copy.help).toBe(accuracyOffsetHelp(span));
+		expect(copy.help).toContain(String(span));
+		expect(accuracyOffsetHelp(span + 50)).not.toBe(copy.help);
+		expect(SETTINGS_COPY.format.elo(150)).toBe("+150");
+		expect(SETTINGS_COPY.format.elo(0)).toBe("0");
+		expect(SETTINGS_COPY.format.elo(-150)).toBe("−150");
+		expect(FORCED_SETTINGS).not.toHaveProperty("strength.blunderScale");
+	});
+
+	it("renders an Elo slider that writes the stored 0–2 unit and reflects a stored value", async () => {
+		const h = await mountSettings(fixedRating());
+		const span = MAIA.slider.eloSpan;
+		const r = row(h.root, "strength.blunderScale");
+		const thumb = q(r, "[role=slider]");
+		expect(thumb.getAttribute("aria-valuemin")).toBe(String(-span));
+		expect(thumb.getAttribute("aria-valuemax")).toBe(String(span));
+		expect(thumb.getAttribute("aria-valuenow")).toBe("0");
+		expect(q(r, ".sl-slider__value").textContent).toBe("0");
+		expect(r.querySelectorAll(".sl-slider__marker")).toHaveLength(1);
+		// One step up is +25 Elo → stored 0.9; End is +span → stored 0; Home is −span → stored 2.
+		key(thumb, "keydown", { key: "ArrowRight" });
+		await dom.tick(0);
+		expect(h.patches.at(-1)).toEqual({ strength: { blunderScale: 0.9 } });
+		expect(q(r, ".sl-slider__value").textContent).toBe("+25");
+		key(thumb, "keydown", { key: "End" });
+		await dom.tick(0);
+		expect(h.patches.at(-1)).toEqual({ strength: { blunderScale: 0 } });
+		expect(q(r, ".sl-slider__value").textContent).toBe(`+${span}`);
+		key(thumb, "keydown", { key: "Home" });
+		await dom.tick(0);
+		expect(h.patches.at(-1)).toEqual({ strength: { blunderScale: 2 } });
+		expect(q(r, ".sl-slider__value").textContent).toBe(`−${span}`);
+		expect(h.settings().strength.blunderScale).toBe(2);
+		// A stored 1.5 (half the span below the target) shows as −125.
+		const half = span / 2;
+		h.store.emit(
+			fixedRating(
+				makeSnapshot({ settings: { strength: { ...DEFAULT_SETTINGS.strength, blunderScale: 1.5 } } })
+			)
+		);
+		await dom.tick(UI_TIMINGS.sliderCommitGraceMs);
+		h.store.emit(
+			fixedRating(
+				makeSnapshot({ settings: { strength: { ...DEFAULT_SETTINGS.strength, blunderScale: 1.5 } } })
+			)
+		);
+		expect(thumb.getAttribute("aria-valuenow")).toBe(String(-half));
+		expect(q(r, ".sl-slider__value").textContent).toBe(`−${half}`);
+	});
+});
+
+// ── settings layout, 2026-09-13: dependants beneath their switch, and disabled while it is off ──
+describe("settings view · dependants", () => {
+	it.each([
+		["strength.matchOpponentRating", "strength.personaEloOffset", "[role=slider]"],
+		["automation.highlightMoves", "automation.highlightStyle", ".sl-chip-group"],
+		["automation.boardEffects", "automation.moveQualityChips", "[role=switch]"],
+		["display.virtualCursor", "display.cursorEffects", "[role=switch]"],
+	] as const)(
+		"%s gates %s, which sits directly beneath it",
+		async (switchPath, dependant, control) => {
+			const h = await mountSettings();
+			const master = row(h.root, switchPath);
+			const dependent = row(h.root, dependant);
+			expect(master.nextElementSibling).toBe(dependent);
+			const disabled = (): boolean => q(dependent, control).getAttribute("aria-disabled") === "true";
+			// Every one of these switches ships on, so its dependant starts enabled.
+			expect(disabled()).toBe(false);
+			click(q(master, "[role=switch]"));
+			await dom.tick(0);
+			expect(disabled()).toBe(true);
+			click(q(master, "[role=switch]"));
+			await dom.tick(0);
+			expect(disabled()).toBe(false);
+		}
+	);
+
+	it("readouts: the label-only sliders carry a numeric readout, the numeric ones do not", async () => {
+		const h = await mountSettings();
+		for (const path of ["timing.varianceScale", "execution.motorSpeed"] as const) {
+			const r = row(h.root, path);
+			expect(r.querySelector(".sl-slider--has-readout")).not.toBeNull();
+			key(q(r, "[role=slider]"), "keydown", { key: "ArrowRight" });
+			expect(q(r, ".sl-slider__readout").textContent).toMatch(/×$/);
+		}
+		for (const path of ["timing.speedScale", "timing.premoveTendency", "strength.targetElo"] as const)
+			expect(row(h.root, path).querySelector(".sl-slider--has-readout")).toBeNull();
+	});
+
+	it("a category remembered under the old layout falls back to All", async () => {
+		expect(isSectionId("execution")).toBe(false);
+		expect(isSectionId("display")).toBe(false);
+		expect(isSectionId("hand")).toBe(true);
+		const content = document.createElement("div");
+		document.body.append(content);
+		const store = fakeStore(makeSnapshot());
+		const ui: PanelUiState = {
+			tab: "settings",
+			updateAvailable: false,
+			updateDismissed: false,
+			settingsCategory: "execution",
+		};
+		const cleanup = await createSettingsView({
+			setSettings: async () => normalizeSettings({}),
+		}).mount({
+			router: noRouter,
+			container: content,
+			store,
+			snapshot: store.snapshot,
+			ui,
+			signal: new AbortController().signal,
+		});
+		const sections = [...content.querySelectorAll<HTMLElement>("[data-section]")];
+		expect(sections.filter((s) => !s.hidden)).toHaveLength(SECTIONS.length);
+		expect(
+			content
+				.querySelector('.sl-settings__jump .sl-chip[data-value="all"]')
+				?.getAttribute("aria-pressed")
+		).toBe("true");
+		cleanup();
+		content.remove();
+	});
 });

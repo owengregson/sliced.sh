@@ -293,6 +293,21 @@
 	background: var(--sl-color-text-secondary);
 	box-shadow: none;
 }
+/* Unlabelled model-switch markers (`SliderOptions.markers`): the same hairline as the network
+   divider, shorter and dimmer so the network boundary stays the taller primary marker. */
+.sl-slider__markers {
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+}
+.sl-slider__marker {
+	position: absolute;
+	top: 50%;
+	width: var(--sl-hairline);
+	height: var(--sl-space-2);
+	transform: translate(-50%, -50%);
+	background: var(--sl-color-text-tertiary);
+}
 .sl-slider--strength .sl-slider__hint {
 	color: var(--sl-color-danger-text);
 }
@@ -305,6 +320,11 @@
 	opacity: var(--sl-slider-heat);
 	transition: opacity var(--sl-motion-duration-4) var(--sl-motion-easing-standard);
 }
+/* Hot range (≥ STRENGTH_UI.glowElo, `--sl-slider-energy` 0→1). Three restrained layers instead of
+   fire: an ember gradient drifting slowly inside the fill, a soft halo breathing around the thumb,
+   and a warm sweep that always crosses at the same unhurried speed — only how often it comes
+   follows the energy (`--sl-slider-flow-gap`, set by slider.ts: the idle gap between two sweeps
+   in sweep widths, wide at 3200 and narrow at the maximum). */
 .sl-slider__glow,
 .sl-slider__energy {
 	display: none;
@@ -316,11 +336,14 @@
 	inset: 0;
 	border-radius: inherit;
 	pointer-events: none;
-	opacity: calc(var(--sl-slider-energy) * 0.48);
 	transition: opacity var(--sl-motion-duration-6) var(--sl-motion-easing-standard);
 }
 .sl-slider--strength .sl-slider__glow {
-	opacity: calc(var(--sl-slider-energy) * 0.28);
+	opacity: calc(var(--sl-slider-energy) * 0.72);
+	background-image: linear-gradient(to right, var(--sl-color-brand), var(--sl-color-warn), var(--sl-color-danger), var(--sl-color-brand-text), var(--sl-color-danger), var(--sl-color-brand));
+	background-size: calc(100% * 3) 100%;
+	background-position: 0 50%;
+	animation: sl-strength-aurora var(--sl-motion-duration-strength-aurora) var(--sl-motion-easing-standard) infinite alternate;
 }
 .sl-slider__glow::before,
 .sl-slider__glow::after {
@@ -328,28 +351,35 @@
 	position: absolute;
 	inset: 0;
 	border-radius: inherit;
-	background: currentColor;
 	box-shadow: 0 0 var(--sl-space-2) calc(var(--sl-unit) / 2) currentColor;
-	transform-origin: center bottom;
-	animation: sl-strength-ember calc(var(--sl-motion-duration-6) * 4) var(--sl-motion-easing-standard) infinite;
 }
 .sl-slider__glow::before {
 	color: var(--sl-color-brand);
+	opacity: calc((1 - var(--sl-slider-heat)) * 0.58);
 }
 .sl-slider__glow::after {
 	color: var(--sl-color-danger);
-	opacity: var(--sl-slider-heat);
+	opacity: calc(var(--sl-slider-heat) * 0.58);
+}
+.sl-slider--hot .sl-slider__thumb {
+	animation: sl-strength-breathe var(--sl-motion-duration-strength-breathe) var(--sl-motion-easing-standard) infinite alternate;
 }
 .sl-slider--strength .sl-slider__energy {
 	overflow: hidden;
 	z-index: var(--sl-z-rail);
 	opacity: calc(var(--sl-slider-energy) * 0.76);
 }
+/* Two sweeps half a period apart: with the gap closed they follow each other as a train, with it
+   open each one crosses alone. Period = sweep × (2 + gap) / 2 for a travel of (2 + gap) widths,
+   so the speed is two widths per `strength-sweep` whatever the gap. Soft head, tapering tail. */
 .sl-slider__energy > span {
 	position: absolute;
 	inset: 0;
-	background-image: linear-gradient(to right, transparent 20%, var(--sl-color-brand-text) 45%, var(--sl-color-brand-text) 55%, transparent 80%);
-	animation: sl-strength-flow calc(var(--sl-motion-duration-6) * 6) var(--sl-motion-easing-standard) infinite;
+	background-image: linear-gradient(to right, transparent, var(--sl-color-warn-tint) 40%, var(--sl-color-warn) 78%, var(--sl-color-brand-text) 86%, transparent);
+	animation: sl-strength-flow calc(var(--sl-motion-duration-strength-sweep) * (2 + var(--sl-slider-flow-gap)) / 2) var(--sl-motion-easing-linear) infinite;
+}
+.sl-slider__energy > span:nth-child(2) {
+	animation-delay: calc(var(--sl-motion-duration-strength-sweep) * (2 + var(--sl-slider-flow-gap)) / -4);
 }
 .sl-slider__energy > span::after {
 	content: "";
@@ -359,7 +389,7 @@
 	height: var(--sl-hairline);
 	width: 100%;
 	border-radius: var(--sl-radius-full);
-	background-image: linear-gradient(to right, transparent, var(--sl-color-brand-text), transparent);
+	background-image: linear-gradient(to right, transparent, var(--sl-color-warn) 78%, var(--sl-color-brand-text) 86%, transparent);
 }
 .sl-slider__ticks {
 	position: absolute;
@@ -387,6 +417,11 @@
 }
 .sl-slider--strength.sl-slider--disabled .sl-slider__thumb {
 	border-color: var(--sl-color-border-strong);
+	animation: none;
+}
+.sl-slider--disabled .sl-slider__glow,
+.sl-slider--disabled .sl-slider__energy > span {
+	animation-play-state: paused;
 }
 .sl-live__strength-elo {
 	transition: color var(--sl-motion-duration-6) var(--sl-motion-easing-standard), text-shadow var(--sl-motion-duration-6) var(--sl-motion-easing-standard);
@@ -398,19 +433,27 @@
 }
 @keyframes sl-strength-flow {
 	from { transform: translateX(-100%); }
-	to { transform: translateX(100%); }
+	to { transform: translateX(calc((1 + var(--sl-slider-flow-gap)) * 100%)); }
 }
-@keyframes sl-strength-ember {
-	0%, 100% { transform: translateY(0) scaleY(1); filter: blur(var(--sl-hairline)); }
-	27% { transform: translateY(calc(var(--sl-unit) / -4)) scaleY(1.25); filter: blur(calc(var(--sl-unit) / 2)); }
-	51% { transform: translateY(0) scaleY(0.9); filter: blur(var(--sl-hairline)); }
-	76% { transform: translateY(calc(var(--sl-unit) / -2)) scaleY(1.15); filter: blur(calc(var(--sl-unit) / 2)); }
+@keyframes sl-strength-aurora {
+	from { background-position: 0 50%; }
+	to { background-position: 100% 50%; }
 }
+/* The halo's reach scales with the energy: a whisper at 3200, a full breath at the maximum. */
+@keyframes sl-strength-breathe {
+	from {
+		box-shadow: 0 0 0 var(--sl-hairline) var(--sl-color-surface-raised), 0 0 0 0 var(--sl-color-danger-tint-strong);
+	}
+	to {
+		box-shadow: 0 0 0 var(--sl-hairline) var(--sl-color-surface-raised), 0 0 calc(var(--sl-space-3) * (0.4 + var(--sl-slider-energy) * 0.6)) calc(var(--sl-unit) * (0.5 + var(--sl-slider-energy))) var(--sl-color-danger-tint-strong);
+	}
+}
+/* Reduced motion: the ember gradient rests, the sweeps stay away, the thumb does not breathe. */
 @media (prefers-reduced-motion: reduce) {
-	.sl-slider__glow::before,
-	.sl-slider__glow::after,
-	.sl-slider__energy > span { animation: none; }
+	.sl-slider--strength .sl-slider__glow,
+	.sl-slider--hot .sl-slider__thumb { animation: none; }
+	.sl-slider__energy > span { animation: none; opacity: 0; }
 }
-[data-reduced-motion="true"] .sl-slider__glow::before,
-[data-reduced-motion="true"] .sl-slider__glow::after,
-[data-reduced-motion="true"] .sl-slider__energy > span { animation: none; }
+[data-reduced-motion="true"] .sl-slider--strength .sl-slider__glow,
+[data-reduced-motion="true"] .sl-slider--hot .sl-slider__thumb { animation: none; }
+[data-reduced-motion="true"] .sl-slider__energy > span { animation: none; opacity: 0; }

@@ -5,6 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { DEFAULT_SETTINGS } from "@core/constants/defaults";
 import { TOKENS } from "@design/tokens.generated";
 import { COPY } from "@panel/copy";
 import {
@@ -17,6 +18,9 @@ import {
 } from "@panel/views/live/collapse";
 import { bootPanelDom, type PanelDom } from "../dom";
 import { idleSnapshot, type LiveHarness, liveSnapshot, mountLive } from "./live-harness";
+
+/** The §8.2 walk was measured at three PV rows; the lines knob ships four since 2026-09-13. */
+const THREE_LINES = { settings: { engine: { ...DEFAULT_SETTINGS.engine, multiPv: 3 } } };
 
 const LIVE_CSS = ["live.css", "workspace.css", "live-progress.css"]
 	.map((file) => readFileSync(path.resolve(import.meta.dir, "../../../css/views", file), "utf8"))
@@ -99,7 +103,7 @@ describe("collapseFor (pure)", () => {
 describe("mounted view", () => {
 	it("720 → 640 → 560 → 480 walk the six states in the §8.2 order (viewport-based)", async () => {
 		resize(360, 720);
-		h = await mountLive(dom.sim, liveSnapshot());
+		h = await mountLive(dom.sim, liveSnapshot(THREE_LINES));
 		expect(h.app.clientHeight).toBe(4000); // the content box is huge and must be ignored
 		expect(h.root.dataset.collapse).toBe("full");
 		expect(h.q(".sl-live__strip").hidden).toBe(false);
@@ -132,10 +136,10 @@ describe("mounted view", () => {
 		const bannerSlot = h.app.querySelector<HTMLElement>(".sl-app__banner");
 		if (!bannerSlot) throw new Error("no banner slot");
 		Object.defineProperty(bannerSlot, "offsetHeight", { configurable: true, value: 40 });
-		h.store.emit(liveSnapshot()); // available 456 < 480
+		h.store.emit(liveSnapshot(THREE_LINES)); // available 456 < 480
 		expect(h.root.dataset.collapse).toBe("scroll");
 		Object.defineProperty(bannerSlot, "offsetHeight", { configurable: true, value: 0 });
-		h.store.emit(liveSnapshot());
+		h.store.emit(liveSnapshot(THREE_LINES));
 		expect(h.root.dataset.collapse).toBe("strength");
 
 		resize(360, 480); // available 436 < 480: the view scrolls, everything folded, card pinned
@@ -169,7 +173,7 @@ describe("mounted view", () => {
 
 	it("subtracts a banner's height from the available height", async () => {
 		resize(360, 720);
-		h = await mountLive(dom.sim, liveSnapshot());
+		h = await mountLive(dom.sim, liveSnapshot(THREE_LINES));
 		const banner = h.app.querySelector<HTMLElement>(".sl-app__banner");
 		if (!banner) throw new Error("no banner slot");
 		Object.defineProperty(banner, "offsetHeight", { configurable: true, value: 80 });
@@ -179,7 +183,7 @@ describe("mounted view", () => {
 
 	it("compact at 320: two lines max, move-sm card, short Play label; depth column at ≥ 420", async () => {
 		resize(320, 720);
-		h = await mountLive(dom.sim, idleSnapshot());
+		h = await mountLive(dom.sim, idleSnapshot(THREE_LINES));
 		expect(h.root.classList.contains("sl-live--compact")).toBe(true);
 		expect(h.qa(".sl-pv")).toHaveLength(2);
 		expect(h.q(".sl-move").classList.contains("sl-move--compact")).toBe(true);

@@ -33,6 +33,8 @@ export const palette = {
 	"danger.300": "#FF8A7A", // Danger text on dark.
 	"danger.500": "#E5533D", // Auto-play armed, errors.
 	"danger.700": "#A8301F", // Danger pressed.
+	"azure.500": "#8DB4EC", // Board effects: the owner's own attacks — pastel (owner, 2026-09-13: "more pastel, less opacity").
+	"crimson.500": "#F0A3A3", // Board effects: the opponent's attacks — pastel (owner, 2026-09-13).
 } as const;
 
 export type PaletteName = keyof typeof palette;
@@ -116,6 +118,11 @@ const darkColors = {
 	"hl.arrow-2": { ref: "line.500", alpha: "a48" },
 	"hl.arrow-3": { ref: "line.600", alpha: "a48" },
 	"hl.preview": { ref: "line.500", alpha: "a64" },
+	// board effects (injected into the host page): blue for our attacks, red for theirs
+	"effect.mine": { ref: "azure.500", alpha: "a48" },
+	"effect.mine-strong": { ref: "azure.500" },
+	"effect.theirs": { ref: "crimson.500", alpha: "a48" },
+	"effect.theirs-strong": { ref: "crimson.500" },
 } as const satisfies Record<string, ColorRef>;
 
 export type SemanticColorKey = keyof typeof darkColors;
@@ -165,6 +172,10 @@ const lightColors = {
 	"hl.arrow-2": { ref: "line.500", alpha: "a48" },
 	"hl.arrow-3": { ref: "line.600", alpha: "a48" },
 	"hl.preview": { ref: "line.500", alpha: "a64" },
+	"effect.mine": { ref: "azure.500", alpha: "a48" },
+	"effect.mine-strong": { ref: "azure.500" },
+	"effect.theirs": { ref: "crimson.500", alpha: "a48" },
+	"effect.theirs-strong": { ref: "crimson.500" },
 } as const satisfies Record<SemanticColorKey, ColorRef>;
 
 /** Shadows (Appendix F §2.5): dark theme = rims, not drops. */
@@ -288,7 +299,20 @@ export const tokens = {
 	motion: {
 		/** ms; every duration is `durationBase × k`. */
 		durationBase: 80,
-		durations: { 1: 1, "1-5": 1.5, "2-5": 2.5, 4: 4, 6: 6 },
+		durations: {
+			1: 1,
+			"1-5": 1.5,
+			"2-5": 2.5,
+			4: 4,
+			6: 6,
+			/**
+			 * Strength slider in the hot range: one crossing of the warm sweep (constant speed — only
+			 * its cadence follows the slider energy), the ember gradient's drift and the thumb's breath.
+			 */
+			"strength-sweep": 60,
+			"strength-aurora": 120,
+			"strength-breathe": 30,
+		},
 		easing: {
 			standard: "cubic-bezier(0.2, 0, 0, 1)",
 			emphasized: "cubic-bezier(0.32, 0.72, 0, 1)",

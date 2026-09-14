@@ -2,7 +2,7 @@
  * Move card (Appendix F §5.6, §6.2, §6.3, §7.4): header · SAN hero · from→to · note · plan line
  * (+ ring) · play button. States: your-move / opponent / thinking / disabled / engine-stopped;
  * transient new-move (SAN exits up, enters with the spring) and played (border flash). The
- * armed play button carries the countdown ("Auto-playing in 4.2s", tenths above 1 s) and an
+ * armed play button reads "Play now" while the ring carries the countdown (tenths above 1 s) and an
  * `aria-label` updated per whole second.
  */
 
@@ -243,7 +243,7 @@ export function createMoveCard(
 			COPY.move.remainingLabel(formatCountdown(remainingMs))
 		);
 		const seconds = Math.ceil(Math.max(0, remainingMs) / MS);
-		if (!hovering) button.update({ label: COPY.move.armed(formatCountdown(remainingMs)) });
+		if (!hovering) button.update({ label: COPY.move.armed });
 		if (seconds !== lastSpokenSecond) {
 			lastSpokenSecond = seconds;
 			button.update({ ariaLabel: COPY.move.ariaArmed(sanToSpeech(data.san ?? ""), seconds) });

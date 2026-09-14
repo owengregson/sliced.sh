@@ -7,6 +7,7 @@ import {
 	type PanelPortMessage,
 	type PanelSnapshot,
 	PORT_NAMES,
+	TIMINGS,
 	TOAST_KEYS,
 } from "@core/constants";
 import { type AcceptedPort, acceptPorts } from "@core/messaging/ports";
@@ -103,6 +104,36 @@ describe("PanelStore", () => {
 		expect(late[1]?.session.state).toBe("game-over");
 		expect(store.snapshot?.session.state).toBe("game-over");
 		expect(toasts).toEqual([TOAST_KEYS.reattached]);
+		await sw.ctx.teardown();
+	});
+
+	it("re-requests the snapshot on a poll while visible and on a focus/visibility return (the reopen backstop)", async () => {
+		const snap = makeSnapshot({ state: "waiting-for-game" });
+		const sw = await bootFakeSw(snap);
+		panel = await bootPanelContext(sim);
+		const seen: PanelSnapshot[] = [];
+		store = await panel.run(() => createPanelStore());
+		store.subscribe((s) => seen.push(s));
+		await sim.time.advance(0);
+		expect(sw.snapshotRequests).toBe(1);
+		// The poll asks again on its interval …
+		await sim.time.advance(TIMINGS.panelSnapshotPollMs);
+		expect(sw.snapshotRequests).toBe(2);
+		await sim.time.advance(TIMINGS.panelSnapshotPollMs);
+		expect(sw.snapshotRequests).toBe(3);
+		// … a focus return asks at once …
+		await panel.run(() => {
+			panel.window.dispatchEvent(new panel.window.Event("focus"));
+		});
+		await sim.time.advance(0);
+		expect(sw.snapshotRequests).toBe(4);
+		// … and every answer reaches the subscribers, so a missed push is caught within one poll.
+		expect(seen.length).toBeGreaterThanOrEqual(4);
+		// dispose stops the poll
+		store.dispose();
+		store = null;
+		await sim.time.advance(TIMINGS.panelSnapshotPollMs * 3);
+		expect(sw.snapshotRequests).toBe(4);
 		await sw.ctx.teardown();
 	});
 
