@@ -245,9 +245,31 @@ describe("highlight-overlay", () => {
 		await Promise.resolve();
 		expect(win.document.querySelectorAll("path")).toHaveLength(1);
 		expect(win.document.querySelectorAll("rect")).toHaveLength(1);
+		// A clear fades the mark out rather than snapping it away (owner, 2026-09-12): the running
+		// draw animations are left alone, the overlay leaves the lookup class at once (a draw that
+		// follows gets a fresh one), and the fade's completion removes it.
+		const before = animations.length;
 		sendToPage(win, command("clear", "done"));
-		expect(animations.every((a) => a.cancelled)).toBe(true);
-		expect(win.document.querySelector("svg")).toBeNull();
+		const second = animations.slice(first.length, before);
+		expect(second.some((a) => a.cancelled)).toBe(false);
+		const svg = win.document.querySelector("svg");
+		expect(svg).not.toBeNull();
+		expect(svg?.classList.contains(overlayClass)).toBe(false);
+		const fade = animations[animations.length - 1];
+		expect(animations).toHaveLength(before + 1);
+		expect(fade?.node).toBe(svg);
+		expect(fade?.frames.map((f) => f.opacity)).toEqual([1, 0]);
+		expect(fade?.options.duration).toBe(HIGHLIGHT_MOTION.clearFadeMs);
+		// A draw during the fade makes a fresh overlay beside the fading one …
+		sendToPage(win, command("draw", "third", { r: "w", h: [{ q: "c3" }], a: [] }));
+		expect(win.document.querySelectorAll("svg")).toHaveLength(2);
+		expect(win.document.querySelectorAll(`svg.${overlayClass}`)).toHaveLength(1);
+		// … and the fade's end removes only the old one.
+		fade?.finish();
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(win.document.querySelectorAll("svg")).toHaveLength(1);
+		expect(win.document.querySelector("svg")?.classList.contains(overlayClass)).toBe(true);
 	});
 
 	it.each([false, true])(

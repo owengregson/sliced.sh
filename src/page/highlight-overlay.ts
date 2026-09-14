@@ -261,16 +261,69 @@ export function overlayStatements(p: OverlayParams): Statement[] {
 			]
 		)
 	);
+	// A clear fades the mark out (`HIGHLIGHT_MOTION.clearFadeMs`) instead of removing it on the
+	// spot: the overlay is first renamed out of `ovFind`'s reach — so a draw that follows at once
+	// gets a fresh overlay and the fading one cannot be mistaken for it — its running animations
+	// are left to finish (dropping them from `ovAnimations` so a later draw's `ovStop` does not
+	// snap them), and a fade to transparent removes it when done. Without motion it is removed.
+	const out = js.id("out");
 	const ovClear = js.const_(
 		OVERLAY.clear,
 		js.arrow(
 			[],
 			[
-				js.expr(js.call(js.id("ovStop"))),
+				js.assign(animations, js.arr()),
 				js.assign(js.id("ovLastMark"), js.nil()),
 				js.assign(js.id("ovLastElement"), js.nil()),
 				js.const_("el", js.call(js.id("ovFind"))),
-				js.if_(el, [js.expr(js.call(js.member(el, "remove")))]),
+				js.if_(el, [
+					js.expr(
+						js.call(js.member(el, "setAttribute"), js.str("class"), js.op(p.cls, "+", js.str("-out")))
+					),
+					js.const_(
+						"motion",
+						js.and(
+							js.op(js.typeof_(js.member(el, "animate")), "===", js.str("function")),
+							js.not(
+								js.and(
+									js.member(js.id("window"), "matchMedia"),
+									js.member(
+										js.call(
+											js.member(js.id("window"), "matchMedia"),
+											js.str(HIGHLIGHT_MOTION.reducedMotionQuery)
+										),
+										"matches"
+									)
+								)
+							)
+						)
+					),
+					js.if_(
+						js.id("motion"),
+						[
+							js.const_(
+								"out",
+								js.call(
+									js.member(el, "animate"),
+									js.arr(js.obj({ opacity: n(1) }), js.obj({ opacity: n(0) })),
+									js.obj({
+										duration: n(HIGHLIGHT_MOTION.clearFadeMs),
+										easing: js.str("ease-out"),
+										fill: js.str("forwards"),
+									})
+								)
+							),
+							js.expr(
+								js.call(
+									js.member(out, "finished", "then"),
+									js.arrow([], [js.expr(js.call(js.member(el, "remove")))]),
+									js.arrow([], [js.expr(js.call(js.member(el, "remove")))])
+								)
+							),
+						],
+						[js.expr(js.call(js.member(el, "remove")))]
+					),
+				]),
 			]
 		)
 	);
