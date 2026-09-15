@@ -1,33 +1,8 @@
-/**
- * Maia-3 move selection below `MAIA.eloMax` (2026-09-11, the owner's brief: "Maia as the model
- * for move selection (not timings) below 2600"). Stockfish stays the **referee**: the draw is
- * over the engine's scored lines — the referee search's MultiPV set plus the extra `searchmoves`
- * lines the pipeline adds for Maia's unscored favourites (2026-09-12) — the never-play rails run
- * on the engine's scores, and the mate / conversion / repetition guards in `move-selector.ts` have
- * already had their say by the time this runs. Maia supplies the *distribution* over what
- * survives — the human population's at the rating `E` the caller asks about, at
- * `MAIA.temperature` (1: the model as advertised).
- *
- * 2026-09-13 (`docs/research/human-move-selection-ideas-2026-09-13.md`, `docs/qa/selector-rails-2026-09-13.md`):
- * - the mistakes knob is no longer a temperature (H2) — the caller folds it into `E`
- *   (`maiaSelfElo`), so the rails and the query agree on one rating and the never-played tail is
- *   never heated;
- * - the draw reports its fidelity meters (§3.2): rail-removed mass, unscored mass (measured before
- *   the repetition/conversion guards, D2), the KL of the final weights from Maia's, and the pick's
- *   rank among the *survivors* (D1);
- * - an optional technique tie-break (H11) reorders only the survivors inside `MAIA.tieBandRatio`
- *   of the top weight, resolved lazily so the prior is computed for that band alone (§7 C1);
- * - the H13 practical-difficulty term (`MAIA.practical`) weights the same band by `1 + trickiness`
- *   when the caller says the position qualifies (behind), normalised like the tie-break;
- * - the draw is split into `maiaSurvivors` (rails and masses) and `drawMaiaFromSurvivors` (the
- *   weighted draw), so generate-and-verify (H3, `generate-verify.ts`) can replace the second half
- *   while `maiaDrawRecord` keeps the rank, the rows and the meters identical for both.
- *
- * Pure apart from the seeded `rng`. `docs/qa/maia-selection-2026-09-11.md` records the design.
- */
+/** Maia candidate safeguards, weighted draws and policy-fidelity accounting. */
 
 import { MAIA } from "@core/constants/maia";
 import { klDivergence, temperedWeights } from "@core/policy/maia-policy";
+import { maiaMaxCpLoss } from "@core/policy/maia-size";
 import type { PolicyResult } from "@core/policy/types";
 import type { Rng } from "@core/rng";
 
@@ -40,6 +15,8 @@ export interface MaiaCandidate {
 	hangs: boolean;
 	/** Win-fraction loss from the **raw** engine score against the best raw line. */
 	lossRaw: number;
+	/** Unclipped centipawn loss, for the upper range's additional quality bound. */
+	cpLoss?: number;
 	/** Scored by the extra `searchmoves` search on Maia's unscored favourites, not the main set. */
 	extra: boolean;
 }
@@ -243,7 +220,10 @@ export function maiaSurvivors(
 		);
 
 	const cap = lossCapFor(E);
-	const survivors = candidates.filter((c) => !c.mated && !c.hangs && c.lossRaw <= cap);
+	const cpCap = maiaMaxCpLoss(E);
+	const survivors = candidates.filter(
+		(c) => !c.mated && !c.hangs && c.lossRaw <= cap && (c.cpLoss ?? 0) <= cpCap
+	);
 	const excluded = candidates.length - survivors.length;
 	let railedMass = 0;
 	if (excluded > 0) {

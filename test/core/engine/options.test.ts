@@ -20,6 +20,18 @@ function settings(patch: Partial<Settings["engine"]>, targetElo = 1500): Setting
 }
 
 describe("optionsForSettings", () => {
+	it("routes active matched targets independently of the stored target and native limiter", () => {
+		for (const stored of [1500, 3800]) {
+			for (const target of [3190, 3200, 3201]) {
+				expect(variantForSettings(settings({ nnue: "auto" }, stored), target)).toBe(
+					target > 3200 ? "full" : "smallnet"
+				);
+			}
+		}
+		expect(variantForSettings(settings({ nnue: "big" }, 1500), 3190)).toBe("full");
+		expect(variantForSettings(settings({ nnue: "small" }, 1500), 3201)).toBe("full");
+		expect(variantForSettings(settings({ nnue: "auto" }, 3800), Number.NaN)).toBe("full");
+	});
 	it("automatically upgrades above the product cutoff, including an old Small preference", () => {
 		expect(variantForSettings(settings({ nnue: "auto" }, LIMITS.nnueSmallEloMax))).toBe("smallnet");
 		expect(variantForSettings(settings({ nnue: "auto" }, LIMITS.nnueSmallEloMax + 1))).toBe("full");

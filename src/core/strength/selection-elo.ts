@@ -13,6 +13,7 @@
 import { sideToMove } from "@core/chess/fen";
 import { isLoneKing } from "@core/chess/material";
 import { MAIA } from "@core/constants/maia";
+import { maiaConditioningElo } from "@core/policy/maia-size";
 import { clockRacePolicy, opponentClockPressure } from "@core/timing/opponent-pressure";
 import { SELECTION_CONSTANTS as C } from "./constants";
 import { effectiveElo } from "./elo-map";
@@ -88,5 +89,5 @@ export function maiaSelfElo(input: MaiaEloInput): number {
 	);
 	const target =
 		input.targetElo - input.pressureReduction - sliderEloOffset(input.blunderScale) - context;
-	return Math.max(MAIA.context.eloFloor, effectiveElo(target, input.form));
+	return maiaConditioningElo(Math.max(MAIA.context.eloFloor, effectiveElo(target, input.form)));
 }

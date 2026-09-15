@@ -82,11 +82,13 @@ export interface OptionsEnv {
 	sab: boolean;
 }
 
-/** Higher targets require the full network, including an old persisted Small preference. */
-export function variantForSettings(settings: Settings): EngineVariant {
-	return settings.strength.targetElo > LIMITS.nnueSmallEloMax || settings.engine.nnue === "big"
-		? "full"
-		: "smallnet";
+/** Higher active targets require the full network; an explicit Big preference always wins. */
+export function variantForSettings(
+	settings: Settings,
+	targetElo = settings.strength.targetElo
+): EngineVariant {
+	const target = Number.isFinite(targetElo) ? targetElo : settings.strength.targetElo;
+	return target > LIMITS.nnueSmallEloMax || settings.engine.nnue === "big" ? "full" : "smallnet";
 }
 
 /**

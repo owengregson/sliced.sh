@@ -355,6 +355,35 @@ describe("createGameStack: the real service-worker stack", () => {
 		expect(built.transport.warmPolicySize()).toBe(maiaSizeFor(2200));
 	});
 
+	it("clears Maia reconnect preload for engine-only settings and matched active targets", async () => {
+		const built = stack as GameStack;
+		await (sw as SwContext).run(async () => {
+			await setSettings({ strength: { targetElo: 3201, matchOpponentRating: false } });
+			await settle();
+		});
+		expect(built.transport.warmPolicySize()).toBeUndefined();
+		await (sw as SwContext).run(async () => {
+			await setSettings({
+				strength: { targetElo: 3100, matchOpponentRating: true, personaEloOffset: 0 },
+			});
+			(site as SimulatedSite).hello();
+			(site as SimulatedSite).startGame();
+			await settle();
+		});
+		expect(built.transport.warmPolicySize()).toBe("79m");
+		await (sw as SwContext).run(async () => {
+			(site as SimulatedSite).opponent({ isBot: false, name: "higher", ratingEstimate: 3300 });
+			await settle();
+		});
+		expect(built.registry.sessionFor(tabId)?.targetElo()).toBe(3300);
+		expect(built.transport.warmPolicySize()).toBeUndefined();
+		await (sw as SwContext).run(async () => {
+			await setSettings({ strength: { matchOpponentRating: false } });
+			await settle();
+		});
+		expect(built.transport.warmPolicySize()).toBe("79m");
+	});
+
 	it("dispose() releases the stack: the game port registry is empty and the timing log is flushed", async () => {
 		const built = stack as GameStack;
 		await (sw as SwContext).run(async () => {

@@ -8,6 +8,7 @@ import { applyMoves, legalMoves } from "@core/chess/san";
 import { PREMOVE } from "@core/constants/books";
 import { CHESS_START_FEN } from "@core/constants/chess";
 import { automaticDepthForElo } from "@core/engine/depth-policy";
+import type { AnalysisRequest, AnalysisUpdate } from "@core/engine/types";
 import type { PolicyInferenceInputs, PolicyPort, PolicyResult } from "@core/policy/types";
 import {
 	ownMoveMaiaElo,
@@ -15,7 +16,8 @@ import {
 	shapedRootSet,
 } from "@service/game-session/recommendation";
 import type { SessionPipeline } from "@service/game-session/session";
-import type { ChosenMove } from "@typedefs/game";
+import type { EvalLine } from "@typedefs/engine";
+import type { ChosenMove, PositionSnapshot } from "@typedefs/game";
 import { createGameHarness, type GameHarness } from "../../behavioral/game/harness";
 import { positionKey } from "../../behavioral/game/scripted-engine";
 
@@ -243,9 +245,9 @@ describe("H6.3 — one Maia size per game", () => {
 		expect(await h.until(() => policy.calls.length > before, 5_000)).toBe(true);
 		expect(policy.calls.at(-1)?.size).toBe("79m");
 		await h.arrive("g1f3");
-		expect(await h.until(() => inputs.length === 2, 5_000)).toBe(true);
-		expect(inputs[1]?.targetElo).toBe(2100);
-		expect(inputs[1]?.maiaSize).toBe("79m");
+		expect(await h.until(() => inputs.at(-1)?.snapshot.ply === 3, 5_000)).toBe(true);
+		expect(inputs.at(-1)?.targetElo).toBe(2100);
+		expect(inputs.at(-1)?.maiaSize).toBe("79m");
 
 		// The user changes the stored target by hand: that is a new commitment and the target moves
 		// — but since 2026-09-13 there is one size, so the re-commit lands on 79M again and the warm
@@ -302,4 +304,145 @@ describe("H8 — the premove gate when the answer lands after the arm", () => {
 		session.gatePremoveWithPolicy("d2d4", AFTER_E4, answer(0));
 		expect(session.premove).not.toBeNull();
 	});
+});
+
+describe("active policy eligibility and stale work", () => {
+	it("pre-infers and warms prior mode, then stops Maia after a matched target crosses 3200", async () => {
+		const policy = fakePolicy({ hold: true });
+		const warmTargets: number[] = [];
+		h = await createGameHarness({
+			myColor: "b",
+			policy: policy.port,
+			warmPolicy: (target) => warmTargets.push(target),
+			settings: { strength: { targetElo: 3100, matchOpponentRating: true, personaEloOffset: 0 } },
+			script: { prefer: new Map([[positionKey(CHESS_START_FEN), ["e2e4"]]]) },
+		});
+		await h.arrive();
+		expect(await h.until(() => policy.calls.length > 0, 5000)).toBe(true);
+		expect(warmTargets).toEqual([3100]);
+		expect(policy.calls[0]?.selfElo).toBeLessThanOrEqual(3000);
+		await h.drive(() => h.site.opponent({ isBot: false, name: "higher", ratingEstimate: 3300 }));
+		expect(policy.signals[0]?.aborted).toBe(true);
+		const count = policy.calls.length;
+		policy.release();
+		await h.advance(1000);
+		expect(policy.calls).toHaveLength(count);
+		expect(warmTargets).toEqual([3100, 3300]);
+		const state = h.session() as unknown as {
+			predictedPolicy: unknown;
+			gameMaia: { size: string | null };
+		};
+		expect(state.predictedPolicy).toBeNull();
+		expect(state.gameMaia.size).toBeNull();
+	});
+
+	it("rejects a late answer when only opponent conditioning changes on the same board", async () => {
+		const policy = fakePolicy({ hold: true });
+		h = await createGameHarness({
+			myColor: "b",
+			policy: policy.port,
+			settings: { strength: { targetElo: 2800, matchOpponentRating: false } },
+			script: { prefer: new Map([[positionKey(CHESS_START_FEN), ["e2e4"]]]) },
+		});
+		await h.arrive();
+		expect(await h.until(() => policy.calls.length > 0, 5000)).toBe(true);
+		const first = policy.calls[0];
+		await h.drive(() => h.site.opponent({ isBot: false, name: "known", ratingEstimate: 2900 }));
+		expect(h.session().targetElo()).toBe(2800);
+		expect(policy.signals[0]?.aborted).toBe(true);
+		policy.release();
+		await h.advance(50);
+		const state = h.session() as unknown as { predictedPolicy: { identity: string } | null };
+		if (state.predictedPolicy) expect(state.predictedPolicy.identity).toContain("2900");
+		expect(first?.oppoElo).not.toBe(2900);
+	});
+
+	it("re-enables the fixed model after an engine-only game has already made its first decision", async () => {
+		const policy = fakePolicy();
+		const warmed: number[] = [];
+		h = await createGameHarness({
+			myColor: "w",
+			policy: policy.port,
+			warmPolicy: (target) => warmed.push(target),
+			settings: { strength: { targetElo: 3300, matchOpponentRating: true, personaEloOffset: 0 } },
+		});
+		await h.arrive();
+		expect(await h.until(() => h.session().recommendation() !== null, 5000)).toBe(true);
+		expect(policy.calls).toHaveLength(0);
+		await h.drive(() => h.site.opponent({ isBot: false, name: "lower", ratingEstimate: 2800 }));
+		expect(await h.until(() => policy.calls.length > 0, 5000)).toBe(true);
+		expect(policy.calls.at(-1)?.size).toBe("79m");
+		expect(warmed).toEqual([3300, 2800]);
+		const state = h.session() as unknown as { gameMaia: { size: string | null } };
+		expect(state.gameMaia.size).toBe("79m");
+	});
+});
+
+describe("prepared holds preserve routing boundaries", () => {
+	for (const targetElo of [3000, 3001, 3201]) {
+		it(`holds at the actual ${targetElo} target with matching search provenance`, async () => {
+			h = await createGameHarness({
+				myColor: "b",
+				policy: fakePolicy().port,
+				settings: { strength: { targetElo, matchOpponentRating: false } },
+				script: {
+					prefer: new Map([[positionKey(CHESS_START_FEN), ["e2e4"]]]),
+					depth: automaticDepthForElo(targetElo),
+					pvDepth: 2,
+				},
+			});
+			type Prepared = {
+				fen: string;
+				lines: EvalLine[];
+				request: AnalysisRequest;
+				bestmove: string | null;
+				comparison?: AnalysisUpdate;
+			};
+			const state = h.session() as unknown as {
+				snapshot: PositionSnapshot;
+				predictedAnalysis: Prepared | null;
+				validPredictedAnalysis(snapshot: PositionSnapshot): Prepared | null;
+				readyMoveFrom(
+					fen: string,
+					lines: EvalLine[],
+					snapshot: PositionSnapshot,
+					request: AnalysisRequest,
+					best: string | null,
+					comparison?: AnalysisUpdate
+				): ChosenMove | null;
+			};
+			await h.arrive();
+			expect(await h.until(() => state.predictedAnalysis !== null, 5000)).toBe(true);
+			const prepared = state.validPredictedAnalysis(state.snapshot);
+			expect(prepared).not.toBeNull();
+			if (!prepared) return;
+			expect(prepared.request.targetElo).toBe(targetElo);
+			expect(prepared.request.moves).toEqual(["e2e4"]);
+			const chosen = state.readyMoveFrom(
+				prepared.fen,
+				prepared.lines,
+				state.snapshot,
+				prepared.request,
+				prepared.bestmove,
+				prepared.comparison
+			);
+			expect(chosen).not.toBeNull();
+			const rationale = chosen?.rationale.join(" ") ?? "";
+			if (targetElo === 3000) {
+				expect(chosen?.source).toBe("maia");
+				expect(rationale).not.toContain("maia prior:");
+			} else if (targetElo === 3001) {
+				expect(chosen?.source).toBe("maia");
+				expect(rationale).toContain("maia prior:");
+			} else {
+				expect(chosen?.source).toBe("engine-elo");
+				expect(rationale).not.toContain("maia prior:");
+			}
+			prepared.request.targetElo = targetElo - 1;
+			expect(state.validPredictedAnalysis(state.snapshot)).toBeNull();
+			prepared.request.targetElo = targetElo;
+			prepared.request.limit.depth = 1;
+			expect(state.validPredictedAnalysis(state.snapshot)).toBeNull();
+		});
+	}
 });

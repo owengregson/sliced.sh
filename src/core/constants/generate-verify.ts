@@ -28,20 +28,22 @@ export const GENERATE_VERIFY = {
 			[1400, 3],
 			[2000, 4],
 			[2500, 5],
+			[2800, 5],
+			[3000, 7],
 		] as ReadonlyArray<readonly [number, number]>,
 		/** Per-move uniform jitter on the rounded knot value: `k ± jitter` (each offset equally likely). */
 		jitter: 1,
 		/** Below this the draw is not a comparison; `k = 1` is reserved for the intuition path. */
 		min: 2,
 		/** Ceiling on `k` after the jitter (the pool is usually smaller and binds first). */
-		max: 6,
+		max: 8,
 	},
 	/**
 	 * `pIntuition(E)`: the probability the move is played on recognition alone (`k = 1`, no
 	 * verification — HvS §2.3), a linear ramp from `loProb` at `loElo` to `hiProb` at `hiElo`, flat
 	 * outside. High at club level, small but never zero at master level.
 	 */
-	intuition: { loElo: 800, loProb: 0.55, hiElo: 2500, hiProb: 0.1 },
+	intuition: { loElo: 800, loProb: 0.55, hiElo: 2500, hiProb: 0.1, upperProb: 0.03 },
 	/**
 	 * The floor on the perception noise applied to the *shallow* scores in the compare stage,
 	 * `[E, cp]` knots (flat outside, linear between): `σ_verify(E) = max(sigmaFor(E), floor(E))`.
@@ -58,6 +60,8 @@ export const GENERATE_VERIFY = {
 		[1400, 45],
 		[2000, 30],
 		[2500, 20],
+		[2800, 20],
+		[3000, 12],
 	] as ReadonlyArray<readonly [number, number]>,
 	/**
 	 * Samples `drawDistribution` takes per move for the `klFromMaia` meter (§3.2): the path's

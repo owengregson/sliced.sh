@@ -1,19 +1,19 @@
 /** Builds a recommendation with one shared preparation budget for policy and engine work. */
 
 import { loadPosition } from "@core/chess/fen";
-import { matchingHistory, type PositionHistory } from "@core/chess/history";
+import { matchingHistory, type PositionHistory, positionKey } from "@core/chess/history";
 import { isLoneKing } from "@core/chess/material";
 import { phase as phaseOf } from "@core/chess/phase";
 import { legalMoves, parseUci, playUci, uciToSan } from "@core/chess/san";
 import { BOOK } from "@core/constants/books";
-import { LIMITS } from "@core/constants/limits";
 import { MAIA, MAIA_INPUT, type MaiaSize } from "@core/constants/maia";
 import { MAIA_CONTEXT_THINK_REF_MS, MAIA_SEARCH, SEARCH_BUDGET } from "@core/constants/search";
 import { automaticDepthForElo, humanDepth } from "@core/engine/depth-policy";
 import { requestEloForTarget } from "@core/engine/options";
 import type { AnalysisHandle, AnalysisRequest, AnalysisResult } from "@core/engine/types";
 import { log } from "@core/logger";
-import { maiaSizeFor, usesMaia, usesMaiaPrior } from "@core/policy/maia-size";
+import { maiaConditioningElo, maiaSizeFor, usesMaia, usesMaiaPrior } from "@core/policy/maia-size";
+import { policyQueryIdentity } from "@core/policy/policy-query";
 import type { PolicyInferenceInputs, PolicyPort, PolicyResult } from "@core/policy/types";
 import type { Rng } from "@core/rng";
 import type { BookContext, BookPolicy } from "@core/strength/book/book-policy";
@@ -320,19 +320,22 @@ export interface ShapedSearchPlan {
 /**
  * Size a search over Maia's roots, shortening confident choices toward the search floor.
  * Predicted-position and own-move searches share this shape for cache reuse. Return null
- * when the policy names no legal move.
+ * when the policy or an independent engine continuation is unavailable.
  */
 export function shapedSearchPlan(
 	policy: PolicyResult,
 	fen: string,
 	knownTopMoves: readonly string[] | undefined,
-	budget: SearchBudget
+	budget: SearchBudget,
+	targetElo = 0
 ): ShapedSearchPlan | null {
+	const legal = new Set(legalMoves(fen));
+	if (!knownTopMoves?.some((uci) => legal.has(uci))) return null;
 	const searchmoves = shapedRootSet(policy, fen, knownTopMoves);
 	if (searchmoves.length === 0) return null;
 	const K = MAIA_SEARCH.shaped;
 	const top = maiaRankedLegal(policy, fen)[0]?.[1] ?? 0;
-	const confident = top >= K.confidentProb;
+	const confident = top >= K.confidentProb && targetElo <= MAIA.upperVerification.fromElo;
 	const floor = SEARCH_BUDGET.minMovetimeMs;
 	const movetimeMs = confident
 		? Math.max(floor, budget.movetimeMs - K.confidentTimeFraction * (budget.movetimeMs - floor))
@@ -473,7 +476,7 @@ export function maiaContextPenalty(input: MaiaContextInput): MaiaContextTerms {
 
 /** The shared Maia query and selection rating, with its contributing terms. */
 export interface MaiaEloContext {
-	/** `maiaSelfElo(...)`: the query's `selfElo` below `MAIA.eloMax`, the rails' E. */
+	/** Canonical self conditioning shared by the query and selection safeguards. */
 	selfElo: number;
 	/** Clock/think penalty passed to the selector as contextEloPenalty. */
 	contextEloPenalty: number;
@@ -613,6 +616,7 @@ export interface RecommendationInput {
 	 */
 	policyAnswer?: {
 		fen: string;
+		identity: string;
 		result: PolicyResult;
 		selfElo: number;
 		historyPlies: number;
@@ -779,13 +783,31 @@ export class RecommendationPipeline {
 			budgetMs: budget.movetimeMs,
 			signal: preparation.signal,
 		});
-		// Reuse a policy answer only for this exact board; otherwise query alongside preparation.
+		// Reuse only an answer with identical model inputs and game history.
 		const held = input.policyAnswer;
+		const policyInputs = maiaElo ? this.policyInputs(input, maiaElo, prior) : null;
+		const identity = policyInputs
+			? policyQueryIdentity({
+					inputs: policyInputs,
+					mode: prior ? "prior" : "maia",
+					selectionMode: settings.strength.selectionMode,
+					history: input.history,
+				})
+			: null;
 		const preInferred: PolicyAnswer | null =
-			maiaElo && held && held.fen === snapshot.fen
-				? { result: held.result, selfElo: held.selfElo, historyPlies: held.historyPlies }
+			maiaElo &&
+			held &&
+			identity !== null &&
+			held.identity === identity &&
+			positionKey(held.fen) === positionKey(snapshot.fen) &&
+			held.result.size === policyInputs?.size
+				? {
+						result: held.result,
+						selfElo: policyInputs.selfElo,
+						historyPlies: policyInputs.historyFens.length,
+					}
 				: null;
-		const policyQuery = maiaElo && !preInferred ? this.queryPolicy(input, maiaElo, prior) : null;
+		const policyQuery = policyInputs && !preInferred ? this.queryPolicy(input, policyInputs) : null;
 
 		try {
 			// Book lookup overlaps the policy and engine work.
@@ -794,29 +816,53 @@ export class RecommendationPipeline {
 			// Without one, search broadly and consider extra candidates only if time remains.
 			let policy: PolicyAnswer | null = preInferred;
 			let shaped: ShapedSearchPlan | null = null;
-			if (maia && MAIA_SEARCH.shaped.enabled) {
-				if (!policy && policyQuery)
-					policy = await this.awaitPolicy(
-						policyQuery,
-						input.signal,
-						Math.min(
-							MAIA_SEARCH.shaped.policyFirstMs,
-							Math.max(0, preparationDeadline - policyQuery.issuedAt)
-						)
-					);
-				if (input.signal?.aborted) return null;
-				if (policy) {
-					const known = preInferred ? held?.knownTopMoves : undefined;
-					shaped = shapedSearchPlan(policy.result, snapshot.fen, known, budget);
-					if (shaped && known === undefined)
-						log.debug("recommendation: shaped search over maia roots only", {
-							roots: shaped.searchmoves.length,
-							ply: snapshot.ply,
-						});
-				}
-			}
+			let anchor: AnalysisResult | null = null;
 			let analysis: AnalysisResult | null;
 			try {
+				if (maia && MAIA_SEARCH.shaped.enabled) {
+					let known = preInferred ? held?.knownTopMoves : undefined;
+					const legal = new Set(legalMoves(snapshot.fen));
+					if (!known?.some((uci) => legal.has(uci))) {
+						const available = remainingBudget(budget);
+						if (available && available.movetimeMs >= 2 * SEARCH_BUDGET.minMovetimeMs) {
+							const anchorMs = Math.min(
+								MAIA_SEARCH.shaped.anchorMaxMs,
+								available.movetimeMs * MAIA_SEARCH.shaped.anchorFraction
+							);
+							anchor = await this.runSearch(
+								snapshot,
+								{
+									...available,
+									movetimeMs: anchorMs,
+									multiPv: Math.min(SEARCH_BUDGET.ponderMultiPv, available.multiPv),
+								},
+								input.targetElo,
+								true,
+								input.signal,
+								input.history,
+								undefined,
+								Math.min(preparationDeadline, this.now() + anchorMs)
+							);
+							if (anchor?.final.complete)
+								known = usableLines(anchor.final.lines).flatMap((line) =>
+									line.pvUci[0] ? [line.pvUci[0]] : []
+								);
+						}
+					}
+					if (!policy && policyQuery)
+						policy = await this.awaitPolicy(
+							policyQuery,
+							input.signal,
+							Math.min(
+								MAIA_SEARCH.shaped.policyFirstMs,
+								Math.max(0, preparationDeadline - policyQuery.issuedAt)
+							)
+						);
+					if (input.signal?.aborted) return null;
+					const available = remainingBudget(budget);
+					if (policy && available)
+						shaped = shapedSearchPlan(policy.result, snapshot.fen, known, available, input.targetElo);
+				}
 				const search = remainingBudget(shaped?.budget ?? budget);
 				analysis = search
 					? await this.analyse(
@@ -830,6 +876,12 @@ export class RecommendationPipeline {
 							preparationDeadline
 						)
 					: null;
+				if (
+					!analysis ||
+					usableLines(analysis.final.lines).length === 0 ||
+					(!analysis.final.complete && anchor?.final.complete)
+				)
+					analysis = anchor ?? analysis;
 			} finally {
 				// Cached analysis may return before warmed inference. Keep only the original
 				// short inference window; searches already beyond it never wait any longer.
@@ -987,27 +1039,18 @@ export class RecommendationPipeline {
 
 	/**
 	 * Query the retained model size with validated history and the shared effective rating.
-	 * Prior mode caps the rating at Maia's calibrated range; an unknown opponent uses our
-	 * rating. A refused or failed query resolves to null.
+	 * Self conditioning is capped at the supported selection ceiling; an unknown opponent
+	 * uses our rating. A refused or failed query resolves to null.
 	 */
 	private queryPolicy(
 		input: RecommendationInput,
-		elo: MaiaEloContext,
-		prior: boolean
+		inputs: PolicyInferenceInputs
 	): PolicyQuery | null {
 		if (!this.policy) return null;
 		const abort = new AbortController();
 		const onAbort = () => abort.abort();
 		input.signal?.addEventListener("abort", onAbort, { once: true });
-		const selfElo = prior ? Math.min(elo.selfElo, MAIA.prior.topCalibratedElo) : elo.selfElo;
-		const historyFens = maiaHistoryFens(input.history, input.snapshot.fen);
-		const inputs: PolicyInferenceInputs = {
-			size: prior ? MAIA.prior.size : (input.maiaSize ?? maiaSizeFor(input.targetElo)),
-			fen: input.snapshot.fen,
-			historyFens,
-			selfElo,
-			oppoElo: input.opponentElo ?? selfElo,
-		};
+		const { selfElo, historyFens } = inputs;
 		const issuedAt = this.now();
 		let pending: Promise<PolicyResult | null>;
 		try {
@@ -1023,6 +1066,21 @@ export class RecommendationPipeline {
 		}
 		void pending.finally(() => input.signal?.removeEventListener("abort", onAbort));
 		return { pending, issuedAt, abort, selfElo, historyPlies: historyFens.length };
+	}
+
+	private policyInputs(
+		input: RecommendationInput,
+		elo: MaiaEloContext,
+		prior: boolean
+	): PolicyInferenceInputs {
+		const selfElo = maiaConditioningElo(elo.selfElo);
+		return {
+			size: prior ? MAIA.prior.size : (input.maiaSize ?? maiaSizeFor(input.targetElo)),
+			fen: input.snapshot.fen,
+			historyFens: maiaHistoryFens(input.history, input.snapshot.fen),
+			selfElo,
+			oppoElo: input.opponentElo ?? selfElo,
+		};
 	}
 
 	/**
@@ -1070,7 +1128,7 @@ export class RecommendationPipeline {
 	/** Opening-book answer, or null when disabled, unavailable or failed. */
 	private async bookMove(input: RecommendationInput): Promise<ChosenMove | null> {
 		const policy = this.book;
-		if (!policy || !input.settings.strength.useOpeningBook || input.targetElo >= LIMITS.eloMax)
+		if (!policy || !input.settings.strength.useOpeningBook || input.targetElo > MAIA.prior.eloMax)
 			return null;
 		const ctx: BookContext = {
 			fen: input.snapshot.fen,
@@ -1147,9 +1205,11 @@ export class RecommendationPipeline {
 		shape?: SearchShape,
 		deadlineMs?: number
 	): Promise<AnalysisResult | null> {
+		if (signal?.aborted) return null;
 		const validHistory = matchingHistory(history, snapshot.fen);
 		const req: AnalysisRequest = {
 			id: newId(),
+			targetElo,
 			fen: validHistory?.fen ?? snapshot.fen,
 			...(validHistory?.moves.length ? { moves: validHistory.moves } : {}),
 			multiPv: budget.multiPv,
@@ -1292,6 +1352,8 @@ export class RecommendationPipeline {
 			rng: input.rng,
 			state: input.selectionState,
 		};
+		if (analysis)
+			ctx.engineResultKind = analysis.request.elo === undefined ? "unrestricted" : "native-limited";
 		if (policy) ctx.maia = policy;
 		if (maiaExtra.length > 0) ctx.maiaExtra = maiaExtra;
 		// The selector judges candidates at the rating used for the query.

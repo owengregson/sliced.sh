@@ -1,23 +1,4 @@
-/**
- * Maia-3 human move-policy assets and the selection policy built on them (2026-09-11, the
- * owner's brief: "Maia as the model for move selection (not timings) below 2600").
- *
- * Maia-3 (CSSLab, ICLR 2026 "Chessformer") is an encoder-only transformer over 64 square tokens
- * that predicts the move a human of a given rating plays — conditioned on **both** ratings — and
- * a WDL value. One size ships in the package under `MAIA_DIR` — the largest, 79M (the owner,
- * 2026-09-13: "remove all the maia models except the largest one, and use that for all elos");
- * the 5M and 23M exports were dropped from the package and the registry then. It is exported to
- * ONNX with float16 weights behind `Cast` by `tools/data/09_export_maia3.py` (the same layout as
- * the ChessMimic bands; the casts fold at load, so the arithmetic stays fp32 on the wasm CPU
- * provider). `docs/research/maia3-feasibility-2026-09-11.md` has the measurements every number
- * here rests on; `docs/qa/maia-79m-only-2026-09-13.md` what the single size costs per move.
- *
- * The rating a query is issued at is unchanged by the size: `selfElo` / `oppoElo` are model
- * inputs and carry the chosen target exactly as before — one model answers for every rating.
- *
- * The **timing** of a move is untouched by any of this: Maia decides *which* move, the ChessMimic
- * head and the executor decide *when* and *how* (C7).
- */
+/** Maia-3 policy assets, rating boundaries and engine-verification constraints. */
 
 export const MAIA_DIR = "assets/models/maia3/";
 
@@ -116,8 +97,12 @@ export const MAIA_INPUT = {
  * from.
  */
 export const MAIA = {
-	/** Maia is the selector strictly below this *target* Elo; Stockfish's policy from here up. */
-	eloMax: 2600,
+	/** Inclusive Maia-led boundary; these product settings are not measured playing Elos. */
+	eloMax: 3000,
+	/** Maximum self-rating supplied to the model; actual opponent rating stays unchanged. */
+	conditioningEloMax: 3000,
+	/** Tighten verification gradually while retaining the existing policy through 2800. */
+	upperVerification: { fromElo: 2800, fullElo: 3000, maxCpLoss: 80 },
 	/**
 	 * Size by target Elo, nearest band at or below the ceiling. One band since 2026-09-13: the
 	 * 79M model answers for every rating (the paper's largest is the most accurate everywhere —
@@ -125,7 +110,7 @@ export const MAIA = {
 	 * asked about is a model input, so the Elo slider still decides *whom* it imitates). The
 	 * band's edge is `eloMax`; the structure is kept so a size is still chosen through one path.
 	 */
-	sizeBands: [{ maxElo: 2600, size: "79m" }] as ReadonlyArray<{ maxElo: number; size: MaiaSize }>,
+	sizeBands: [{ maxElo: 3000, size: "79m" }] as ReadonlyArray<{ maxElo: number; size: MaiaSize }>,
 	/**
 	 * Warmed on connect before the settings are known. The only size, so the cold load (≈ 0.7 s
 	 * session create + ≈ 0.3 s warm-up query single-threaded, plus the 156 MB read) is paid once,
@@ -263,18 +248,12 @@ export const MAIA = {
 		/** Elo rating floor of any Maia query or rail judgement. */
 		eloFloor: 400,
 	},
-	/**
-	 * H15 (2026-09-13): above `eloMax` the engine chooses, but a Maia-79M query at the top of the
-	 * model's in-distribution range breaks ties among lines within `gapFor(E)` of the best, so the
-	 * 2600–3200 band stops being one player wearing six labels. `LIMITS.eloMax` (3800) stays the
-	 * pure-engine escape hatch.
-	 */
+	/** Above the Maia-led boundary, human preferences choose among progressively closer engine lines. */
 	prior: {
-		/** The `selfElo` the query is issued at above `eloMax`: `min(target, topCalibratedElo)`. */
-		topCalibratedElo: 2700,
-		/** Weight floor for a pool line Maia has never seen (it can still be played when clearly best). */
+		eloMax: 3200,
+		gapCp: { start: 12, end: 4 },
+		/** Weight floor lets an engine continuation survive when Maia assigns it negligible mass. */
 		floorWeight: 0.02,
-		/** The size that answers above `eloMax`. */
 		size: "79m" as MaiaSize,
 	},
 } as const;

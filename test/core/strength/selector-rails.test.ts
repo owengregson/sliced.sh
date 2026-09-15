@@ -11,7 +11,7 @@ import { klDivergence, policyEntropy } from "@core/policy/maia-policy";
 import type { PolicyResult } from "@core/policy/types";
 import { createRng } from "@core/rng";
 import { SELECTION_CONSTANTS as C } from "@core/strength/constants";
-import { gapFor, winProb } from "@core/strength/elo-map";
+import { winProb } from "@core/strength/elo-map";
 import { drawMaiaMove, lossCapFor, type MaiaCandidate } from "@core/strength/maia-select";
 import {
 	createSelectionState,
@@ -623,20 +623,21 @@ describe("H12 — tilt as per-game state", () => {
 	});
 });
 
-describe("H15 — Maia-79M as a prior between MAIA.eloMax and LIMITS.eloMax", () => {
+describe("Maia-79M as a bounded upper-range prior", () => {
 	const prior79 = (moves: Array<[string, number]>) => policy(moves, { size: "79m", ms: 184 });
 	it("the pool is the engine's gap; Maia decides inside it, floored, and the pick differs from the engine's", () => {
 		const maia = prior79(Object.entries(P));
-		for (const targetElo of [MAIA.eloMax, 2800, 3000]) {
+		const near = FOUR.map((l, i) => ({ ...l, score: { cp: 50 - 3 * i } }));
+		for (const targetElo of [3001, 3020, 3040]) {
 			const engine = selectMove(
-				FOUR,
+				near,
 				ctx({ targetElo, selectionMode: "hybrid", engineBestmove: "e2e4", rng: createRng(11) }),
 				flatPrior(FOUR)
 			);
 			expect(engine.source).toBe("engine-elo");
 			expect(engine.uci).toBe("e2e4");
 			const N = 2000;
-			const { counts, picks } = sample(FOUR, N, { targetElo, maia }, `prior-${targetElo}`);
+			const { counts, picks } = sample(near, N, { targetElo, maia }, `prior-${targetElo}`);
 			const floor = MAIA.prior.floorWeight;
 			let total = 0;
 			for (const uci of Object.keys(P)) total += Math.max(floor, P[uci] ?? 0);
@@ -645,10 +646,8 @@ describe("H15 — Maia-79M as a prior between MAIA.eloMax and LIMITS.eloMax", ()
 			const m = picks[0];
 			expect(m?.source).toBe("maia");
 			expect(m?.maiaProb).toBe(P[m?.uci ?? ""] ?? -1);
-			expect(m?.rationale.join(" ")).toContain(
-				`maia prior: 79m E=${Math.min(targetElo, MAIA.prior.topCalibratedElo)} pool 4/4 within ${gapFor(targetElo)} cp`
-			);
-			expect(m?.maiaMeters?.selfElo).toBe(Math.min(targetElo, MAIA.prior.topCalibratedElo));
+			expect(m?.rationale.join(" ")).toContain(`maia prior: 79m E=3000 pool 4/4 within`);
+			expect(m?.maiaMeters?.selfElo).toBe(3000);
 			expect(m?.maiaMeters?.survivors).toBe(4);
 			expect(m?.maiaMeters?.rank).toBe(
 				[...Object.entries(P)].sort((a, b) => b[1] - a[1]).findIndex(([u]) => u === m?.uci) + 1
@@ -681,7 +680,7 @@ describe("H15 — Maia-79M as a prior between MAIA.eloMax and LIMITS.eloMax", ()
 	it("a line Maia gives no mass to is still played when it is alone inside the gap", () => {
 		const clear = [line(START, "e2e4", { cp: 200 }, 1), line(START, "d2d4", { cp: 30 }, 2)];
 		const maia = prior79([["d2d4", 1]]);
-		const { counts, picks } = sample(clear, 200, { targetElo: 2800, maia }, "alone");
+		const { counts, picks } = sample(clear, 200, { targetElo: 3100, maia }, "alone");
 		expect(counts.get("e2e4")).toBe(200);
 		expect(picks[0]?.maiaProb).toBe(0);
 		expect(picks[0]?.maiaMeters?.railedMass).toBe(1);

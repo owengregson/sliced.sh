@@ -44,7 +44,8 @@ describe("H6.3 — one Maia size per game", () => {
 		expect(maiaSizeForGame(1650)).toBe("79m");
 		expect(maiaSizeForGame(2300)).toBe("79m");
 		expect(maiaSizeForGame(MAIA.eloMax)).toBe(MAIA.prior.size);
-		expect(maiaSizeForGame(LIMITS.eloMax - 1)).toBe(MAIA.prior.size);
+		expect(maiaSizeForGame(MAIA.prior.eloMax)).toBe(MAIA.prior.size);
+		expect(maiaSizeForGame(MAIA.prior.eloMax + 1)).toBeNull();
 		expect(maiaSizeForGame(LIMITS.eloMax)).toBeNull();
 	});
 
@@ -97,6 +98,7 @@ describe("H7.3 — the predicted position's query", () => {
 		expect(q?.inputs.oppoElo).toBe(1700);
 		expect(q?.inputs.selfElo).toBe(q?.selfElo ?? -1);
 		expect(predictedPolicyInputs({ ...base, size: null })).toBeNull();
+		expect(predictedPolicyInputs({ ...base, position: { ...position, targetElo: 3201 } })).toBeNull();
 	});
 
 	it("selfElo is the pipeline's own rating for the position (ownMoveMaiaElo: pressure, slider, context)", () => {
@@ -134,13 +136,13 @@ describe("H7.3 — the predicted position's query", () => {
 	});
 
 	it("above MAIA.eloMax the H15 prior's size and Elo clamp apply", () => {
-		const high = { ...position, targetElo: 3000 };
+		const high = { ...position, targetElo: 3100 };
 		const q = predictedPolicyInputs({ ...base, position: high, size: MAIA.prior.size });
 		expect(q?.inputs.size).toBe(MAIA.prior.size);
 		expect(q?.selfElo).toBe(
-			Math.min(ownMoveMaiaElo(high, settings).selfElo, MAIA.prior.topCalibratedElo)
+			Math.min(ownMoveMaiaElo(high, settings).selfElo, MAIA.conditioningEloMax)
 		);
-		expect(q?.selfElo ?? 0).toBeLessThanOrEqual(MAIA.prior.topCalibratedElo);
+		expect(q?.selfElo ?? 0).toBeLessThanOrEqual(MAIA.conditioningEloMax);
 	});
 
 	it("falls back to the degenerate single frame and our own rating when history and opponent are unknown", () => {
@@ -157,7 +159,13 @@ describe("H7.3 — the predicted position's query", () => {
 });
 
 describe("H7.3 / H8 — the answer follows the position, not the FEN string", () => {
-	const answer: PredictedPolicyAnswer = { fen: AFTER_E4, result, selfElo: 1500, historyPlies: 2 };
+	const answer: PredictedPolicyAnswer = {
+		identity: "matching-query",
+		fen: AFTER_E4,
+		result,
+		selfElo: 1500,
+		historyPlies: 2,
+	};
 
 	it("samePosition ignores counters and a non-usable en-passant spelling", () => {
 		expect(samePosition(AFTER_E4, AFTER_E4_EP)).toBe(true);
@@ -165,10 +173,15 @@ describe("H7.3 / H8 — the answer follows the position, not the FEN string", ()
 	});
 
 	it("policyAnswerFor re-keys the answer to the page's FEN string, or refuses another position", () => {
-		expect(policyAnswerFor(answer, AFTER_E4)).toBe(answer);
-		expect(policyAnswerFor(answer, AFTER_E4_EP)).toEqual({ ...answer, fen: AFTER_E4_EP });
-		expect(policyAnswerFor(answer, AFTER_E4_E5)).toBeNull();
-		expect(policyAnswerFor(null, AFTER_E4)).toBeNull();
+		expect(policyAnswerFor(answer, AFTER_E4, "matching-query")).toBe(answer);
+		expect(policyAnswerFor(answer, AFTER_E4, "stale-query")).toBeNull();
+		expect(policyAnswerFor(answer, AFTER_E4, undefined)).toBeNull();
+		expect(policyAnswerFor(answer, AFTER_E4_EP, "matching-query")).toEqual({
+			...answer,
+			fen: AFTER_E4_EP,
+		});
+		expect(policyAnswerFor(answer, AFTER_E4_E5, "matching-query")).toBeNull();
+		expect(policyAnswerFor(null, AFTER_E4, "matching-query")).toBeNull();
 	});
 
 	it("attachPredictedPolicy sets ctx.maia only for the hold's own position", () => {
@@ -186,11 +199,11 @@ describe("H7.3 / H8 — the answer follows the position, not the FEN string", ()
 			state: createSelectionState(),
 		});
 		const hit = ctx(AFTER_E4_EP);
-		expect(attachPredictedPolicy(hit, answer)).toBe(true);
+		expect(attachPredictedPolicy(hit, answer, "matching-query")).toBe(true);
 		expect(hit.maia).toBe(result);
 		const miss = ctx(AFTER_E4_E5);
-		expect(attachPredictedPolicy(miss, answer)).toBe(false);
+		expect(attachPredictedPolicy(miss, answer, "matching-query")).toBe(false);
 		expect(miss.maia).toBeUndefined();
-		expect(attachPredictedPolicy(ctx(AFTER_E4), null)).toBe(false);
+		expect(attachPredictedPolicy(ctx(AFTER_E4), null, "matching-query")).toBe(false);
 	});
 });

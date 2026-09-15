@@ -1,21 +1,4 @@
-/**
- * Rating-parameterised move selection — Part I §7.2 steps 1–9 (Task 14), with
- * Appendix E §1.5/§1.8 as the reference implementation. Pure apart from the
- * seeded `ctx.rng` and the per-game `ctx.state` counters it advances.
- *
- * 2026-09-13 (`docs/research/human-move-selection-ideas-2026-09-13.md`, recorded in
- * `docs/qa/selector-rails-2026-09-13.md`): the Maia branch judges at one rating, `maiaSelfElo`
- * — pressure, the mistakes slider as an Elo offset (H2), the pipeline's context penalty and the
- * selector's own ambiguity (H5) and tilt (H12) terms — and its rails scale with it: the hang rail
- * ramps in and swaps to a one-ply view below 1600 (H1), deep mated lines are allowed below 1000
- * as the base policy allows them (H16), and the technique prior is a tie-break inside Maia's
- * near-indifference band, computed for that band alone (H11, §7 C1). §7.2 step 5's mate ramp is
- * live again for every path (H9), and above `MAIA.eloMax` Maia-79M breaks the engine's ties (H15).
- * Every Maia pick carries its fidelity meters (`ChosenMove.maiaMeters`). With the same search's
- * human-depth frame on hand (`ctx.shallowLines`) the Maia branch runs generate-and-verify (H3/H4,
- * `generate-verify.ts`) in place of the single weighted draw; when behind, the tie band of the
- * plain draw also carries the H13 practical-difficulty proxy (`MAIA.practical`).
- */
+/** Rating-aware selection with shared mate, repetition, conversion and piece-safety guards. */
 
 import { loadPosition } from "@core/chess/fen";
 import { classifyMove } from "@core/chess/move-classify";
@@ -27,7 +10,14 @@ import { LIMITS } from "@core/constants/limits";
 import { MAIA } from "@core/constants/maia";
 import { requestEloForTarget } from "@core/engine/options";
 import { klDivergence, policyEntropy } from "@core/policy/maia-policy";
-import { usesMaia, usesMaiaPrior } from "@core/policy/maia-size";
+import {
+	maiaConditioningElo,
+	maiaMaxCpLoss,
+	maiaPriorGapCp,
+	upperVerificationProgress,
+	usesMaia,
+	usesMaiaPrior,
+} from "@core/policy/maia-size";
 import { createRng, type Rng } from "@core/rng";
 import { clamp } from "@core/util/clamp";
 import type { EvalLine } from "@typedefs/engine";
@@ -490,7 +480,7 @@ export function selectMove(
 		throwWinFilter = true;
 		rationale.push(`mate: throw-win filter, lines with loss ≥ ${NP.throwWinLoss} excluded`);
 	}
-	const ranked = throwWinFilter
+	let ranked = throwWinFilter
 		? rankedAll.filter((r) => winTopRaw - winProb(r.cpRaw) < NP.throwWinLoss)
 		: rankedAll;
 	if (pressureReduction > 0)
@@ -503,6 +493,12 @@ export function selectMove(
 		}
 		return chosen;
 	};
+	if (ctx.targetElo > MAIA.prior.eloMax) {
+		const best = ranked[0];
+		if (!best) throw new RangeError("selectMove: no lines");
+		rationale.push("full-strength engine: strongest guarded continuation");
+		return finishPick(toCandidate(best), "engine-elo");
+	}
 	// Maia's mass on what the search scored, before the repetition/conversion guards (§7 D2).
 	const maiaProb = ctx.maia === undefined ? undefined : policyProbabilities(ctx.maia);
 	let scoredMassBefore = 0;
@@ -535,7 +531,7 @@ export function selectMove(
 		survivors: draw.survivors,
 		...(verified === undefined ? {} : verified),
 	});
-	// Maia-3 (2026-09-11): below `MAIA.eloMax` the human policy draws the move over the engine's
+	// Through `MAIA.eloMax`, the human policy draws the move over the engine's
 	// scored lines — the main set and the extra `searchmoves` lines the pipeline added for Maia's
 	// unscored favourites (`ctx.maiaExtra`, 2026-09-12) alike — with the rails on the engine's raw
 	// scores, judged at `maiaE`. No perception jitter and no injected blunder channel here — the
@@ -580,12 +576,15 @@ export function selectMove(
 			return bandPriors.values;
 		};
 		const byUci = new Map(cands.map((c) => [c.uci, c]));
+		const bestSearchedCp = Math.max(...cands.map((c) => searchedCp(c.line)));
 		const set = maiaSurvivors(
 			cands.map((c) => ({
 				uci: c.uci,
 				mated: getsMated(c),
 				hangs: hangs(c),
 				lossRaw: c.lossRaw,
+				cpLoss:
+					searchedCp(c.line) === bestSearchedCp ? 0 : Math.max(0, bestSearchedCp - searchedCp(c.line)),
 				extra: extra.has(c.uci),
 			})),
 			ctx.maia,
@@ -634,17 +633,21 @@ export function selectMove(
 							return out;
 						}
 					: undefined;
-			// H3: when the same search's human-depth frame is on hand, recognition proposes a few
-			// candidates from Maia's distribution and the verification at that depth decides among
-			// them; the tie band's terms are skipped because the comparison leaves no tie. Without
-			// the frame the plain draw runs — a comparison against the deep scores alone would be an
-			// argmax on the referee, the opposite of the idea.
-			if (GENERATE_VERIFY.enabled && ctx.shallowLines !== undefined) {
+			// Upper verification can use the available referee evidence if the comparison frame
+			// missed the deadline. Lower-range missing-frame behavior remains the plain draw.
+			if (
+				GENERATE_VERIFY.enabled &&
+				(ctx.shallowLines !== undefined || upperVerificationProgress(maiaE) > 0)
+			) {
 				const shallow = new Map<string, number>();
-				for (const l of ctx.shallowLines) {
+				for (const l of ctx.shallowLines ?? []) {
 					const u = l.pvUci[0];
 					if (u !== undefined && !shallow.has(u)) shallow.set(u, cpEffective(l.score));
 				}
+				if (ctx.shallowLines === undefined)
+					rationale.push(
+						"upper verification: comparison frame unavailable, using bounded referee scores"
+					);
 				const gvInput: Omit<GvInput, "rng"> = {
 					survivors: set.survivors.map((s) => {
 						const sc = shallow.get(s.uci);
@@ -709,26 +712,34 @@ export function selectMove(
 			return chosen;
 		}
 	}
-	// The top product setting requests the strongest searched move, without injected mistakes.
-	if (ctx.targetElo >= LIMITS.eloMax && pressureReduction === 0) {
-		const best = ranked[0];
-		if (!best) throw new RangeError("selectMove: no lines");
-		rationale.push("maximum strength: strongest searched continuation");
-		return finish(toCandidate(best), "engine-elo", lines, ctx, rationale);
+	if (
+		(ctx.engineResultKind === "unrestricted" && usesMaia(ctx.targetElo)) ||
+		(usesMaiaPrior(ctx.targetElo) && ctx.maia === undefined)
+	) {
+		const cap = usesMaiaPrior(ctx.targetElo)
+			? maiaPriorGapCp(ctx.targetElo)
+			: maiaMaxCpLoss(maiaE ?? E);
+		const leading = ranked[0];
+		if (Number.isFinite(cap) && leading !== undefined) {
+			const best = searchedCp(leading.line);
+			ranked = ranked.filter((r) => searchedCp(r.line) === best || best - searchedCp(r.line) <= cap);
+			rationale.push(`upper referee fallback: retaining alternatives within ${fmt(cap, 0)} cp`);
+		}
 	}
-	// H15 (2026-09-13): from `MAIA.eloMax` to `LIMITS.eloMax` the engine still chooses the pool —
-	// the unmated, non-hanging lines within `gapFor(E)` of the best — but Maia-79M, queried at the
-	// top of its calibrated range, decides among them, floored so a line it has never seen is still
-	// played when it is alone in the gap. 2600, 2800 and 3000 stop being one player.
+	// The upper prior may choose only increasingly close, guarded engine alternatives.
 	if (ctx.maia !== undefined && maiaProb !== undefined && usesMaiaPrior(ctx.targetElo)) {
 		const cands = ranked.map((r) => toCandidate(r));
 		const alternativeExists = cands.some((c) => !isMatedLine(c));
 		const eligible = cands.filter(
 			(c) => !(alternativeExists && isMatedLine(c)) && !hangsPiece(c.line, c.lossRaw, ctx.fen)
 		);
-		const gap = gapFor(E);
-		const bestCp = eligible[0]?.cpRaw ?? cands[0]?.cpRaw ?? 0;
-		let pool = eligible.filter((c) => bestCp - c.cpRaw <= gap);
+		const gap = maiaPriorGapCp(ctx.targetElo);
+		const leading = eligible[0] ?? cands[0];
+		if (leading === undefined) throw new RangeError("selectMove: no prior candidates");
+		const bestCp = searchedCp(leading.line);
+		let pool = eligible.filter(
+			(c) => searchedCp(c.line) === bestCp || bestCp - searchedCp(c.line) <= gap
+		);
 		if (pool.length === 0) pool = eligible.length > 0 ? eligible : cands;
 		const weights = pool.map((c) => Math.max(MAIA.prior.floorWeight, maiaProb.get(c.uci) ?? 0));
 		const pick = rng.weighted(pool, weights);
@@ -741,7 +752,7 @@ export function selectMove(
 		const finalWeights = new Map(pool.map((c, i) => [c.uci, weights[i] ?? 0]));
 		const klFromMaia = klDivergence(finalWeights, maiaProb);
 		const ordered = [...pool].sort((a, b) => (maiaProb.get(b.uci) ?? 0) - (maiaProb.get(a.uci) ?? 0));
-		const selfElo = Math.min(E, MAIA.prior.topCalibratedElo);
+		const selfElo = maiaConditioningElo(E);
 		rationale.push(
 			`maia prior: ${ctx.maia.size} E=${fmt(selfElo, 0)} pool ${pool.length}/${cands.length} within ${fmt(gap, 0)} cp, p=${fmt(p)} rank ${ordered.findIndex((c) => c.uci === pick.uci) + 1}/${pool.length} (floor ${MAIA.prior.floorWeight})`
 		);
@@ -758,7 +769,11 @@ export function selectMove(
 	}
 	// Retain native rating variation when Hybrid's custom parameters have saturated;
 	// the ordinary gap and explicit-error thresholds can otherwise both reject its choice.
-	if (usesNativeSelection(ctx.selectionMode, E) && pressureReduction === 0) {
+	if (
+		ctx.engineResultKind !== "unrestricted" &&
+		usesNativeSelection(ctx.selectionMode, E) &&
+		pressureReduction === 0
+	) {
 		if (ctx.selectionMode === "hybrid")
 			rationale.push(
 				`hybrid: native selection at E≥${C.tau.pivotElo} (UCI_Elo ${requestEloForTarget(ctx.targetElo) ?? "unlimited"})`
@@ -776,7 +791,13 @@ export function selectMove(
 		// Preserve that legal choice, but never resurrect an evaluated move that a
 		// guard removed. Its unknown score must not become a zero-loss observation —
 		// nor, with a forced mate on the board (H9), a throw of the win nobody can judge.
-		if (idx < 0 && native && !throwWinFilter && !lines.some((line) => line.pvUci[0] === native)) {
+		if (
+			idx < 0 &&
+			native &&
+			!usesMaiaPrior(ctx.targetElo) &&
+			!throwWinFilter &&
+			!lines.some((line) => line.pvUci[0] === native)
+		) {
 			const next = applyMoves(ctx.fen, [native]);
 			const board = next ? loadPosition(next) : null;
 			const probe: EvalLine = {
@@ -818,6 +839,10 @@ export function selectMove(
 		return finishPick(toCandidate(r), "engine-elo");
 	}
 
+	if (ctx.engineResultKind === "unrestricted")
+		rationale.push(
+			"unrestricted referee fallback: rated sampling, no native strength-limited choice"
+		);
 	const params = selectionParams(E, state, ctx.phase, ctx.tauScale ?? 1);
 	if (rush > 0) {
 		params.sigma = sigmaFor(baselineE);

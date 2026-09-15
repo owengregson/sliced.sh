@@ -2,32 +2,53 @@
  * Which Maia-3 size answers for a target Elo, and whether Maia selects at all for it.
  */
 
-import { LIMITS } from "@core/constants/limits";
-import { MAIA, type MaiaSize } from "@core/constants/maia";
+import { MAIA, MAIA_INPUT, type MaiaSize } from "@core/constants/maia";
+import { clamp } from "@core/util/clamp";
 
-/**
- * Maia is the selector strictly below `MAIA.eloMax` (the *target*, not the form-adjusted E).
- * The Elo alone decides (the owner's ruling, 2026-09-11): there is no user-facing switch.
- */
+/** The product's Maia-led interval, independent of form or temporary penalties. */
 export function usesMaia(targetElo: number): boolean {
-	return targetElo < MAIA.eloMax;
+	return Number.isFinite(targetElo) && targetElo <= MAIA.eloMax;
 }
 
-/**
- * H15 (2026-09-13): from `MAIA.eloMax` up to (not including) `LIMITS.eloMax`, Maia-79M is queried
- * as a *prior* for the engine's tie-break, not as the selector. `usesMaia` stays false there.
- */
+/** Above direct Maia selection, retain its prior only through the hybrid ceiling. */
 export function usesMaiaPrior(targetElo: number): boolean {
-	return targetElo >= MAIA.eloMax && targetElo < LIMITS.eloMax;
+	return targetElo > MAIA.eloMax && targetElo <= MAIA.prior.eloMax;
 }
 
 /**
- * Nearest band at or below the ceiling; the largest size above every band (never asked for, but
- * total). Since 2026-09-13 there is one band, so every target answers `"79m"`; the rating still
- * travels in the query (`selfElo` / `oppoElo`), which is where the Elo slider acts.
+ * Canonical self-rating input: rounding after the clamp changes it by at most 0.5 Elo
+ * and prevents insignificant clock drift from invalidating a reusable policy answer.
+ * Opponent ratings retain their existing validation.
  */
+export function maiaConditioningElo(elo: number): number {
+	return Math.round(
+		clamp(
+			Number.isFinite(elo) ? elo : MAIA.context.eloFloor,
+			MAIA_INPUT.eloMin,
+			MAIA.conditioningEloMax
+		)
+	);
+}
+
+export function upperVerificationProgress(elo: number): number {
+	const { fromElo, fullElo } = MAIA.upperVerification;
+	return Number.isFinite(elo) ? clamp((elo - fromElo) / (fullElo - fromElo), 0, 1) : 0;
+}
+
+/** Infinite at the unchanged boundary, approaching the upper range's finite loss limit smoothly. */
+export function maiaMaxCpLoss(elo: number): number {
+	const progress = upperVerificationProgress(elo);
+	return progress > 0 ? MAIA.upperVerification.maxCpLoss / progress : Number.POSITIVE_INFINITY;
+}
+
+export function maiaPriorGapCp(elo: number): number {
+	const progress = clamp((elo - MAIA.eloMax) / (MAIA.prior.eloMax - MAIA.eloMax), 0, 1);
+	return MAIA.prior.gapCp.start + progress * (MAIA.prior.gapCp.end - MAIA.prior.gapCp.start);
+}
+
+/** One packaged size serves every supported rating. */
 export function maiaSizeFor(targetElo: number): MaiaSize {
-	for (const band of MAIA.sizeBands) if (targetElo < band.maxElo) return band.size;
+	for (const band of MAIA.sizeBands) if (targetElo <= band.maxElo) return band.size;
 	const last = MAIA.sizeBands[MAIA.sizeBands.length - 1];
 	return last?.size ?? MAIA.defaultSize;
 }

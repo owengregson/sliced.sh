@@ -11,6 +11,7 @@ import { humanDepth } from "@core/engine/depth-policy";
 import { requestEloForTarget } from "@core/engine/options";
 import type { AnalysisHandle, AnalysisRequest, AnalysisResult } from "@core/engine/types";
 import { maiaSizeFor } from "@core/policy/maia-size";
+import { policyQueryIdentity } from "@core/policy/policy-query";
 import type { PolicyInferenceInputs, PolicyPort, PolicyResult } from "@core/policy/types";
 import { createRng } from "@core/rng";
 import type { BookPolicy } from "@core/strength/book/book-policy";
@@ -761,14 +762,37 @@ function strength(patch: Partial<Settings["strength"]>): Settings {
 	return s;
 }
 
+function heldPolicy(result: PolicyResult, knownTopMoves?: string[]) {
+	const inputs = {
+		fen: START,
+		historyFens: [START],
+		size: result.size,
+		selfElo: 1500,
+		oppoElo: 1500,
+	};
+	return {
+		fen: START,
+		result,
+		selfElo: 1500,
+		historyPlies: 1,
+		identity: policyQueryIdentity({
+			inputs,
+			mode: "maia",
+			selectionMode: strength({}).strength.selectionMode,
+		}),
+		...(knownTopMoves ? { knownTopMoves } : {}),
+	};
+}
+
 describe("Maia-3 selection in the pipeline (2026-09-11)", () => {
 	const FOUR = ["e2e4", "d2d4", "g1f3", "c2c4"];
 
-	it("maiaSearchMode: below 2600, a port, no clock race — and nothing else", () => {
+	it("maiaSearchMode: through 3000 inclusive, with a port and no clock race", () => {
 		const base = { targetElo: 1500, policy: true, clockRace: false };
 		expect(maiaSearchMode(base)).toBe(true);
 		expect(maiaSearchMode({ ...base, targetElo: MAIA.eloMax - 1 })).toBe(true);
-		expect(maiaSearchMode({ ...base, targetElo: MAIA.eloMax })).toBe(false);
+		expect(maiaSearchMode({ ...base, targetElo: MAIA.eloMax })).toBe(true);
+		expect(maiaSearchMode({ ...base, targetElo: MAIA.eloMax + 1 })).toBe(false);
 		expect(maiaSearchMode({ ...base, policy: false })).toBe(false);
 		expect(maiaSearchMode({ ...base, clockRace: true })).toBe(false);
 	});
@@ -814,7 +838,7 @@ describe("Maia-3 selection in the pipeline (2026-09-11)", () => {
 		expect(maiaHistoryFens({ fen: START, moves: moves.slice(0, 2) }, fen)).toEqual([fen]);
 	});
 
-	it("queries Maia only below 2600 and only with the human model on", async () => {
+	it("queries Maia through 3000 and its prior through 3200", async () => {
 		const engine = fakeEngine((req) => analysisOf(req, FOUR, 14));
 		const { port, calls } = fakePolicy(async () => MAIA_START);
 		const pipeline = new RecommendationPipeline({
@@ -826,15 +850,19 @@ describe("Maia-3 selection in the pipeline (2026-09-11)", () => {
 		await pipeline.run(input({ targetElo: 1500, settings: strength({}) }));
 		expect(calls).toHaveLength(1);
 		expect(calls[0]?.size).toBe(maiaSizeFor(1500));
-		// from 2600 the query is the H15 *prior* (79M, capped rating); the referee is the native one
+		// The primary ceiling is inclusive and still uses an unrestricted referee.
 		await pipeline.run(input({ targetElo: MAIA.eloMax, settings: strength({}) }));
 		expect(calls).toHaveLength(2);
 		expect(calls[1]?.size).toBe(MAIA.prior.size);
-		expect(engine.requests[1]?.elo).toBe(MAIA.eloMax);
+		expect(engine.requests.at(-1)?.elo).toBeUndefined();
+		await pipeline.run(input({ targetElo: 3200, settings: strength({}) }));
+		expect(calls).toHaveLength(3);
+		expect(calls[2]?.selfElo).toBe(3000);
+		expect(engine.requests.at(-1)?.elo).toBe(requestEloForTarget(3200));
 		// the top setting is the pure-engine escape hatch: no query of either kind
 		await pipeline.run(input({ targetElo: LIMITS.eloMax, settings: strength({}) }));
-		expect(calls).toHaveLength(2);
-		expect(engine.requests[2]?.elo).toBeUndefined();
+		expect(calls).toHaveLength(3);
+		expect(engine.requests.at(-1)?.elo).toBeUndefined();
 	});
 
 	it("the query carries the size for the target, the last 8 FENs, our effective E and the opponent's rating", async () => {
@@ -888,14 +916,13 @@ describe("Maia-3 selection in the pipeline (2026-09-11)", () => {
 			const out = await pipeline.run(
 				input({ targetElo: 1500, settings: strength({ selectionMode }) })
 			);
-			expect(engine.requests).toHaveLength(1);
+			expect(engine.requests).toHaveLength(2);
+			expect(engine.requests[0]?.searchmoves).toBeUndefined();
 			expect(engine.requests[0]?.elo).toBeUndefined();
-			// H10 (2026-09-13): the answer is instant, so the one search is Maia-shaped — its roots
-			// and its breadth are the root set, not the 20-root sampling breadth (that is the fallback
-			// when the answer misses `policyFirstMs`, tested with the extra referee search below).
-			expect(engine.requests[0]?.searchmoves).toEqual(shapedRootSet(MAIA_START, START));
-			expect(engine.requests[0]?.multiPv).toBe(shapedRootSet(MAIA_START, START).length);
-			expect(engine.requests[0]?.shaped).toBe(true);
+			// The unrestricted anchor supplies engine roots before the shaped comparison.
+			expect(engine.requests[1]?.searchmoves).toEqual(shapedRootSet(MAIA_START, START));
+			expect(engine.requests[1]?.multiPv).toBe(shapedRootSet(MAIA_START, START).length);
+			expect(engine.requests[1]?.shaped).toBe(true);
 			expect(out?.rec.chosen.source).toBe("maia");
 			expect(FOUR).toContain(out?.rec.chosen.uci ?? "");
 			// `p` is the model's probability of the drawn move, surfaced for the Engine view.
@@ -977,7 +1004,7 @@ describe("Maia-3 selection in the pipeline (2026-09-11)", () => {
 		expect(out?.rec.chosen.source).not.toBe("maia");
 		expect(out?.rec.maia).toBeUndefined();
 		expect(elapsed - NOW).toBe(SEARCH_BUDGET.moveMs.blitz);
-		expect(engine.requests[0]?.limit.movetimeMs).toBe(
+		expect(engine.requests.reduce((sum, req) => sum + (req.limit.movetimeMs ?? 0), 0)).toBe(
 			SEARCH_BUDGET.moveMs.blitz - MAIA_SEARCH.shaped.policyFirstMs - 1
 		);
 	});
@@ -1138,13 +1165,7 @@ const MAIA_OUTSIDE: PolicyResult = {
 	],
 };
 
-/**
- * H10 (2026-09-13): a clock that steps past `policyFirstMs` on every reading, so a fresh answer
- * can never shape the search — the pipeline takes the broad-search fallback and the query keeps
- * running for the selector (the final wait is `MAIA.inferenceBudgetMs`, which five or six
- * readings do not exhaust).
- */
-/** Simulates policy latency once, instead of advancing time whenever code reads the clock. */
+/** Delays policy until the broad main search starts, after any unrestricted anchor. */
 function fallbackPipeline(
 	engine: ReturnType<typeof fakeEngine>,
 	port: PolicyPort,
@@ -1155,7 +1176,9 @@ function fallbackPipeline(
 	const analyse = engine.analyse.bind(engine);
 	engine.analyse = (req) => {
 		const handle = analyse(req);
-		for (const wake of waiting.splice(0)) wake();
+		if (req.multiPv > SEARCH_BUDGET.ponderMultiPv) {
+			for (const wake of waiting.splice(0)) wake();
+		}
 		return handle;
 	};
 	const late: PolicyPort = {
@@ -1285,8 +1308,8 @@ describe("Maia's unscored favourites — the extra referee search (2026-09-12; t
 			const out = await pipelineWith(engine, port).run(
 				input({ targetElo: 1500, settings: strength({}), rng: createRng(`extra-${seed}`) })
 			);
-			expect(engine.requests).toHaveLength(2);
-			const [main, extra] = engine.requests;
+			expect(engine.requests).toHaveLength(3);
+			const [, main, extra] = engine.requests;
 			extraRequest = extra;
 			expect(extra?.searchmoves).toEqual(["b1c3", "a2a3", "h2h3"]);
 			expect(extra?.multiPv).toBe(3);
@@ -1338,8 +1361,8 @@ describe("Maia's unscored favourites — the extra referee search (2026-09-12; t
 			],
 		}));
 		await pipelineWith(engine, port).run(input({ targetElo: 1500, settings: strength({}) }));
-		expect(engine.requests[1]?.searchmoves).toEqual(["b1c3", "b2b3", "a2a4", "a2a3", "h2h3", "h2h4"]);
-		expect(engine.requests[1]?.multiPv).toBe(MAIA.extraCandidates);
+		expect(engine.requests[2]?.searchmoves).toEqual(["b1c3", "b2b3", "a2a4", "a2a3", "h2h3", "h2h4"]);
+		expect(engine.requests[2]?.multiPv).toBe(MAIA.extraCandidates);
 	});
 
 	it("(b) below extraMassMin with no strong single move there is no extra request", async () => {
@@ -1357,7 +1380,7 @@ describe("Maia's unscored favourites — the extra referee search (2026-09-12; t
 		const out = await pipelineWith(engine, port).run(
 			input({ targetElo: 1500, settings: strength({}) })
 		);
-		expect(engine.requests).toHaveLength(1);
+		expect(engine.requests).toHaveLength(2);
 		expect(out?.rec.chosen.source).toBe("maia");
 		expect(out?.rec.chosen.rationale.join(" ")).not.toContain("searchmoves");
 		expect(FOUR).toContain(out?.rec.chosen.uci ?? "");
@@ -1408,8 +1431,8 @@ describe("Maia's unscored favourites — the extra referee search (2026-09-12; t
 		const out = await pipelineWith(engine, port).run(
 			input({ targetElo: 1500, settings: strength({}), rng: createRng("failed-extra") })
 		);
-		expect(engine.requests).toHaveLength(2);
-		expect(engine.requests[1]?.searchmoves).toEqual(["b1c3", "a2a3", "h2h3"]);
+		expect(engine.requests).toHaveLength(3);
+		expect(engine.requests[2]?.searchmoves).toEqual(["b1c3", "a2a3", "h2h3"]);
 		expect(out?.rec.chosen.source).toBe("maia");
 		expect(FOUR).toContain(out?.rec.chosen.uci ?? "");
 		expect(out?.rec.lines).toHaveLength(4);
@@ -1421,7 +1444,7 @@ describe("Maia's unscored favourites — the extra referee search (2026-09-12; t
 		const alone = await pipelineWith(plain, fakePolicy(async () => MAIA_OUTSIDE).port).run(
 			input({ targetElo: 1500, settings: strength({}), rng: createRng("failed-extra") })
 		);
-		expect(plain.requests).toHaveLength(2);
+		expect(plain.requests).toHaveLength(3);
 		expect(alone?.rec.chosen.uci).toBe(out?.rec.chosen.uci ?? "");
 	});
 
@@ -1436,21 +1459,21 @@ describe("Maia's unscored favourites — the extra referee search (2026-09-12; t
 			input({ targetElo: 1500, settings: strength({}), signal: controller.signal })
 		);
 		expect(out).toBeNull();
-		expect(engine.requests).toHaveLength(1);
+		expect(engine.requests).toHaveLength(2);
 		expect(engine.requests[0]?.searchmoves).toBeUndefined();
 	});
 
-	it("without a policy answer, or above 2600, nothing about the search changes", async () => {
+	it("without a policy answer or above 3000, no extra candidate search runs", async () => {
 		const engine = fakeEngine(refereeAndExtra);
 		const { port } = fakePolicy(async () => null);
 		await pipelineWith(engine, port).run(input({ targetElo: 1500, settings: strength({}) }));
-		expect(engine.requests).toHaveLength(1);
+		expect(engine.requests).toHaveLength(2);
 		const high = fakeEngine(refereeAndExtra);
 		await pipelineWith(high, fakePolicy(async () => MAIA_OUTSIDE).port).run(
-			input({ targetElo: MAIA.eloMax, settings: strength({}) })
+			input({ targetElo: MAIA.eloMax + 1, settings: strength({}) })
 		);
 		expect(high.requests).toHaveLength(1);
-		expect(high.requests[0]?.elo).toBe(MAIA.eloMax);
+		expect(high.requests[0]?.elo).toBe(MAIA.eloMax + 1);
 	});
 
 	// §7 A1 (2026-09-13): a 260 ms search that has not seen the refutation must not become the
@@ -1467,7 +1490,7 @@ describe("Maia's unscored favourites — the extra referee search (2026-09-12; t
 			const out = await pipelineWith(engine, fakePolicy(async () => MAIA_OUTSIDE).port).run(
 				input({ targetElo: 1500, settings: strength({}), rng: createRng(`a1-${seed}`) })
 			);
-			expect(engine.requests).toHaveLength(2);
+			expect(engine.requests).toHaveLength(3);
 			// the recommendation's eval, first line and the whole leading frame are the main search's
 			expect(out?.rec.eval).toEqual({ cp: 30 });
 			expect(out?.rec.lines[0]?.pvUci[0]).toBe("e2e4");
@@ -1499,7 +1522,7 @@ describe("Maia's unscored favourites — the extra referee search (2026-09-12; t
 		const out = await pipelineWith(engine, fakePolicy(async () => MAIA_OUTSIDE).port).run(
 			input({ targetElo: 1500, settings: strength({}), rng: createRng("a3") })
 		);
-		expect(engine.requests).toHaveLength(2);
+		expect(engine.requests).toHaveLength(3);
 		expect(out?.rec.lines).toHaveLength(4);
 		expect(out?.rec.eval).toEqual({ cp: 30 });
 		expect(FOUR).toContain(out?.rec.chosen.uci ?? "");
@@ -1740,13 +1763,13 @@ describe("one rating for the query, the rails and the human frame (2026-09-13, �
 			book: null,
 			policy: port,
 		});
-		const held = { fen: START, result: MAIA_START, selfElo: 1480, historyPlies: 8 };
+		const held = heldPolicy(MAIA_START);
 		const out = await pipeline.run(
 			input({ targetElo: 1500, settings: strength({}), policyAnswer: held })
 		);
 		expect(calls).toHaveLength(0);
 		expect(out?.rec.chosen.source).toBe("maia");
-		expect(out?.rec.maia).toMatchObject({ size: "79m", selfElo: 1480, historyPlies: 8 });
+		expect(out?.rec.maia).toMatchObject({ size: "79m", selfElo: 1500, historyPlies: 1 });
 		const other = { ...held, fen: applyMoves(START, ["e2e4"])! };
 		const fresh = await pipeline.run(
 			input({ targetElo: 1500, settings: strength({}), policyAnswer: other })
@@ -1862,11 +1885,11 @@ describe("the human-depth frame (2026-09-13, H4)", () => {
 	});
 });
 
-describe("Maia-79M as a prior above 2600 (2026-09-13, H15)", () => {
+describe("Maia-79M as a prior above 3000 through 3200", () => {
 	const SIX = ["e2e4", "d2d4", "g1f3", "c2c4", "b1c3", "g2g3"];
 
-	it("queries 79M at min(selfElo, topCalibratedElo) with the native referee at priorCandidates roots", async () => {
-		for (const targetElo of [2600, 2700, 3000]) {
+	it("queries 79M at capped selfElo with the native referee at priorCandidates roots", async () => {
+		for (const targetElo of [3001, 3100, 3200]) {
 			const engine = fakeEngine((req) => analysisOf(req, SIX, 18));
 			const { port, calls } = fakePolicy(async () => ({ ...MAIA_START, size: "79m" }));
 			const pipeline = new RecommendationPipeline({
@@ -1880,7 +1903,7 @@ describe("Maia-79M as a prior above 2600 (2026-09-13, H15)", () => {
 			);
 			expect(calls).toHaveLength(1);
 			expect(calls[0]?.size).toBe(MAIA.prior.size);
-			expect(calls[0]?.selfElo).toBe(Math.min(targetElo, MAIA.prior.topCalibratedElo));
+			expect(calls[0]?.selfElo).toBe(Math.min(targetElo, MAIA.conditioningEloMax));
 			expect(engine.requests).toHaveLength(1);
 			expect(engine.requests[0]?.elo).toBe(requestEloForTarget(targetElo));
 			expect(engine.requests[0]?.multiPv).toBe(SEARCH_BUDGET.priorCandidates);
@@ -1888,7 +1911,7 @@ describe("Maia-79M as a prior above 2600 (2026-09-13, H15)", () => {
 			expect(out?.budget.multiPv).toBe(SEARCH_BUDGET.priorCandidates);
 			expect(out?.rec.maia).toMatchObject({
 				size: "79m",
-				selfElo: Math.min(targetElo, MAIA.prior.topCalibratedElo),
+				selfElo: Math.min(targetElo, MAIA.conditioningEloMax),
 			});
 		}
 	});
@@ -1910,7 +1933,7 @@ describe("Maia-79M as a prior above 2600 (2026-09-13, H15)", () => {
 			book: null,
 			policy: port,
 		});
-		await pipeline.run(input({ targetElo: 2700, settings: strength({}) }));
+		await pipeline.run(input({ targetElo: 3100, settings: strength({}) }));
 		expect(calls).toHaveLength(1);
 		expect(engine.requests).toHaveLength(1);
 		expect(engine.requests[0]?.searchmoves).toBeUndefined();
@@ -2052,13 +2075,7 @@ describe("one Maia-shaped search (2026-09-13, H10 / H17)", () => {
 			book: null,
 			...(port ? { policy: port } : {}),
 		});
-	const held = (result: PolicyResult, knownTopMoves?: string[]) => ({
-		fen: START,
-		result,
-		selfElo: 1500,
-		historyPlies: 1,
-		...(knownTopMoves ? { knownTopMoves } : {}),
-	});
+	const held = heldPolicy;
 	const policyOf = (moves: Array<[string, number]>): PolicyResult => ({ ...MAIA_START, moves });
 	const CONFIDENT = policyOf([
 		["e2e4", 0.97],
@@ -2107,19 +2124,18 @@ describe("one Maia-shaped search (2026-09-13, H10 / H17)", () => {
 	});
 
 	it("shapedSearchPlan: multiPv is the root count; H17 shrinks the movetime toward the floor only when Maia is confident", () => {
-		const plain = shapedSearchPlan(MAIA_START, START, undefined, BUDGET);
+		const plain = shapedSearchPlan(MAIA_START, START, ["e2e4"], BUDGET);
 		expect(plain?.searchmoves).toEqual(shapedRootSet(MAIA_START, START));
 		expect(plain?.budget).toEqual({ ...BUDGET, multiPv: 4, movetimeMs: 600 });
 		expect(plain?.confident).toBe(false);
-		const confident = shapedSearchPlan(CONFIDENT, START, undefined, BUDGET);
+		const confident = shapedSearchPlan(CONFIDENT, START, ["e2e4"], BUDGET);
 		const floor = SEARCH_BUDGET.minMovetimeMs;
 		expect(confident?.budget.movetimeMs).toBe(600 - K.confidentTimeFraction * (600 - floor));
 		expect(confident?.budget.movetimeMs).toBe(375);
 		expect(confident?.confident).toBe(true);
 		// never below the floor: the panel still needs an eval
 		expect(
-			shapedSearchPlan(CONFIDENT, START, undefined, { ...BUDGET, movetimeMs: floor })?.budget
-				.movetimeMs
+			shapedSearchPlan(CONFIDENT, START, ["e2e4"], { ...BUDGET, movetimeMs: floor })?.budget.movetimeMs
 		).toBe(floor);
 		expect(K.confidentProb).toBe(0.8);
 		expect(shapedSearchPlan(policyOf([["e2e5", 1]]), START, undefined, BUDGET)).toBeNull();
@@ -2167,16 +2183,17 @@ describe("one Maia-shaped search (2026-09-13, H10 / H17)", () => {
 		expect(picks.has("b1c3")).toBe(true);
 	});
 
-	it("a fresh answer inside policyFirstMs shapes the search over Maia's roots alone; a slow one falls back to the broad search", async () => {
+	it("a fresh answer shapes the engine and Maia roots; a slow answer uses the broad search", async () => {
 		const engine = fakeEngine(referee);
 		const { port, calls } = fakePolicy(async () => MAIA_OUTSIDE);
 		const out = await pipelineWith(engine, port).run(
 			input({ targetElo: 1500, settings: strength({}) })
 		);
 		expect(calls).toHaveLength(1);
-		expect(engine.requests).toHaveLength(1);
-		expect(engine.requests[0]?.searchmoves).toEqual(shapedRootSet(MAIA_OUTSIDE, START));
-		expect(engine.requests[0]?.shaped).toBe(true);
+		expect(engine.requests).toHaveLength(2);
+		expect(engine.requests[0]?.searchmoves).toBeUndefined();
+		expect(engine.requests[1]?.searchmoves).toEqual(shapedRootSet(MAIA_OUTSIDE, START, FOUR));
+		expect(engine.requests[1]?.shaped).toBe(true);
 		expect(out?.rec.chosen.source).toBe("maia");
 		expect(out?.rec.maia?.selfElo).toBe(1500);
 
@@ -2188,12 +2205,12 @@ describe("one Maia-shaped search (2026-09-13, H10 / H17)", () => {
 		const late = await fallbackPipeline(slow, fakePolicy(async () => MAIA_OUTSIDE).port).run(
 			input({ targetElo: 1500, settings: strength({}) })
 		);
-		expect(slow.requests).toHaveLength(2);
+		expect(slow.requests).toHaveLength(3);
 		expect(slow.requests[0]?.searchmoves).toBeUndefined();
 		expect(slow.requests[0]?.shaped).toBeUndefined();
-		expect(slow.requests[0]?.multiPv).toBe(20);
-		expect(slow.requests[1]?.searchmoves).toEqual(["b1c3", "a2a3", "h2h3"]);
-		expect(slow.requests[1]?.shaped).toBeUndefined();
+		expect(slow.requests[1]?.multiPv).toBe(20);
+		expect(slow.requests[2]?.searchmoves).toEqual(["b1c3", "a2a3", "h2h3"]);
+		expect(slow.requests[2]?.shaped).toBeUndefined();
 		// the late answer still reaches the selector
 		expect(late?.rec.chosen.source).toBe("maia");
 	});
@@ -2219,12 +2236,12 @@ describe("one Maia-shaped search (2026-09-13, H10 / H17)", () => {
 		// above MAIA.eloMax the prior keeps its 12-root native search
 		const prior = fakeEngine((req) => analysisOf(req, [...FOUR, "b1c3", "g2g3"], 14));
 		await pipelineWith(prior, fakePolicy(async () => MAIA_OUTSIDE).port).run(
-			input({ targetElo: 2700, settings: strength({}), policyAnswer: held(MAIA_OUTSIDE, FOUR) })
+			input({ targetElo: 3100, settings: strength({}), policyAnswer: held(MAIA_OUTSIDE, FOUR) })
 		);
 		expect(prior.requests).toHaveLength(1);
 		expect(prior.requests[0]?.searchmoves).toBeUndefined();
 		expect(prior.requests[0]?.multiPv).toBe(SEARCH_BUDGET.priorCandidates);
-		expect(prior.requests[0]?.elo).toBe(requestEloForTarget(2700));
+		expect(prior.requests[0]?.elo).toBe(requestEloForTarget(3100));
 	});
 
 	it("H17: a confident Maia shrinks the search's movetime toward the floor; the request and the outcome's budget agree", async () => {
@@ -2297,8 +2314,8 @@ describe("one turn's clock and preparation deadline", () => {
 		});
 		const out = await pipeline.run(input({ targetElo: 2400 }));
 		expect(out).not.toBeNull();
-		expect(engine.requests).toHaveLength(1);
-		expect(engine.requests[0]?.limit.movetimeMs).toBe(
+		expect(engine.requests).toHaveLength(2);
+		expect(engine.requests.reduce((sum, req) => sum + (req.limit.movetimeMs ?? 0), 0)).toBe(
 			SEARCH_BUDGET.moveMs.blitz - MAIA_SEARCH.shaped.policyFirstMs - 1
 		);
 		expect(now - NOW).toBe(SEARCH_BUDGET.moveMs.blitz);
@@ -2350,6 +2367,132 @@ describe("one turn's clock and preparation deadline", () => {
 				);
 				expect(context.contextEloPenalty).toBe(0);
 			}
+		}
+	});
+});
+
+describe("selection routing and independent engine evidence", () => {
+	it("routes every search using the active target despite a different saved slider", async () => {
+		for (const targetElo of [500, 1500, 2600, 2800, 2801, 3000, 3001, 3200, 3201, 3800]) {
+			const engine = fakeEngine((req) => analysisOf(req, req.searchmoves ?? ["e2e4", "d2d4"], 18));
+			const { port, calls } = fakePolicy(async () => MAIA_START);
+			const configured = strength({ targetElo: 900 });
+			const out = await new RecommendationPipeline({
+				engine,
+				timing: model(),
+				book: null,
+				policy: port,
+				now: () => NOW,
+			}).run(input({ targetElo, settings: configured, opponentElo: 3400 }));
+			expect(out).not.toBeNull();
+			expect(engine.requests.length).toBeGreaterThan(0);
+			for (const req of engine.requests) expect(req.targetElo).toBe(targetElo);
+			expect(calls).toHaveLength(targetElo <= 3200 ? 1 : 0);
+			if (calls[0]) {
+				expect(calls[0].selfElo).toBeLessThanOrEqual(3000);
+				expect(calls[0].oppoElo).toBe(3400);
+			}
+			if (targetElo > 3200) {
+				expect(out?.rec.maia).toBeUndefined();
+				expect(out?.rec.chosen.uci).toBe("e2e4");
+			}
+		}
+	});
+
+	it("rejects a held answer when conditioning, mode or repetition history changes", async () => {
+		const repeats = ["g1f3", "g8f6", "f3g1", "f6g8"];
+		const changes: Partial<RecommendationInput>[] = [
+			{ targetElo: 1600 },
+			{ opponentElo: 1600 },
+			{ form: 0.5 },
+			{ settings: strength({ selectionMode: "persona-sampling" }) },
+			{ targetElo: 3100 },
+			{
+				snapshot: snapshot({ fen: applyMoves(START, repeats)!, ply: 4 }),
+				history: { fen: START, moves: repeats },
+				moves: repeats,
+			},
+		];
+		for (const change of changes) {
+			const engine = fakeEngine((req) => analysisOf(req, ["e2e4", "d2d4"], 18));
+			const { port, calls } = fakePolicy(async () => MAIA_START);
+			const out = await new RecommendationPipeline({
+				engine,
+				timing: model(),
+				book: null,
+				policy: port,
+				now: () => NOW,
+			}).run(
+				input({ settings: strength({}), policyAnswer: heldPolicy(MAIA_START, ["e2e4"]), ...change })
+			);
+			expect(out).not.toBeNull();
+			expect(calls).toHaveLength(1);
+		}
+	});
+
+	it("keeps an engine move missing from Maia in one coherent final comparison within 600 ms", async () => {
+		let now = NOW;
+		const policy: PolicyResult = {
+			...MAIA_START,
+			moves: [
+				["e2e4", 0.97],
+				["d2d4", 0.01],
+				["g1f3", 0.01],
+				["c2c4", 0.01],
+			],
+		};
+		const engine = fakeEngine((req) => {
+			now += req.limit.movetimeMs ?? 0;
+			return req.searchmoves
+				? analysisOf(
+						req,
+						["b1c3", ...req.searchmoves.filter((move) => move !== "b1c3")],
+						16,
+						[100, -100, -100, -100, -100]
+					)
+				: analysisOf(req, ["b1c3"], 12, [100]);
+		});
+		const out = await new RecommendationPipeline({
+			engine,
+			timing: model(),
+			book: null,
+			policy: fakePolicy(async () => policy).port,
+			now: () => now,
+		}).run(input({ targetElo: 3000, settings: strength({}) }));
+		expect(engine.requests).toHaveLength(2);
+		expect(engine.requests[0]?.searchmoves).toBeUndefined();
+		expect(engine.requests[1]?.searchmoves).toContain("b1c3");
+		expect(engine.requests[1]?.limit.movetimeMs).toBe(400);
+		expect(now - NOW).toBe(600);
+		expect(out?.rec.chosen.uci).toBe("b1c3");
+		expect(out?.rec.lines.every((line) => line.depth === 16)).toBe(true);
+	});
+
+	it("keeps a completed unrestricted result when the narrowed search fails", async () => {
+		const engine = fakeEngine((req) =>
+			req.searchmoves ? null : analysisOf(req, ["b1c3", "e2e4"], 14, [100, -100])
+		);
+		const out = await new RecommendationPipeline({
+			engine,
+			timing: model(),
+			book: null,
+			policy: fakePolicy(async () => MAIA_START).port,
+			now: () => NOW,
+		}).run(input({ targetElo: 3000, settings: strength({}) }));
+		expect(engine.requests).toHaveLength(2);
+		expect(out?.analysis?.request.searchmoves).toBeUndefined();
+		expect(out?.rec.chosen.uci).toBe("b1c3");
+		expect(out?.rec.eval).toEqual({ cp: 100 });
+	});
+
+	it("does not narrow a root set without independent engine evidence or shorten upper verification", () => {
+		const policy: PolicyResult = { ...MAIA_START, moves: [["e2e4", 1]] };
+		const budget = { movetimeMs: 600, depthCap: 20, multiPv: 12 };
+		expect(shapedSearchPlan(policy, START, undefined, budget, 3000)).toBeNull();
+		expect(shapedSearchPlan(policy, START, ["e2e5"], budget, 3000)).toBeNull();
+		expect(shapedSearchPlan(policy, START, ["b1c3"], budget, 2800)?.budget.movetimeMs).toBe(375);
+		for (const target of [2801, 2900, 3000]) {
+			expect(shapedSearchPlan(policy, START, ["b1c3"], budget, target)?.budget.movetimeMs).toBe(600);
 		}
 	});
 });

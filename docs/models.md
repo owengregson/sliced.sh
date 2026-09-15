@@ -153,8 +153,15 @@ model copies, raw ONNX duplicates, source parts and empty packed assets.
 
 ## 8. Maia-3 human move-policy models
 
-Maia-3 decides *which* move below `MAIA.eloMax` (2600); the ChessMimic head and the executor
-still decide *when* and *how*. Every number here comes from
+Maia-3 leads move selection through `MAIA.eloMax` (3000), with stronger verification above
+2800. Above 3000 through 3200, Stockfish defines the acceptable alternatives and Maia supplies
+a secondary preference. Above 3200, selection uses Stockfish alone and the automatic network
+switches to Full. Network routing uses the active opponent-matched target; explicit Big remains
+available at every target. Maia self conditioning is capped at 3000 while the opponent input
+retains the actual rating. These boundaries are engineering choices, not measured playing ratings.
+The ChessMimic head and executor still decide *when* and *how*.
+
+The original export measurements below come from
 [`research/maia3-feasibility-2026-09-11.md`](research/maia3-feasibility-2026-09-11.md), measured on
 2026-09-11 on the same machine as §5 (Apple M5, 10 cores, 24 GB, macOS 26.3); the registry is
 `src/core/constants/maia.ts` and it is the contract every file below is checked against.
@@ -182,7 +189,7 @@ copies nothing from it.
 > choose etc.)". Since then `MAIA_SIZES = ["79m"]`, `MAIA_MODEL_FILES` names only
 > `maia3-79m.onnx`, `MAIA.sizeBands` is one band up to `MAIA.eloMax`, and `defaultSize` /
 > `prior.size` are 79M; `maiaSizeFor(anyElo)` answers `"79m"`. The query's `selfElo` / `oppoElo`
-> are untouched — the rating is a model input, and the Elo slider (with the H2 offset, H5 context
+> remain model inputs; current self conditioning is capped at 3000. The Elo slider (with the H2 offset, H5 context
 > penalty and the pressure term) still decides whom the model imitates. The 5M and 23M rows in the
 > tables below are the **historical export record**; the files `maia3-5m.onnx`, `maia3-23m.onnx`
 > and the fixtures `expected-5m.json` / `expected-23m.json` were removed from the repository and

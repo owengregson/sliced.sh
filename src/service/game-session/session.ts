@@ -45,7 +45,12 @@
  */
 
 import { type FenParts, loadPosition, parseFen, plyOf, turnFieldOf } from "@core/chess/fen";
-import { historyFromSan, matchingHistory, type PositionHistory } from "@core/chess/history";
+import {
+	historyFromSan,
+	historyKey,
+	matchingHistory,
+	type PositionHistory,
+} from "@core/chess/history";
 import { isLoneKing } from "@core/chess/material";
 import { phase as phaseOf } from "@core/chess/phase";
 import { hangsOutright } from "@core/chess/safety";
@@ -69,7 +74,7 @@ import { TELEMETRY_BANDS } from "@core/constants/telemetry";
 import { TIMINGS, type TimingProfile } from "@core/constants/timings";
 import { automaticDepthForElo } from "@core/engine/depth-policy";
 import { requestEloForTarget } from "@core/engine/options";
-import type { AnalysisHandle, AnalysisRequest } from "@core/engine/types";
+import type { AnalysisHandle, AnalysisRequest, AnalysisUpdate } from "@core/engine/types";
 import { log } from "@core/logger";
 import { sampleRange } from "@core/motor/geometry";
 import {
@@ -78,7 +83,6 @@ import {
 	opponentExplorationCandidates,
 } from "@core/motor/opponent-candidates";
 import type { TimeControlClass } from "@core/motor/types";
-import { maiaSizeFor, usesMaia } from "@core/policy/maia-size";
 import type { PolicyPort, PolicyResult } from "@core/policy/types";
 import { createRng, type Rng } from "@core/rng";
 import type { BookPolicy } from "@core/strength/book/book-policy";
@@ -141,7 +145,9 @@ import {
 	commitmentSuperseded,
 	knownTopMovesFor,
 	type MaiaCommitment,
+	maiaSizeForGame,
 	type PredictedPolicyAnswer,
+	type PredictedPolicyQuery,
 	policyAnswerFor,
 	predictedPolicyInputs,
 	samePosition,
@@ -161,6 +167,7 @@ import {
 	maiaSearchMode,
 	ownMoveBudget,
 	ownMoveClockRace,
+	ownMoveMaiaElo,
 	RecommendationPipeline,
 	refereeElo,
 	shapedSearchPlan,
@@ -313,14 +320,9 @@ export interface GameSessionDeps {
 	speak(text: string): Promise<void>;
 	/** Task 34: pre-load the ChessMimic band for a target Elo before the first move. */
 	warmTiming?: ((targetElo: number) => void) | undefined;
-	/** 2026-09-11: the Maia-3 policy port the pipeline queries below `MAIA.eloMax`; absent → engine policy. */
+	/** Policy inference for Maia-led and assisted selection; absent uses the engine fallback. */
 	policy?: PolicyPort | undefined;
-	/**
-	 * 2026-09-11: have the Maia-3 size for a target Elo resident before it is queried. Called at
-	 * game start and whenever the size the target maps to changes while a game is live or
-	 * pending (a settings write, the opponent's rating arriving) — never when the human model is
-	 * off or the target is at or above `MAIA.eloMax`.
-	 */
+	/** Synchronize model preloading; engine-only targets clear reconnect warming. */
 	warmPolicy?: ((targetElo: number) => void) | undefined;
 	/** The session became live / stopped being live (the registry holds `Keepalive`). */
 	onLivenessChanged?: (() => void) | undefined;
@@ -457,12 +459,9 @@ export class GameSession implements SessionSource {
 	} | null = null;
 	/** The Maia-3 size last asked to be resident for this session (`warmPolicyFor` dedupes on it). */
 	private policySizeWarmed: MaiaSize | null = null;
-	/**
-	 * H6.3 (2026-09-13): the Maia size this game plays with, committed at game start and locked by
-	 * the first move — one player plays the whole game, whatever an opponent-matched target does
-	 * afterwards. An explicit settings change of the target re-commits (`onSettingsChanged`).
-	 * `null` before the first game.
-	 */
+	private policyConfiguration: string | null = null;
+	private workGeneration = 0;
+	/** Keep the model fixed within eligible play; active rating changes can disable or re-enable it. */
 	private gameMaia: MaiaCommitment | null = null;
 	/** H6.3: set by the game's first pipeline run; cleared by an explicit target change. */
 	private gameMaiaLocked = false;
@@ -568,7 +567,15 @@ export class GameSession implements SessionSource {
 	/** The next hold-or-premove checkpoint of the opponent's turn (`scheduleOpponentDecision`). */
 	private decisionTimer: unknown = null;
 	/** `preAnalysePredicted`'s answer for this opponent turn: what a hold candidate is chosen from. */
-	private predictedAnalysis: { reply: string; fen: string; lines: EvalLine[] } | null = null;
+	private predictedAnalysis: {
+		reply: string;
+		fen: string;
+		lines: EvalLine[];
+		request: AnalysisRequest;
+		generation: number;
+		bestmove: string | null;
+		comparison?: AnalysisUpdate;
+	} | null = null;
 	/** The per-game seed every per-position draw derives from (`startGame`). */
 	private gameSeed: string;
 	/** Recoveries always ask the executor for a fresh pre-dispatch position check. */
@@ -605,6 +612,7 @@ export class GameSession implements SessionSource {
 		this.deps = deps;
 		this.acting = this.mayAct();
 		this.boardEffects = new BoardEffectsReporter({
+			getTargetElo: () => this.targetElo(),
 			searcher: () => this.deps.engine,
 			post: (cmd) => {
 				this.deps.link.post(this.deps.tabId, cmd);
@@ -696,27 +704,102 @@ export class GameSession implements SessionSource {
 		return clamp(rating + s.personaEloOffset, LIMITS.eloMin, LIMITS.eloMax);
 	}
 
-	/**
-	 * 2026-09-11: ask for the Maia-3 size the current target maps to, when Maia selects for it
-	 * (target below `MAIA.eloMax`) and the session may act. Cheap by
-	 * design — a port message, deduped on the size so a target moving inside one band asks
-	 * nothing; `force` (game start) asks even for the size already remembered, because the
-	 * offscreen document may have been recreated since.
-	 */
-	private warmPolicyFor(targetElo: number, force = false): void {
-		const warm = this.deps.warmPolicy;
-		if (!warm || !this.mayAct()) return;
-		// H6.3: a game plays one size. Until the first move is decided the commitment follows the
-		// target (the opponent's rating arriving with the game is still "game start"); after it,
-		// only an explicit settings change (`onSettingsChanged` re-commits) can move it, and an
-		// opponent-matched target drifting across a band edge asks for nothing.
-		if (this.gameMaiaLocked) return;
-		if (this.gameMaia) this.gameMaia = commitMaiaSize(targetElo, this.deps.getSettings().strength);
-		if (!usesMaia(targetElo)) return;
-		const size = maiaSizeFor(targetElo);
-		if (!force && size === this.policySizeWarmed) return;
+	private policyConfigurationKey(): string {
+		const settings = this.deps.getSettings();
+		return JSON.stringify([
+			settings.enabled,
+			this.targetElo(),
+			this.opponentInfo?.ratingEstimate ?? null,
+			settings.strength.selectionMode,
+			settings.strength.blunderScale,
+			settings.strength.persona,
+			settings.engine,
+		]);
+	}
+
+	/** Keep model residency and asynchronous work aligned with the active selection inputs. */
+	private warmPolicyFor(targetElo: number, force = false): boolean {
+		const configuration = this.policyConfigurationKey();
+		const changed = this.policyConfiguration !== null && configuration !== this.policyConfiguration;
+		this.policyConfiguration = configuration;
+		if (changed) {
+			this.cancelInFlight();
+			this.rec = null;
+			this.forgetPremove("the active selection configuration changed");
+			this.clearBoardMarks();
+		}
+		if (this.gameMaia) {
+			const next = commitMaiaSize(targetElo, this.deps.getSettings().strength);
+			if (next.size !== null && this.gameMaiaLocked && this.gameMaia.size !== null)
+				next.size = this.gameMaia.size;
+			this.gameMaia = next;
+		}
+		const size = this.mayAct() ? maiaSizeForGame(targetElo) : null;
+		if (!force && size === this.policySizeWarmed) return changed;
 		this.policySizeWarmed = size;
-		warm(targetElo);
+		this.deps.warmPolicy?.(this.mayAct() ? targetElo : LIMITS.eloMax);
+		return changed;
+	}
+
+	private policyPosition(
+		snapshot: PositionSnapshot,
+		fen: string,
+		ply: number
+	): OwnMoveBudgetInput | null {
+		const me = snapshot.myColor;
+		const timing = this.timing;
+		if (me === null || !timing) return null;
+		const position = {
+			fen,
+			ply,
+			targetElo: this.targetElo(),
+			form: this.form.value,
+			myClockMs: this.remainingClockMs(snapshot, me),
+			oppClockMs: this.remainingClockMs(snapshot, me === "w" ? "b" : "w"),
+			timeControl: this.currentTimeControl(),
+			tau: timing.persona.tau,
+			budgetUsedRatio: this.budgetUsedRatio(snapshot),
+		};
+		const mode = {
+			targetElo: position.targetElo,
+			policy: this.deps.policy !== undefined,
+			clockRace: ownMoveClockRace(position) !== null,
+		};
+		return { ...position, maia: maiaSearchMode(mode), maiaPrior: maiaPriorMode(mode) };
+	}
+
+	private policyQueryFor(
+		snapshot: PositionSnapshot,
+		fen: string,
+		history: PositionHistory,
+		ply: number
+	): PredictedPolicyQuery | null {
+		const position = this.policyPosition(snapshot, fen, ply);
+		if (!this.mayAct() || !position || ownMoveClockRace(position) !== null) return null;
+		return predictedPolicyInputs({
+			fen,
+			history,
+			position,
+			settings: this.deps.getSettings(),
+			size: maiaSizeForGame(this.targetElo()),
+			opponentElo: this.opponentInfo?.ratingEstimate ?? null,
+		});
+	}
+
+	private currentPolicyFor(
+		snapshot: PositionSnapshot,
+		candidate = this.predictedPolicy
+	): PredictedPolicyAnswer | null {
+		const query = this.policyQueryFor(
+			snapshot,
+			snapshot.fen,
+			this.historyFor(snapshot.fen),
+			snapshot.ply
+		);
+		const answer = policyAnswerFor(candidate, snapshot.fen, query?.identity);
+		return answer && query
+			? { ...answer, selfElo: query.selfElo, historyPlies: query.historyPlies }
+			: null;
 	}
 
 	/**
@@ -818,7 +901,7 @@ export class GameSession implements SessionSource {
 		});
 		// A new target (or the human model switched on) may map to a different Maia size.
 		this.recommitMaiaOnSettings(settings);
-		if (this.gamePendingOrLive()) this.warmPolicyFor(this.targetElo());
+		const selectionChanged = this.gamePendingOrLive() ? this.warmPolicyFor(this.targetElo()) : false;
 		this.executorHandle?.updateSettings({
 			persona: settings.strength.persona,
 			...executorSettingsFor(settings.execution),
@@ -838,6 +921,7 @@ export class GameSession implements SessionSource {
 			this.deps.autoQueue.cancel(this.deps.tabId);
 		else if (this.game) this.cancelQueueForNewGame(this.game.gameId);
 		if (!flipped) {
+			if (on && selectionChanged) void this.resumeEnabled();
 			if (on && !previouslyAutomatic && this.autoMoveAllowed(settings) && this.rec)
 				this.retryHeldRecommendation(this.rec, "the live profile now allows automatic moves");
 			return;
@@ -1037,6 +1121,10 @@ export class GameSession implements SessionSource {
 
 	/** Stop a running ponder / panel / pre-analysis search (Task 13's `pendingOptions`, §6.4). */
 	stopSearch(): Promise<void> {
+		this.workGeneration += 1;
+		this.abortPredictedPolicy();
+		this.predictedPolicy = null;
+		this.predictedAnalysis = null;
 		const pre = this.preAnalysis;
 		this.preAnalysis = null;
 		if (pre) void pre.stop();
@@ -1101,8 +1189,8 @@ export class GameSession implements SessionSource {
 					ratingEstimate: msg.ratingEstimate,
 					...(msg.title !== undefined ? { title: msg.title } : {}),
 				};
-				// Opponent-matched targets move with the rating, and so may the Maia size.
-				if (this.gamePendingOrLive()) this.warmPolicyFor(this.targetElo());
+				// Both ratings determine the query, including when the target is fixed.
+				if (this.gamePendingOrLive() && this.warmPolicyFor(this.targetElo())) void this.resumeEnabled();
 				// Re-read the clocks against the detector. The opponent itself proves nothing on the
 				// queue screen — the card there is the *previous* opponent's after an auto-queue hop —
 				// so only a running clock or a move ends the hold (`lobby.ts`).
@@ -1298,7 +1386,7 @@ export class GameSession implements SessionSource {
 		);
 		// H7.3: the pre-inferred answer survives the cancel exactly when this is the position it was
 		// inferred for — the whole point of inferring it early. Any other position drops it.
-		const carried = policyAnswerFor(this.predictedPolicy, snapshot.fen);
+		const carried = this.predictedPolicy;
 		this.cancelInFlight(held !== null);
 		this.predictedPolicy = carried;
 		const previous = this.snapshot;
@@ -1334,6 +1422,7 @@ export class GameSession implements SessionSource {
 		// position *before* the move, and it wants the root the next ply's search will also use.
 		const beforeHistory = previous ? this.historyFor(previous.fen) : null;
 		this.trackMove(previous, snapshot);
+		this.predictedPolicy = this.currentPolicyFor(snapshot, carried);
 		if (!this.apply("positionChanged", { myTurn })) return;
 		// After the transition, before the §4.4 gate: the effect layer reports what *happened* on the
 		// board, which is true whether or not the colour is known and whether or not it is our turn —
@@ -1736,8 +1825,8 @@ export class GameSession implements SessionSource {
 	/**
 	 * The move to hold: the armed §7.4 premove (a recapture, an only move — a human's ready move
 	 * anyway); else the ordinary selector run over the predicted position's analysis at
-	 * `SCRAMBLE_HOLD.eloPenalty` below the target, which is what makes a ready move weaker than a
-	 * searched one; else — only sometimes — the ponder's own answer, which would be too strong to
+	 * the active target using the bounded predicted search; else — only sometimes — the ponder's
+	 * own answer, which would be too strong to
 	 * hold every time.
 	 */
 	private holdCandidate(
@@ -1745,9 +1834,16 @@ export class GameSession implements SessionSource {
 	): { reply: string; chosen: ChosenMove; fen: string } | null {
 		const armed = this.premove;
 		if (armed) return { reply: armed.reply, chosen: armed.chosen, fen: armed.fen };
-		const analysed = this.predictedAnalysis;
+		const analysed = this.validPredictedAnalysis(snapshot);
 		if (analysed && analysed.lines.length > 0) {
-			const chosen = this.readyMoveFrom(analysed.fen, analysed.lines, snapshot);
+			const chosen = this.readyMoveFrom(
+				analysed.fen,
+				analysed.lines,
+				snapshot,
+				analysed.request,
+				analysed.bestmove,
+				analysed.comparison
+			);
 			if (chosen) return { reply: analysed.reply, chosen, fen: analysed.fen };
 		}
 		if (!this.rng.chance(SCRAMBLE_HOLD.pvAnswerProb)) return null;
@@ -1771,18 +1867,21 @@ export class GameSession implements SessionSource {
 		return { reply, chosen, fen: afterReply };
 	}
 
-	/** §7.2 over the predicted position, a notch below the target: the hold's "ready move". */
+	/** Select a prepared reply with the active routing, history and search provenance. */
 	private readyMoveFrom(
 		fen: string,
 		lines: readonly EvalLine[],
-		snapshot: PositionSnapshot
+		snapshot: PositionSnapshot,
+		request: AnalysisRequest,
+		bestmove: string | null,
+		comparison?: AnalysisUpdate
 	): ChosenMove | null {
 		const me = snapshot.myColor;
 		if (me === null) return null;
 		const settings = this.deps.getSettings();
 		const ctx: SelectionContext = {
 			fen,
-			targetElo: clamp(this.targetElo() - SCRAMBLE_HOLD.eloPenalty, LIMITS.eloMin, LIMITS.eloMax),
+			targetElo: this.targetElo(),
 			form: this.form.value,
 			ply: snapshot.ply + 1,
 			phase: phaseOf(fen) ?? "middlegame",
@@ -1790,19 +1889,38 @@ export class GameSession implements SessionSource {
 			oppClockMs: this.remainingClockMs(snapshot, me === "w" ? "b" : "w"),
 			selectionMode: settings.strength.selectionMode,
 			blunderScale: settings.strength.blunderScale,
+			history: matchingHistory({ fen: request.fen, moves: [...(request.moves ?? [])] }, fen) ?? {
+				fen,
+				moves: [],
+			},
+			engineResultKind: request.elo === undefined ? "unrestricted" : "native-limited",
+			...(bestmove ? { engineBestmove: bestmove } : {}),
+			...(comparison ? { shallowLines: comparison.lines, shallowDepth: comparison.depth } : {}),
+			...(snapshot.timeControl
+				? { baseMs: snapshot.timeControl.baseMs, incrementMs: snapshot.timeControl.incMs }
+				: {}),
 			rng: createRng(`${this.gameSeed}:hold:${boardKeyOf(fen)}`),
 			// Its own streak/damper state: a ready move must not advance the game's real selection.
 			state: createSelectionState(),
 		};
 		// H8: the pre-inferred answer for this very position makes the hold a Maia draw over the
 		// pre-analysed lines (the selector runs its rails as usual); otherwise the §7.2 policy.
-		const maia = attachPredictedPolicy(ctx, this.predictedPolicy);
+		const query = this.policyQueryFor(
+			snapshot,
+			fen,
+			ctx.history ?? { fen, moves: [] },
+			snapshot.ply + 1
+		);
+		const position = this.policyPosition(snapshot, fen, snapshot.ply + 1);
+		if (position && query)
+			ctx.contextEloPenalty = ownMoveMaiaElo(position, settings).contextEloPenalty;
+		const maia = attachPredictedPolicy(ctx, this.predictedPolicy, query?.identity);
 		try {
 			const chosen = selectMove(lines, ctx);
 			chosen.rationale.push(
 				maia
-					? "ready move: a Maia draw over the pre-analysed lines, a notch below the target"
-					: "ready move: chosen for a hold, a notch below the target"
+					? "ready move: a Maia draw over the pre-analysed lines"
+					: "ready move: chosen for a hold at the active target"
 			);
 			return chosen;
 		} catch (error) {
@@ -1901,6 +2019,7 @@ export class GameSession implements SessionSource {
 		const timing = this.timing;
 		const myColor = snapshot.myColor;
 		if (!engine || !timing || myColor === null || !this.mayAct()) return;
+		const generation = this.workGeneration;
 		// The prediction. §7.4 produces one on the classes it runs on, and only when its own draw
 		// came up; otherwise the `go infinite` ponder is still running and is *holding* the answer —
 		// it settles on `stop`. Stopping it early costs depth on the opponent's position, which is
@@ -1919,7 +2038,7 @@ export class GameSession implements SessionSource {
 			// go infinite` on every rapid opponent turn.
 			if (!isPremoveSpeed(this.currentTimeControl()) && !this.racePolicyFor(snapshot)) return;
 			await ponderer.stop();
-			if (this.disposed || this.snapshot !== snapshot) return;
+			if (this.disposed || this.snapshot !== snapshot || generation !== this.workGeneration) return;
 			reply = ponderer.expectedReply(snapshot.fen);
 		}
 		if (reply === null) {
@@ -1971,7 +2090,11 @@ export class GameSession implements SessionSource {
 				: []
 		);
 		// H7.3: the Maia query for the same position goes out beside the search, on their clock.
-		const inferred = this.preInferPredicted(snapshot, predicted, reply, { ...position, maia });
+		const inferred = this.preInferPredicted(snapshot, predicted, reply, {
+			...position,
+			maia,
+			maiaPrior,
+		});
 		// H10: on their clock, wait (bounded) for that answer and shape the pre-analysis exactly as
 		// the own-move search will be shaped — the same roots, breadth, movetime and flag, from the
 		// same pure `shapedSearchPlan` — so a correct prediction is a cache hit exactly as before.
@@ -1980,15 +2103,17 @@ export class GameSession implements SessionSource {
 		let shaped: ShapedSearchPlan | null = null;
 		if (maia && MAIA_SEARCH.shaped.enabled) {
 			const answer = await settledWithin(inferred, MAIA_SEARCH.shaped.preInferWaitMs);
-			if (this.disposed || this.snapshot !== snapshot) return;
+			if (this.disposed || this.snapshot !== snapshot || generation !== this.workGeneration) return;
 			if (answer && this.predictedPolicy === answer) {
-				shaped = shapedSearchPlan(answer.result, predicted, knownTopMoves, budget);
+				shaped = shapedSearchPlan(answer.result, predicted, knownTopMoves, budget, position.targetElo);
 				if (shaped) this.predictedPolicy = { ...answer, knownTopMoves };
 			}
 		}
+		if (generation !== this.workGeneration || !this.mayAct()) return;
 		const search = shaped?.budget ?? budget;
 		const request: AnalysisRequest = {
 			id: `${this.deps.tabId}-predicted-${this.now()}`,
+			targetElo: position.targetElo,
 			fen: this.historyFor(snapshot.fen).fen,
 			moves: [...this.historyFor(snapshot.fen).moves, reply],
 			multiPv: search.multiPv,
@@ -2006,8 +2131,23 @@ export class GameSession implements SessionSource {
 			const handle = engine.analyse(request);
 			this.preAnalysis = handle;
 			const result = await handle.result;
-			if (this.snapshot === snapshot && result.final.lines.length > 0)
-				this.predictedAnalysis = { reply, fen: predicted, lines: result.final.lines };
+			if (
+				this.preAnalysis === handle &&
+				this.snapshot === snapshot &&
+				generation === this.workGeneration &&
+				this.mayAct() &&
+				result.status === "complete" &&
+				result.final.lines.length > 0
+			)
+				this.predictedAnalysis = {
+					reply,
+					fen: predicted,
+					lines: result.final.lines,
+					request,
+					generation,
+					bestmove: result.bestmove,
+					...(result.atFeatureDepth ? { comparison: result.atFeatureDepth } : {}),
+				};
 			log.debug("game-session: pre-analysed the predicted position", {
 				tabId: this.deps.tabId,
 				reply,
@@ -2017,11 +2157,43 @@ export class GameSession implements SessionSource {
 		} catch (error) {
 			log.debug("game-session: pre-analysis unavailable", { error: errorMessage(error) });
 		} finally {
-			this.preAnalysis = null;
+			if (generation === this.workGeneration) this.preAnalysis = null;
 		}
 		// §6.4: the rest of the opponent's clock goes back to pondering their position — the engine
 		// must not sit idle for the remainder of a long turn.
-		await this.resumePonder(snapshot, ponderer);
+		if (generation === this.workGeneration) await this.resumePonder(snapshot, ponderer);
+	}
+
+	private validPredictedAnalysis(snapshot: PositionSnapshot): typeof this.predictedAnalysis {
+		const analysed = this.predictedAnalysis;
+		if (!analysed || analysed.generation !== this.workGeneration) return null;
+		const root = this.historyFor(snapshot.fen);
+		const history = { fen: root.fen, moves: [...root.moves, analysed.reply] };
+		const position = this.policyPosition(snapshot, analysed.fen, snapshot.ply + 1);
+		if (!position || !samePosition(applyMoves(snapshot.fen, [analysed.reply]) ?? "", analysed.fen))
+			return null;
+		const query = this.policyQueryFor(snapshot, analysed.fen, history, snapshot.ply + 1);
+		const answer = policyAnswerFor(this.predictedPolicy, analysed.fen, query?.identity);
+		const budget = ownMoveBudget(position, this.deps.getSettings());
+		const shaped =
+			position.maia && answer?.knownTopMoves
+				? shapedSearchPlan(answer.result, analysed.fen, answer.knownTopMoves, budget, this.targetElo())
+				: null;
+		const expected = shaped?.budget ?? budget;
+		const request = analysed.request;
+		if (
+			request.targetElo !== this.targetElo() ||
+			request.elo !== refereeElo(this.targetElo(), position.maia === true) ||
+			request.multiPv !== expected.multiPv ||
+			request.limit.depth !== expected.depthCap ||
+			request.featureDepth !== expected.featureDepth ||
+			request.shaped !== (shaped ? true : undefined) ||
+			JSON.stringify([...(request.searchmoves ?? [])].sort()) !==
+				JSON.stringify([...(shaped?.searchmoves ?? [])].sort()) ||
+			historyKey(request.fen, request.moves) !== historyKey(history.fen, history.moves)
+		)
+			return null;
+		return analysed;
 	}
 
 	/**
@@ -2040,7 +2212,8 @@ export class GameSession implements SessionSource {
 		position: OwnMoveBudgetInput
 	): Promise<PredictedPolicyAnswer | null> {
 		const policy = this.deps.policy;
-		if (!policy || !this.mayAct()) return Promise.resolve(null);
+		if (!policy || !this.mayAct() || ownMoveClockRace(position) !== null)
+			return Promise.resolve(null);
 		const root = this.historyFor(snapshot.fen);
 		// The pipeline's own arithmetic over the same `OwnMoveBudgetInput` the pre-analysis was
 		// sized by (`ownMoveMaiaElo`), so the answer is the one the own-move query would have asked for.
@@ -2069,9 +2242,27 @@ export class GameSession implements SessionSource {
 			pending = Promise.resolve(null);
 		}
 		return pending.then((result) => {
-			if (this.predictedPolicyAc === ac) this.predictedPolicyAc = null;
-			if (!result || ac.signal.aborted || this.disposed || this.snapshot !== snapshot) return null;
+			if (
+				this.predictedPolicyAc !== ac ||
+				!result ||
+				result.size !== query.inputs.size ||
+				ac.signal.aborted ||
+				this.disposed ||
+				this.snapshot !== snapshot ||
+				!this.mayAct()
+			)
+				return null;
+			this.predictedPolicyAc = null;
+			const currentRoot = this.historyFor(snapshot.fen);
+			const current = this.policyQueryFor(
+				snapshot,
+				predicted,
+				{ fen: currentRoot.fen, moves: [...currentRoot.moves, reply] },
+				snapshot.ply + 1
+			);
+			if (current?.identity !== query.identity) return null;
 			const answer: PredictedPolicyAnswer = {
+				identity: query.identity,
 				fen: predicted,
 				result,
 				selfElo: query.selfElo,
@@ -2174,7 +2365,7 @@ export class GameSession implements SessionSource {
 		// is for this very position (`onPosition` carried it across the cancel).
 		const maiaSize = this.gameMaia?.size ?? null;
 		this.gameMaiaLocked = true;
-		const policyAnswer = policyAnswerFor(this.predictedPolicy, snapshot.fen);
+		const policyAnswer = this.currentPolicyFor(snapshot);
 		let outcome: RecommendationOutcome | null = null;
 		try {
 			outcome = await pipeline.run({
@@ -2680,6 +2871,22 @@ export class GameSession implements SessionSource {
 		if (!engine || !timing || last === undefined || !this.autoMoveAllowed(settings)) return;
 		const previous = this.priorFen;
 		if (previous === null) return;
+		const targetElo = this.targetElo();
+		const generation = this.workGeneration;
+		const candidatePolicy = this.predictedPolicy;
+		const predictedReply = this.predictedAnalysis?.reply;
+		const rootHistory = this.historyFor(snapshot.fen);
+		const policyQuery =
+			candidatePolicy && predictedReply
+				? this.policyQueryFor(
+						snapshot,
+						candidatePolicy.fen,
+						{ fen: rootHistory.fen, moves: [...rootHistory.moves, predictedReply] },
+						snapshot.ply + 1
+					)
+				: null;
+		const heldPolicy =
+			candidatePolicy && policyQuery?.identity === candidatePolicy.identity ? candidatePolicy : null;
 		try {
 			const candidate = await premoveCandidate(
 				{
@@ -2695,9 +2902,7 @@ export class GameSession implements SessionSource {
 					ponder: this.ponderer?.expectedReply(snapshot.fen) ?? undefined,
 					// H8: an answer already in hand gates the candidate in its position; the usual case
 					// (the answer arriving after the arm) is `gatePremoveWithPolicy`.
-					...(this.predictedPolicy
-						? { policy: { fen: this.predictedPolicy.fen, result: this.predictedPolicy.result } }
-						: {}),
+					...(heldPolicy ? { policy: { fen: heldPolicy.fen, result: heldPolicy.result } } : {}),
 					rng: this.rng,
 					// `Persona.pi_p` is in logit units; the policy takes a probability in [0, 1].
 					piP: 1 / (1 + Math.exp(-(timing.persona.pi_p + timing.state.knobs.piOffset))),
@@ -2707,6 +2912,7 @@ export class GameSession implements SessionSource {
 						const root = this.historyFor(snapshot.fen);
 						const request: AnalysisRequest = {
 							id: `${this.deps.tabId}-premove-${this.now()}`,
+							targetElo,
 							fen: root.fen,
 							moves: [...root.moves, ...moves.slice(1)],
 							multiPv: opts.multiPv,
@@ -2726,7 +2932,14 @@ export class GameSession implements SessionSource {
 			);
 			// The search above is an await: a flip-off inside it already nulled `this.premove`, so a
 			// candidate must not be published over the top of that (§4.4).
-			if (!candidate || this.disposed || this.snapshot !== snapshot || !this.mayAct()) return;
+			if (
+				!candidate ||
+				this.disposed ||
+				this.snapshot !== snapshot ||
+				!this.mayAct() ||
+				generation !== this.workGeneration
+			)
+				return;
 			const chosen: ChosenMove = {
 				uci: candidate.premove,
 				san: candidate.premove,
@@ -3415,6 +3628,7 @@ export class GameSession implements SessionSource {
 	// ── game lifecycle ─────────────────────────────────────────────────────
 
 	private startGame(meta: GameMeta): void {
+		this.cancelInFlight();
 		this.cancelQueueForNewGame(meta.gameId);
 		this.finishingGame = null;
 		this.game = meta;
@@ -4079,6 +4293,7 @@ export class GameSession implements SessionSource {
 	}
 
 	private cancelInFlight(keepHand = false): void {
+		this.workGeneration += 1;
 		this.pipelineAc?.abort();
 		this.pipelineAc = null;
 		this.playWhenReady = false;

@@ -41,7 +41,8 @@ describe("rating tables", () => {
 		expect(candidateBase(2000)).toBe(4);
 		expect(candidateBase(2500)).toBe(5);
 		expect(candidateBase(500)).toBe(2);
-		expect(candidateBase(3000)).toBe(5);
+		expect(candidateBase(2800)).toBe(5);
+		expect(candidateBase(3000)).toBe(7);
 		let prev = 0;
 		for (let E = 400; E <= 3200; E += 50) {
 			const k = candidateBase(E);
@@ -73,7 +74,8 @@ describe("rating tables", () => {
 		expect(verifySigmaFor(900)).toBeCloseTo(57.5, 9);
 		expect(verifySigmaFor(2000)).toBe(30);
 		expect(verifySigmaFor(2500)).toBe(20);
-		expect(verifySigmaFor(3000)).toBe(20);
+		expect(verifySigmaFor(2800)).toBe(20);
+		expect(verifySigmaFor(3000)).toBe(12);
 		expect(verifySigmaFor(500)).toBe(60);
 		for (let E = 400; E <= 3200; E += 50) {
 			expect(verifySigmaFor(E)).toBeGreaterThanOrEqual(sigmaFor(E));
@@ -84,7 +86,8 @@ describe("rating tables", () => {
 		expect(intuitionProb(800)).toBeCloseTo(0.55, 12);
 		expect(intuitionProb(2500)).toBeCloseTo(0.1, 12);
 		expect(intuitionProb(500)).toBeCloseTo(0.55, 12);
-		expect(intuitionProb(3000)).toBeCloseTo(0.1, 12);
+		expect(intuitionProb(2800)).toBeCloseTo(0.1, 12);
+		expect(intuitionProb(3000)).toBeCloseTo(0.03, 12);
 		expect(intuitionProb(1650)).toBeCloseTo(0.325, 12);
 		let prev = 1;
 		for (let E = 400; E <= 3200; E += 50) {

@@ -94,22 +94,15 @@ export const SEARCH_BUDGET = {
 	panelMultiPv: 4,
 } as const;
 
-/**
- * H4 (2026-09-13, `docs/research/human-move-selection-ideas-2026-09-13.md`): the depth of the
- * "what the human sees" frame the referee search captures on the side (`AnalysisRequest.featureDepth`
- * → `AnalysisResult.atFeatureDepth`) in Maia mode, by the rating Maia is asked about
- * (`maiaSelfElo`). `[E, depth]` knots: flat outside, linear between, rounded (`humanDepth` in
- * `src/core/engine/depth-policy.ts`). The 2400 knot is `LIMITS.featureDepth`, the timing model's
- * `D_f`, so above it the frame is the one every search already captured and the cache key does
- * not change. HvS §7.1 records Stockfish's own handicap picking at `depth = 1 + int(level)`; the
- * ramp here is that shape on the human rating axis, not a calibrated depth-for-rating claim.
- */
+/** Comparison-depth requests share the bounded search; this is not a depth-to-Elo calibration. */
 export const HUMAN_DEPTH: ReadonlyArray<readonly [elo: number, depth: number]> = [
 	[800, 2],
 	[1200, 4],
 	[1600, 6],
 	[2000, 8],
 	[2400, 10],
+	[2800, 10],
+	[3000, 14],
 ];
 
 /**
@@ -138,6 +131,9 @@ export const MAIA_CONTEXT_THINK_REF_MS: Readonly<Record<BudgetTcClass, number>> 
  */
 export const MAIA_SEARCH = {
 	shaped: {
+		/** The unrestricted anchor shares the preparation budget with the final scored pool. */
+		anchorMaxMs: 200,
+		anchorFraction: 1 / 3,
 		/** Off → today's broad search and extra-search path, byte for byte. */
 		enabled: true,
 		/**

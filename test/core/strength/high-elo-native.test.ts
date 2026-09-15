@@ -83,15 +83,17 @@ describe("high-rating Hybrid native selection", () => {
 		expect(chosen.rationale.join(" ")).toContain("opponent clock pressure: accuracy −");
 	});
 
-	it("reports the native request independently from effective form or the unlimited range", () => {
+	it("reports native requests independently of form and uses guarded engine scores above3200", () => {
 		const pool = [line(START, "e2e4", { cp: 20 }, 1), line(START, "d2d4", { cp: 0 }, 2)];
 		for (const [targetElo, form, request] of [
 			[2499, 1, "2499"],
 			[3300, 0, "unlimited"],
 		] as const) {
 			const chosen = selectMove(pool, ctx({ ...high, targetElo, form, engineBestmove: "d2d4" }));
-			expect(chosen.uci).toBe("d2d4");
-			expect(chosen.rationale.join(" ")).toContain(`UCI_Elo ${request}`);
+			expect(chosen.uci).toBe(targetElo > 3200 ? "e2e4" : "d2d4");
+			expect(chosen.rationale.join(" ")).toContain(
+				targetElo > 3200 ? "full-strength engine" : `UCI_Elo ${request}`
+			);
 		}
 	});
 

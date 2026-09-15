@@ -13,14 +13,12 @@
 
 import { tabsQuery } from "@core/chrome/tabs";
 import { DEFAULT_SETTINGS } from "@core/constants/defaults";
-import { MAIA } from "@core/constants/maia";
 import { AnalysisCache } from "@core/engine/analysis-cache";
 import type { OptionsEnv } from "@core/engine/options";
 import { RemoteEngine } from "@core/engine/remote-engine";
 import { UciEngine } from "@core/engine/uci-client";
 import { log } from "@core/logger";
 import type { MessageRouter } from "@core/messaging/router";
-import { maiaSizeFor } from "@core/policy/maia-size";
 import { getSettings, onSettingsChanged } from "@core/storage/settings-storage";
 import { createBookPolicy } from "@core/strength/book/book-policy";
 import { ChessMimicHead, selectBand } from "@core/timing/chessmimic-head";
@@ -34,6 +32,7 @@ import { DebuggerManager } from "@service/debugger-manager";
 import { EngineController } from "@service/engine-controller";
 import { FocusGate } from "@service/focus-gate";
 import { SessionRegistry } from "@service/game-session";
+import { maiaSizeForGame } from "@service/game-session/maia-session";
 import { HandOwnership } from "@service/hand-ownership";
 import { registerContentHandlers } from "@service/handlers/content";
 import { registerEngineHandlers } from "@service/handlers/engine";
@@ -99,9 +98,6 @@ export function createGameStack(options: GameStackOptions): GameStack {
 		// offscreen document is asked to pre-load its default band with the first `configure`.
 		// `setWarmTiming` after that first `configure` has no effect until a reconnect.
 		warmTiming: true,
-		// 2026-09-11: Maia-3 selects below `MAIA.eloMax`; the cheapest size is made resident on
-		// connect, and the session re-warms the target's size once it is known (`warmPolicy`).
-		warmPolicy: MAIA.defaultSize,
 	});
 	const engine = new UciEngine(transport);
 	const cache = new AnalysisCache();
@@ -110,6 +106,7 @@ export function createGameStack(options: GameStackOptions): GameStack {
 		onSettingsChanged,
 		env: options.env ?? defaultEnv(),
 		cache,
+		getLoadedVariant: () => transport.status().variant,
 		configureVariant: (variant, threads, signal) =>
 			transport.configureAndWait(variant, threads, signal),
 	});
@@ -163,14 +160,26 @@ export function createGameStack(options: GameStackOptions): GameStack {
 		// `configure` is re-sent on every reconnect and carries `warmPolicy`, so without this a
 		// document torn down mid-game would come back warming only the default size while the
 		// session's dedupe still believed the right one was resident.
-		warmPolicy: (targetElo) => {
-			const size = maiaSizeFor(targetElo);
-			transport.setWarmPolicy(size);
-			policyPort.warm(size);
-		},
+		warmPolicy: (targetElo) => synchronizePolicyWarmup(targetElo),
 		engineHasPendingOptions: () => controller.status().pendingOptions,
 		observeExecutor: (tabId, executor) => broadcaster.observeExecutor(tabId, executor),
 	});
+
+	function synchronizePolicyWarmup(targetElo: number): void {
+		const targets = [
+			targetElo,
+			...registry
+				.all()
+				.filter((session) => session.isLive())
+				.map((session) => session.targetElo()),
+		];
+		const size = settings.enabled
+			? (targets.map(maiaSizeForGame).find((candidate) => candidate !== null) ?? undefined)
+			: undefined;
+		const previous = transport.warmPolicySize();
+		transport.setWarmPolicy(size);
+		if (size !== undefined && previous !== size) policyPort.warm(size);
+	}
 
 	registerContentHandlers(router, {
 		getSettings: readSettings,
@@ -195,6 +204,8 @@ export function createGameStack(options: GameStackOptions): GameStack {
 		// the content script's replay is swallowed by the feed dedupe. Fanning out is what releases
 		// it — `resumeEnabled` picks the held position up with the settings that really apply.
 		registry.settingsChanged();
+		const active = registry.all().find((session) => session.isLive());
+		synchronizePolicyWarmup(active?.targetElo() ?? settings.strength.targetElo);
 	};
 	const offSettings = onSettingsChanged(applySettings);
 	void getSettings().then(applySettings, (error: unknown) =>

@@ -97,7 +97,7 @@ export function createStrengthCard(host: HTMLElement): StrengthCardHandle {
 			dangerHint: COPY.strength.warning,
 			ariaLabel: COPY_LIVE.strength.rating,
 			threshold: STRENGTH_NETWORK_THRESHOLD,
-			// The Maia-3 → Stockfish switch at 2600, unlabelled, the same as the Settings slider.
+			// Match the primary Maia ceiling shown in Settings.
 			markers: [MAIA.eloMax],
 			strength: true,
 			disabled: strength.matchOpponentRating,

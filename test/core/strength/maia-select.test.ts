@@ -304,8 +304,8 @@ describe("selectMove — Maia scope (f)(g)", () => {
 		expect(withMaia.source).not.toBe("maia");
 		expect(withMaia.rationale.join(" ")).not.toContain("maia");
 	});
-	it("(f) from MAIA.eloMax up Maia is a prior over the engine's gap, not the selector (H15)", () => {
-		for (const targetElo of [MAIA.eloMax, 2700]) {
+	it("(f) above MAIA.eloMax through3200 Maia is an engine-pool prior", () => {
+		for (const targetElo of [3001, 3100, 3200]) {
 			const m = selectMove(
 				FOUR,
 				ctx({ targetElo, maia: MAIA_FOUR, rng: createRng(7) }),

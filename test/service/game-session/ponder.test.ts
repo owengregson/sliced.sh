@@ -97,6 +97,22 @@ function fakeEngine(
 }
 
 describe("PonderController", () => {
+	it("propagates an unrestricted active target and invalidates reuse even at an unchanged depth", async () => {
+		const engine = fakeEngine(() => "e7e5");
+		const { scheduler } = fakeScheduler();
+		let targetElo = 3201;
+		const p = new PonderController({ engine, scheduler, getTargetElo: () => targetElo });
+		await p.start("opponent", FEN);
+		expect(engine.requests[0]?.targetElo).toBe(3201);
+		expect(engine.requests[0]?.elo).toBeUndefined();
+		targetElo = 3202;
+		await p.start("opponent", FEN);
+		expect(engine.requests[1]?.targetElo).toBe(3202);
+		expect(engine.requests[1]?.elo).toBeUndefined();
+		expect(engine.requests[1]?.limit.depth).toBe(engine.requests[0]?.limit.depth);
+		expect(engine.stops()).toBe(1);
+		p.dispose();
+	});
 	it("publishes complete reached-position frames before the search settles", async () => {
 		for (const targetElo of [1800, 3800]) {
 			const seen: Array<{ fen: string; update: AnalysisUpdate; fullStrength: boolean }> = [];

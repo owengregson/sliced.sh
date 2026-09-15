@@ -11,7 +11,7 @@ import {
 	UI_TIMINGS,
 } from "@core/constants";
 import { DEFAULT_SETTINGS } from "@core/constants/defaults";
-import { MAIA, MAIA_INPUT } from "@core/constants/maia";
+import { MAIA_INPUT } from "@core/constants/maia";
 import { TIMING_STATISTICS } from "@core/constants/telemetry";
 import type { LogEntry } from "@core/logger";
 import type { TypedMessage } from "@core/messaging/typed-messages";
@@ -265,7 +265,7 @@ describe("engine view — engine rows", () => {
 		expect(text(root, ".sl-engine__status .sl-pill__text")).toBe(COPY.engine.idle);
 	});
 
-	it("names the selection model from the snapshot: Maia-3 79M at every target below 2600", async () => {
+	it("names the selection model from the snapshot: Maia-3 79M at every target through 3000", async () => {
 		// 2026-09-13: one shipped size, so the label reads 79M across the whole human range.
 		const s = engineSnapshot();
 		s.settings = { ...s.settings, strength: { ...s.settings.strength, targetElo: 1200 } };
@@ -277,33 +277,29 @@ describe("engine view — engine rows", () => {
 		await dom.tick(0);
 		expect(text(root, ".sl-engine__selection")).toBe(COPY.engineView.selection.maia("79M"));
 		const u = engineSnapshot();
-		u.settings = { ...u.settings, strength: { ...u.settings.strength, targetElo: 2550 } };
+		u.settings = { ...u.settings, strength: { ...u.settings.strength, targetElo: 3000 } };
 		store.emit(u);
 		await dom.tick(0);
 		expect(text(root, ".sl-engine__selection")).toBe(COPY.engineView.selection.maia("79M"));
 	});
 
-	it("names Stockfish on the small net from 2600 and the full net above 3200", async () => {
-		const s = engineSnapshot();
-		s.settings = { ...s.settings, strength: { ...s.settings.strength, targetElo: MAIA.eloMax } };
-		const root = await mountView(s);
-		expect(text(root, ".sl-engine__selection")).toBe(COPY.engineView.selection.stockfishSmall);
-		const t = engineSnapshot();
-		t.settings = {
-			...t.settings,
-			strength: { ...t.settings.strength, targetElo: LIMITS.nnueSmallEloMax },
-		};
-		store.emit(t);
-		await dom.tick(0);
-		expect(text(root, ".sl-engine__selection")).toBe(COPY.engineView.selection.stockfishSmall);
-		const u = engineSnapshot();
-		u.settings = {
-			...u.settings,
-			strength: { ...u.settings.strength, targetElo: LIMITS.nnueSmallEloMax + 50 },
-		};
-		store.emit(u);
-		await dom.tick(0);
-		expect(text(root, ".sl-engine__selection")).toBe(COPY.engineView.selection.stockfishFull);
+	it("names the assisted range and the actual loaded engine network", async () => {
+		const root = await mountView(engineSnapshot());
+		for (const [targetElo, variant, label] of [
+			[3000, "smallnet", COPY.engineView.selection.maia("79M")],
+			[3001, "smallnet", COPY.engineView.selection.maiaPriorSmall],
+			[3200, "smallnet", COPY.engineView.selection.maiaPriorSmall],
+			[3100, "full", COPY.engineView.selection.maiaPriorFull],
+			[3201, "full", COPY.engineView.selection.stockfishFull],
+			[3201, "smallnet", COPY.engineView.selection.stockfishSmall],
+		] as const) {
+			const next = engineSnapshot();
+			next.settings.strength.targetElo = targetElo;
+			next.engine.variant = variant;
+			store.emit(next);
+			await dom.tick(0);
+			expect(text(root, ".sl-engine__selection")).toBe(label);
+		}
 	});
 
 	it("follows the derived target: a matched opponent decides the model, not the slider", async () => {
@@ -344,7 +340,7 @@ describe("engine view — engine rows", () => {
 
 	it("the human-model block: Off outside Maia's range, waiting without an answer, the answer's pick/WDL/latency", async () => {
 		const off = engineSnapshot();
-		off.settings = { ...off.settings, strength: { ...off.settings.strength, targetElo: 2800 } };
+		off.settings = { ...off.settings, strength: { ...off.settings.strength, targetElo: 3201 } };
 		const root = await mountView(off);
 		expect(text(root, ".sl-engine__policy-name")).toBe(COPY.engineView.policy.inactive);
 		expect(text(root, ".sl-engine__policy-status .sl-pill__text")).toBe(COPY.engineView.policy.off);
@@ -374,6 +370,19 @@ describe("engine view — engine rows", () => {
 		store.emit(policySnapshot(48, 11, { source: "sampled" }));
 		await dom.tick(0);
 		expect(text(root, ".sl-engine__policy-detail")).toBe(COPY.engineView.policy.fallback);
+		expect(text(root, ".sl-engine__policy-meta")).toBe(COPY.engineView.none);
+	});
+
+	it("shows the assisted policy but hides a stale Maia answer after crossing 3200", async () => {
+		const root = await mountView(policySnapshot(48, 1, { targetElo: 3200, source: "sampled" }));
+		expect(text(root, ".sl-engine__selection")).toBe(COPY.engineView.selection.maiaPriorFull);
+		expect(text(root, ".sl-engine__policy-status .sl-pill__text")).toBe(
+			COPY.engineView.policy.answered
+		);
+		store.emit(policySnapshot(48, 1, { targetElo: 3201, source: "sampled" }));
+		await dom.tick(0);
+		expect(text(root, ".sl-engine__selection")).toBe(COPY.engineView.selection.stockfishFull);
+		expect(text(root, ".sl-engine__policy-status .sl-pill__text")).toBe(COPY.engineView.policy.off);
 		expect(text(root, ".sl-engine__policy-meta")).toBe(COPY.engineView.none);
 	});
 

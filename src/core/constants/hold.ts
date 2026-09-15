@@ -42,14 +42,7 @@ export const SCRAMBLE_HOLD = {
 	 */
 	scrambleHoldMs: [8_000, 15_000] as MsRange,
 	regularHoldMs: [2_500, 7_000] as MsRange,
-	/**
-	 * A hold is decided before the position exists, on a guess about the reply, and a human's
-	 * ready-made move is not their best one (owner: "they may be too strong"). The candidate is
-	 * chosen by the ordinary selector at this much below the target rating; before the predicted
-	 * position has been analysed the ponder's own answer stands in only this often — otherwise the
-	 * checkpoint passes and the next one may find the analysis ready.
-	 */
-	eloPenalty: 250,
+	/** Before a predicted search is ready, occasionally use the ponder continuation. */
 	pvAnswerProb: 0.5,
 	/**
 	 * Ordinary play: seeing the reply, the hand often takes the ready move back for a searched

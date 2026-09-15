@@ -134,42 +134,40 @@ describe("high-Elo search candidate allocation", () => {
 		expect(ownMoveBudget({ ...input, myClockMs: 1000 }, settings("hybrid")).multiPv).toBe(3);
 	});
 
-	// H15 (2026-09-13): above 2600 a Maia-79M prior breaks the engine's ties, which needs a pool.
-	it("maiaPriorMode: from MAIA.eloMax up to LIMITS.eloMax, with a port and no race; never below", () => {
+	it("maiaPriorMode: above 3000 through 3200, with a port and no clock race", () => {
 		const base = { policy: true, clockRace: false };
-		expect(maiaPriorMode({ ...base, targetElo: MAIA.eloMax })).toBe(true);
-		expect(maiaPriorMode({ ...base, targetElo: 3000 })).toBe(true);
-		expect(maiaPriorMode({ ...base, targetElo: LIMITS.eloMax - 1 })).toBe(true);
+		expect(maiaPriorMode({ ...base, targetElo: MAIA.eloMax })).toBe(false);
+		expect(maiaPriorMode({ ...base, targetElo: 3001 })).toBe(true);
+		expect(maiaPriorMode({ ...base, targetElo: 3200 })).toBe(true);
+		expect(maiaPriorMode({ ...base, targetElo: 3201 })).toBe(false);
 		expect(maiaPriorMode({ ...base, targetElo: LIMITS.eloMax })).toBe(false);
-		expect(maiaPriorMode({ ...base, targetElo: MAIA.eloMax - 1 })).toBe(false);
-		expect(maiaPriorMode({ ...base, targetElo: 2700, policy: false })).toBe(false);
-		expect(maiaPriorMode({ ...base, targetElo: 2700, clockRace: true })).toBe(false);
-		// the two modes never overlap, and `maiaSearchMode` is exactly what it was below 2600
-		for (const targetElo of [800, 2599, 2600, 2700, 3799])
+		expect(maiaPriorMode({ ...base, targetElo: 3100, policy: false })).toBe(false);
+		expect(maiaPriorMode({ ...base, targetElo: 3100, clockRace: true })).toBe(false);
+		for (const targetElo of [800, 2599, 2600, 2800, 3000, 3001, 3200, 3201, 3800])
 			expect(maiaSearchMode({ ...base, targetElo }) && maiaPriorMode({ ...base, targetElo })).toBe(
 				false
 			);
-		expect(maiaSearchMode({ ...base, targetElo: 2599 })).toBe(true);
+		expect(maiaSearchMode({ ...base, targetElo: 3000 })).toBe(true);
 	});
 
 	it("the prior's referee keeps the native strength shape but asks for priorCandidates roots", () => {
 		for (const selectionMode of ["hybrid", "engine-elo"] as const) {
 			const s = settings(selectionMode);
-			const plain = searchBudget({ ...comfortable, targetElo: 2700 }, s);
-			const prior = searchBudget({ ...comfortable, targetElo: 2700, maiaPrior: true }, s);
+			const plain = searchBudget({ ...comfortable, targetElo: 3100 }, s);
+			const prior = searchBudget({ ...comfortable, targetElo: 3100, maiaPrior: true }, s);
 			expect(plain.multiPv).toBe(6);
 			expect(prior).toEqual({ ...plain, multiPv: SEARCH_BUDGET.priorCandidates });
-			expect(ownMoveBudget({ ...ownPosition, targetElo: 2700, maiaPrior: true }, s).multiPv).toBe(
+			expect(ownMoveBudget({ ...ownPosition, targetElo: 3100, maiaPrior: true }, s).multiPv).toBe(
 				SEARCH_BUDGET.priorCandidates
 			);
 		}
 		// the prior never widens a search that is already broad, and never adds a human frame
 		expect(
-			searchBudget({ ...comfortable, targetElo: 2700, maiaPrior: true }, settings("hybrid", 20))
+			searchBudget({ ...comfortable, targetElo: 3100, maiaPrior: true }, settings("hybrid", 20))
 				.multiPv
 		).toBe(20);
 		expect(
-			ownMoveBudget({ ...ownPosition, targetElo: 2700, maiaPrior: true }, settings("hybrid"))
+			ownMoveBudget({ ...ownPosition, targetElo: 3100, maiaPrior: true }, settings("hybrid"))
 				.featureDepth
 		).toBeUndefined();
 	});

@@ -83,6 +83,8 @@ export interface Arrival {
 export interface BoardEffectsReporterDeps {
 	/** `null` while no searcher is attached: the effects still go out, the verdict does not. */
 	searcher(): BoardEffectsSearcher | null;
+	/** Active session target selects the network independently of referee strength. */
+	getTargetElo?: () => number;
 	post(cmd: GamePortCommand): void;
 	/**
 	 * `Settings.automation.moveQualityChips` (2026-09-13). `false`: the rays still go out, but no
@@ -506,6 +508,7 @@ export class BoardEffectsReporter {
 		if (target === null || this.inFlight.has(target)) return;
 		const req: AnalysisRequest = {
 			id: newId(),
+			...(this.deps.getTargetElo ? { targetElo: this.deps.getTargetElo() } : {}),
 			fen: job.move.historyFen,
 			...(moves.length > 0 ? { moves: [...moves] } : {}),
 			multiPv: Q.multiPv,

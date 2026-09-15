@@ -1,5 +1,5 @@
 /**
- * Generate-and-verify move selection below `MAIA.eloMax` (H3 + H4 of
+ * Generate-and-verify move selection through `MAIA.eloMax` (H3 + H4 of
  * `docs/research/human-move-selection-ideas-2026-09-13.md`, 2026-09-13).
  *
  * The plain Maia draw picks one move from a smooth distribution. A human (HvS §2.3, §5.2, §5.3,
@@ -29,6 +29,7 @@
  */
 
 import { GENERATE_VERIFY as GV } from "@core/constants/generate-verify";
+import { upperVerificationProgress } from "@core/policy/maia-size";
 import type { Rng } from "@core/rng";
 import { clamp } from "@core/util/clamp";
 import { eloRamp, sigmaFor } from "./elo-map";
@@ -115,7 +116,14 @@ export function candidateCount(E: number, rng: Rng): number {
 /** `pIntuition(E)`: the probability the move is played on recognition alone. */
 export function intuitionProb(E: number): number {
 	const { loElo, loProb, hiElo, hiProb } = GV.intuition;
-	return eloRamp(E, loElo, loProb, hiElo, hiProb);
+	const ordinary = eloRamp(E, loElo, loProb, hiElo, hiProb);
+	return ordinary + upperVerificationProgress(E) * (GV.intuition.upperProb - ordinary);
+}
+
+/** Above 2800, progressively include the same bounded search's deeper evidence. */
+export function verificationCp(candidate: GvCandidate, E: number): number {
+	const shallow = candidate.shallowCp ?? candidate.deepCp;
+	return shallow + upperVerificationProgress(E) * (candidate.deepCp - shallow);
 }
 
 /**
@@ -161,7 +169,7 @@ export function generateAndVerify(input: GvInput): GvResult | null {
 	const verifyDepth = input.shallowDepth ?? 0;
 	const considered: GvConsidered[] = drawn.map((c) => {
 		const verified = c.shallowCp !== undefined;
-		const cp = c.shallowCp ?? c.deepCp;
+		const cp = verificationCp(c, E);
 		const score = intuition ? cp : cp + rng.normal(0, sigma);
 		return { uci: c.uci, p: c.p, cp, score, verified };
 	});

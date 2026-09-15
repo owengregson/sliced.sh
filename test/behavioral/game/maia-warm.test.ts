@@ -64,13 +64,13 @@ it("the opponent's rating arriving moves an opponent-matched target but not the 
 	expect(warmed).toHaveLength(1);
 });
 
-it("never warms when the target starts at or above MAIA.eloMax", async () => {
+it("clears reconnect warming when the target starts in engine-only mode", async () => {
 	const high: number[] = [];
 	h = await createGameHarness({
-		settings: { strength: { targetElo: 2800, matchOpponentRating: false } },
+		settings: { strength: { targetElo: 3201, matchOpponentRating: false } },
 		warmPolicy: (targetElo) => high.push(targetElo),
 	});
 	await h.arrive();
 	await h.advance(500);
-	expect(high).toEqual([]);
+	expect(high).toEqual([3201]);
 });

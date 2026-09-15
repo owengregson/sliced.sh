@@ -1,15 +1,4 @@
-/**
- * Engine controller (Task 13): the service worker's owner of the engine's
- * option state. Turns `Settings` into `EngineOptions` (`optionsForSettings`)
- * on construction and on every settings change, sends only the diff (the
- * client diffs again against what the engine actually has), and defers a
- * change that arrives while the engine is searching until it is idle again.
- * `analyse` / `ponder` put the `AnalysisCache` in front of the engine and pass
- * the request priority (`move` > `ponder` > `panel`) straight through.
- *
- * Wiring into `bootstrapServiceSystems()` (Task 9) is deferred to Task 30 by
- * controller ruling: nothing here is instantiated yet.
- */
+/** Owns engine options, network routing, and priority-aware cached analysis. */
 
 import { LIMITS } from "@core/constants/limits";
 import { SEARCH_BUDGET } from "@core/constants/search";
@@ -53,6 +42,8 @@ export interface EngineControllerDeps {
 	cacheMinDepth?: number;
 	/** Resolves only when the requested variant and its verified networks are loaded. */
 	configureVariant?: (variant: EngineVariant, threads: number, signal: AbortSignal) => Promise<void>;
+	/** Actual host variant can differ after an acknowledged Full-to-Small crash fallback. */
+	getLoadedVariant?: () => EngineVariant | undefined;
 }
 
 export interface EngineControllerStatus {
@@ -95,6 +86,30 @@ function cachedHandle(req: AnalysisRequest, hit: AnalysisResult): AnalysisHandle
 	};
 }
 
+interface RoutedAnalysis {
+	req: AnalysisRequest;
+	handle: AnalysisHandle;
+	inner: AnalysisHandle | null;
+	cancelled: boolean;
+	superseded: boolean;
+	start(handle: AnalysisHandle | null): void;
+	settle(result: AnalysisResult): void;
+}
+
+function priority(req: AnalysisRequest): number {
+	return req.priority === "panel" ? 2 : req.priority === "ponder" ? 1 : 0;
+}
+
+function emptyResult(req: AnalysisRequest, status: AnalysisResult["status"]): AnalysisResult {
+	return {
+		id: req.id,
+		bestmove: null,
+		request: req,
+		status,
+		final: { id: req.id, depth: 0, lines: [], nodes: 0, nps: 0, timeMs: 0, complete: false },
+	};
+}
+
 export class EngineController {
 	/** Resolves once the initial settings have been read (and applied, or left pending). */
 	readonly ready: Promise<void>;
@@ -115,6 +130,8 @@ export class EngineController {
 	private readonly cacheMinDepth: number;
 	private readonly unsubscribe: () => void;
 	private readonly configureVariant: EngineControllerDeps["configureVariant"];
+	private readonly getLoadedVariant: EngineControllerDeps["getLoadedVariant"];
+	private lastLoadedVariant: EngineVariant | undefined;
 	private configuredVariant: EngineVariant | null = null;
 	private loadingVariant: EngineVariant | null = null;
 	private variantChange: Promise<void> | null = null;
@@ -122,6 +139,11 @@ export class EngineController {
 	private configuredInfo: EngineInfo | null = null;
 	private gameChange: Promise<void> | null = null;
 	private resettingGameId: string | undefined;
+	private readonly routedQueue: RoutedAnalysis[] = [];
+	private routedActive: RoutedAnalysis | null = null;
+	/** Keep warming the admitted target even if its bounded request expires. */
+	private routeRequest: AnalysisRequest | null = null;
+	private cacheGeneration = 0;
 
 	constructor(
 		private readonly engine: UciEngine,
@@ -132,6 +154,7 @@ export class EngineController {
 		this.now = deps.now ?? (() => Date.now());
 		this.cacheMinDepth = deps.cacheMinDepth ?? FEATURE_DEPTH;
 		this.configureVariant = deps.configureVariant;
+		this.getLoadedVariant = deps.getLoadedVariant;
 		this.unsubscribe = deps.onSettingsChanged((s) => this.onSettings(s));
 		this.ready = deps.getSettings().then(
 			(s) => {
@@ -159,12 +182,8 @@ export class EngineController {
 
 	/** Cache hit → a settled handle; otherwise queued on the engine at `req.priority`. */
 	analyse(req: AnalysisRequest): AnalysisHandle {
-		if (this.needsVariantChange()) this.startVariantChange();
-		if (this.gameChange) {
-			const ready = Promise.all([this.gameChange, this.variantChange]).then(() => {});
-			return this.afterVariantChange(req, ready);
-		}
-		if (this.variantChange) return this.afterVariantChange(req, this.variantChange);
+		if (this.configureVariant) return this.enqueueRouted(req);
+		if (this.gameChange) return this.afterVariantChange(req, this.gameChange);
 		const hit = this.lookup(req);
 		if (hit) {
 			log.debug("engine-controller: cache hit", req.id, req.priority ?? "move");
@@ -188,6 +207,7 @@ export class EngineController {
 			fen,
 			moves,
 			multiPv,
+			targetElo,
 			limit: { depth: automaticDepthForElo(targetElo), movetimeMs: TIMINGS.ponderMaxMs },
 			...(elo === undefined ? {} : { elo }),
 			priority: "ponder",
@@ -224,6 +244,7 @@ export class EngineController {
 			if (this.gameChange !== operation) return;
 			this.gameChange = null;
 			this.resettingGameId = undefined;
+			this.pumpRouted();
 		};
 		void operation.then(clear, clear);
 		return operation;
@@ -258,6 +279,7 @@ export class EngineController {
 		this.disposed = true;
 		this.variantAbort?.abort();
 		this.unsubscribe();
+		for (const handle of this.inFlight) void handle.stop().catch(() => {});
 		this.inFlight.clear();
 	}
 
@@ -267,11 +289,15 @@ export class EngineController {
 		this.wanted = optionsForSettings(settings, this.env);
 		this.pending = true;
 		if (this.needsVariantChange() || this.variantChange) {
-			if (this.loadingVariant !== variantForSettings(settings)) this.variantAbort?.abort();
+			if (this.loadingVariant !== this.desiredVariant()) this.variantAbort?.abort();
 			this.startVariantChange();
 			return;
 		}
 		void this.applyOptions();
+	}
+
+	private desiredVariant(): EngineVariant | null {
+		return this.settings ? variantForSettings(this.settings, this.routeRequest?.targetElo) : null;
 	}
 
 	private needsVariantChange(): boolean {
@@ -279,7 +305,7 @@ export class EngineController {
 			!this.disposed &&
 			this.configureVariant !== undefined &&
 			this.settings !== undefined &&
-			variantForSettings(this.settings) !== this.configuredVariant
+			this.desiredVariant() !== this.configuredVariant
 		);
 	}
 
@@ -288,14 +314,18 @@ export class EngineController {
 		const configure = this.configureVariant;
 		const run = async (): Promise<void> => {
 			while (this.settings && this.wanted && !this.disposed) {
-				const variant = variantForSettings(this.settings);
+				const variant = this.desiredVariant();
+				if (!variant) return;
 				const wanted = this.wanted;
 				const ac = new AbortController();
 				this.variantAbort = ac;
 				this.loadingVariant = variant;
-				await Promise.all([...this.inFlight].map((handle) => handle.stop()));
+				// Only the native handle may be stopped here: queued wrappers await this load.
+				await this.routedActive?.inner?.stop();
 				if (ac.signal.aborted) continue;
+				this.cacheGeneration++;
 				this.cache?.clear();
+				this.configuredVariant = null;
 				try {
 					this.configuredInfo = await this.engine.reconfigure(
 						() => configure(variant, wanted.Threads, ac.signal),
@@ -309,29 +339,155 @@ export class EngineController {
 				this.configuredVariant = variant;
 				this.applied = wanted;
 				this.appliedAt = this.now();
-				if (this.wanted === wanted) {
-					this.pending = false;
+				if (this.desiredVariant() === variant && !ac.signal.aborted) {
+					this.pending = this.wanted !== wanted;
 					return;
 				}
 			}
 		};
 		const operation = run();
 		this.variantChange = operation;
-		void operation
-			.then(
-				() => {},
-				(error: unknown) => {
-					log.warn("engine-controller: network configuration failed", String(error));
-				}
-			)
-			.finally(() => {
-				if (this.variantChange === operation) this.variantChange = null;
-				this.variantAbort = null;
-				this.loadingVariant = null;
-			});
+		const clear = (): void => {
+			if (this.variantChange !== operation) return;
+			this.variantChange = null;
+			this.variantAbort = null;
+			this.loadingVariant = null;
+		};
+		void operation.then(
+			() => {
+				clear();
+				if (this.pending) void this.applyOptions();
+			},
+			(error: unknown) => {
+				clear();
+				log.warn("engine-controller: network configuration failed", String(error));
+			}
+		);
 	}
 
-	/** Searches wait through downloads and game resets without using stale cache or options. */
+	private enqueueRouted(req: AnalysisRequest): AnalysisHandle {
+		let start: (handle: AnalysisHandle | null) => void = () => {};
+		let settle: (result: AnalysisResult) => void = () => {};
+		const started = new Promise<AnalysisHandle | null>((resolve) => {
+			start = resolve;
+		});
+		const result = new Promise<AnalysisResult>((resolve) => {
+			settle = resolve;
+		});
+		async function* updates(): AsyncGenerator<AnalysisUpdate> {
+			const inner = await started;
+			if (inner) yield* inner.updates;
+		}
+		const job: RoutedAnalysis = {
+			req,
+			inner: null,
+			cancelled: false,
+			superseded: false,
+			start,
+			settle,
+			handle: { id: req.id, updates: updates(), result, stop: () => this.stopRouted(job) },
+		};
+		this.track(job.handle, false);
+		if (this.disposed) {
+			void this.stopRouted(job);
+			return job.handle;
+		}
+		const index = this.routedQueue.findIndex((queued) => priority(queued.req) > priority(req));
+		if (index < 0) this.routedQueue.push(job);
+		else this.routedQueue.splice(index, 0, job);
+		const active = this.routedActive;
+		if (
+			active &&
+			(active.req.priority === "ponder" ||
+				priority(req) < priority(active.req) ||
+				(active.inner && priority(req) === priority(active.req)))
+		) {
+			active.superseded = true;
+			void this.stopRouted(active).catch(() => {});
+		}
+		this.pumpRouted();
+		return job.handle;
+	}
+
+	private async stopRouted(job: RoutedAnalysis): Promise<void> {
+		job.cancelled = true;
+		if (job.inner) {
+			await job.inner.stop();
+			return;
+		}
+		job.start(null);
+		job.settle(emptyResult(job.req, "superseded"));
+		const index = this.routedQueue.indexOf(job);
+		if (index >= 0) this.routedQueue.splice(index, 1);
+		if (this.routedActive === job) this.routedActive = null;
+		this.pumpRouted();
+	}
+
+	private pumpRouted(): void {
+		// A reset must await initialization, but it need not keep downloading the previous
+		// session's network once the next session has supplied its active target.
+		if (this.gameChange && this.variantChange && !this.routedActive) {
+			const next = this.routedQueue[0];
+			if (next) {
+				this.routeRequest = next.req;
+				if (this.loadingVariant !== this.desiredVariant()) this.variantAbort?.abort();
+			}
+		}
+		if (this.disposed || this.suspendApply || this.gameChange || this.routedActive) return;
+		const job = this.routedQueue.shift();
+		if (!job) return;
+		this.routedActive = job;
+		this.routeRequest = job.req;
+		if (this.variantChange && this.loadingVariant !== this.desiredVariant())
+			this.variantAbort?.abort();
+		void this.runRouted(job);
+	}
+
+	private async runRouted(job: RoutedAnalysis): Promise<void> {
+		try {
+			if (!this.settings) await this.ready;
+			while (true) {
+				if (job.cancelled || this.disposed) return;
+				if (this.needsVariantChange()) this.startVariantChange();
+				if (this.variantChange) {
+					await this.variantChange;
+					continue;
+				}
+				if (this.pending) await this.applyOptions();
+				if (job.cancelled || this.disposed) return;
+				// Settings may have changed during the option acknowledgement.
+				if (!this.needsVariantChange() && !this.variantChange) break;
+			}
+			this.refreshNetworkCache();
+			const hit = this.lookup(job.req);
+			const generation = this.cacheGeneration;
+			job.inner = hit ? cachedHandle(job.req, hit) : this.engine.analyse(job.req);
+			job.start(job.inner);
+			const result = await job.inner.result;
+			const outcome = job.superseded ? { ...result, status: "superseded" as const } : result;
+			this.refreshNetworkCache();
+			if (!hit && generation === this.cacheGeneration) this.store(outcome);
+			job.settle(outcome);
+		} catch {
+			job.start(null);
+			job.settle(emptyResult(job.req, job.cancelled ? "superseded" : "failed"));
+		} finally {
+			if (this.routedActive === job) {
+				this.routedActive = null;
+				this.pumpRouted();
+			}
+		}
+	}
+
+	private refreshNetworkCache(): void {
+		const loaded = this.getLoadedVariant?.();
+		if (loaded === undefined || loaded === this.lastLoadedVariant) return;
+		this.lastLoadedVariant = loaded;
+		this.cacheGeneration++;
+		this.cache?.clear();
+	}
+
+	/** Without a network configurator, UCI owns admission after a game reset. */
 	private afterVariantChange(req: AnalysisRequest, change: Promise<void>): AnalysisHandle {
 		let cancelled = false;
 		let inner: AnalysisHandle | null = null;
@@ -339,18 +495,9 @@ export class EngineController {
 		const result = new Promise<AnalysisResult>((resolve) => {
 			settle = resolve;
 		});
-		const failed = (status: AnalysisResult["status"]): AnalysisResult => ({
-			id: req.id,
-			bestmove: null,
-			request: req,
-			status,
-			final: { id: req.id, depth: 0, lines: [], nodes: 0, nps: 0, timeMs: 0, complete: false },
-		});
 		const started = change.then(
 			() => {
 				if (cancelled || this.disposed) return null;
-				// The request carries the active session's strength. Global fixed settings
-				// must not overwrite a persona-matched target after a network/game wait.
 				inner = this.engine.analyse(req);
 				return inner;
 			},
@@ -358,9 +505,9 @@ export class EngineController {
 		);
 		void started
 			.then(async (handle) => {
-				settle(handle ? await handle.result : failed(cancelled ? "superseded" : "failed"));
+				settle(handle ? await handle.result : emptyResult(req, cancelled ? "superseded" : "failed"));
 			})
-			.catch(() => settle(failed("failed")));
+			.catch(() => settle(emptyResult(req, "failed")));
 		async function* updates(): AsyncGenerator<AnalysisUpdate> {
 			const handle = await started;
 			if (handle) yield* handle.updates;
@@ -372,7 +519,7 @@ export class EngineController {
 			stop: async () => {
 				cancelled = true;
 				if (inner) await inner.stop();
-				else settle(failed("superseded"));
+				else settle(emptyResult(req, "superseded"));
 			},
 		};
 		this.track(handle);
@@ -419,11 +566,12 @@ export class EngineController {
 		}
 	}
 
-	private track(handle: AnalysisHandle): void {
+	private track(handle: AnalysisHandle, store = true): void {
 		this.inFlight.add(handle);
+		const generation = this.cacheGeneration;
 		void handle.result.then((result) => {
 			this.inFlight.delete(handle);
-			this.store(result);
+			if (store && generation === this.cacheGeneration) this.store(result);
 			if (this.pending) void this.applyOptions();
 		});
 	}
@@ -438,7 +586,9 @@ export class EngineController {
 	private minDepthFor(req: AnalysisRequest): number {
 		const depth = req.limit.depth;
 		if (depth === undefined)
-			return req.limit.infinite ? automaticDepthForElo(req.elo ?? LIMITS.eloMax) : this.cacheMinDepth;
+			return req.limit.infinite
+				? automaticDepthForElo(req.targetElo ?? req.elo ?? LIMITS.eloMax)
+				: this.cacheMinDepth;
 		return Math.min(depth, Math.max(this.cacheMinDepth, depth - SEARCH_BUDGET.cacheDepthSlack));
 	}
 

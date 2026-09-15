@@ -67,6 +67,7 @@ interface Running {
 	timer: unknown;
 	settled: Promise<void>;
 	elo: number | undefined;
+	targetElo: number;
 	depth: number;
 	finished: boolean;
 }
@@ -147,6 +148,7 @@ export class PonderController {
 			current.kind === kind &&
 			current.fen === reached &&
 			current.elo === elo &&
+			current.targetElo === targetElo &&
 			current.depth === depth
 		)
 			return;
@@ -155,6 +157,7 @@ export class PonderController {
 		const req: AnalysisRequest = {
 			id: newId(),
 			fen,
+			targetElo,
 			multiPv: kind === "opponent" ? SEARCH_BUDGET.ponderMultiPv : SEARCH_BUDGET.panelMultiPv,
 			limit: { depth, movetimeMs: this.maxMs },
 			priority: kind === "opponent" ? "ponder" : "panel",
@@ -184,7 +187,17 @@ export class PonderController {
 				this.running.finished = true;
 				this.scheduler.clearTimeout(timer);
 			});
-		this.running = { kind, fen: reached, handle, timer, settled, elo, depth, finished: false };
+		this.running = {
+			kind,
+			fen: reached,
+			handle,
+			timer,
+			settled,
+			elo,
+			targetElo,
+			depth,
+			finished: false,
+		};
 		void this.observe(reached, handle);
 		log.debug("ponder: started", { kind, fen, at: this.now() });
 	}

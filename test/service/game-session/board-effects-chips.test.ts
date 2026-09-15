@@ -8,7 +8,10 @@ import { BoardEffectsReporter } from "@service/game-session/board-effects";
 
 const START = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
-function reporter(chips: boolean | undefined): {
+function reporter(
+	chips: boolean | undefined,
+	targetElo?: number
+): {
 	r: BoardEffectsReporter;
 	posts: GamePortCommand[];
 	searches: AnalysisRequest[];
@@ -27,6 +30,7 @@ function reporter(chips: boolean | undefined): {
 			},
 		}),
 		post: (cmd) => posts.push(cmd),
+		...(targetElo === undefined ? {} : { getTargetElo: () => targetElo }),
 		...(chips === undefined ? {} : { chips: () => chips }),
 	});
 	return { r, posts, searches };
@@ -42,6 +46,16 @@ const landed = (uci: string, mine: boolean) => ({
 });
 
 describe("BoardEffectsReporter · moveQualityChips", () => {
+	it("routes quality searches by the active target while preserving an unrestricted referee", () => {
+		const { r, searches } = reporter(true, 3201);
+		r.report({ moves: [landed("e2e4", true)], lines: [] });
+		expect(searches.length).toBeGreaterThan(0);
+		for (const search of searches) {
+			expect(search.targetElo).toBe(3201);
+			expect(search.elo).toBeUndefined();
+		}
+		r.dispose();
+	});
 	it("off: report posts the rays of each move with no quality and issues no search", () => {
 		const { r, posts, searches } = reporter(false);
 		r.prepare({ beforeFen: START, history: { fen: START, moves: [] }, uci: "e2e4", ply: 0 });

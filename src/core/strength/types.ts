@@ -51,8 +51,10 @@ export interface SelectionContext {
 	/** The opponent's last move (UCI); enables the recapture row. */
 	lastMove?: string;
 	selectionMode: SelectionMode;
-	/** The engine's `UCI_Elo`-limited `bestmove` (§7.1). */
+	/** The engine's bestmove; engineResultKind records whether a strength limiter produced it. */
 	engineBestmove?: string;
+	/** Explicit provenance prevents an unrestricted referee answer being treated as native limiting. */
+	engineResultKind?: "native-limited" | "unrestricted";
 	/** `Settings.strength.blunderScale`. */
 	blunderScale: number;
 	/** Optional explicit temperature adjustment; search depth does not alter it. Default 1. */
@@ -72,8 +74,8 @@ export interface SelectionContext {
 	/**
 	 * The same search's complete MultiPV frame at the *human* depth (2026-09-13, H3/H4 of
 	 * `docs/research/human-move-selection-ideas-2026-09-13.md`): `AnalysisResult.atFeatureDepth`
-	 * captured at `humanDepth(E)`. Generate-and-verify scores Maia's candidates against these,
-	 * never against the deep referee lines. Absent when the search never completed that depth.
+	 * captured at `humanDepth(E)`. Upper-range verification also incorporates the bounded
+	 * referee evidence. Absent when the search never completed the requested comparison depth.
 	 */
 	shallowLines?: readonly EvalLine[];
 	/** The depth `shallowLines` were captured at. */

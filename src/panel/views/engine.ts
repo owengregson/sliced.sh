@@ -23,7 +23,7 @@ import { MAIA_INPUT } from "@core/constants/maia";
 import { type LogStreamMessage, MSG, type PanelSnapshot } from "@core/constants/messages";
 import { UI_TIMINGS } from "@core/constants/ui";
 import { LOG_LEVELS, type LogEntry, levelAllows, log } from "@core/logger";
-import { maiaSizeFor, usesMaia } from "@core/policy/maia-size";
+import { maiaSizeFor, usesMaia, usesMaiaPrior } from "@core/policy/maia-size";
 import { normalizeTimingStats } from "@core/timing/session-stats";
 import { TOKENS } from "@design/tokens.generated";
 import type { ExecutionResult } from "@typedefs/game";
@@ -141,18 +141,15 @@ function enginePill(snapshot: PanelSnapshot): { variant: PillVariant; text: stri
 	}
 }
 
-/**
- * The model that picks the move at the target rating, from the snapshot alone: Maia-3 (sized by
- * the target) below `MAIA.eloMax` while the human model is on, else Stockfish on the small net up
- * to `LIMITS.nnueSmallEloMax` and the full net above it. The derived target (a matched opponent)
- * wins over the stored slider value, as it does in the session.
- */
+/** Selection policy at the active target and the network currently reported by the engine. */
 export function selectionModel(snapshot: PanelSnapshot): string {
 	const { strength } = snapshot.settings;
 	const target = snapshot.opponent?.derivedTargetElo ?? strength.targetElo;
 	const { selection } = COPY.engineView;
 	if (usesMaia(target)) return selection.maia(selection.maiaSizes[maiaSizeFor(target)]);
-	return target > LIMITS.nnueSmallEloMax ? selection.stockfishFull : selection.stockfishSmall;
+	const full = snapshot.engine.variant === "full";
+	if (usesMaiaPrior(target)) return full ? selection.maiaPriorFull : selection.maiaPriorSmall;
+	return full ? selection.stockfishFull : selection.stockfishSmall;
 }
 
 /** What the Human-model block shows for a snapshot (exported for the view's tests). */
@@ -227,12 +224,10 @@ export function policyBlock(snapshot: PanelSnapshot): PolicyBlock {
 	const { strength } = snapshot.settings;
 	const target = snapshot.opponent?.derivedTargetElo ?? strength.targetElo;
 	const { policy: copy, selection, none } = COPY.engineView;
-	const active = usesMaia(target);
+	const active = usesMaia(target) || usesMaiaPrior(target);
 	const rec = snapshot.recommendation;
-	const maia = rec?.maia;
-	// H15: above `MAIA.eloMax` the model still answers as the engine's prior, so an answer on the
-	// recommendation is shown whatever the target; without one the block says what selects.
-	if (!active && !maia)
+	const maia = active ? rec?.maia : undefined;
+	if (!active)
 		return {
 			name: copy.inactive,
 			pill: { variant: "idle", text: copy.off },

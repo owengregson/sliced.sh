@@ -360,6 +360,8 @@ export const COPY = {
 			maia: (size: string): string => `Selection · Maia-3 · ${size}`,
 			stockfishSmall: "Selection · Stockfish 18 · small net",
 			stockfishFull: "Selection · Stockfish 18 · full net",
+			maiaPriorSmall: "Selection · Stockfish 18 + Maia-3 · small net",
+			maiaPriorFull: "Selection · Stockfish 18 + Maia-3 · full net",
 			/** One shipped size since 2026-09-13; the map stays total over `MaiaSize`. */
 			maiaSizes: { "79m": "79M" },
 		},

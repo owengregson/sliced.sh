@@ -116,7 +116,7 @@ describe("selectMove — selection modes", () => {
 				ctx({ targetElo: 3800, form: -1, selectionMode, engineBestmove: "d2d4", blunderScale: 2 })
 			);
 			expect(chosen.uci).toBe("e2e4");
-			expect(chosen.rationale.join(" ")).toContain("maximum strength");
+			expect(chosen.rationale.join(" ")).toContain("full-strength engine");
 		}
 	});
 	it("engine-elo plays the engine's bestmove verbatim", () => {

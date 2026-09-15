@@ -108,7 +108,7 @@ describe("clock-race strength", () => {
 			expect(chosen.cpLoss ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(60);
 			expect(chosen.source).not.toBe("blunder");
 		}
-		expect([...picks].sort()).toEqual(["d2d4", "e2e4"]);
+		expect([...picks]).toEqual(["e2e4"]);
 		expect(selectMove(lines, ctx({ ...race, oppClockMs: 10000, targetElo: 3800 })).uci).toBe("e2e4");
 	});
 

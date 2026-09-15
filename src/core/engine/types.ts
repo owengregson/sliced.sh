@@ -36,6 +36,8 @@ export interface AnalysisRequest {
 	multiPv: number;
 	limit: AnalysisLimit;
 	searchmoves?: string[];
+	/** Active product target for network routing; omitted requests use stored settings. */
+	targetElo?: number;
 	/** `UCI_Elo`; undefined = full strength. */
 	elo?: number;
 	priority?: AnalysisPriority;

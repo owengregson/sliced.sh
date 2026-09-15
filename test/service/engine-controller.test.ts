@@ -8,6 +8,7 @@ import { automaticDepthForElo } from "@core/engine/depth-policy";
 import type { AnalysisHandle, AnalysisRequest } from "@core/engine/types";
 import { FEATURE_DEPTH, UciEngine } from "@core/engine/uci-client";
 import { EngineController, type EngineControllerDeps } from "@service/engine-controller";
+import type { EngineVariant } from "@typedefs/engine";
 import { DEFAULT_SETTINGS, type Settings } from "@typedefs/settings";
 import { FakeEngineTransport, FakeScheduler, flush } from "../fakes/engine-transport";
 
@@ -117,6 +118,337 @@ function finish(t: FakeEngineTransport, multiPv: number, depth: number, pv = "e2
 }
 
 const setoptions = (lines: string[]): string[] => lines.filter((l) => l.startsWith("setoption"));
+
+describe("EngineController active target routing", () => {
+	it("a next-game Small request cancels the prior game's cold Full load before reset admission", async () => {
+		const variants: string[] = [];
+		const { ctrl, t } = await setup({
+			deps: {
+				configureVariant: (variant, _threads, signal) => {
+					variants.push(variant);
+					if (variant === "smallnet") return Promise.resolve();
+					return new Promise<void>((_resolve, reject) => {
+						signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+					});
+				},
+			},
+		});
+		await ctrl.init();
+		const old = ctrl.analyse(req({ id: "previous-game", fen: START, targetElo: 3201 }));
+		await flush();
+		const reset = ctrl.newGame("new-small-game");
+		const next = ctrl.analyse(req({ id: "next-game", fen: AFTER_E4, targetElo: 3200 }));
+		expect((await old.result).status).toBe("superseded");
+		await reset;
+		await flush();
+		expect(variants).toEqual(["smallnet", "full", "smallnet"]);
+		expect(t.sent.indexOf("ucinewgame")).toBeLessThan(t.sent.indexOf(`position fen ${AFTER_E4}`));
+		expect(t.sent.filter((line) => line.startsWith("position fen "))).toEqual([
+			`position fen ${AFTER_E4}`,
+		]);
+		finish(t, 2, 2, "e7e5");
+		expect((await next.result).status).toBe("complete");
+		ctrl.dispose();
+	});
+	it("the controller ponder API carries its matched target into network routing", async () => {
+		const variants: string[] = [];
+		const { ctrl, t } = await setup({
+			deps: {
+				configureVariant: async (variant) => {
+					variants.push(variant);
+				},
+			},
+		});
+		await ctrl.init();
+		const handle = ctrl.ponder(START, [], 2, 3201);
+		await flush();
+		expect(variants).toEqual(["smallnet", "full"]);
+		finish(t, 2, 2);
+		expect((await handle.result).request.targetElo).toBe(3201);
+		ctrl.dispose();
+	});
+	it("invalidates Full cache on an acknowledged host fallback without repeatedly reloading Full", async () => {
+		let loaded: EngineVariant = "full";
+		const variants: string[] = [];
+		const { ctrl, t, cache } = await setup({
+			settings: settings({ targetElo: 3800 }),
+			deps: {
+				getLoadedVariant: () => loaded,
+				configureVariant: async (variant) => {
+					variants.push(variant);
+				},
+			},
+		});
+		await ctrl.init();
+		const first = ctrl.analyse(
+			req({ id: "before-fallback", fen: START, targetElo: 3201, limit: { movetimeMs: 500 } })
+		);
+		finish(t, 2, FEATURE_DEPTH + 2);
+		await first.result;
+		expect(cache.size).toBe(1);
+		// RemoteEngine keeps fallbackFrom=full and accepts its ready Small worker.
+		loaded = "smallnet";
+		const next = ctrl.analyse(
+			req({ id: "after-fallback", fen: START, targetElo: 3201, limit: { movetimeMs: 500 } })
+		);
+		expect(cache.size).toBe(0);
+		expect(t.sent.filter((line) => line.startsWith("go "))).toHaveLength(2);
+		finish(t, 2, FEATURE_DEPTH + 2);
+		await next.result;
+		expect(variants).toEqual(["full"]);
+		expect(ctrl.status().pendingOptions).toBe(false);
+		ctrl.dispose();
+	});
+
+	it("applies the latest non-network settings after a cold load, including with no waiting request", async () => {
+		let release = (): void => {};
+		const { ctrl, src } = await setup({
+			deps: {
+				configureVariant: () =>
+					new Promise<void>((resolve) => {
+						release = resolve;
+					}),
+			},
+		});
+		src.emit(settings({ engine: { hashMb: 64, threads: 2 } }));
+		release();
+		await flush();
+		expect(ctrl.status().pendingOptions).toBe(false);
+		expect(ctrl.status().options?.Hash).toBe(64);
+		expect(ctrl.status().options?.Threads).toBe(2);
+		ctrl.dispose();
+	});
+
+	it("routes 3190 and 3200 to Small and 3201 to Full without limiting referee searches", async () => {
+		const variants: string[] = [];
+		const { ctrl, t, cache } = await setup({
+			deps: {
+				configureVariant: async (variant) => {
+					variants.push(variant);
+				},
+			},
+		});
+		await ctrl.init();
+		for (const targetElo of [3190, 3200, 3201, 3200]) {
+			const before = t.sent.filter((line) => line.startsWith("go ")).length;
+			const handle = ctrl.analyse(
+				req({ id: `target-${targetElo}-${before}`, fen: START, targetElo, limit: { movetimeMs: 500 } })
+			);
+			await flush();
+			// The first two share a compatible full-strength Small evaluation.
+			if (targetElo === 3200 && variants.length === 1) {
+				expect(t.sent.filter((line) => line.startsWith("go ")).length).toBe(before);
+			} else {
+				expect(t.sent.filter((line) => line.startsWith("go ")).length).toBe(before + 1);
+				finish(t, 2, FEATURE_DEPTH + 2);
+			}
+			expect((await handle.result).request.targetElo).toBe(targetElo);
+			expect(t.sent.filter((line) => line.startsWith("setoption name UCI_LimitStrength")).at(-1)).toBe(
+				"setoption name UCI_LimitStrength value false"
+			);
+			expect(variants.at(-1)).toBe(targetElo > 3200 ? "full" : "smallnet");
+			expect(cache.size).toBe(1);
+		}
+		expect(variants).toEqual(["smallnet", "full", "smallnet"]);
+		ctrl.dispose();
+	});
+
+	it("public requests use stored settings after an explicit matched target, while Big stays explicit", async () => {
+		const variants: string[] = [];
+		const { ctrl, t, src } = await setup({
+			settings: settings({ targetElo: 3800 }),
+			deps: {
+				configureVariant: async (variant) => {
+					variants.push(variant);
+				},
+			},
+		});
+		await ctrl.init();
+		for (const targetElo of [3200, undefined]) {
+			const handle = ctrl.analyse(
+				req({ id: `route-${targetElo}`, fen: START, ...(targetElo === undefined ? {} : { targetElo }) })
+			);
+			await flush();
+			finish(t, 2, 2);
+			await handle.result;
+		}
+		expect(variants).toEqual(["full", "smallnet", "full"]);
+		src.emit(settings({ targetElo: 1500, engine: { nnue: "big" } }));
+		await flush();
+		const explicit = ctrl.analyse(
+			req({ id: "explicit-big", fen: START, targetElo: 3190, elo: 1700 })
+		);
+		await flush();
+		finish(t, 2, 2);
+		expect((await explicit.result).request.elo).toBe(1700);
+		expect(variants).toEqual(["full", "smallnet", "full"]);
+		expect(t.sent.filter((line) => line.startsWith("setoption name UCI_Elo")).at(-1)).toBe(
+			"setoption name UCI_Elo value 1700"
+		);
+		ctrl.dispose();
+	});
+
+	it("keeps a canceled cold Full load warm for the next bounded request", async () => {
+		let release = (): void => {};
+		const variants: string[] = [];
+		let fullSignal: AbortSignal | undefined;
+		const { ctrl, t } = await setup({
+			deps: {
+				configureVariant: async (variant, _threads, signal) => {
+					variants.push(variant);
+					if (variant === "full") {
+						fullSignal = signal;
+						await new Promise<void>((resolve) => {
+							release = resolve;
+						});
+					}
+				},
+			},
+		});
+		await ctrl.init();
+		const first = ctrl.analyse(req({ id: "expires", fen: START, targetElo: 3201 }));
+		await flush();
+		await first.stop();
+		expect((await first.result).status).toBe("superseded");
+		expect(fullSignal?.aborted).toBe(false);
+		const second = ctrl.analyse(req({ id: "retry", fen: START, targetElo: 3201 }));
+		await flush();
+		expect(variants).toEqual(["smallnet", "full"]);
+		release();
+		await flush();
+		expect(t.sent.filter((line) => line.startsWith("go "))).toHaveLength(1);
+		finish(t, 2, 2);
+		expect((await second.result).status).toBe("complete");
+		expect(ctrl.status().pendingOptions).toBe(false);
+		ctrl.dispose();
+	});
+
+	it("a Small move preempts a cold Full panel load without dispatching the stale request", async () => {
+		const variants: string[] = [];
+		let fullSignal: AbortSignal | undefined;
+		const { ctrl, t } = await setup({
+			deps: {
+				configureVariant: (variant, _threads, signal) => {
+					variants.push(variant);
+					if (variant === "smallnet") return Promise.resolve();
+					fullSignal = signal;
+					return new Promise<void>((_resolve, reject) => {
+						signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+					});
+				},
+			},
+		});
+		await ctrl.init();
+		const panel = ctrl.analyse(
+			req({ id: "panel-load", fen: START, targetElo: 3201, priority: "panel" })
+		);
+		await flush();
+		const move = ctrl.analyse(req({ id: "small-move", fen: AFTER_E4, targetElo: 3200 }));
+		expect((await panel.result).status).toBe("superseded");
+		await flush();
+		expect(fullSignal?.aborted).toBe(true);
+		expect(variants).toEqual(["smallnet", "full", "smallnet"]);
+		expect(t.sent.filter((line) => line.startsWith("position fen "))).toEqual([
+			`position fen ${AFTER_E4}`,
+		]);
+		finish(t, 2, 2, "e7e5");
+		expect((await move.result).status).toBe("complete");
+		ctrl.dispose();
+	});
+
+	it("does not dispatch against a late successful response from an aborted network configuration", async () => {
+		let release = (): void => {};
+		const variants: string[] = [];
+		const { ctrl, t } = await setup({
+			deps: {
+				configureVariant: async (variant) => {
+					variants.push(variant);
+					if (variant === "full")
+						await new Promise<void>((resolve) => {
+							release = resolve;
+						});
+				},
+			},
+		});
+		await ctrl.init();
+		const panel = ctrl.analyse(
+			req({ id: "stale-full", fen: START, targetElo: 3201, priority: "panel" })
+		);
+		await flush();
+		const move = ctrl.analyse(req({ id: "fresh-small", fen: AFTER_E4, targetElo: 3200 }));
+		expect((await panel.result).status).toBe("superseded");
+		// A transport may finish a load just as cancellation arrives.
+		release();
+		await flush();
+		expect(variants).toEqual(["smallnet", "full", "smallnet"]);
+		expect(t.sent.filter((line) => line.startsWith("position fen "))).toEqual([
+			`position fen ${AFTER_E4}`,
+		]);
+		finish(t, 2, 2, "e7e5");
+		expect((await move.result).status).toBe("complete");
+		ctrl.dispose();
+	});
+
+	it("queued cross-network panel work cannot preempt a move or jump ahead of newer move work", async () => {
+		const variants: string[] = [];
+		const { ctrl, t } = await setup({
+			deps: {
+				configureVariant: async (variant) => {
+					variants.push(variant);
+				},
+			},
+		});
+		await ctrl.init();
+		const first = ctrl.analyse(req({ id: "first-move", fen: START, targetElo: 3200 }));
+		const panel = ctrl.analyse(
+			req({ id: "full-panel", fen: AFTER_D4, targetElo: 3201, priority: "panel" })
+		);
+		expect(t.sent).not.toContain("stop");
+		expect(variants).toEqual(["smallnet"]);
+		const next = ctrl.analyse(req({ id: "next-move", fen: AFTER_E4, targetElo: 3190 }));
+		expect(t.sent).toContain("stop");
+		t.feed("bestmove e2e4");
+		expect((await first.result).status).toBe("superseded");
+		await flush();
+		expect(variants).toEqual(["smallnet"]);
+		expect(t.sent.filter((line) => line.startsWith("position fen ")).at(-1)).toBe(
+			`position fen ${AFTER_E4}`
+		);
+		finish(t, 2, 2, "e7e5");
+		await next.result;
+		await flush();
+		expect(variants).toEqual(["smallnet", "full"]);
+		expect(t.sent.filter((line) => line.startsWith("position fen ")).at(-1)).toBe(
+			`position fen ${AFTER_D4}`
+		);
+		finish(t, 2, 2, "d7d5");
+		await panel.result;
+		ctrl.dispose();
+	});
+
+	it("a settings change during matched search defers options without overriding its target", async () => {
+		const variants: string[] = [];
+		const { ctrl, t, src } = await setup({
+			deps: {
+				configureVariant: async (variant) => {
+					variants.push(variant);
+				},
+			},
+		});
+		await ctrl.init();
+		const active = ctrl.analyse(req({ id: "matched", fen: START, targetElo: 3200 }));
+		src.emit(settings({ targetElo: 3800, engine: { hashMb: 64 } }));
+		expect(t.sent).not.toContain("stop");
+		expect(ctrl.status().pendingOptions).toBe(true);
+		finish(t, 2, 2);
+		await active.result;
+		await flush();
+		expect(variants).toEqual(["smallnet"]);
+		expect(ctrl.status().pendingOptions).toBe(false);
+		expect(ctrl.status().options?.Hash).toBe(64);
+		ctrl.dispose();
+	});
+});
 
 describe("EngineController options", () => {
 	it("waits for a large network and preserves the request's active rating through reconfiguration", async () => {

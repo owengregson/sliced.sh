@@ -43,7 +43,10 @@ it("humanDepth: the HUMAN_DEPTH knots, flat outside, linear and rounded between"
 		[1800, 7],
 		[2200, 9],
 		[2401, 10],
-		[3800, 10],
+		[2800, 10],
+		[2900, 12],
+		[3000, 14],
+		[3800, 14],
 	])
 		expect(humanDepth(elo as number)).toBe(depth as number);
 	expect(humanDepth(2400)).toBe(LIMITS.featureDepth);
