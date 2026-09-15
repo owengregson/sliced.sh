@@ -647,7 +647,7 @@ export const SETTINGS_COPY = {
 		},
 		"automation.moveRatingSounds": {
 			label: "Move rating sound effects",
-			help: "Plays a sound when a brilliant, best, inaccuracy, mistake, or blunder rating appears.",
+			help: "Plays a sound when a brilliant, great, inaccuracy, mistake, or blunder rating appears.",
 		},
 		"keybinds.playMove": { label: COPY.keybind.actions.playMove },
 		"keybinds.toggleAutoMove": { label: COPY.keybind.actions.toggleAutoMove },

@@ -3,7 +3,7 @@ export const SOUNDS_DIR = "assets/sounds/";
 
 export const MOVE_RATING_SOUNDS = {
 	brilliant: "brilliant.mp3",
-	best: "best.mp3",
+	great: "great.mp3",
 	inaccuracy: "inaccuracy.mp3",
 	mistake: "mistake.mp3",
 	blunder: "blunder.mp3",

@@ -18,7 +18,7 @@ function setup() {
 			kind: "effects",
 			mine,
 			effects: [],
-			quality: { square: "e4", quality: "best" },
+			quality: { square: "e4", quality: "great" },
 		});
 	return { bridge, sounds, effects, draw };
 }
@@ -40,7 +40,7 @@ describe("board rating sound synchronization", () => {
 		await settle();
 		h.draw(false);
 		await settle();
-		expect(h.sounds).toEqual(["best", "best"]);
+		expect(h.sounds).toEqual(["great", "great"]);
 	});
 
 	it("does not sound for rays, rejected draws or repeated badges", async () => {

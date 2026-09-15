@@ -141,7 +141,7 @@ describe("the mark reaches the page: port command → wire → emitted bridge pr
 			kind: "effects",
 			effects: [],
 			mine: true,
-			quality: { square: "e4", quality: "best" },
+			quality: { square: "e4", quality: "great" },
 		};
 		j.command({ kind: "effects", effects: [], mine: true });
 		await sleep(20);
@@ -149,23 +149,23 @@ describe("the mark reaches the page: port command → wire → emitted bridge pr
 		j.command(verdict);
 		await waitFor(() => sounds.length === 1);
 		expect(j.dom.document.querySelector(`svg.${TOKENS_FOR_SEED.effectsClass} path`)).not.toBeNull();
-		expect(sounds).toEqual(["best"]);
+		expect(sounds).toEqual(["great"]);
 		j.command(verdict);
 		await sleep(20);
-		expect(sounds).toEqual(["best"]);
+		expect(sounds).toEqual(["great"]);
 		j.command({ ...verdict, mine: false });
 		await waitFor(() => sounds.length === 2);
-		expect(sounds).toEqual(["best", "best"]);
+		expect(sounds).toEqual(["great", "great"]);
 		j.command({
 			kind: "settings",
 			highlightMoves: false,
 			boardEffects: true,
 			moveRatingSounds: false,
 		});
-		expect(sounds).toEqual(["best", "best", null]);
+		expect(sounds).toEqual(["great", "great", null]);
 		j.command({ ...verdict, quality: { square: "e5", quality: "brilliant" } });
 		await sleep(20);
-		expect(sounds).toEqual(["best", "best", null]);
+		expect(sounds).toEqual(["great", "great", null]);
 	});
 	it("ordinary recommendations reach our SVG and an identical execution mark retains the same nodes", async () => {
 		const j = await joinChain();
