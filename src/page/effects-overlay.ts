@@ -475,7 +475,7 @@ export function effectsStatements(p: EffectsParams): Statement[] {
 			["el", "chip", "black", "motion"],
 			[
 				js.const_("art", js.member(p.icons, js.member(id("chip"), W.badgeIndex))),
-				js.if_(js.not(id("art")), [js.ret()]),
+				js.if_(js.not(id("art")), [js.ret(js.bool(false))]),
 				js.const_("square", js.member(id("chip"), W.square)),
 				// Two chips on one square would blend into one unreadable disc (a recapture): the
 				// earlier one goes. Chips on other squares keep running.
@@ -561,6 +561,7 @@ export function effectsStatements(p: EffectsParams): Statement[] {
 					),
 					forgetOnFinish(id("run"), chips, id("group")),
 				]),
+				js.ret(js.bool(true)),
 			]
 		)
 	);
@@ -576,7 +577,7 @@ export function effectsStatements(p: EffectsParams): Statement[] {
 			["q"],
 			[
 				js.const_("el", js.call(id("efEnsure"))),
-				js.if_(js.not(el), [js.ret()]),
+				js.if_(js.not(el), [js.ret(js.bool(false))]),
 				js.const_(
 					"black",
 					js.op(js.member(id("q"), W.orientation), "===", s(BRIDGE_ORIENTATION.black))
@@ -641,9 +642,10 @@ export function effectsStatements(p: EffectsParams): Statement[] {
 					),
 					js.if_(js.op(id("efChipMark"), "!==", id("badge")), [
 						js.assign(id("efChipMark"), id("badge")),
-						js.expr(js.call(id("efBadge"), el, id("chip"), black, id("motion"))),
+						js.ret(js.call(id("efBadge"), el, id("chip"), black, id("motion"))),
 					]),
 				]),
+				js.ret(js.bool(false)),
 			]
 		)
 	);
@@ -733,9 +735,9 @@ export function effectsStatements(p: EffectsParams): Statement[] {
 	];
 }
 
-/** `efDraw(payload)` / `efClear()` as statements. */
+/** Draw returns whether a new badge was inserted; clear removes the layer. */
 export const effects = {
-	draw: (payload: Expression): Statement => js.expr(js.call(id(EFFECTS.draw), payload)),
+	draw: (payload: Expression): Expression => js.call(id(EFFECTS.draw), payload),
 	clear: (): Statement => js.expr(js.call(id(EFFECTS.clear))),
 };
 
@@ -768,7 +770,7 @@ export const effectsOverlay = defineProgram({
 			defineHandle([
 				{
 					kind: KINDS.effects,
-					body: [effects.draw(id("q")), post(KINDS.effects, id("i"), js.nil())],
+					body: [post(KINDS.effects, id("i"), effects.draw(id("q")))],
 				},
 				{
 					kind: KINDS.effectsClear,

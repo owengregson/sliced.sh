@@ -15,6 +15,15 @@ beforeEach(() => {
 });
 
 describe("settings storage", () => {
+	it("keeps rating sounds opt-in and persists the preference independently of control sounds", async () => {
+		expect(normalizeSettings({ automation: {} }).automation.moveRatingSounds).toBe(false);
+		expect(
+			normalizeSettings({ automation: { moveRatingSounds: "true" } }).automation.moveRatingSounds
+		).toBe(false);
+		await setSettings({ automation: { moveRatingSounds: true }, display: { uiSounds: false } });
+		expect((await getSettings()).automation.moveRatingSounds).toBe(true);
+		expect((await getSettings()).display.uiSounds).toBe(false);
+	});
 	it("returns defaults when nothing stored", async () => {
 		expect(await getSettings()).toEqual(DEFAULT_SETTINGS);
 	});

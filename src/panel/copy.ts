@@ -642,8 +642,12 @@ export const SETTINGS_COPY = {
 			help: "After every move, shows what it did — threats, checks, forks, captures.",
 		},
 		"automation.moveQualityChips": {
-			label: "Move quality chips",
+			label: "Move ratings",
 			help: "Rates each move on its square — best, mistake, blunder. Off saves the extra searches.",
+		},
+		"automation.moveRatingSounds": {
+			label: "Move rating sound effects",
+			help: "Plays a sound when a brilliant, best, inaccuracy, mistake, or blunder rating appears.",
 		},
 		"keybinds.playMove": { label: COPY.keybind.actions.playMove },
 		"keybinds.toggleAutoMove": { label: COPY.keybind.actions.toggleAutoMove },
@@ -656,7 +660,7 @@ export const SETTINGS_COPY = {
 		},
 		"display.uiSounds": {
 			label: "Control sounds",
-			help: "Feedback for settings and controls. Moves are always silent.",
+			help: "Feedback for settings and controls.",
 		},
 		"display.tts": {
 			label: "Spoken move shortcut",

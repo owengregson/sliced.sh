@@ -13,8 +13,9 @@
  */
 
 import { BRIDGE_KINDS, type PageBridge } from "@content/adapters/adapter";
+import { runtimeSendMessage } from "@core/chrome/runtime";
 import type { BoardEffect } from "@core/constants/board-effects";
-import type { GamePortCommand } from "@core/constants/messages";
+import { type GamePortCommand, MSG } from "@core/constants/messages";
 import type { MoveQualityMark } from "@core/constants/move-quality";
 import { TIMINGS } from "@core/constants/timings";
 import { log } from "@core/logger";
@@ -22,6 +23,7 @@ import { log } from "@core/logger";
 export interface BoardEffects {
 	enabled(): boolean;
 	setEnabled(on: boolean): void;
+	setSoundsEnabled(on: boolean): void;
 	/** Apply a port command; returns whether it was one of the effect layer's. */
 	apply(cmd: GamePortCommand): boolean;
 	/** Resolves once the page side answered (a no-op when nothing was drawn). */
@@ -40,16 +42,29 @@ export interface BoardEffectsOptions {
 	/** Black at the bottom (`SiteAdapter.isFlipped`). */
 	flipped(): boolean;
 	initiallyEnabled?: boolean;
+	/** Override the extension-owned player in tests. */
+	sound?(quality: MoveQualityMark["quality"] | null): void;
 }
 
 export function createBoardEffects(bridge: PageBridge, options: BoardEffectsOptions): BoardEffects {
 	let enabled = options.initiallyEnabled === true;
 	let drawn = false;
 	let disposed = false;
+	let soundsEnabled = false;
+	let soundGeneration = 0;
+	const sound =
+		options.sound ??
+		((quality: MoveQualityMark["quality"] | null): void => {
+			void runtimeSendMessage({ type: MSG.OFFSCREEN_MOVE_RATING_SOUND, quality }).catch(
+				(error: unknown) => log.debug("board effects: sound unavailable", error)
+			);
+		});
 
 	const ready = (): PageBridge | null => (!disposed && bridge.isAvailable() ? bridge : null);
 
 	const clear = (): Promise<void> => {
+		soundGeneration += 1;
+		if (soundsEnabled) sound(null);
 		if (!drawn) return Promise.resolve();
 		drawn = false;
 		const live = ready();
@@ -73,9 +88,22 @@ export function createBoardEffects(bridge: PageBridge, options: BoardEffectsOpti
 			...(cmd.quality ? { quality: cmd.quality } : {}),
 		};
 		drawn = true;
+		const generation = soundGeneration;
+		const playSound = soundsEnabled;
 		live
-			.call(BRIDGE_KINDS.effects, payload, TIMINGS.adapterBridgeTimeoutMs)
-			.then(() => undefined)
+			.call<boolean>(BRIDGE_KINDS.effects, payload, TIMINGS.adapterBridgeTimeoutMs)
+			.then((added) => {
+				if (
+					added === true &&
+					cmd.quality &&
+					playSound &&
+					soundsEnabled &&
+					enabled &&
+					!disposed &&
+					generation === soundGeneration
+				)
+					sound(cmd.quality.quality);
+			})
 			.catch((error: unknown) => {
 				log.debug("board effects: draw failed", error);
 			});
@@ -87,6 +115,12 @@ export function createBoardEffects(bridge: PageBridge, options: BoardEffectsOpti
 			if (enabled === on) return;
 			enabled = on;
 			if (!on) void clear();
+		},
+		setSoundsEnabled(on) {
+			if (soundsEnabled === on) return;
+			soundsEnabled = on;
+			soundGeneration += 1;
+			if (!on) sound(null);
 		},
 		apply(cmd) {
 			switch (cmd.kind) {

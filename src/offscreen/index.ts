@@ -13,6 +13,7 @@
 import { EngineHost, serveEnginePort } from "./engine-host";
 import { MaiaStore } from "./maia-store";
 import { ModelStore } from "./model-store";
+import { serveMoveRatingSounds } from "./move-rating-sounds";
 import { NnueStore } from "./nnue-store";
 import { createOrtRuntime } from "./ort-loader";
 import { createPolicyInference, policyThreads } from "./policy-inference";
@@ -43,6 +44,15 @@ const served = serveEnginePort({
 		}),
 });
 
+const stopSounds = serveMoveRatingSounds();
+
 // The document is closed by `chrome.offscreen.closeDocument()` (or an extension
 // reload): quit the engine and stop routing so nothing outlives the page.
-globalThis.addEventListener?.("pagehide", () => served.stop(), { once: true });
+globalThis.addEventListener?.(
+	"pagehide",
+	() => {
+		stopSounds();
+		served.stop();
+	},
+	{ once: true }
+);

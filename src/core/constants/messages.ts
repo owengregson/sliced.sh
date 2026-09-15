@@ -97,6 +97,7 @@ export const MSG = {
 	// offscreen ↔ SW (also via port)
 	OFFSCREEN_PING: "sl:offscreen:ping",
 	OFFSCREEN_ENGINE_STATUS: "sl:offscreen:engineStatus",
+	OFFSCREEN_MOVE_RATING_SOUND: "sl:offscreen:moveRatingSound",
 	// shared
 	LOG: "sl:log",
 } as const;
@@ -272,7 +273,7 @@ export type GamePortCommand =
 	 * §13.3 rule 4); default off until sent. `boardEffects` is optional so a caller that predates
 	 * it — every existing fixture — still means "off", which is what "default off until sent" says.
 	 */
-	| { kind: "settings"; highlightMoves: boolean; boardEffects?: boolean }
+	| { kind: "settings"; highlightMoves: boolean; boardEffects?: boolean; moveRatingSounds?: boolean }
 	/**
 	 * The board-effect batch for the move that has just landed, either side's (owner's brief,
 	 * 2026-09-13). `mine` picks the colour family — the accent for the owner's moves, the cool

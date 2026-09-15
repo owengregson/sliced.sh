@@ -547,6 +547,8 @@ export function createSettingsView(overrides: Partial<SettingsViewDeps> = {}): V
 						return !automation.highlightMoves;
 					case "automation.moveQualityChips":
 						return !automation.boardEffects;
+					case "automation.moveRatingSounds":
+						return !automation.boardEffects || !automation.moveQualityChips;
 					case "display.cursorEffects":
 						return !display.virtualCursor;
 					default:

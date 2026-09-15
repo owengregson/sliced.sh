@@ -376,7 +376,7 @@ export const chesscomBridge = defineProgram({
 					},
 					// The board-effect layer is its own element with its own lifetime: a `clear` of the
 					// recommendation mark leaves it alone, and this leaves the mark alone.
-					{ kind: KINDS.effects, body: [effects.draw(q), post(KINDS.effects, i, js.nil())] },
+					{ kind: KINDS.effects, body: [post(KINDS.effects, i, effects.draw(q))] },
 					{
 						kind: KINDS.effectsClear,
 						body: [effects.clear(), post(KINDS.effectsClear, i, js.nil())],

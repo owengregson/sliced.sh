@@ -122,6 +122,8 @@ export interface Settings {
 		 * `boardEffects` is on.
 		 */
 		moveQualityChips: boolean;
+		/** Play a matching sound when either side's move rating appears. */
+		moveRatingSounds: boolean;
 	};
 	keybinds: {
 		playMove: Keybind;
@@ -243,6 +245,7 @@ export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze<Settings>({
 		highlightStyle: "both",
 		boardEffects: true,
 		moveQualityChips: true,
+		moveRatingSounds: false,
 	},
 	keybinds: { ...DEFAULT_KEYBINDS, global: false },
 	display: {

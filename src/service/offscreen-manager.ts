@@ -12,14 +12,15 @@ import { log } from "@core/logger";
 import { dedupeAsync } from "@core/util/dedupe-async";
 
 export const OFFSCREEN_PAGE_PATH = "pages/offscreen.html";
-const OFFSCREEN_JUSTIFICATION = "Runs the chess engine in a Web Worker with SharedArrayBuffer";
+const OFFSCREEN_JUSTIFICATION =
+	"Runs the chess engine in a Web Worker with SharedArrayBuffer and plays move-rating sounds";
 const ALREADY_EXISTS = /only a single offscreen document/i;
 
 async function create(): Promise<void> {
 	try {
 		const created = await offscreenEnsure({
 			url: OFFSCREEN_PAGE_PATH,
-			reasons: ["WORKERS"],
+			reasons: ["WORKERS", "AUDIO_PLAYBACK"],
 			justification: OFFSCREEN_JUSTIFICATION,
 		});
 		if (created) log.debug("offscreen: document created");

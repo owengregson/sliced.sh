@@ -109,6 +109,7 @@ export async function copyBundledAssets(root: string, dist: string): Promise<voi
 		(band) => ({ ...CHESSMIMIC_BAND_FILES[band], file: chessMimicBandFile(band) })
 	);
 	const sources = new Set([
+		path.join(root, "assets/sounds/best_v2.mp3"),
 		...ENGINE_NNUE_SOURCES.map((spec) => path.join(engineDir, spec.source)),
 		...maiaSourceFiles(maiaSpecs, MAIA_FILES).map((name) => path.join(maiaDir, name)),
 		...timingSpecs.map((spec) => path.join(root, MODELS_DIR, spec.file)),

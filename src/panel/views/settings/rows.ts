@@ -397,6 +397,7 @@ export const ROWS: readonly RowSpec[] = [
 	},
 	toggle("automation.boardEffects"),
 	toggle("automation.moveQualityChips"),
+	toggle("automation.moveRatingSounds"),
 	toggle("display.virtualCursor"),
 	toggle("display.cursorEffects"),
 	// panel

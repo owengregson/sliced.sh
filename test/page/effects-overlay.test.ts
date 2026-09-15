@@ -147,6 +147,24 @@ function paintOf(el: PaintedNode | null | undefined, attribute: "stroke" | "fill
 }
 
 describe("effects-overlay", () => {
+	it("acknowledges only newly inserted rating badges, including late verdicts and recaptures", () => {
+		const { win, posts } = boot("<cg-container></cg-container>");
+		captureAnimations(win);
+		const verdict = batch([], { b: { q: "e4", j: 6 } });
+		sendToPage(win, command("effects", "rays", batch([])));
+		expect(reply(posts, "rays")?.p).toBe(false);
+		sendToPage(win, command("effects", "rating", verdict));
+		expect(reply(posts, "rating")?.p).toBe(true);
+		sendToPage(win, command("effects", "repeat", verdict));
+		expect(reply(posts, "repeat")?.p).toBe(false);
+		sendToPage(win, command("effects", "recapture", { ...verdict, u: false }));
+		expect(reply(posts, "recapture")?.p).toBe(true);
+		sendToPage(win, command("effects", "invalid", batch([], { b: { q: "a1", j: 99 } })));
+		expect(reply(posts, "invalid")?.p).toBe(false);
+		win.document.body.innerHTML = "";
+		sendToPage(win, command("effects", "missing-board", verdict));
+		expect(reply(posts, "missing-board")?.p).toBe(false);
+	});
 	it("emits no forbidden substring and no literal host selector / colour / class", () => {
 		expect(forbiddenIn(emitted.code)).toEqual([]);
 		expect(emitted.code).not.toContain("cg-container");

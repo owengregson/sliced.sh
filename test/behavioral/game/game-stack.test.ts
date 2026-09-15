@@ -292,7 +292,12 @@ describe("createGameStack: the real service-worker stack", () => {
 		expect(after.length).toBeGreaterThan(before);
 		// Both drawing gates travel in the one command (§13.3 rule 4): the recommendation mark and
 		// the board-effect layer, each `enabled && <its own setting>`.
-		expect(after.at(-1)).toEqual({ kind: "settings", highlightMoves: true, boardEffects: true });
+		expect(after.at(-1)).toEqual({
+			kind: "settings",
+			highlightMoves: true,
+			boardEffects: true,
+			moveRatingSounds: false,
+		});
 	});
 
 	it("a first-position ponder follows the game reset through the actual offscreen port", async () => {

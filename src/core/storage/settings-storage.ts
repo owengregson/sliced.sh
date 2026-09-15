@@ -204,6 +204,7 @@ export function normalizeSettings(raw: unknown): Settings {
 			highlightStyle: oneOf(automation.highlightStyle, D.automation.highlightStyle, HIGHLIGHT_STYLES),
 			boardEffects: bool(automation.boardEffects, D.automation.boardEffects),
 			moveQualityChips: bool(automation.moveQualityChips, D.automation.moveQualityChips),
+			moveRatingSounds: bool(automation.moveRatingSounds, D.automation.moveRatingSounds),
 		},
 		keybinds: {
 			playMove: keybind(keybinds.playMove, D.keybinds.playMove),

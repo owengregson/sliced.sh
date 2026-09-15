@@ -10,13 +10,14 @@ beforeEach(() => {
 });
 
 describe("ensureOffscreen", () => {
-	it("creates one document for three concurrent calls, with the WORKERS reason", async () => {
+	it("creates one document for three concurrent calls, with worker and audio reasons", async () => {
 		await Promise.all([ensureOffscreen(), ensureOffscreen(), ensureOffscreen()]);
 		expect(sim.offscreen.history()).toHaveLength(1);
 		expect(sim.offscreen.document()).toMatchObject({
 			url: OFFSCREEN_PAGE_PATH,
-			reasons: ["WORKERS"],
-			justification: "Runs the chess engine in a Web Worker with SharedArrayBuffer",
+			reasons: ["WORKERS", "AUDIO_PLAYBACK"],
+			justification:
+				"Runs the chess engine in a Web Worker with SharedArrayBuffer and plays move-rating sounds",
 		});
 		expect(OFFSCREEN_PAGE_PATH).toBe("pages/offscreen.html");
 	});

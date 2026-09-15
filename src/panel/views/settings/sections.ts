@@ -96,6 +96,7 @@ export const SECTIONS: readonly SectionSpec[] = [
 		"automation.highlightStyle",
 		"automation.boardEffects",
 		"automation.moveQualityChips",
+		"automation.moveRatingSounds",
 		"display.virtualCursor",
 		"display.cursorEffects",
 	]),

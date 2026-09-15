@@ -272,6 +272,7 @@ describe("settings view · rows", () => {
 			"automation.highlightStyle",
 			"automation.boardEffects",
 			"automation.moveQualityChips",
+			"automation.moveRatingSounds",
 			"display.virtualCursor",
 			"display.cursorEffects",
 		]);
@@ -1059,10 +1060,30 @@ describe("settings view · accuracy offset (H2, exposed 2026-09-13)", () => {
 
 // ── settings layout, 2026-09-13: dependants beneath their switch, and disabled while it is off ──
 describe("settings view · dependants", () => {
+	it("keeps rating sounds off when clicked while move ratings or board effects are disabled", async () => {
+		const h = await mountSettings();
+		const ratings = q(row(h.root, "automation.moveQualityChips"), "[role=switch]");
+		const sounds = q(row(h.root, "automation.moveRatingSounds"), "[role=switch]");
+		click(ratings);
+		await dom.tick(0);
+		expect(sounds.getAttribute("aria-disabled")).toBe("true");
+		click(sounds);
+		await dom.tick(0);
+		expect(h.settings().automation.moveRatingSounds).toBe(false);
+		click(ratings);
+		await dom.tick(0);
+		click(q(row(h.root, "automation.boardEffects"), "[role=switch]"));
+		await dom.tick(0);
+		expect(sounds.getAttribute("aria-disabled")).toBe("true");
+		click(sounds);
+		await dom.tick(0);
+		expect(h.settings().automation.moveRatingSounds).toBe(false);
+	});
 	it.each([
 		["strength.matchOpponentRating", "strength.personaEloOffset", "[role=slider]"],
 		["automation.highlightMoves", "automation.highlightStyle", ".sl-chip-group"],
 		["automation.boardEffects", "automation.moveQualityChips", "[role=switch]"],
+		["automation.moveQualityChips", "automation.moveRatingSounds", "[role=switch]"],
 		["display.virtualCursor", "display.cursorEffects", "[role=switch]"],
 	] as const)(
 		"%s gates %s, which sits directly beneath it",

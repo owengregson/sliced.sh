@@ -4341,6 +4341,11 @@ export class GameSession implements SessionSource {
 				kind: "settings",
 				highlightMoves: this.mayAct() && settings.automation.highlightMoves,
 				boardEffects: this.mayAct() && settings.automation.boardEffects,
+				moveRatingSounds:
+					this.mayAct() &&
+					settings.automation.boardEffects &&
+					settings.automation.moveQualityChips &&
+					settings.automation.moveRatingSounds,
 			},
 			{ kind: "keybinds", keybinds: settings.keybinds },
 		];

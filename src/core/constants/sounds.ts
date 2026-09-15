@@ -1,6 +1,16 @@
 /** Directory of every UI sound, relative to the extension root. */
 export const SOUNDS_DIR = "assets/sounds/";
 
+export const MOVE_RATING_SOUNDS = {
+	brilliant: "brilliant.mp3",
+	best: "best.mp3",
+	inaccuracy: "inaccuracy.mp3",
+	mistake: "mistake.mp3",
+	blunder: "blunder.mp3",
+} as const;
+
+export type MoveRatingSoundQuality = keyof typeof MOVE_RATING_SOUNDS;
+
 /** File names under `SOUNDS_DIR`. */
 export const SOUNDS = {
 	clickLight: "click_light.wav",

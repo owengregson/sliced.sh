@@ -14,6 +14,7 @@
 import { runtimeSendMessage } from "@core/chrome/runtime";
 import { tabsSendMessage } from "@core/chrome/tabs";
 import { type MessageType, MSG, type PanelSnapshot } from "@core/constants/messages";
+import type { MoveRatingSoundQuality } from "@core/constants/sounds";
 import type { LogSeverity } from "@core/logger";
 import type { SerializedValue } from "@core/serialization";
 import type { EngineStatus } from "@typedefs/engine";
@@ -59,6 +60,7 @@ export interface MessagePayloadMap {
 	// offscreen ↔ SW
 	[MSG.OFFSCREEN_PING]: EmptyPayload;
 	[MSG.OFFSCREEN_ENGINE_STATUS]: EmptyPayload;
+	[MSG.OFFSCREEN_MOVE_RATING_SOUND]: { quality: MoveRatingSoundQuality | null };
 	// shared (the logger's `LogEnvelope` is assignable to this)
 	[MSG.LOG]: {
 		level: LogSeverity;
@@ -94,6 +96,7 @@ export interface MessageResponseMap {
 	[MSG.CONTENT_START_NEW_GAME]: void;
 	[MSG.OFFSCREEN_PING]: { ok: true };
 	[MSG.OFFSCREEN_ENGINE_STATUS]: EngineStatus;
+	[MSG.OFFSCREEN_MOVE_RATING_SOUND]: boolean;
 	[MSG.LOG]: void;
 }
 

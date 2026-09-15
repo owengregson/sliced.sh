@@ -17,7 +17,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import type { FeedPort } from "@content/feed-port";
 import { startContent } from "@content/index";
 import { createPageBridgeClient } from "@content/page-bridge-client";
-import type { GamePortCommand } from "@core/constants/messages";
+import { type GamePortCommand, MSG } from "@core/constants/messages";
 import { chesscomBridge } from "@page/chesscom-bridge";
 import { chesscomEntryArgs } from "@page/index";
 import { bindCode, emit } from "@pagescript";
@@ -112,6 +112,61 @@ async function joinChain(): Promise<Joined> {
 }
 
 describe("the mark reaches the page: port command → wire → emitted bridge program → DOM", () => {
+	it("requests sound only after the real bridge draws a new rating, and stops on disable", async () => {
+		const previous = Object.getOwnPropertyDescriptor(globalThis, "chrome");
+		const sounds: unknown[] = [];
+		Object.defineProperty(globalThis, "chrome", {
+			configurable: true,
+			value: {
+				runtime: {
+					sendMessage(message: { type: string; quality?: unknown }, reply: (value: unknown) => void) {
+						if (message.type === MSG.OFFSCREEN_MOVE_RATING_SOUND) sounds.push(message.quality);
+						reply(true);
+					},
+				},
+			},
+		});
+		cleanups.push(() => {
+			if (previous) Object.defineProperty(globalThis, "chrome", previous);
+			else Reflect.deleteProperty(globalThis, "chrome");
+		});
+		const j = await joinChain();
+		j.command({
+			kind: "settings",
+			highlightMoves: false,
+			boardEffects: true,
+			moveRatingSounds: true,
+		});
+		const verdict: GamePortCommand = {
+			kind: "effects",
+			effects: [],
+			mine: true,
+			quality: { square: "e4", quality: "best" },
+		};
+		j.command({ kind: "effects", effects: [], mine: true });
+		await sleep(20);
+		expect(sounds).toEqual([]);
+		j.command(verdict);
+		await waitFor(() => sounds.length === 1);
+		expect(j.dom.document.querySelector(`svg.${TOKENS_FOR_SEED.effectsClass} path`)).not.toBeNull();
+		expect(sounds).toEqual(["best"]);
+		j.command(verdict);
+		await sleep(20);
+		expect(sounds).toEqual(["best"]);
+		j.command({ ...verdict, mine: false });
+		await waitFor(() => sounds.length === 2);
+		expect(sounds).toEqual(["best", "best"]);
+		j.command({
+			kind: "settings",
+			highlightMoves: false,
+			boardEffects: true,
+			moveRatingSounds: false,
+		});
+		expect(sounds).toEqual(["best", "best", null]);
+		j.command({ ...verdict, quality: { square: "e5", quality: "brilliant" } });
+		await sleep(20);
+		expect(sounds).toEqual(["best", "best", null]);
+	});
 	it("ordinary recommendations reach our SVG and an identical execution mark retains the same nodes", async () => {
 		const j = await joinChain();
 		j.command({ kind: "settings", highlightMoves: true });

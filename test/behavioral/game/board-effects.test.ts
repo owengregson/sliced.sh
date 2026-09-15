@@ -55,6 +55,28 @@ const verdictSearches = (): number =>
 	h.transport.goLines.filter((line) => line.includes(`movetime ${MOVE_QUALITY.movetimeMs}`)).length;
 
 describe("game session: board effects", () => {
+	it("gates rating audio on both board effects and move ratings through live settings changes", async () => {
+		h = await createGameHarness({
+			settings: {
+				automation: {
+					autoMove: false,
+					boardEffects: true,
+					moveQualityChips: true,
+					moveRatingSounds: true,
+				},
+			},
+		});
+		await h.arrive();
+		expect(gates().at(-1)?.moveRatingSounds).toBe(true);
+		await h.patch({ automation: { moveQualityChips: false } });
+		expect(gates().at(-1)?.moveRatingSounds).toBe(false);
+		await h.patch({ automation: { moveQualityChips: true } });
+		expect(gates().at(-1)?.moveRatingSounds).toBe(true);
+		await h.patch({ automation: { boardEffects: false } });
+		expect(gates().at(-1)?.moveRatingSounds).toBe(false);
+		await h.patch({ automation: { boardEffects: true }, enabled: false });
+		expect(gates().at(-1)?.moveRatingSounds).toBe(false);
+	});
 	it("sends what the opponent's move did, and the verdict when it arrives", async () => {
 		h = await createGameHarness({
 			myColor: "b",

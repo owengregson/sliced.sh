@@ -493,6 +493,7 @@ function bootContent(
 			case "settings":
 				highlights.setEnabled(cmd.highlightMoves);
 				boardEffects.setEnabled(cmd.boardEffects === true);
+				boardEffects.setSoundsEnabled(cmd.moveRatingSounds === true);
 				return;
 			case "startNewGame": {
 				const answer = (reachable: boolean) => {
