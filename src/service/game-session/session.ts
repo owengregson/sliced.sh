@@ -662,6 +662,12 @@ export class GameSession implements SessionSource {
 	 * `automation.moveQualityChips`, each on its own (owner, 2026-09-15).
 	 */
 	private readonly boardEffects: BoardEffectsReporter;
+	/** Only the current arrival may recover late last-move metadata; never retain a game backlog. */
+	private pendingEffectsArrival: {
+		previous: PositionSnapshot;
+		arrival: PositionSnapshot;
+		history: PositionHistory;
+	} | null = null;
 	/** The game-end erase of the effect layer, pending while the last move's chip and sound finish. */
 	private effectsClearTimer: unknown = null;
 
@@ -1466,6 +1472,9 @@ export class GameSession implements SessionSource {
 			tc ? `${tc.baseMs}+${tc.incMs}` : "?"
 		}|${snapshot.approximate === true ? "~" : "="}`;
 		if (key === this.lastPositionKey) {
+			// The exact board can arrive before its move-list/bridge metadata. Recover only the
+			// missing effects report; a metadata correction must not restart preparation or input.
+			this.recoverBoardEffects(snapshot);
 			const current = this.snapshot;
 			if (current && snapshot.capturedAt > current.capturedAt) {
 				// Keep the same object so a clock tick cannot invalidate an in-flight search.
@@ -3978,6 +3987,7 @@ export class GameSession implements SessionSource {
 
 	private startGame(meta: GameMeta): void {
 		this.cancelInFlight();
+		this.pendingEffectsArrival = null;
 		this.cancelQueueForNewGame(meta.gameId);
 		this.finishingGame = null;
 		this.game = meta;
@@ -4770,8 +4780,15 @@ export class GameSession implements SessionSource {
 			!this.mayAct() ||
 			(!settings.automation.boardEffects && !settings.automation.moveQualityChips)
 		) {
+			this.pendingEffectsArrival = null;
 			this.boardEffects.cancel();
 			return;
+		}
+		if (previous && previous.gameId === snapshot.gameId && snapshot.ply > previous.ply) {
+			this.pendingEffectsArrival =
+				!snapshot.lastMove && history ? { previous, arrival: snapshot, history } : null;
+		} else if (this.pendingEffectsArrival?.arrival !== snapshot) {
+			this.pendingEffectsArrival = null;
 		}
 		if (previous !== null && previous.gameId !== snapshot.gameId) {
 			// A different game's board: nothing drawn for the old one belongs on this one.
@@ -4786,6 +4803,41 @@ export class GameSession implements SessionSource {
 			return;
 		}
 		this.boardEffects.observe({ fen: snapshot.fen, history: this.historyFor(snapshot.fen) });
+	}
+
+	/** Backfill one missing report on the same board, without invalidating its playing state. */
+	private recoverBoardEffects(snapshot: PositionSnapshot): void {
+		const pending = this.pendingEffectsArrival;
+		const last = snapshot.lastMove;
+		if (
+			!pending ||
+			!last ||
+			this.snapshot !== pending.arrival ||
+			snapshot.gameId !== pending.arrival.gameId ||
+			snapshot.ply !== pending.arrival.ply ||
+			snapshot.fen !== pending.arrival.fen
+		)
+			return;
+		const settings = this.deps.getSettings();
+		if (
+			!this.mayAct() ||
+			(!settings.automation.boardEffects && !settings.automation.moveQualityChips)
+		) {
+			this.pendingEffectsArrival = null;
+			return;
+		}
+		const plies = BoardEffectsReporter.landedPlies(pending.previous.fen, last, snapshot.fen);
+		// A stale lastMove can be legal in the previous position. Legality alone is not proof:
+		// replay must reach this exact normalized FEN (including counters) and the reported ply.
+		if (
+			!plies ||
+			plies.length !== snapshot.ply - pending.previous.ply ||
+			!matchingHistory({ fen: pending.previous.fen, moves: plies }, snapshot.fen)
+		)
+			return;
+		this.pendingEffectsArrival = null;
+		pending.arrival.lastMove = last;
+		this.reportLandedMoves(pending.previous, snapshot, pending.history);
 	}
 
 	/** The `report` half of `reportBoardEffects`: the plies between `previous` and `snapshot`. */
@@ -4835,6 +4887,7 @@ export class GameSession implements SessionSource {
 	 */
 	private clearBoardEffects(): void {
 		this.cancelEffectsClear();
+		this.pendingEffectsArrival = null;
 		this.boardEffects.cancel();
 		this.updateReviewAdmission();
 		this.deps.link.post(this.deps.tabId, { kind: "clearEffects" });
@@ -4846,6 +4899,7 @@ export class GameSession implements SessionSource {
 	 * the mating position, and an erase at once silenced the checkmate (owner, 2026-09-15).
 	 */
 	private clearBoardEffectsAfterGame(): void {
+		this.pendingEffectsArrival = null;
 		this.boardEffects.cancel();
 		this.updateReviewAdmission();
 		this.scheduleEffectsClear();

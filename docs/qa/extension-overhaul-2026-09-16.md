@@ -1,5 +1,10 @@
 # Extension overhaul — 2026-09-16
 
+The release ZIP was subsequently rebuilt with the
+[review startup and delayed-metadata fixes](review-startup-2026-09-16.md). That report records
+the current archive checksum and validation; the artifact figures below describe the original
+overhaul build.
+
 This integrates the existing Stockfish 19 migration and unfinished working-tree changes with
 the review, selection, timing, executor, settings and packaging work requested on September 16.
 The original source changes were snapshotted before editing. No stashes, divergent branches or

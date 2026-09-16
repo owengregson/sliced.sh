@@ -393,7 +393,13 @@ export class EngineHost {
 			return;
 		}
 		this.flushInfo();
-		if (line.startsWith(ID_NAME_PREFIX)) this.st.version = line.slice(ID_NAME_PREFIX.length).trim();
+		if (line.startsWith(ID_NAME_PREFIX)) {
+			this.st.version = line.slice(ID_NAME_PREFIX.length).trim();
+			// Publish the identity during the handshake, before `uciok` can finish warming.
+			// Otherwise the remote reviewer captures the boot module's filename, sees this
+			// name only on the first `go` status, and rejects every search as a network change.
+			this.postStatus();
+		}
 		this.deps.post({ kind: "line", line });
 		if (line.startsWith("bestmove")) {
 			this.attempt = 0;
