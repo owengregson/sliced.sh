@@ -68,7 +68,7 @@ describe("opponent clock policy", () => {
 });
 
 describe("clock-race execution policy", () => {
-	it("skips timing inference latency when the post-layer already requires immediate execution", async () => {
+	it("prepares position-conditioned timing under opponent pressure and skips only our emergency", async () => {
 		let prepares = 0;
 		const model = new TimingModel(
 			{
@@ -83,9 +83,11 @@ describe("clock-race execution policy", () => {
 			createRng("prepare-race")
 		);
 		await model.prepare(ctx({ oppClockMs: 2000 }));
-		expect(prepares).toBe(0);
-		await model.prepare(ctx());
 		expect(prepares).toBe(1);
+		await model.prepare(ctx());
+		expect(prepares).toBe(2);
+		await model.prepare(ctx({ myClockMs: 1000, oppClockMs: 2000 }));
+		expect(prepares).toBe(2);
 	});
 	it("starts below ten seconds and leaves invalid or untimed contexts unchanged", () => {
 		for (const patch of [
@@ -117,25 +119,38 @@ describe("clock-race execution policy", () => {
 			late.opponentUrgency
 		);
 	});
-	it("uses varied opponent-pressure windows even when the head samples an almost instantaneous reply", () => {
+	it("preserves deliberation and quick replies instead of replacing both with the same rush window", () => {
 		for (const opponentClockMs of [9000, 1000]) {
 			const policy = clockRacePolicy({ ...clocks, opponentClockMs })!;
-			const windows = Array.from({ length: 60 }, (_, i) =>
-				plan(opponentClockMs, 0, {}, `opponent-race-${i}`, 0.001)
-			);
-			expect(Math.min(...windows.map((p) => p.thinkMs))).toBeGreaterThanOrEqual(policy.minMoveMs);
-			expect(Math.max(...windows.map((p) => p.thinkMs))).toBeLessThanOrEqual(policy.maxMoveMs);
-			expect(Math.min(...windows.map((p) => p.thinkMs))).toBeGreaterThan(300);
-			expect(new Set(windows.map((p) => Math.round(p.thinkMs))).size).toBeGreaterThan(40);
-			for (const p of windows) {
-				expect(p.features.opponentOnlyRace).toBe(1);
-				expect(p.features.emergency).toBe(0);
-				expect(p.rationale).toContain("opponent clock pressure: varied reply window");
-				expect(p.thinkMs).toBeLessThanOrEqual(p.features.capSec! * 1000);
+			for (let i = 0; i < 20; i++) {
+				const seed = `opponent-deliberation-${i}`;
+				const quick = plan(opponentClockMs, 0, {}, seed, 0.001);
+				const thoughtful = plan(opponentClockMs, 0, {}, seed, 10);
+				const neutral = plan(60_000, 0, {}, seed, 10);
+				expect(thoughtful.thinkMs).toBeGreaterThan(policy.maxMoveMs);
+				expect(thoughtful.thinkMs).toBeGreaterThan(quick.thinkMs);
+				expect(thoughtful.thinkMs).toBeLessThan(neutral.thinkMs);
+				expect(thoughtful.window.approachMs).toBe(neutral.window.approachMs);
+				expect(thoughtful.features.clockRace).toBe(0);
+				expect(thoughtful.features.opponentOnlyRace).toBe(0);
+				expect(thoughtful.features.emergency).toBe(0);
+				expect(thoughtful.features.opponentPressure).toBeGreaterThan(0);
+				expect(thoughtful.thinkMs).toBeLessThanOrEqual(thoughtful.features.capSec! * 1000);
 			}
 		}
 	});
-	it("retains variation and own-clock bounds when the opponent-pressure ceiling cannot fit", () => {
+	it("does not introduce a subsecond timing cliff as the opponent crosses ten seconds", () => {
+		const before = plan(10_001);
+		const after = plan(9999);
+		expect(Math.abs(after.thinkMs - before.thinkMs)).toBeLessThan(1);
+		expect(after.mode).toBe(before.mode);
+		expect(after.window.approachMs).toBe(before.window.approachMs);
+	});
+	it("an increment that covers opponent pressure preserves the ordinary timing window", () => {
+		expect(plan(1000, 10).thinkMs).toBe(plan(60_000, 10).thinkMs);
+		expect(plan(1000, 10).features.clockRace).toBe(0);
+	});
+	it("retains variation and own-clock bounds when little time remains on both clocks", () => {
 		const windows = Array.from({ length: 60 }, (_, i) =>
 			plan(9000, 0, { myClockMs: 5000 }, `capped-opponent-${i}`, 0.001)
 		);

@@ -195,16 +195,16 @@ export class TimingModel {
 
 	/** Kick off head-side inference for the position (no-op for the v1 head). */
 	prepare(ctx: TimingContext, options?: TimingPreparation): Promise<void> {
-		if (
-			clockRacePolicy({
-				ownClockMs: ctx.myClockMs,
-				opponentClockMs: ctx.oppClockMs,
-				baseMs: ctx.baseSec * 1000,
-				incrementMs: ctx.incSec * 1000,
-				loneKing: isLoneKing(ctx.fen, ctx.myColor),
-			})
-		)
-			return Promise.resolve();
+		const race = clockRacePolicy({
+			ownClockMs: ctx.myClockMs,
+			opponentClockMs: ctx.oppClockMs,
+			baseMs: ctx.baseSec * 1000,
+			incrementMs: ctx.incSec * 1000,
+			loneKing: isLoneKing(ctx.fen, ctx.myColor),
+		});
+		// An opponent's short clock is a reason to play briskly, not to discard
+		// position-conditioned thinking while we can still afford it.
+		if (race && !race.opponentOnly) return Promise.resolve();
 		return this.head.prepare?.(ctx, options) ?? Promise.resolve();
 	}
 
@@ -302,7 +302,11 @@ export class TimingModel {
 			baseMs: ctx.baseSec * 1000,
 			incrementMs: ctx.incSec * 1000,
 		};
-		const race = clockRacePolicy({ ...clockInput, loneKing });
+		const clockPolicy = clockRacePolicy({ ...clockInput, loneKing });
+		// The shared policy still bounds search and strength under opponent pressure.
+		// Only our own emergency (or a lone king) imposes a forced execution window;
+		// opponent-only pressure retains the clock-conditioned sample (or gradual fallback).
+		const race = clockPolicy?.opponentOnly ? null : clockPolicy;
 		if (race) mode = "instant";
 		const motor = this.motorFor(f, ctx, mode);
 		const orientationMs = race || mode === "premove" ? 0 : sampleOrientationMs(f, this.rng);
@@ -329,23 +333,19 @@ export class TimingModel {
 
 		const opponentPressure = opponentClockPressure(clockInput);
 		if (opponentPressure > 0 && mode !== "premove") {
-			const factor = 1 - C.opponentPressure.maxThinkReduction * opponentPressure;
-			const floor = emergency ? C.motor.minMotorMs / 1000 : Math.max(floorFor(mode), physicalS);
-			totalS = Math.min(totalS, Math.max(floor, totalS * factor));
-			why.push(`opponent clock pressure: think ×${factor.toFixed(2)}`);
+			if (sample.opponentClockConditioned) {
+				why.push("opponent clock pressure: included in learned sample");
+			} else {
+				const factor = 1 - C.opponentPressure.maxThinkReduction * opponentPressure;
+				const floor = emergency ? C.motor.minMotorMs / 1000 : Math.max(floorFor(mode), physicalS);
+				totalS = Math.min(totalS, Math.max(floor, totalS * factor));
+				why.push(`opponent clock pressure: think ×${factor.toFixed(2)}`);
+			}
 		}
 		if (race) {
-			if (race.opponentOnly) {
-				const maxMs = Math.min(race.maxMoveMs, capSec * 1000);
-				const minMs = Math.min(race.minMoveMs, maxMs * C.caps.jitterMin);
-				totalS = uniform(this.rng, minMs, maxMs) / 1000;
-				emergency = clockEmergency;
-				why.push("opponent clock pressure: varied reply window");
-			} else {
-				totalS = Math.min(totalS, uniform(this.rng, race.minMoveMs, race.maxMoveMs) / 1000);
-				emergency = true;
-				why.push(loneKing ? "lone king: fast execution" : "own clock emergency: fast execution");
-			}
+			totalS = Math.min(totalS, uniform(this.rng, race.minMoveMs, race.maxMoveMs) / 1000);
+			emergency = true;
+			why.push(loneKing ? "lone king: fast execution" : "own clock emergency: fast execution");
 		}
 		if (emergency) why.push("emergency regime: no floors, minimal motor");
 		const thinkMs = totalS * 1000;

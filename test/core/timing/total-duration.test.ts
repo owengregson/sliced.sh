@@ -30,6 +30,25 @@ function model(head: ChessMimicHead, seed: string, speed = 1) {
 }
 
 describe("learned times are complete turn windows", () => {
+	it("does not compress opponent-clock-conditioned samples a second time", async () => {
+		const planned = [];
+		for (const opponentClockMs of [60_000, 15_000, 1000]) {
+			const head = makeHead([[4, 1]]);
+			const timing = model(head, "conditioned-pressure");
+			const context = ctx({ targetElo: 2400, oppClockMs: opponentClockMs });
+			await timing.prepare(context);
+			const plan = timing.planMove(context);
+			planned.push(plan.thinkMs);
+			expect(head.diagnostics(context.fen).head).toBe("chessmimic");
+			expect(plan.features.clockRace).toBe(0);
+			if (opponentClockMs < 20_000)
+				expect(plan.rationale).toContain("opponent clock pressure: included in learned sample");
+		}
+		// Equal conditional distributions produce equal times; the policy must not
+		// add a second opponent-clock discount after the learned one.
+		expect(planned[1]).toBe(planned[0]);
+		expect(planned[2]).toBe(planned[0]);
+	});
 	it.each([
 		{ move: "e7e8q", autoQueen: true, picker: false },
 		{ move: "e7e8q", autoQueen: false, picker: true },

@@ -456,6 +456,34 @@ describe("recommendation pipeline (§3.2)", () => {
 		const out = await pipeline.run(input());
 		expect(out?.rec.plan.rationale.join(" ")).toContain("chessmimic band=1500_1600 bucket 5");
 	});
+	it("opponent-only rush keeps the short search while allowing warmed timing its normal bounded window", async () => {
+		let inferenceBudget = 0;
+		const head = new ChessMimicHead({
+			infer: async (inputs, options) => {
+				inferenceBudget = options?.budgetMs ?? 0;
+				await new Promise((resolve) => setTimeout(resolve, 60));
+				return { band: inputs.band, probs: Array.from({ length: 30 }, (_, i) => Number(i === 5)) };
+			},
+			fallback: new V1ParametricHead(),
+		});
+		const timing = new TimingModel(head, MODEL_TIMING, createRng("opponent-native"));
+		const engine = fakeEngine((req) => analysisOf(req, ["e2e4", "d2d4"], 14));
+		const pipeline = new RecommendationPipeline({ engine, timing, book: null });
+		const out = await pipeline.run(
+			input({
+				targetElo: 2500,
+				snapshot: snapshot({
+					timeControl: { baseMs: 180_000, incMs: 0 },
+					clocks: { w: { ms: 120_000, running: true }, b: { ms: 1000, running: false } },
+				}),
+			})
+		);
+		expect(inferenceBudget).toBe(100);
+		expect(out?.budget.movetimeMs).toBeLessThan(60);
+		expect(head.diagnostics(START)).toEqual({ head: "chessmimic", band: "2200_3500" });
+		expect(out?.rec.plan.features.clockRace).toBe(0);
+		expect(out?.rec.plan.rationale).toContain("opponent clock pressure: included in learned sample");
+	});
 	it("a quick cached search cancels unfinished inference after its bounded grace", async () => {
 		const head = new ChessMimicHead({
 			infer: () => new Promise(() => {}),

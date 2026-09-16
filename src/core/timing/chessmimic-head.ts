@@ -301,12 +301,14 @@ export class ChessMimicHead implements DistributionHead {
 				return {
 					tSec: rng.next() * TIMING_CONSTANTS.premove.maxS,
 					mode: "premove",
+					opponentClockConditioned: true,
 					why: [...why, `bucket 0 → premove p=${pPre.toFixed(2)}`],
 				};
 			return {
 				tSec: this.instantSec(wideFastSample ?? sampleWithinBucket(c.band, bucket, rng)),
 				mode: "instant",
 				includesExecution: true,
+				opponentClockConditioned: true,
 				why: [...why, "bucket 0 → instant"],
 			};
 		}
@@ -320,7 +322,13 @@ export class ChessMimicHead implements DistributionHead {
 		const median = this.median(f, p, st, allocSec);
 		const long = bucket >= CM.longBucketFrom || t > CM.longMedianMultiple * median;
 		why.push(`s_game=${p.s_game.toFixed(2)} ε=${st.eps.toFixed(2)}`);
-		return { tSec: t, mode: long ? "long" : "normal", includesExecution: true, why };
+		return {
+			tSec: t,
+			mode: long ? "long" : "normal",
+			includesExecution: true,
+			opponentClockConditioned: true,
+			why,
+		};
 	}
 
 	private instantSec(sample: number): number {

@@ -214,6 +214,8 @@ export interface HeadSample {
 	tSec: number;
 	/** Learned clock labels already include perception and execution. Never add the hand again. */
 	includesExecution?: boolean;
+	/** The learned distribution already accounts for the opponent's remaining clock. */
+	opponentClockConditioned?: boolean;
 	mode: TimingMode;
 	why: string[];
 	/** Per-term contributions (`β_i f_i`) for the debug view / timing log. */
@@ -221,7 +223,7 @@ export interface HeadSample {
 }
 
 export interface TimingPreparation {
-	/** May use the already-running search window; never extends the search deadline. */
+	/** Bounded inference window from preparation start; never extends the engine search. */
 	budgetMs?: number;
 	signal?: AbortSignal;
 }

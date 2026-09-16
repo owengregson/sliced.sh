@@ -760,6 +760,12 @@ export class RecommendationPipeline {
 		const maia = maiaSearchMode(mode);
 		const shape = { ...position, maia };
 		const budget = ownMoveBudget(shape, settings);
+		// Opponent-only rush keeps its short move search, but can afford the usual
+		// bounded timing inference. Otherwise a 30–70 ms search needlessly loses the
+		// learned clock distribution even while our own clock is comfortable.
+		const timingBudgetMs = ownMoveClockRace(position)?.opponentOnly
+			? Math.max(TIMING_CONSTANTS.chessmimic.inferenceBudgetMs, budget.movetimeMs)
+			: budget.movetimeMs;
 		// The query, selector and human-depth frame share the same rating inputs.
 		const maiaElo = maia ? ownMoveMaiaElo(shape, settings) : null;
 
@@ -797,7 +803,7 @@ export class RecommendationPipeline {
 		const abortPreparation = () => preparation.abort();
 		input.signal?.addEventListener("abort", abortPreparation, { once: true });
 		const timingPending = this.timing.prepare(timingCtx, {
-			budgetMs: budget.movetimeMs,
+			budgetMs: timingBudgetMs,
 			signal: preparation.signal,
 		});
 		// Reuse only an answer with identical model inputs and game history.
@@ -903,7 +909,7 @@ export class RecommendationPipeline {
 				// short inference window; searches already beyond it never wait any longer.
 				await finishTimingPreparation(
 					timingPending,
-					Math.min(TIMING_CONSTANTS.chessmimic.inferenceBudgetMs, budget.movetimeMs) -
+					Math.min(TIMING_CONSTANTS.chessmimic.inferenceBudgetMs, timingBudgetMs) -
 						(this.now() - preparationStarted),
 					input.signal
 				);
