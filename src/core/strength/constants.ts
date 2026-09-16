@@ -199,6 +199,14 @@ export const SELECTION_CONSTANTS = deepFreeze({
 		wonLossMax: 0.05,
 		/** … by this prior multiplier. Design constant: Appendix E §3.5 gives the rule but no number. */
 		wonTechnique: 1.5,
+		/** Modest policy preference for exchanging pieces while preserving a material win. */
+		simplification: {
+			minCp: 250,
+			fullCp: 500,
+			maxLossCp: 75,
+			minMaterialLead: 1,
+			maxBonus: 0.25,
+		},
 	},
 	/** Appendix E §3.3 simplify-when-ahead / complicate-when-behind. */
 	situational: {

@@ -42,6 +42,7 @@ import { compareLines, moveQuality, rankedLines } from "./quality";
 import { avoidRepetition } from "./repetition";
 import { maiaSelfElo, pressureTerms, sliderEloOffset } from "./selection-elo";
 import { usesNativeSelection } from "./selection-mode";
+import { simplificationFactors } from "./simplification";
 import type { SelectionContext, SelectionState } from "./types";
 
 export { cpEffective, winProb } from "./elo-map";
@@ -587,7 +588,15 @@ export function selectMove(
 		const tieBreak = (band: readonly string[]): ReadonlyMap<string, number> => {
 			const members = new Set(band);
 			bandPriors = boostedPriors(usable.filter((line) => members.has(line.pvUci[0] ?? "")));
-			return bandPriors.values;
+			// Simplification also applies outside the tie band and in verification. Strip it
+			// from this older prior so the plain draw cannot count the same preference twice.
+			return new Map(
+				[...bandPriors.values].map(([uci, value]) => {
+					const factor =
+						bandPriors?.terms.get(uci)?.find((t) => t.rule === "endgame-simplification")?.factor ?? 1;
+					return [uci, value / factor];
+				})
+			);
 		};
 		const byUci = new Map(cands.map((c) => [c.uci, c]));
 		const bestSearchedCp = Math.max(...cands.map((c) => searchedCp(c.line)));
@@ -609,6 +618,12 @@ export function selectMove(
 		let draw: MaiaDraw | null = null;
 		let verified: { candidates: number; verifyDepth: number } | undefined;
 		if (set !== null) {
+			const simplification = simplificationFactors(ctx.fen, usable, ctx.phase);
+			const exchangeRows = set.survivors.filter((s) => simplification.has(s.uci));
+			if (exchangeRows.length > 0)
+				rationale.push(
+					`endgame simplification: safe piece exchanges weighted (${exchangeRows.map((s) => `${s.uci} ×${fmt(simplification.get(s.uci) ?? 1)}`).join(", ")})`
+				);
 			// H13 (the free approximation): only when behind, and only inside the tie band, a
 			// candidate the opponent must answer precisely — and quietly — is preferred. The proxy is
 			// documented on `MAIA.practical`; the band's total mass does not move.
@@ -667,7 +682,7 @@ export function selectMove(
 						const sc = shallow.get(s.uci);
 						return {
 							uci: s.uci,
-							p: set.prob.get(s.uci) ?? 0,
+							p: (set.prob.get(s.uci) ?? 0) * (simplification.get(s.uci) ?? 1),
 							deepCp: byUci.get(s.uci)?.cpRaw ?? 0,
 							...(sc === undefined ? {} : { shallowCp: sc }),
 						};
@@ -704,6 +719,7 @@ export function selectMove(
 			if (draw === null)
 				draw = drawMaiaFromSurvivors(set, ctx.maia, maiaE, rng, rationale, {
 					tieBreak,
+					simplification,
 					...(practical === undefined ? {} : { practical }),
 				});
 		}

@@ -21,7 +21,7 @@ import { eloRamp, sigmaFor } from "./elo-map";
 /** One survivor of the rails, as the Maia branch of `selectMove` hands it in. */
 export interface GvCandidate {
 	uci: string;
-	/** Maia's probability of the move (raw, untempered). */
+	/** Maia's untempered proposal mass, including any caller-supplied endgame preference. */
 	p: number;
 	/** The deep referee's score for the move, side-to-move POV cp (`cpEffective`). */
 	deepCp: number;

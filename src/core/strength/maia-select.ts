@@ -49,6 +49,8 @@ export interface MaiaDrawOptions {
 	scoredMassBefore?: number;
 	tieBreak?: MaiaTieBreak;
 	practical?: MaiaPractical;
+	/** Safe endgame exchange factors; applied once, after tie-band preferences. */
+	simplification?: ReadonlyMap<string, number>;
 }
 
 /**
@@ -91,7 +93,7 @@ export interface MaiaDraw {
 	railedMass: number;
 	/** Candidates the draw was over. */
 	survivors: number;
-	/** `KL(final weights ‖ Maia renormalised over the drawn set)` — 0 unless a tie-break or T ≠ 1 moved mass. */
+	/** `KL(final weights ‖ Maia renormalised over the drawn set)`, including policy preferences. */
 	klFromMaia: number;
 	/** Survivors the technique tie-break reordered (0 when the band had one member or no prior came). */
 	tieBand: number;
@@ -312,7 +314,7 @@ export function drawMaiaFromSurvivors(
 	E: number,
 	rng: Rng,
 	rationale: string[],
-	options: Pick<MaiaDrawOptions, "tieBreak" | "practical"> = {}
+	options: Pick<MaiaDrawOptions, "tieBreak" | "practical" | "simplification"> = {}
 ): MaiaDraw {
 	const weights = temperedWeights(set.pool, MAIA.temperature, MAIA.minProb);
 	const band = tieBandOf(weights);
@@ -326,6 +328,9 @@ export function drawMaiaFromSurvivors(
 		rationale.push(
 			`maia practical: ${practical.moved} near-equal survivors weighted by 1 + trickiness (${practical.rows.join(", ")})`
 		);
+	for (const [uci, factor] of options.simplification ?? []) {
+		if (weights.has(uci)) weights.set(uci, (weights.get(uci) ?? 0) * factor);
+	}
 	const items = [...weights.keys()];
 	const uci = rng.weighted(
 		items,

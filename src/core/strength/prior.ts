@@ -14,6 +14,7 @@ import type { Color, Square } from "@typedefs/game";
 import type { Chess } from "chess.js";
 import { SELECTION_CONSTANTS as C } from "./constants";
 import { cpEffective, effectiveElo, eloRamp, winProb } from "./elo-map";
+import { simplificationFactors } from "./simplification";
 import type { PriorContext } from "./types";
 
 /** One PV ply after the candidate move; `matDiff` is our material balance change from the root. */
@@ -258,7 +259,8 @@ function priorForLine(line: EvalLine, env: PriorEnv): PriorBreakdown {
 	const sharp = opponentCaptures >= S.sharpOpponentCaptures;
 	const full = env.E >= S.fullElo;
 	if (env.bestCp >= S.aheadCp) {
-		if (trade) apply("simplify-ahead:trade", S.tradeWhenAhead);
+		// Endgames use the smaller, quality-checked exchange preference below.
+		if (trade && env.phase !== "endgame") apply("simplify-ahead:trade", S.tradeWhenAhead);
 		if (full && quiet && sharp) apply("simplify-ahead:quiet-sharp", S.quietSharpWhenAhead);
 	} else if (env.bestCp <= S.behindCp && full) {
 		if (cls.isCheck || cls.isCapture) apply("complicate-behind:forcing", S.forcingWhenBehind);
@@ -307,10 +309,17 @@ export function heuristicPriorDetailed(
 		wonEndgame:
 			ctx.phase === "endgame" && !queensOn.w && !queensOn.b && bestCpSafe >= C.endgame.wonCp,
 	};
+	const simplification = simplificationFactors(fen, lines, ctx.phase);
 	for (const line of lines) {
 		const uci = line.pvUci[0];
 		if (uci === undefined) continue;
-		out.set(uci, priorForLine(line, env));
+		const breakdown = priorForLine(line, env);
+		const factor = simplification.get(uci);
+		if (factor !== undefined) {
+			breakdown.value *= factor;
+			breakdown.terms.push({ rule: "endgame-simplification", factor });
+		}
+		out.set(uci, breakdown);
 	}
 	return out;
 }

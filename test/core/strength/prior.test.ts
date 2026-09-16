@@ -273,19 +273,20 @@ describe("heuristicPrior — Appendix E §3.4 table", () => {
 });
 
 describe("heuristicPrior — situational modifiers (Appendix E §3.3)", () => {
-	it("simplify when ahead: trades ×1.8 at every Elo", () => {
+	it("the legacy trade bonus remains outside endgames; a bare-king liquidation gets no endgame bonus", () => {
 		const moves: Array<[string, number, string[]]> = [
 			["d1d5", 400, ["e6d5"]],
 			["e1d2", 380, []],
 		];
-		expect(priors(TRADE, moves, { phase: "endgame", targetElo: 1500 }).get("d1d5")).toBeCloseTo(
+		expect(priors(TRADE, moves, { phase: "middlegame", targetElo: 1500 }).get("d1d5")).toBeCloseTo(
 			1.8,
 			12
 		);
-		expect(priors(TRADE, moves, { phase: "endgame", targetElo: 1000 }).get("d1d5")).toBeCloseTo(
+		expect(priors(TRADE, moves, { phase: "middlegame", targetElo: 1000 }).get("d1d5")).toBeCloseTo(
 			1.8,
 			12
 		);
+		expect(priors(TRADE, moves, { phase: "endgame", targetElo: 1500 }).get("d1d5")).toBe(1);
 		// Not ahead → no modifier.
 		const level: Array<[string, number, string[]]> = [
 			["d1d5", 0, ["e6d5"]],
