@@ -154,8 +154,24 @@ export const BOARD_EFFECT_SEIZE = {
 	radius: 0.12,
 	/** The outline's stroke width, in board units. */
 	width: 0.05,
-	/** The contraction and fade, in ms. */
-	ms: 260,
+	/**
+	 * The contraction and fade, in ms. 390 since 2026-09-15 (owner: "slow down the capture piece
+	 * animation by 50%" — 1.5× the earlier 260); still well inside the group's
+	 * `BOARD_EFFECT_MOTION` life, so the mark lands before the group fades.
+	 */
+	ms: 390,
+} as const;
+
+/**
+ * The game end (owner, 2026-09-15: "the last move of checkmate sequence isn't playing the sound
+ * effect"). The page reports the game over in the same instant as its final position, and erasing
+ * the layer at once cut that move's chip short and cancelled its sound. The layer is erased this long
+ * after the game ends instead: past a chip's whole life (`MOVE_QUALITY` in + hold + out, 1 620 ms)
+ * and the longest clip a last move can carry (`forced.mp3`, 1.368 s, at its lowest pitch of −12
+ * semitones — half speed — 2.74 s). A new game, a navigation or the switch still erases at once.
+ */
+export const BOARD_EFFECT_GAME_END = {
+	clearDelayMs: 3_000,
 } as const;
 
 /** One batch's motion. `drawMs + holdMs + fadeMs` is the life of an effect group. */

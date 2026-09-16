@@ -1,5 +1,4 @@
 import { describe, expect, it } from "bun:test";
-import { DEFAULT_SETTINGS } from "@core/constants/defaults";
 import { createRng } from "@core/rng";
 import { computeFeatures } from "@core/timing/features";
 import { createMoveBudget } from "@core/timing/move-budget";
@@ -7,7 +6,7 @@ import { samplePersona } from "@core/timing/persona-latents";
 import { ratingPace } from "@core/timing/rating-pace";
 import { TimingModel } from "@core/timing/timing-model";
 import { V1ParametricHead } from "@core/timing/v1-head";
-import { ctx, median, START_FEN } from "./helpers";
+import { ctx, MODEL_TIMING, median, START_FEN } from "./helpers";
 
 const opening = (targetElo: number, inBook: boolean, baseSec = 180) =>
 	ctx({
@@ -49,11 +48,7 @@ describe("rating-specific recognition", () => {
 			const plans = (inBook: boolean) =>
 				Array.from({ length: 60 }, (_, i) => {
 					const gameId = `opening-${i}`;
-					const model = new TimingModel(
-						new V1ParametricHead(),
-						DEFAULT_SETTINGS.timing,
-						createRng(gameId)
-					);
+					const model = new TimingModel(new V1ParametricHead(), MODEL_TIMING, createRng(gameId));
 					model.startGame({
 						gameId,
 						targetElo: 2400,

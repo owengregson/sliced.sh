@@ -9,7 +9,7 @@
  *     `selfElo` / `oppoElo`, decoded by the real `encodeMaiaInputs` → `decodeMaiaOutputs` under the
  *     vendored onnxruntime-web (the parity test proves this path reproduces torch fp32), so the
  *     fixture is bit-faithful to what the offscreen host answers;
- *   - one real Stockfish 18 smallnet MultiPV frame at full strength (the referee) over exactly the
+ *   - one real Stockfish 19 smallnet MultiPV frame at full strength (the referee) over exactly the
  *     union of each size's top-`--top` moves via `go searchmoves`, `movetime 600 depth 18`, one
  *     thread, 32 MB hash — the last complete cycle, as the other `stockfish18-*.json` fixtures.
  *
@@ -209,7 +209,7 @@ async function main(): Promise<void> {
 	}
 	await maia.dispose();
 
-	console.log("engine: booting the vendored Stockfish 18 smallnet …");
+	console.log("engine: booting the vendored Stockfish 19 smallnet …");
 	const engine = await createRefereeEngine({ threads: 1, hashMb: 32 });
 	const started = performance.now();
 	for (const p of positions) {
@@ -244,7 +244,7 @@ async function main(): Promise<void> {
 		provenance: {
 			source: "test/fixtures/maia3/positions.json (the 60-position parity set, seed 34)",
 			generator: "tools/human-match/make-fixture.ts",
-			engine: "vendored Stockfish 18 smallnet, full strength (referee), one thread, 32 MB hash",
+			engine: "vendored Stockfish 19 smallnet, full strength (referee), one thread, 32 MB hash",
 			models: args.sizes.map((s) => `maia3-${s}.onnx via onnxruntime-web wasm, one thread`),
 			command: `go movetime ${args.movetime} depth ${args.depth} searchmoves <union of each size's top-${args.top}>`,
 			threads: 1,

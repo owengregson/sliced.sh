@@ -64,14 +64,14 @@ describe("attachNnueDownload", () => {
 				return { ok: true, status: 200, arrayBuffer: async () => data.slice().buffer };
 			},
 		});
-		port.emit({ kind: "nnue-request", name: "nn-c288c895ea92.nnue" });
+		port.emit({ kind: "nnue-request", name: "nn-1a298aa575a0.nnue" });
 		await new Promise((r) => setTimeout(r, 0));
-		expect(fetched).toEqual([`${URLS.nnueMirror}nn-c288c895ea92.nnue`]);
+		expect(fetched).toEqual([`${URLS.nnueMirror}nn-1a298aa575a0.nnue`]);
 		expect(port.posted).toHaveLength(2);
 		expect(port.posted[0]).toMatchObject({ kind: "nnue-chunk", index: 0, total: 2 });
 		expect(port.posted[1]).toMatchObject({ kind: "nnue-chunk", index: 1, total: 2 });
 		detach();
-		port.emit({ kind: "nnue-request", name: "nn-c288c895ea92.nnue" });
+		port.emit({ kind: "nnue-request", name: "nn-1a298aa575a0.nnue" });
 		await new Promise((r) => setTimeout(r, 0));
 		expect(fetched).toHaveLength(1);
 	});

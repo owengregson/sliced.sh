@@ -132,7 +132,46 @@ describe("bookMove", () => {
 		const policy = createBookPolicy({ loadBook: loader.loadBook });
 		expect(await policy.bookMove(ctx({ targetElo: 1500 }))).toBeNull();
 		expect(await policy.bookMove(ctx({ targetElo: 1500 }))).toBeNull();
-		expect(loader.loads).toEqual([BOOKS.club]);
+		expect(loader.loads).toEqual([BOOKS.club, BOOKS.gm2600, BOOKS.theory]);
+		policy.dispose();
+	});
+
+	it("falls back to the other game book, then to named theory, where the band's book is silent", async () => {
+		const afterE4 = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
+		const theory = makeBook([{ fen: afterE4, uci: "c7c5", weight: 12 }]);
+		const loader = fakeLoader({
+			[BOOKS.club]: clubBook,
+			[BOOKS.gm2600]: gmBook,
+			[BOOKS.theory]: theory,
+		});
+		const policy = createBookPolicy({ loadBook: loader.loadBook });
+		// The club book does not know 1.e4 for Black; neither does the GM book; the theory does.
+		const reply = await policy.bookMove(ctx({ fen: afterE4, ply: 1, targetElo: 1500 }));
+		expect(reply?.uci).toBe("c7c5");
+		expect(reply?.rationale.join(" ")).toContain(BOOKS.theory);
+		// A strong target whose own book knows the position never reaches the fallbacks.
+		const strong = await policy.bookMove(ctx({ targetElo: 2200 }));
+		expect(strong?.rationale.join(" ")).toContain(BOOKS.gm2600);
+		expect(loader.loads).toEqual([BOOKS.club, BOOKS.gm2600, BOOKS.theory]);
+		policy.dispose();
+	});
+});
+
+describe("bookMoves (the review's Book rating)", () => {
+	it("is every move of the master book and the named theory — never the club book's", async () => {
+		const theory = makeBook([{ fen: START, uci: "g1f3", weight: 40 }]);
+		const loader = fakeLoader({
+			[BOOKS.club]: clubBook,
+			[BOOKS.gm2600]: gmBook,
+			[BOOKS.theory]: theory,
+		});
+		const policy = createBookPolicy({ loadBook: loader.loadBook });
+		// b1c3 is only in the club book.
+		expect(new Set(await policy.bookMoves?.(START))).toEqual(
+			new Set(["e2e4", "d2d4", "h2h4", "g1f3"])
+		);
+		expect(loader.loads).not.toContain(BOOKS.club);
+		expect(await policy.bookMoves?.("8/8/8/8/8/8/8/k6K w - - 0 1")).toEqual([]);
 		policy.dispose();
 	});
 });

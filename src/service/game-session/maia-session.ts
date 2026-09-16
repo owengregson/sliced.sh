@@ -13,9 +13,9 @@
  */
 
 import { type PositionHistory, positionKey } from "@core/chess/history";
-import { MAIA, type MaiaSize } from "@core/constants/maia";
+import type { MaiaSize } from "@core/constants/maia";
 import { MAIA_SEARCH } from "@core/constants/search";
-import { maiaConditioningElo, maiaSizeFor, usesMaia, usesMaiaPrior } from "@core/policy/maia-size";
+import { maiaConditioningElo, maiaSizeFor, usesMaia } from "@core/policy/maia-size";
 import { policyQueryIdentity } from "@core/policy/policy-query";
 import type { PolicyInferenceInputs, PolicyResult } from "@core/policy/types";
 import type { SelectionContext } from "@core/strength/types";
@@ -88,7 +88,7 @@ export function settledWithin<T>(pending: Promise<T>, ms: number): Promise<T | n
  * commitment follows the target, since that is still "game start".
  */
 export interface MaiaCommitment {
-	/** `null` → Maia is not queried for this game (target above `MAIA.prior.eloMax`). */
+	/** `null` → Maia is not queried for this game (target above `MAIA.eloMax`). */
 	size: MaiaSize | null;
 	/** The derived target the size was chosen from. */
 	targetElo: number;
@@ -98,12 +98,11 @@ export interface MaiaCommitment {
 }
 
 /**
- * The resident size for direct and prior selection; no model above the prior ceiling. `null` when Maia is not queried at all.
+ * The resident size while Maia selects; `null` above the Maia cutoff (`MAIA.eloMax`), where Maia is
+ * not queried at all (no prior band since 2026-09-15).
  */
 export function maiaSizeForGame(targetElo: number): MaiaSize | null {
-	if (usesMaia(targetElo)) return maiaSizeFor(targetElo);
-	if (usesMaiaPrior(targetElo)) return MAIA.prior.size;
-	return null;
+	return usesMaia(targetElo) ? maiaSizeFor(targetElo) : null;
 }
 
 export function commitMaiaSize(
@@ -150,8 +149,8 @@ export interface PredictedPolicyQuery {
 }
 
 /**
- * H7.3: the query the own-move pipeline would issue for `fen` — the game's size (the H15 prior's
- * above `MAIA.eloMax`), the history window, the pipeline's own rating arithmetic
+ * H7.3: the query the own-move pipeline would issue for `fen` — the game's size, the history
+ * window, the pipeline's own rating arithmetic
  * (`ownMoveMaiaElo`: `maiaSelfElo` over `pressureTerms`, the slider offset and H5's context
  * penalty, capped by `maiaConditioningElo`) and the opponent rating
  * fallback (`MAIA.oppoFallbackSelf`). `null` when Maia is not queried for this target.
@@ -159,13 +158,12 @@ export interface PredictedPolicyQuery {
 export function predictedPolicyInputs(input: PredictedPolicyInput): PredictedPolicyQuery | null {
 	const size = input.size;
 	const targetElo = input.position.targetElo ?? input.settings.strength.targetElo;
-	if (size === null || (!usesMaia(targetElo) && !usesMaiaPrior(targetElo))) return null;
-	const prior = usesMaiaPrior(targetElo);
+	if (size === null || !usesMaia(targetElo)) return null;
 	const elo = ownMoveMaiaElo(input.position, input.settings);
 	const selfElo = maiaConditioningElo(elo.selfElo);
 	const historyFens = maiaHistoryFens(input.history, input.fen);
 	const inputs: PolicyInferenceInputs = {
-		size: prior ? MAIA.prior.size : size,
+		size,
 		fen: input.fen,
 		historyFens,
 		selfElo,
@@ -175,7 +173,6 @@ export function predictedPolicyInputs(input: PredictedPolicyInput): PredictedPol
 		inputs,
 		identity: policyQueryIdentity({
 			inputs,
-			mode: prior ? "prior" : "maia",
 			selectionMode: input.settings.strength.selectionMode,
 			history: input.history,
 		}),
@@ -214,7 +211,7 @@ export function attachPredictedPolicy(
 	predicted: PredictedPolicyAnswer | null,
 	identity: string | undefined
 ): boolean {
-	if (!usesMaia(ctx.targetElo) && !usesMaiaPrior(ctx.targetElo)) return false;
+	if (!usesMaia(ctx.targetElo)) return false;
 	const answer = policyAnswerFor(predicted, ctx.fen, identity);
 	if (!answer) return false;
 	ctx.maia = answer.result;

@@ -3,6 +3,11 @@
 Owner: "figure out other ways to optimize the size of the extension zip, without requiring
 external downloads when using it. it should be ready out of the box."
 
+> **Partly superseded on 2026-09-15** by the move to Stockfish 19: the full build's second net
+> (`nn-37f18f62d772.nnue`, 3.5 MB) no longer exists, and the vendored programs are now `sf_19_*`.
+> Every per-entry size below is the 2026-09-13 archive as measured under Stockfish 18 and stands
+> as that record; re-measure before citing any of it as current.
+
 Baseline: `release/sliced-2.0.0.zip` built 2026-09-13 18:24 — **335,544,879 B (320.0 MiB)**,
 102 entries, 414,978,231 B (395.8 MiB) unpacked. Every number below is the archive's own
 per-entry size (`unzip -lv`), so the "after" totals are computed, not rebuilt: the owner runs

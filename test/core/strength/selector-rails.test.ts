@@ -1,8 +1,9 @@
 // test/core/strength/selector-rails.test.ts — the 2026-09-13 selector changes
 // (`docs/research/human-move-selection-ideas-2026-09-13.md`, `docs/qa/selector-rails-2026-09-13.md`):
 // H1 the rating-ramped hang rail with its one-ply view, H2 the slider as an Elo offset, H9 the
-// restored mate ramp and throw-win filter, H11 the technique tie-break, H12 tilt, H15 the ≥ 2600
-// Maia prior, H16 deep mated lines in Maia mode, and the fidelity meters (§3.2, D1, D2).
+// restored mate ramp and throw-win filter, H11 the technique tie-break, H12 tilt, H15 the upper
+// Maia prior (removed 2026-09-15: nothing Maia above the cutoff), H16 deep mated lines in Maia mode,
+// and the fidelity meters (§3.2, D1, D2).
 import { describe, expect, it } from "bun:test";
 import { hangsOutright } from "@core/chess/safety";
 import { LIMITS } from "@core/constants/limits";
@@ -438,7 +439,7 @@ describe("H11 — the technique prior breaks ties inside Maia's near-indifferenc
 		["b1b2", 0.35],
 		["c1c2", 0.25],
 	]);
-	it("only the band is re-weighted, by the prior normalised to mean 1 over the band, and the KL says so", () => {
+	it("only the band is re-weighted, its probability mass is conserved, and the KL says so", () => {
 		expect(0.35 / 0.4).toBeGreaterThanOrEqual(MAIA.tieBandRatio);
 		expect(0.25 / 0.4).toBeLessThan(MAIA.tieBandRatio);
 		const seen: string[][] = [];
@@ -465,9 +466,26 @@ describe("H11 — the technique prior breaks ties inside Maia's near-indifferenc
 			expect(rows.join(" ")).toContain(`KL ${Number(kl.toFixed(3))}`);
 		}
 		expect(seen.every((band) => [...band].sort().join() === "a1a2,b1b2")).toBe(true);
-		// a ×0.5, b ×1.5 (mean 2 over the band), c untouched: 0.2 / 0.525 / 0.25 renormalised
-		const total = 0.2 + 0.525 + 0.25;
-		const expected = { a1a2: 0.2 / total, b1b2: 0.525 / total, c1c2: 0.25 / total };
+		// The weighted mean preserves the band's 0.75 mass exactly; c stays at 0.25.
+		const mean = (0.4 + 0.35 * 3) / 0.75;
+		const expected = { a1a2: 0.4 / mean, b1b2: (0.35 * 3) / mean, c1c2: 0.25 };
+		let actualWeights: readonly number[] = [];
+		drawMaiaMove(
+			cands,
+			maia,
+			1500,
+			{
+				...createRng("mass"),
+				weighted(items, weights) {
+					actualWeights = weights;
+					return items[0]!;
+				},
+			},
+			[],
+			{ tieBreak }
+		);
+		expect(actualWeights[2]).toBeCloseTo(0.25, 14);
+		expect((actualWeights[0] ?? 0) + (actualWeights[1] ?? 0)).toBeCloseTo(0.75, 14);
 		for (const [uci, share] of Object.entries(expected))
 			expect(Math.abs((counts.get(uci) ?? 0) / N - share)).toBeLessThan(0.03);
 		const q = new Map(Object.entries(expected));
@@ -623,12 +641,15 @@ describe("H12 — tilt as per-game state", () => {
 	});
 });
 
-describe("Maia-79M as a bounded upper-range prior", () => {
+// Owner, 2026-09-15: the upper prior band is removed. Its cases here pinned the prior's pool, floor
+// weight and meters at 3001–3040 and 3100; they now pin that a Maia answer above the cutoff is
+// ignored. The Maia-pool cases below the cutoff are unchanged.
+describe("Maia-79M above and below the cutoff", () => {
 	const prior79 = (moves: Array<[string, number]>) => policy(moves, { size: "79m", ms: 184 });
-	it("the pool is the engine's gap; Maia decides inside it, floored, and the pick differs from the engine's", () => {
+	it("above the cutoff a policy answer is ignored: the engine's strongest line, every time", () => {
 		const maia = prior79(Object.entries(P));
 		const near = FOUR.map((l, i) => ({ ...l, score: { cp: 50 - 3 * i } }));
-		for (const targetElo of [3001, 3020, 3040]) {
+		for (const targetElo of [MAIA.eloMax + 1, 3020, 3040, 3100]) {
 			const engine = selectMove(
 				near,
 				ctx({ targetElo, selectionMode: "hybrid", engineBestmove: "e2e4", rng: createRng(11) }),
@@ -636,22 +657,14 @@ describe("Maia-79M as a bounded upper-range prior", () => {
 			);
 			expect(engine.source).toBe("engine-elo");
 			expect(engine.uci).toBe("e2e4");
-			const N = 2000;
-			const { counts, picks } = sample(near, N, { targetElo, maia }, `prior-${targetElo}`);
-			const floor = MAIA.prior.floorWeight;
-			let total = 0;
-			for (const uci of Object.keys(P)) total += Math.max(floor, P[uci] ?? 0);
-			for (const [uci, p] of Object.entries(P))
-				expect(Math.abs((counts.get(uci) ?? 0) / N - Math.max(floor, p) / total)).toBeLessThan(0.035);
-			const m = picks[0];
-			expect(m?.source).toBe("maia");
-			expect(m?.maiaProb).toBe(P[m?.uci ?? ""] ?? -1);
-			expect(m?.rationale.join(" ")).toContain(`maia prior: 79m E=3000 pool 4/4 within`);
-			expect(m?.maiaMeters?.selfElo).toBe(3000);
-			expect(m?.maiaMeters?.survivors).toBe(4);
-			expect(m?.maiaMeters?.rank).toBe(
-				[...Object.entries(P)].sort((a, b) => b[1] - a[1]).findIndex(([u]) => u === m?.uci) + 1
-			);
+			const { counts, picks } = sample(near, 200, { targetElo, maia }, `above-${targetElo}`);
+			expect(counts.get("e2e4")).toBe(200);
+			for (const m of picks) {
+				expect(m.source).toBe("engine-elo");
+				expect(m.maiaProb).toBeUndefined();
+				expect(m.maiaMeters).toBeUndefined();
+				expect(m.rationale.join(" ")).not.toContain("maia");
+			}
 		}
 	});
 	it("targets that the pipeline queries at different ratings draw different moves for the same seed", () => {
@@ -676,15 +689,6 @@ describe("Maia-79M as a bounded upper-range prior", () => {
 		);
 		expect(a.uci).toBe("d2d4");
 		expect(b.uci).toBe("e2e4");
-	});
-	it("a line Maia gives no mass to is still played when it is alone inside the gap", () => {
-		const clear = [line(START, "e2e4", { cp: 200 }, 1), line(START, "d2d4", { cp: 30 }, 2)];
-		const maia = prior79([["d2d4", 1]]);
-		const { counts, picks } = sample(clear, 200, { targetElo: 3100, maia }, "alone");
-		expect(counts.get("e2e4")).toBe(200);
-		expect(picks[0]?.maiaProb).toBe(0);
-		expect(picks[0]?.maiaMeters?.railedMass).toBe(1);
-		expect(picks[0]?.rationale.join(" ")).toContain("pool 1/2");
 	});
 	it("mated and hanging lines never enter the pool, and LIMITS.eloMax stays pure engine", () => {
 		const hanging = { ...line(START, "f2f3", { cp: 40 }, 2), pvSan: ["f3", "Bxe4"] };

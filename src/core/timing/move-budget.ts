@@ -1,7 +1,7 @@
 import { clamp } from "@core/util/clamp";
 import { budgetController } from "./budget";
 import { TIMING_CONSTANTS } from "./constants";
-import { hardCapSec } from "./pressure";
+import { hardCapSec, longThinkCapSec } from "./pressure";
 import { ratingPace } from "./rating-pace";
 import type { Features, Persona } from "./types";
 
@@ -11,6 +11,8 @@ export interface MoveBudget {
 	allocationSec: number;
 	targetSec: number;
 	capSec: number;
+	/** Learned clock distributions budget their mean; a rare draw may borrow beyond one allocation. */
+	distributionCapSec: number;
 	effort: number;
 	recognition: number;
 	complexity: number;
@@ -21,7 +23,7 @@ export interface MoveBudget {
 export function createMoveBudget(
 	f: Features,
 	persona: Persona,
-	speedScale = 1,
+	moveTimeScale = 1,
 	allocationOverride?: number
 ): MoveBudget {
 	const rating =
@@ -57,7 +59,7 @@ export function createMoveBudget(
 		C.maximumEffort
 	);
 	const allocationSec = budgetController(f, persona);
-	const speed = Math.max(0, speedScale);
+	const speed = Math.max(0, moveTimeScale);
 	const targetSec = (allocationOverride ?? allocationSec) * effort * speed;
 	const burst = C.normalBurst + (C.criticalBurst - C.normalBurst) * complexity;
 	const capSec =
@@ -72,5 +74,18 @@ export function createMoveBudget(
 					)
 				);
 	const recognitionCapSec = recognition > 0 ? 1 + (1 - recognition) * 4 : Number.POSITIVE_INFINITY;
-	return { allocationSec, targetSec, capSec, effort, recognition, complexity, recognitionCapSec };
+	const distributionCapSec =
+		f.tc === "untimed"
+			? Number.POSITIVE_INFINITY
+			: Math.min(hardCapSec(f), Math.max(capSec, longThinkCapSec(f) * Math.min(1, speed)));
+	return {
+		allocationSec,
+		targetSec,
+		capSec,
+		distributionCapSec,
+		effort,
+		recognition,
+		complexity,
+		recognitionCapSec,
+	};
 }

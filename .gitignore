@@ -22,3 +22,6 @@ assets/models/maia3/maia3-79m.onnx
 .scratch/
 /*.pgn
 /*.docx
+/*.mhtml
+# Chessigma's Brilliant Benchmark dataset, read by tools/move-review
+/chessigma-brilliant-benchmark.json

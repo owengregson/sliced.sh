@@ -90,7 +90,7 @@ is the selector's (Maia's own entropy, lane 1a).
 
 | Constant | Value | Set from |
 | --- | ---: | --- |
-| `MAIA_CONTEXT_THINK_REF_MS` (`search.ts`) | bullet 1 500 · blitz 5 000 · rapid 15 000 · classical 30 000 · untimed 0 | The fresh-game `estimatedThinkMs` measured 2026-09-13 at ply 20, default persona, `speedScale` 1: 1+0 ≈ 1.6 s, 2+1 ≈ 4.2 s, 3+0 ≈ 4.9 s, 3+2 ≈ 6.9 s, 5+0 ≈ 8.1 s, 10+0 ≈ 16 s, 15+10 ≈ 35 s, 30+0 ≈ 50 s — rounded down so an increment game reads as unhurried. Note a fresh 3+0 sits 3–4 Elo under the blitz reference. |
+| `MAIA_CONTEXT_THINK_REF_MS` (`search.ts`) | bullet 1 500 · blitz 5 000 · rapid 15 000 · classical 30 000 · untimed 0 | The fresh-game `estimatedThinkMs` measured 2026-09-13 at ply 20, default persona (at the then-default `speedScale` 1; since 2026-09-15 `estimatedThinkMs` reads no speed setting at all, so the figures stand for every base speed): 1+0 ≈ 1.6 s, 2+1 ≈ 4.2 s, 3+0 ≈ 4.9 s, 3+2 ≈ 6.9 s, 5+0 ≈ 8.1 s, 10+0 ≈ 16 s, 15+10 ≈ 35 s, 30+0 ≈ 50 s — rounded down so an increment game reads as unhurried. Note a fresh 3+0 sits 3–4 Elo under the blitz reference. |
 | `MAIA.context.*` | seeded (clockElo 120, thinkElo 100, interactionElo 130, maxPenalty 350, eloFloor 400) | Lane 0; the three weights sum to the cap, so an empty clock with no think is exactly the cap. |
 | `MAIA.slider.eloSpan` | 250 (seeded) | H2: `selfElo` moves ∓ 250 for slider 0 / 2. |
 

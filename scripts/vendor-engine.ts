@@ -1,4 +1,4 @@
-// scripts/vendor-engine.ts — vendor Stockfish 18 (`@lichess-org/stockfish-web`) and the
+// scripts/vendor-engine.ts — vendor Stockfish 19 (`@lichess-org/stockfish-web`) and the
 // all NNUE variants into `assets/engine/` (Task 10, §6.1–6.2).
 //
 // 1. Copies the files named by `ENGINE_FILES` (+ the AGPL `LICENSE`) from the installed npm
@@ -43,9 +43,13 @@ export const PACKAGE_NAME = "@lichess-org/stockfish-web";
 const PACKAGE_DIR = path.join(ROOT, "node_modules", ...PACKAGE_NAME.split("/"));
 const PACKAGE_REPO = "https://github.com/lichess-org/stockfish-web";
 const STOCKFISH_REPO = "https://github.com/official-stockfish/Stockfish";
-/** Upstream base of the `sf_18` targets (package README). */
-const STOCKFISH_BASE_COMMIT = "cb3d4ee9b47d0c5aae855b12379378ea1439675c";
-const STOCKFISH_TAG = "sf_18";
+/**
+ * Upstream base of the `sf_19` targets (package README). These two values are the written offer of
+ * corresponding source (GPL-3.0 §6 / AGPL-3.0 §6) rendered into `docs/third-party.md`: no check
+ * verifies them against the installed package, so they must be updated by hand with the version.
+ */
+const STOCKFISH_BASE_COMMIT = "edb0d9db6731067ec50ce619ff372b463bc4dd5d";
+const STOCKFISH_TAG = "sf_19";
 
 const LICENSE_FILE = "LICENSE";
 const TYPES_FILE = "stockfishWeb.d.ts";
@@ -58,6 +62,7 @@ interface BookRegistry {
 	dir: string;
 	gm2600: string;
 	club: string;
+	theory: string;
 }
 
 interface ModelsRegistry {
@@ -138,7 +143,8 @@ interface EngineRegistry extends ModelsRegistry {
 	ENGINE_NNUE_SOURCES: readonly NnueSource[];
 	ENGINE_FILES: {
 		smallnet: { js: string; wasm: string; nnue: string };
-		full: { js: string; wasm: string; nnue: readonly [string, string] };
+		/** One net since Stockfish 19 retired the full build's secondary network; a list either way. */
+		full: { js: string; wasm: string; nnue: readonly string[] };
 	};
 	nnueMirror: string;
 	website: string;
@@ -155,7 +161,8 @@ export function packageFiles(files: EngineRegistry["ENGINE_FILES"]): string[] {
 
 /**
  * Files in `ENGINE_DIR` that neither the registry's programs, its net sources nor the licence
- * account for — a build that stopped shipping (the plain-SIMD `sf_18*.js/.wasm`, 2026-09-13) or
+ * account for — a build that stopped shipping (the plain-SIMD `sf_19*.js/.wasm`), a superseded one
+ * (every `sf_18*` program and net after the 2026-09-15 move to Stockfish 19) or
  * a stray download. They never reach the package (`copyBundledAssets` copies by allowlist), but
  * they sit in the repository; the vendor step names them so they get deleted.
  */
@@ -270,23 +277,48 @@ async function describe(dir: string, names: string[]): Promise<VendoredFile[]> {
 	return out;
 }
 
-/** `<book>.build.json` written by `scripts/build-club-book.py` next to each book. */
+/** `<book>.build.json` written by `scripts/build-club-book.py` next to each game book. */
 export interface BookManifest {
 	book: string;
 	script: string;
 	inputs: string[];
+	/** SHA-256 of every input (2026-09-15 on). */
+	input_sha256?: Record<string, string>;
 	filters: {
 		min_elo: number;
 		max_elo: number | null;
 		max_ply: number;
 		min_count_requested: number;
 		min_count: number;
+		/** Games reaching the position (2026-09-15 on; absent = 0). */
+		min_position?: number;
+		/** Share of the position's games (2026-09-15 on; absent = 0). */
+		min_share?: number;
 		max_bytes: number;
 		max_games: number;
 		keep_bullet: boolean;
+		/** Games without both ratings kept (2026-09-15 on; absent = false). */
+		allow_unrated?: boolean;
 	};
 	games_read: number;
 	games_kept: number;
+	positions: number;
+	entries: number;
+	bytes: number;
+	sha256: string;
+}
+
+/** `theory.bin.build.json` written by `scripts/build-theory-book.py`. */
+export interface TheoryBookManifest {
+	book: string;
+	kind: "theory";
+	script: string;
+	source: string;
+	inputs: string[];
+	input_sha256: Record<string, string>;
+	lines: number;
+	skipped_lines: number;
+	max_plies: number;
 	positions: number;
 	entries: number;
 	bytes: number;
@@ -300,8 +332,10 @@ export interface ThirdPartyNotice {
 	/** Decoded networks shipped by build, including any compressed repository source. */
 	networks: VendoredFile[];
 	typesFile: VendoredFile;
-	/** The Polyglot books in `BOOKS.dir` (Task 15), each with its build manifest. */
+	/** The Polyglot game books in `BOOKS.dir` (Task 15), each with its build manifest. */
 	books: Array<{ file: VendoredFile; manifest: BookManifest }>;
+	/** The named-opening theory book (2026-09-15); omitted → no theory row. */
+	theoryBook?: { file: VendoredFile; manifest: TheoryBookManifest };
 	/** Task 27: the vendored UI fonts (`describeFonts()`); omitted → no fonts section. */
 	fonts?: VendoredFont[];
 	/** Task 34: the exported ChessMimic bands (`describeModels()`); omitted → no models section. */
@@ -391,34 +425,47 @@ export function bookCommand(dir: string, m: BookManifest): string {
 		...(f.max_elo === null ? [] : [`--max-elo ${f.max_elo}`]),
 		...(f.max_ply === 30 ? [] : [`--max-ply ${f.max_ply}`]),
 		`--min-count ${f.min_count_requested}`,
+		...(f.min_position ? [`--min-position ${f.min_position}`] : []),
+		...(f.min_share ? [`--min-share ${f.min_share}`] : []),
 		`--max-bytes ${f.max_bytes}`,
 		...(f.max_games ? [`--max-games ${f.max_games}`] : []),
 		...(f.keep_bullet ? ["--keep-bullet"] : []),
+		...(f.allow_unrated ? ["--allow-unrated"] : []),
 		`--output ${dir}${m.book}`,
 	];
 	const inputs = m.inputs.map((i) => `--input ${i}`).join(" ");
-	return `uv run --with chess --with zstandard ${m.script} ${inputs} ${flags.join(" ")}`;
+	const numpy = m.input_sha256 ? " --with numpy" : "";
+	return `uv run --with chess --with zstandard${numpy} ${m.script} ${inputs} ${flags.join(" ")}`;
+}
+
+/** The literal `build-theory-book.py` invocation recorded by a theory manifest. */
+export function theoryBookCommand(dir: string, m: TheoryBookManifest): string {
+	const inputs = m.inputs.map((i) => `--input ${i}`).join(" ");
+	return `uv run --with chess ${m.script} ${inputs} --output ${dir}${m.book}`;
 }
 
 function describeFilter(m: BookManifest): string {
 	const f = m.filters;
 	const elo = f.max_elo === null ? `≥ ${f.min_elo}` : `${f.min_elo}–${f.max_elo}`;
+	const unrated = f.allow_unrated ? " (or unrated)" : "";
 	const bullet = f.keep_bullet ? "" : ", no bullet";
-	return `both players rated ${elo}${bullet}, first ${f.max_ply} plies, ≥ ${f.min_count} games per move`;
+	const position = f.min_position ? `, position reached ≥ ${f.min_position} times` : "";
+	const share = f.min_share ? `, ≥ ${f.min_share * 100} % of the position's games` : "";
+	return `both players rated ${elo}${unrated}${bullet}, first ${f.max_ply} plies, ≥ ${f.min_count} games per move${position}${share}`;
 }
 
 /** Load every `<book>.build.json` for the registry's books. */
-export async function readBookManifests(
+export async function readBookManifests<M extends { sha256: string } = BookManifest>(
 	dir: string,
 	names: string[]
-): Promise<Array<{ file: VendoredFile; manifest: BookManifest }>> {
+): Promise<Array<{ file: VendoredFile; manifest: M }>> {
 	const files = await describe(dir, names);
-	const out: Array<{ file: VendoredFile; manifest: BookManifest }> = [];
+	const out: Array<{ file: VendoredFile; manifest: M }> = [];
 	for (const file of files) {
 		const manifestPath = path.join(dir, `${file.name}.build.json`);
 		if (!existsSync(manifestPath))
-			throw new Error(`${file.name}: missing ${path.basename(manifestPath)} (run build-club-book.py)`);
-		const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as BookManifest;
+			throw new Error(`${file.name}: missing ${path.basename(manifestPath)} (run its build script)`);
+		const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as M;
 		if (manifest.sha256 !== file.sha256)
 			throw new Error(`${file.name}: manifest sha256 ${manifest.sha256} != file ${file.sha256}`);
 		out.push({ file, manifest });
@@ -428,14 +475,16 @@ export async function readBookManifests(
 
 export function renderThirdParty(n: ThirdPartyNotice): string {
 	const { ENGINE_DIR, ENGINE_FILES, nnueMirror, website } = n.registry;
-	const [big, small] = ENGINE_FILES.full.nnue;
+	const fullNets = ENGINE_FILES.full.nnue;
+	// `ENGINE_NNUE_SOURCES` gzips exactly the first full net, so that is the one the prose names.
+	const [big] = fullNets;
 	const row = (f: VendoredFile) =>
 		`| \`${f.name}\` | ${f.bytes.toLocaleString("en-US")} | \`${f.sha256}\` |`;
 	return `# Third-party components
 
 <!-- Generated by \`bun run vendor:engine\` (scripts/vendor-engine.ts); do not edit by hand. -->
 
-## Stockfish 18 — \`${PACKAGE_NAME}\` ${n.version}
+## Stockfish 19 — \`${PACKAGE_NAME}\` ${n.version}
 
 sliced.sh bundles a WebAssembly build of the Stockfish chess engine under \`${ENGINE_DIR}\` and
 drives it over UCI from an offscreen document. The engine is a separate program: sliced.sh's own
@@ -445,20 +494,19 @@ code is not derived from Stockfish and talks to it only through the package's pu
 | Component | Version | License | Source |
 |---|---|---|---|
 | \`${PACKAGE_NAME}\` (build scripts, patches, Emscripten glue) | ${n.version} | AGPL-3.0-or-later | ${PACKAGE_REPO} |
-| Stockfish | 18 (tag \`${STOCKFISH_TAG}\`, base \`${STOCKFISH_BASE_COMMIT.slice(0, 8)}\`) | GPL-3.0-or-later | ${STOCKFISH_REPO} |
+| Stockfish | 19 (tag \`${STOCKFISH_TAG}\`, base \`${STOCKFISH_BASE_COMMIT.slice(0, 8)}\`) | GPL-3.0-or-later | ${STOCKFISH_REPO} |
 | NNUE network \`${ENGINE_FILES.smallnet.nnue}\` (smallnet weights) | — | distributed by the Stockfish project | ${nnueMirror}${ENGINE_FILES.smallnet.nnue} |
-| NNUE network \`${big}\` (full-build big weights) | — | distributed by the Stockfish project | ${nnueMirror}${big} |
-| NNUE network \`${small}\` (full-build small weights) | — | distributed by the Stockfish project | ${nnueMirror}${small} |
+${fullNets.map((name) => `| NNUE network \`${name}\` (full-build weights) | — | distributed by the Stockfish project | ${nnueMirror}${name} |`).join("\n")}
 
-Targets vendored: \`sf_18_smallnet_relaxed-simd\` (Stockfish 18 with the sscg13/threat-small
-patch) and \`sf_18_relaxed-simd\` (the dual-net full build). Only the relaxed-SIMD variants ship:
+Targets vendored: \`sf_19_smallnet_relaxed-simd\` (Stockfish 19 with the sscg13/size-optimize-nnue
+patch) and \`sf_19_relaxed-simd\` (the full build). Only the relaxed-SIMD variants ship:
 relaxed SIMD has been in Chrome since 114 and the manifest's \`minimum_chrome_version\` is 128,
-so the package's plain-SIMD \`sf_18\` / \`sf_18_smallnet\` programs are not vendored (2026-09-13).
-The full build's networks
-\`${big}\` (big) and \`${small}\` (small) are bundled alongside the smallnet. Switching to full
+so the package's plain-SIMD \`sf_19\` / \`sf_19_smallnet\` programs are not vendored (2026-09-13).
+Stockfish 19 retired the secondary network that sat inside the full build, so that build now loads
+a single network, \`${big}\`, bundled alongside the smallnet's own. Switching to full
 strength loads installed extension bytes without downloading networks. The repository stores
-the big net as \`${big}.gz\` using deterministic gzip (level 9, no timestamp or filename) to stay
-below the Git host's per-file limit. Build verifies and expands it to \`${big}\` and excludes the
+the full net as \`${big}.gz\` using deterministic gzip (level 9, no timestamp or filename) to keep
+the checked-in file small. Build verifies and expands it to \`${big}\` and excludes the
 compressed source from the extension; runtime does not decompress it.
 
 ### Source offer
@@ -499,10 +547,12 @@ Types only (not shipped): \`src/types/stockfish-web.d.ts\` copied from the packa
 ${n.models ? `\n${renderModelsSection(n.registry, n.models)}\n` : ""}${n.maia ? `\n${renderMaiaSection(n.registry.maia, n.maia, website)}\n` : ""}${n.onnxruntime ? `\n${renderOnnxRuntimeSection(n.registry, n.onnxruntime)}\n` : ""}
 ## Opening books — \`${n.registry.BOOKS.dir}\`
 
-Both Polyglot books are generated by \`scripts/build-club-book.py\` from games in the Lichess open
-database (${LICHESS_DB}), which Lichess releases under the Creative Commons CC0 1.0
-public-domain dedication; \`lichess_elite_*.zip\` inputs are the Lichess Elite Database
-(${LICHESS_ELITE_DB}), a subset of that database (2400+ vs 2200+, no bullet). Nothing under
+The game books are generated by \`scripts/build-club-book.py\` from games in the Lichess open
+database (${LICHESS_DB} — rated games, and OTB broadcasts as \`lichess_db_broadcast_*\`), which
+Lichess releases under the Creative Commons CC0 1.0 public-domain dedication; \`lichess_elite_*.zip\`
+inputs are the Lichess Elite Database (${LICHESS_ELITE_DB}), a subset of that database (2400+ vs
+2200+ until November 2021, 2500+ vs 2300+ after; no bullet). A \`.first6GiB\`-style input name is
+the first bytes of the named monthly file, read up to its last complete game. Nothing under
 \`${n.registry.BOOKS.dir}\` is copied from a third-party book file. Each book ships with a
 \`<book>.build.json\` manifest; the rows below are rendered from those manifests.
 
@@ -518,7 +568,19 @@ ${n.books
 Exact invocations (inputs are the unmodified downloads):
 
 ${n.books.map(({ manifest: m }) => `    ${bookCommand(n.registry.BOOKS.dir, m)}`).join("\n\n")}
+${
+	n.theoryBook
+		? `
+\`${n.theoryBook.manifest.book}\` is generated by \`${n.theoryBook.manifest.script}\` from the Lichess
+\`chess-openings\` dataset (${n.theoryBook.manifest.source}, CC0 1.0): every move of every named opening
+line, for both sides, weighted by the number of named lines through it —
+${n.theoryBook.manifest.lines.toLocaleString("en-US")} lines, ${n.theoryBook.manifest.entries.toLocaleString("en-US")} entries.
+Inputs are the unmodified \`a.tsv\`…\`e.tsv\` (SHA-256 in its manifest):
 
+    ${theoryBookCommand(n.registry.BOOKS.dir, n.theoryBook.manifest)}
+`
+		: ""
+}
 The Polyglot \`Random64\` table in \`src/core/strength/book/random64.ts\` is transcribed from
 Michel Van den Bergh's format description (http://hgm.nubati.net/book_format.html), which states
 the table is not subject to copyright and releases its sample code into the public domain.
@@ -528,7 +590,7 @@ Georges \`gm2600.bin\`, whose licence forbids reuse without the author's permiss
 
 | File | Bytes | SHA-256 |
 |---|---|---|
-${n.books.map(({ file }) => row(file)).join("\n")}
+${[...n.books.map(({ file }) => row(file)), ...(n.theoryBook ? [row(n.theoryBook.file)] : [])].join("\n")}
 ${n.fonts ? `\n${renderFontsSection(n.fonts)}` : ""}`;
 }
 
@@ -923,6 +985,9 @@ export async function vendorEngine(): Promise<void> {
 	if (!typesFile) throw new Error("types file missing after copy");
 	const { BOOKS } = registry;
 	const books = await readBookManifests(path.join(ROOT, BOOKS.dir), [BOOKS.gm2600, BOOKS.club]);
+	const [theoryBook] = await readBookManifests<TheoryBookManifest>(path.join(ROOT, BOOKS.dir), [
+		BOOKS.theory,
+	]);
 	const fonts = await describeFonts();
 	const onnxruntime = await vendorOnnxRuntime(registry);
 	const models = await describeModels(registry);
@@ -936,6 +1001,7 @@ export async function vendorEngine(): Promise<void> {
 			networks,
 			typesFile,
 			books,
+			...(theoryBook ? { theoryBook } : {}),
 			fonts,
 			models,
 			onnxruntime,

@@ -272,8 +272,21 @@ export type GamePortCommand =
 	 * Settings the content script acts on (`automation.highlightMoves`, `automation.boardEffects`,
 	 * §13.3 rule 4); default off until sent. `boardEffects` is optional so a caller that predates
 	 * it — every existing fixture — still means "off", which is what "default off until sent" says.
+	 * `forcedMateSounds` (owner, 2026-09-14) gates the forced-mate chip's sound on its own and
+	 * already folds in `moveRatingSounds`, so it is never true while that is false.
+	 *
+	 * The effect layer has two independent gates (owner, 2026-09-15): `boardEffects` for the rays
+	 * and the capture mark, `moveRatings` (`enabled && automation.moveQualityChips`) for the chip.
+	 * `moveRatingSounds` folds in `moveRatings`, never `boardEffects`.
 	 */
-	| { kind: "settings"; highlightMoves: boolean; boardEffects?: boolean; moveRatingSounds?: boolean }
+	| {
+			kind: "settings";
+			highlightMoves: boolean;
+			boardEffects?: boolean;
+			moveRatings?: boolean;
+			moveRatingSounds?: boolean;
+			forcedMateSounds?: boolean;
+	  }
 	/**
 	 * The board-effect batch for the move that has just landed, either side's (owner's brief,
 	 * 2026-09-13). `mine` picks the colour family — the accent for the owner's moves, the cool

@@ -135,6 +135,7 @@ describe("the mark reaches the page: port command → wire → emitted bridge pr
 			kind: "settings",
 			highlightMoves: false,
 			boardEffects: true,
+			moveRatings: true,
 			moveRatingSounds: true,
 		});
 		const verdict: GamePortCommand = {
@@ -160,6 +161,7 @@ describe("the mark reaches the page: port command → wire → emitted bridge pr
 			kind: "settings",
 			highlightMoves: false,
 			boardEffects: true,
+			moveRatings: true,
 			moveRatingSounds: false,
 		});
 		expect(sounds).toEqual(["great", "great", null]);
@@ -167,6 +169,101 @@ describe("the mark reaches the page: port command → wire → emitted bridge pr
 		await sleep(20);
 		expect(sounds).toEqual(["great", "great", null]);
 	});
+	it("a forced-mate chip reaches the page and requests its pitch as a number, only while its own switch is on", async () => {
+		const previous = Object.getOwnPropertyDescriptor(globalThis, "chrome");
+		const requests: unknown[] = [];
+		Object.defineProperty(globalThis, "chrome", {
+			configurable: true,
+			value: {
+				runtime: {
+					sendMessage(message: { type: string }, reply: (value: unknown) => void) {
+						if (message.type === MSG.OFFSCREEN_MOVE_RATING_SOUND) requests.push(message);
+						reply(true);
+					},
+				},
+			},
+		});
+		cleanups.push(() => {
+			if (previous) Object.defineProperty(globalThis, "chrome", previous);
+			else Reflect.deleteProperty(globalThis, "chrome");
+		});
+		const j = await joinChain();
+		const gates = (forcedMateSounds: boolean): GamePortCommand => ({
+			kind: "settings",
+			highlightMoves: false,
+			boardEffects: true,
+			moveRatings: true,
+			moveRatingSounds: true,
+			forcedMateSounds,
+		});
+		j.command(gates(true));
+		j.command({
+			kind: "effects",
+			effects: [],
+			mine: true,
+			quality: { square: "f7", quality: "mate", mateSemitones: 1.5 },
+		});
+		await waitFor(() => requests.length === 1);
+		expect(requests).toEqual([
+			{ type: MSG.OFFSCREEN_MOVE_RATING_SOUND, quality: "mate", mateSemitones: 1.5 },
+		]);
+		const fills = [
+			...j.dom.document.querySelectorAll(`svg.${TOKENS_FOR_SEED.effectsClass} path`),
+		].map((p) => p.getAttribute("fill"));
+		expect(fills).toContain("#E3AA24");
+		j.command(gates(false));
+		expect(requests.at(-1)).toEqual({ type: MSG.OFFSCREEN_MOVE_RATING_SOUND, quality: null });
+		j.command({
+			kind: "effects",
+			effects: [],
+			mine: false,
+			quality: { square: "g8", quality: "mate", mateSemitones: 3 },
+		});
+		await sleep(20);
+		expect(requests).toHaveLength(2);
+		// A rating chip still sounds with the forced-mate switch off.
+		j.command({
+			kind: "effects",
+			effects: [],
+			mine: true,
+			quality: { square: "e4", quality: "great" },
+		});
+		await waitFor(() => requests.length === 3);
+		expect(requests.at(-1)).toEqual({ type: MSG.OFFSCREEN_MOVE_RATING_SOUND, quality: "great" });
+	});
+	// Owner, 2026-09-15: the rays and the chip are gated separately, and the join is where a batch
+	// could arrive with a half the page must not draw.
+	it("draws the chip alone with board effects off, and the rays alone with move ratings off", async () => {
+		const j = await joinChain();
+		const layerPaths = () => [
+			...j.dom.document.querySelectorAll(`svg.${TOKENS_FOR_SEED.effectsClass} path`),
+		];
+		/** A ray is painted through a per-group gradient; the chip's own paths carry literal fills. */
+		const rays = () => layerPaths().filter((p) => (p.getAttribute("fill") ?? "").startsWith("url("));
+		const chips = () =>
+			[...j.dom.document.querySelectorAll(`svg.${TOKENS_FOR_SEED.effectsClass} g`)].filter((g) =>
+				(g.getAttribute("transform") ?? "").includes("scale(")
+			);
+		const batch: GamePortCommand = {
+			kind: "effects",
+			effects: [{ kind: "check", from: "f8", to: "e8" }],
+			mine: false,
+			quality: { square: "f8", quality: "blunder" },
+		};
+
+		j.command({ kind: "settings", highlightMoves: false, boardEffects: false, moveRatings: true });
+		j.command(batch);
+		await waitFor(() => chips().length === 1);
+		expect(rays()).toHaveLength(0);
+
+		// The gate flip erases the layer; the rays come back on the next batch, without the chip.
+		j.command({ kind: "settings", highlightMoves: false, boardEffects: true, moveRatings: false });
+		await waitFor(() => chips().length === 0);
+		j.command(batch);
+		await waitFor(() => rays().length > 0);
+		expect(chips()).toHaveLength(0);
+	});
+
 	it("ordinary recommendations reach our SVG and an identical execution mark retains the same nodes", async () => {
 		const j = await joinChain();
 		j.command({ kind: "settings", highlightMoves: true });

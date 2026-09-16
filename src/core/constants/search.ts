@@ -59,12 +59,6 @@ export const SEARCH_BUDGET = {
 	/** Rushed sampling still needs ordinary alternatives beyond a narrow near-best native pool. */
 	opponentRaceCandidates: 12,
 	/**
-	 * H15 (2026-09-13): the referee breadth from `MAIA.eloMax` up, when a Maia-79M prior breaks
-	 * the engine's ties (`maiaPriorMode`). The native path asks for six roots there
-	 * (`docs/qa/high-elo-selection-2026-09-11.md`), which leaves nothing to choose among.
-	 */
-	priorCandidates: 12,
-	/**
 	 * §7 A1 (2026-09-13): in a pool that mixes search frames (the main referee frame plus the
 	 * extra `searchmoves` frame on Maia's unscored favourites), two centipawn scores within this
 	 * band are a tie, and `rankedLines` breaks it towards the deeper line. Outside the band the
@@ -110,9 +104,14 @@ export const HUMAN_DEPTH: ReadonlyArray<readonly [elo: number, depth: number]> =
  * of the pipeline's context penalty — `shortThink = clamp(1 − estimatedThinkMs / ref, 0, 1)`, so
  * a move planned at or above the reference costs nothing and a move squeezed towards zero costs
  * `MAIA.context.thinkElo`. Set at the fresh-game `estimatedThinkMs` allocation measured on
- * 2026-09-13 (default persona, `speedScale` 1, ply 20): 1+0 ≈ 1.6 s, 3+0 ≈ 4.9 s, 3+2 ≈ 6.9 s,
+ * 2026-09-13 (default persona, ply 20): 1+0 ≈ 1.6 s, 3+0 ≈ 4.9 s, 3+2 ≈ 6.9 s,
  * 10+0 ≈ 16 s, 30+0 ≈ 50 s — rounded down so an increment game with a fuller allocation still
  * reads as unhurried. `untimed` has no clock to be short of: the term is 0 there.
+ *
+ * 2026-09-15: the measurement stands unchanged. `estimatedThinkMs` used to carry the raw
+ * `timing.speedScale` slider (1 at the default, which is why these numbers were measured "at
+ * `speedScale` 1"); it no longer reads the speed setting at all, so the reference and the
+ * estimate it is compared against are both independent of the user's base speed.
  */
 export const MAIA_CONTEXT_THINK_REF_MS: Readonly<Record<BudgetTcClass, number>> = {
 	bullet: 1_500,

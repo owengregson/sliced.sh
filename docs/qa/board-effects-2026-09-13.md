@@ -14,6 +14,11 @@ code base defaults highlight on, in which case default on"). It is an ordinary v
 `FORCED_SETTINGS` entry — so `test/panel/views/settings.test.ts`'s "every setting has a row" walk
 covers it, and `normalizeSettings` picks it up like every other boolean.
 
+**Superseded 2026-09-15:** `boardEffects` now gates the rays and the capture mark only. The rating
+chip has its own gate on the same command (`moveRatings` = `enabled && automation.moveQualityChips`),
+and the rating sounds follow that alone, so every combination of the two switches works — see
+`docs/qa-checklist.md` B6.26. The rest of this document describes the layer as first built.
+
 The service worker reports it to the content script on the existing `settings` command as
 `enabled && automation.boardEffects`, beside `highlightMoves`. §13.3 rule 4 is unchanged: the page
 draws nothing until that command arrives, and turning the setting off mid-game erases whatever is

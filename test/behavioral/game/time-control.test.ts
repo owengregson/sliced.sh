@@ -34,7 +34,7 @@ describe("game session: the time control arrives after the game started (§4.3)"
 		h = await createGameHarness({
 			timeControl: null, // the site has not answered yet — the production order
 			gameId: "late-tc",
-			settings: { automation: { autoMove: false }, timing: { profile: "natural" } },
+			settings: { automation: { autoMove: false } },
 		});
 		// Move 1 with no clock: every clock-pressure term is bypassed and the hand is classical.
 		await h.arrive(null, { w: BULLET.baseMs, b: BULLET.baseMs });

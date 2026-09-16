@@ -514,7 +514,7 @@ describe("game session: a queued premove (Fix F)", () => {
 		}
 	);
 
-	it("resumes free exploration after a queued drag without touching the queued piece again", async () => {
+	it("keeps stationary readiness after a queued drag without disturbing the queued piece", async () => {
 		let entered = false;
 		for (let seed = 0; seed < SEEDS && !entered; seed++) {
 			await h?.dispose();
@@ -525,8 +525,9 @@ describe("game session: a queued premove (Fix F)", () => {
 			const held = h.site.premoveQueued();
 			const before = dispatched().length;
 			const presses = pressCount(mark);
-			expect(await h.until(() => dispatched().length > before + 20, 3000)).toBe(true);
 			await h.advance(10_000);
+			// A prepared reply owns the pointer: optional browsing must not take it back.
+			expect(dispatched()).toHaveLength(before);
 			expect(pressCount(mark)).toBe(presses);
 			expect(h.site.premoveQueued()).toEqual(held);
 			expect(h.executor()?.isExploring()).toBe(true);

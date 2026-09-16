@@ -24,6 +24,7 @@ import {
 	clockBucketBoundaries,
 	distributionMeanSec,
 	distributionMedianSec,
+	maskedBucketShare,
 	sampleBucket,
 	sampleWithinBucket,
 } from "./chessmimic-buckets";
@@ -258,7 +259,24 @@ export class ChessMimicHead implements DistributionHead {
 			this.temperature
 		);
 		const sigma = CM.arSigma * st.knobs.sigmaScale;
-		return expected * Math.exp(p.s_game + (sigma * sigma) / 2);
+		const table = CHESSMIMIC_BUCKETS[c.band].bucket_empirical_distributions[0]?.distribution ?? {};
+		const tableTotal = Object.values(table).reduce((sum, weight) => sum + weight, 0);
+		const underOne = tableTotal > 0 ? (table["0"] ?? 0) / tableTotal : 0;
+		const fastShare =
+			underOne *
+			maskedBucketShare(
+				c.probs,
+				bucketMask(c.inputs.playerClockS, c.inputs.incrementS, c.band),
+				this.temperature,
+				0
+			);
+		const pPre = f.premove_eligible ? sigmoid(premoveLogit(f, p, st.knobs)) : 0;
+		const fastMean = (pPre * TIMING_CONSTANTS.premove.maxS) / 2 + (1 - pPre) * this.instantSec(0.5);
+		// Fast samples are clock windows, without the body persona/AR multiplier. The novice
+		// bucket mixes seconds 0 and 1; only its actual subsecond mass takes this fast path.
+		return (
+			(expected - fastShare * 0.5) * Math.exp(p.s_game + (sigma * sigma) / 2) + fastShare * fastMean
+		);
 	}
 
 	sample(f: Features, p: Persona, st: GameTimingState, rng: Rng, allocSec: number): HeadSample {
@@ -286,8 +304,9 @@ export class ChessMimicHead implements DistributionHead {
 					why: [...why, `bucket 0 → premove p=${pPre.toFixed(2)}`],
 				};
 			return {
-				tSec: this.instantSec(c.band, rng),
+				tSec: this.instantSec(wideFastSample ?? sampleWithinBucket(c.band, bucket, rng)),
 				mode: "instant",
+				includesExecution: true,
 				why: [...why, "bucket 0 → instant"],
 			};
 		}
@@ -301,14 +320,13 @@ export class ChessMimicHead implements DistributionHead {
 		const median = this.median(f, p, st, allocSec);
 		const long = bucket >= CM.longBucketFrom || t > CM.longMedianMultiple * median;
 		why.push(`s_game=${p.s_game.toFixed(2)} ε=${st.eps.toFixed(2)}`);
-		return { tSec: t, mode: long ? "long" : "normal", why };
+		return { tSec: t, mode: long ? "long" : "normal", includesExecution: true, why };
 	}
 
-	private instantSec(band: ChessMimicBand, rng: Rng): number {
-		const I = TIMING_CONSTANTS.instant;
-		const sample = sampleWithinBucket(band, 0, rng);
-		// Bucket zero spans a whole second; clamping it collapsed most reactions onto
-		// exactly 250 ms. Preserve in-range samples and redraw overflow within the band.
-		return sample >= I.minS && sample <= I.minS + I.rangeS ? sample : I.minS + rng.next() * I.rangeS;
+	private instantSec(sample: number): number {
+		// Clock labels include the hand. Condition the subsecond draw on the physical support
+		// before planning: U(0,1) -> U(orientation floor + motor floor,1), without a floor atom.
+		const floor = (TIMING_CONSTANTS.orientation.minMs + TIMING_CONSTANTS.motor.minMotorMs) / 1000;
+		return floor + (1 - floor) * sample;
 	}
 }

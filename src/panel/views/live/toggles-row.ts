@@ -15,6 +15,7 @@ import { showTooltip, type TooltipHandle } from "../../components/popover";
 import { createToggle, type ToggleHandle } from "../../components/toggle";
 import { COPY, COPY_LIVE } from "../../copy";
 import { instantiate, part } from "../../template";
+import { autoPlayState } from "../auto-play-state";
 import rowHtml from "../templates/live/toggles-row.html?raw";
 
 export interface TogglesRowOptions {
@@ -116,7 +117,13 @@ export function createTogglesRow(options: TogglesRowOptions): TogglesRowHandle {
 	function update(state: TogglesRowState): void {
 		const snap = state.snapshot;
 		const { strength, automation } = snap.settings;
-		autoplay.update({ checked: snap.autoMove.armed, disabled: state.handsOff });
+		const auto = autoPlayState(snap);
+		autoplay.update({
+			checked: auto.checked,
+			waiting: auto.waiting,
+			hint: auto.waiting ? COPY.toggle.waitingHint : null,
+			disabled: state.handsOff,
+		});
 		highlight.update({ checked: automation.highlightMoves, disabled: state.handsOff });
 		autoqueue.update({ checked: automation.autoQueue, disabled: state.handsOff });
 		chip.textContent = COPY_LIVE.strength.chip(

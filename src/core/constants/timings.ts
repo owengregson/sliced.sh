@@ -167,45 +167,12 @@ export const TIME_CONTROL = {
 	maxProbes: 30,
 } as const;
 
-/** Time-control classes a timing preset is keyed by (the timing model's `TcClass` minus untimed). */
-export type TimedTcClass = "bullet" | "blitz" | "rapid" | "classical";
-
 /**
- * The timing preset a detected time control selects (Appendix F §4.6). The Settings view's
- * preset chips display it and the `GameSession` applies it (Task 30): the session's effective
- * `timing.profile` is this entry whenever the stored profile is itself a *detected* preset
- * (`fast` / `natural` / `slow`), so what the chips show is what the timing model runs.
+ * The timing presets (`manual` / `fast` / `natural` / `slow` / `custom`) were removed on
+ * 2026-09-15 at the owner's request ("remove the timing presets 'fast natural slow' etc."). The
+ * user's own timing sliders always apply now, re-based only by `SETTING_GAIN` for the detected
+ * time-control class — see `timingSettingsFor` (`src/service/game-session/presets.ts`).
  */
-export const PROFILE_FOR_TC_CLASS: Readonly<Record<TimedTcClass, TimingProfile>> = {
-	bullet: "fast",
-	blitz: "natural",
-	rapid: "natural",
-	classical: "slow",
-};
-
-/** `Settings["timing"]["profile"]` without importing the whole settings surface into a registry. */
-export type TimingProfile = "manual" | "fast" | "natural" | "slow" | "custom";
-
-/**
- * What a preset means numerically. `natural` is the identity, `fast` is one 4/3 step quicker and
- * `slow` its reciprocal rounded to the speed slider's 0.05 step (`SETTINGS_RANGES.speedScale`),
- * so the two presets are log-symmetric about `natural`. `manual` and `custom` carry no knobs:
- * `custom` runs the user's stored sliders and `manual` additionally never auto-plays
- * (`COPY.timing.manualOnly`, "Never auto-plays; shows recommendations only.").
- */
-export const TIMING_PROFILE_KNOBS: Readonly<
-	Record<TimedTcClassPreset, { readonly speedScale: number }>
-> = {
-	fast: { speedScale: 0.75 },
-	natural: { speedScale: 1 },
-	slow: { speedScale: 1.35 },
-};
-
-/** The presets a detected time control can select (the rest are the user's own choice). */
-export type TimedTcClassPreset = "fast" | "natural" | "slow";
-
-/** `manual` shows recommendations and never auto-plays (§4.6). */
-export const MANUAL_TIMING_PROFILE = "manual" satisfies TimingProfile;
 
 /** One-shot recommendation feedback; all durations are independent of the move's think time. */
 export const HIGHLIGHT_MOTION = {

@@ -9,6 +9,7 @@
 import type { BoardGeometryReply } from "@core/constants/messages";
 import type { ExecutionResult, PromoPiece, Site, Square } from "@typedefs/game";
 import type { PersonaId } from "@typedefs/settings";
+import type { MotorRepertoireContext } from "./repertoire";
 
 export type { ExecutionResult };
 
@@ -168,6 +169,8 @@ export interface HandAction {
 
 /** What the exploration planner needs beyond the committed move (Task 18 hand controller). */
 export interface ExplorationInput {
+	/** Optional coherent attention model; caller supplies live tactical and clock context. */
+	repertoire?: MotorRepertoireContext;
 	candidates: readonly MoveCandidate[];
 	nReasonable: number;
 	myClockMs: number;

@@ -40,7 +40,7 @@ Five runtime contexts, each with one entry point:
 | Context | Entry → bundle | Owns | Never |
 |---|---|---|---|
 | Service worker | `src/service/service-worker.ts` → `js/service-worker.js` | `GameSession` per tab, the recommendation pipeline, `MoveExecutor` (CDP), debugger lifecycle, licence gate, alarms, side-panel policy, TTS | DOM, engine compute |
-| Offscreen doc | `src/offscreen/index.ts` (`pages/offscreen.html`) | Stockfish (pthreads + SharedArrayBuffer), NNUE storage, analysis cache, ONNX timing inference | `chrome.storage`, tab APIs, UI |
+| Offscreen doc | `src/offscreen/index.ts` (`pages/offscreen.html`) | Two Stockfish instances (pthreads + SharedArrayBuffer) — the playing engine and the full-network move-review engine — NNUE storage, analysis cache, ONNX timing inference | `chrome.storage`, tab APIs, UI |
 | Side panel | `src/panel/index.ts` (`pages/panel.html`) | Views, router, store hydrated from SW snapshots | Engine or DOM access — it is a pure client of the SW |
 | Content (ISOLATED) | `src/content/index.ts` → `js/content.js` | Site detection, `SiteAdapter` DOM observers, highlights, keybinds, cursor tracking | Engine, timing decisions, CDP |
 | Page bridge (MAIN) | `src/page/*.ts` → `dist/js/page/*.js` | `wc-chess-board.game` / chessground internals, relayed over `window.postMessage` with a per-build token | `chrome.*` (unavailable), any business logic |
@@ -49,7 +49,8 @@ Per position: `adapter.positionChanged` → SW `GameSession.onPosition` → engi
 → `MoveSelector.choose` → `TimingModel.planMove` → panel snapshot + board highlight → if armed,
 `MoveExecutor` drives a humanised CDP drag at the planned time and verifies it landed.
 
-Ports: `sl-panel` (SW ↔ panel), `sl-engine` (SW ↔ offscreen), `sl-game` (SW ↔ content).
+Ports: `sl-panel` (SW ↔ panel), `sl-engine` (SW ↔ offscreen), `sl-review-engine` (SW ↔ offscreen,
+board ratings only), `sl-game` (SW ↔ content).
 
 ---
 
@@ -92,9 +93,11 @@ templates are `src/panel/views/templates/*.html` imported with `?raw`.
 as `ICONS` names in `src/design/icons.ts`; `gen-icons` fails on an unknown Font Awesome class.
 Animation timings mirror the CSS custom properties, so they cannot drift.
 
-**C5 — brand assets are byte-unchanged.** The logo (`assets/images/sliced_*.png`) and the 13
-sounds in `assets/sounds/` are the v1 files, copied bit for bit. Product name `sliced.sh`, short
-name `sliced`, accent `#ffa71f`, dark-first. All user-facing strings live once in
+**C5 — preserve brand assets.** The logo (`assets/images/sliced_*.png`) and existing sound
+recordings retain their original bytes. The owner explicitly authorized exchanging the blunder
+and mistake recordings under their semantic filenames on 2026-09-16; preserve that assignment.
+Only registered sound files are packaged. Product name `sliced.sh`, short name `sliced`, accent
+`#ffa71f`, dark-first. All user-facing strings live once in
 `src/panel/copy.ts` — never a literal in a view.
 
 **C6 — every `chrome.*` call goes through `src/core/chrome/*`.** Promise wrappers that check
@@ -146,6 +149,25 @@ with `getPlayingAs()`. Without a bridge the only DOM source left is the bottom c
 (the live player panel carries no colour class and the WebGL board carries no `flipped` class).
 QA against bots only exercises the DOM renderer — see `docs/qa-checklist.md` §B0.
 
+**Board ratings never come from the playing engine.** The chess.com-style chips
+(`classifyMoveQuality`, `src/core/engine/move-quality.ts`) read only frames from the move-review
+engine (`src/service/review-engine.ts`, port `sl-review-engine`): a second Stockfish 19 instance,
+always the full network, never strength-limited, never falling back to the small net. The playing
+engine's lines are strength-limited, Maia-shaped or shallow and must not be fed back in. One
+MultiPV frame per position (`REVIEW`) is both the "before" of the move played from it and the
+"after" of the move that made it, so `BoardEffectsReporter` reviews the current position, our
+planned move's result and the likeliest replies ahead of time. The thresholds in `BRILLIANT` are
+tuned with `tools/move-review` on two evidence sources — Chessigma's 100-game benchmark and the
+owner's chess.com-reviewed PGNs (`pgn-labels.ts`) — and only at the live review depth; re-run both
+before changing them. The benchmark pins one brilliant per game, so it cannot judge rules about
+consecutive brilliants. The offscreen document now holds two full engines' WASM memory. The Book
+chip reads only `THEORY_BOOKS` (the master book and the named-opening theory, never the club
+book): chess.com's Book is master theory, and amateur games hold the traps chess.com badges
+brilliant instead. Book coverage is measured, not guessed — against the deepest named opening
+(`ECOUrl`) of public chess.com games, and against Book-regressions in the brilliant benchmark — so
+re-measure both before rebuilding a book (`scripts/build-club-book.py` counts tens of millions of
+games in parallel; `--save-counts`/`--from-counts` re-thresholds without re-reading).
+
 **Offscreen documents have no `chrome.storage`.** Every setting the engine host needs arrives
 over the port as a `configure` message; anything it must persist goes to OPFS, with IndexedDB
 (`NNUE_DB`, `MODEL_DB`) as the fallback. Do not reach for `chrome.storage` in `src/offscreen/**`.
@@ -171,7 +193,7 @@ ordinary control activation remains available through click or Enter. Automatic 
 remain deferred until the game ends. This does not bypass the executor's independent input and
 focus checks. See `docs/qa/focus-discipline.md` for the historical measurements and current policy.
 
-**The vendored engine is copyleft, and `docs/third-party.md` is generated.** Stockfish 18 is
+**The vendored engine is copyleft, and `docs/third-party.md` is generated.** Stockfish 19 is
 GPL-3.0-or-later, the `@lichess-org/stockfish-web` glue is AGPL-3.0-or-later, and the ChessMimic
 timing weights are PolyForm Noncommercial 1.0.0 (non-commercial use only — that is a condition on
 the product, not just the file). Shipping a build to anyone triggers a written offer of the

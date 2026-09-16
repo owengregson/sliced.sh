@@ -2,8 +2,10 @@ export const LIMITS = {
 	eloMin: 400,
 	/** Product strength scale; the top endpoint requests maximum available engine strength. */
 	eloMax: 3800,
-	/** Product policy boundary, not a calibrated capability limit of the small engine. */
-	nnueSmallEloMax: 3200,
+	/*
+	 * The small → full network switch is not a second number: it is `MAIA.eloMax`, the product's one
+	 * strength division (owner, 2026-09-15). `LIMITS.nnueSmallEloMax` (3200) is gone with it.
+	 */
 	engineEloMin: 1320,
 	engineEloMax: 3190,
 	multiPvMin: 1,
@@ -53,9 +55,15 @@ export const LIMITS = {
 	/** The timing model's fixed feature depth `D_f` (§6.5, Appendix D §2). */
 	featureDepth: 10,
 	/** Smallnet weights bundled in `assets/engine/` (§6.1); `nn-<sha256[0:12]>.nnue`. */
-	nnueSmallName: "nn-4ca89e4b3abf.nnue",
-	/** Full-strength `sf_18` dual nets `[big, small]`, bundled as raw installed assets. */
-	nnueBigNames: ["nn-c288c895ea92.nnue", "nn-37f18f62d772.nnue"],
+	nnueSmallName: "nn-61e7af4bb97d.nnue",
+	/**
+	 * The `sf_19` full build's network, bundled as a raw installed asset. Stockfish 19 retired the
+	 * secondary net that lived inside the full build (SF18 loaded `[big, small]`), so this is a
+	 * one-element list: the loader sets whatever `getRecommendedNnue` reports, so the count is data,
+	 * not structure. Kept as a list because `ENGINE_NNUE_SOURCES`, `BUNDLED_NNUE` and the packaging
+	 * rules all derive from it, and a future build may ship more than one again.
+	 */
+	nnueBigNames: ["nn-1a298aa575a0.nnue"],
 	/** Raw bytes per `nnue-chunk` / `model-chunk` relayed SW → offscreen (before base64) (Task 12/34). */
 	nnueChunkBytes: 4_194_304,
 	/** Task 34: onnxruntime-web wasm threads for the timing head (capped `hardwareConcurrency`). */
@@ -77,8 +85,16 @@ export const LIMITS = {
 	policyInferenceThreadsMax: 4,
 	/** Shared `WebAssembly.Memory` initial pages (64 KiB each) tried in order (§6.3). */
 	engineMemoryInitialPages: [2560, 1536, 1024],
-	/** Shared `WebAssembly.Memory` maximum pages (512 MiB). */
-	engineMemoryMaxPages: 8192,
+	/**
+	 * Shared `WebAssembly.Memory` maximum pages: 2 GiB, the maximum both engine builds declare. The
+	 * old 512 MiB cap predates the full network (2026-09-15): loading it copies the ~140 MiB network
+	 * object again and peaks at 509 MiB with the two nets set back to back, 585–646 MiB with a gap
+	 * between them. At the cap `memory.grow` fails and a pthread worker traps — the owner's "table
+	 * index is out of bounds". Reproduced in Chrome 152: 17/20 boots at 512 MiB with a 300 ms gap,
+	 * 0/20 at 2 GiB; two full instances together peaked at 1.3 GiB. A larger maximum reserves no
+	 * more: Chrome refused shared memories by count, at the same count for 512 MiB, 1 GiB and 2 GiB.
+	 */
+	engineMemoryMaxPages: 32768,
 	/** Task 23: devices one key may be active on (Appendix F §7.2 "already active on 2 devices"). */
 	licenseMaxDevices: 2,
 	/**
@@ -99,7 +115,13 @@ export const LIMITS = {
  */
 export const SETTINGS_RANGES = {
 	personaEloOffset: { min: -400, max: 400, step: 10 },
-	speedScale: { min: 0.25, max: 3, step: 0.05 },
+	/**
+	 * `timing.baseSpeed` — **higher is faster** (owner, 2026-09-15). The reciprocal span of the
+	 * `timing.speedScale` slider it replaces (0.25…3, which meant 4×…0.33× the pace): 1/3 rounded
+	 * down to the step is 0.35, 1/0.25 is 4. Same 0.05 grid, so a migrated value lands on or
+	 * beside a tick.
+	 */
+	baseSpeed: { min: 0.35, max: 4, step: 0.05 },
 	varianceScale: { min: 0, max: 2, step: 0.1 },
 	premoveTendency: { min: 0, max: 1, step: 0.05 },
 	longThinkFrequency: { min: 0, max: 3, step: 0.1 },

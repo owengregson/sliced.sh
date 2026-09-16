@@ -148,7 +148,8 @@ sub-second mass at a real middlegame position (band 1800_1900, P(bucket 0)):
 | Italian middlegame | 19 % | 3 % | 4 % | 3 % | 4 % | 5 % | 9 % | 14 % | 24 % |
 
 Against the 16–20 % the real 2400s in §2.2 actually play at 90–150 s. Our realised 0–2 % is roughly
-the model's own 3–6 % after `SETTING_GAIN.speedScale` pushes a 0.9 s draw past a second — **we are
+the model's own 3–6 % after `SETTING_GAIN.speedScale` (renamed `SETTING_GAIN.moveTimeScale` on
+2026-09-15, same values) pushes a 0.9 s draw past a second — **we are
 delivering what our head asks for; the head is calibrated for the pool, not for a 3-minute game.**
 Every band saw the same pool through the same three inputs, so no band changes this.
 
@@ -173,7 +174,8 @@ band does not buy clock.
 
 Two smaller contributors, both ours:
 
-- **`SETTING_GAIN.speedScale = 1.3`** (owner, 2026-09-13, "base speed 1.0x = 1.3x") multiplies the
+- **`SETTING_GAIN.speedScale = 1.3`** (owner, 2026-09-13, "base speed 1.0x = 1.3x"; the constant is
+  `SETTING_GAIN.moveTimeScale` since 2026-09-15, unchanged in value) multiplies the
   sampled think *duration*, so a default install is 30 % slower per move than the day before.
   Measured at 3+0 in the simulator: 11.7 s less clock by move 20 (101.7 → 90.0) and 3.2 s by move 40.
   It also pushes sub-second draws over a second, which is exactly the mass §2.2 says we are missing.
@@ -199,7 +201,7 @@ PGN rather than tuned by hand.
    carries (`humanFastShare`, a marginal over every blitz time control) is the weaker of the two
    estimates of the same human quantity — as a **constant** per class, so the budget stays monotone
    in the clock.
-2. **`SETTING_GAIN.speedScale` is per time-control class** — 1.0 in bullet and blitz, the owner's
+2. **`SETTING_GAIN.speedScale` (now `moveTimeScale`) is per time-control class** — 1.0 in bullet and blitz, the owner's
    instructed 1.3 in rapid, classical and untimed, read at `timingSettingsFor` where the class is
    known (an unknown time control takes the blitz value). The gain multiplies a duration, and §3
    prices it at 11.7 s of clock by move 20 in a 3+0; it is also what pushes a sub-second draw over a

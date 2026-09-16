@@ -32,7 +32,8 @@ or the focus rules is there for that reason.
 │  ┌───────────────┐   port "sl-engine"   │   SidePanelPolicy    │               │
 │  │  OFFSCREEN    │◄────────────────────►│   LicenseGate        │               │
 │  │  EngineHost   │  UCI lines / status  │   Keepalive          │               │
-│  │  (SF, SAB)    │                      └──────────┬───────────┘               │
+│  │  (SF, SAB)    │  "sl-review-engine"  │   ReviewEngine       │               │
+│  │  + review SF  │◄────────────────────►└──────────┬───────────┘               │
 │  └───────────────┘                                 │ port "sl-game"            │
 │                                                    ▼                           │
 │  chess.com tab                     ┌──────────────────────────────┐            │
@@ -47,7 +48,7 @@ or the focus rules is there for that reason.
 | Context | Owns | Never does |
 |---|---|---|
 | **Service worker** `src/service/service-worker.ts` | `GameSession` per tab, recommendation pipeline, `MoveExecutor`, debugger lifecycle, side-panel policy, licence gate, offscreen lifecycle, alarms, `chrome.tts` | DOM, engine compute, heavy CPU |
-| **Offscreen document** `src/offscreen/index.ts` | Stockfish worker (pthreads + SAB), `UciEngine`, NNUE loading, analysis cache, ONNX timing inference | Chrome tab APIs, `chrome.storage`, UI |
+| **Offscreen document** `src/offscreen/index.ts` | Stockfish worker (pthreads + SAB), `UciEngine`, NNUE loading, analysis cache, ONNX timing inference; a second, independent full-network Stockfish host on `sl-review-engine` for board ratings (2026-09-14) | Chrome tab APIs, `chrome.storage`, UI |
 | **Side panel** `src/panel/index.ts` | Views, router, store hydrated from SW snapshots, settings editing | Direct engine or DOM access |
 | **Content script (ISOLATED)** `src/content/index.ts` | Site detection, `SiteAdapter`, highlights, keybinds, cursor tracking, TTS relay | Engine, timing decisions, CDP |
 | **Page bridge (MAIN)** generated `dist/js/page/*.js` | `wc-chess-board.game` / chessground internals; relays over `window.postMessage` with a per-build token | `chrome.*`, business logic |
@@ -110,24 +111,37 @@ scanned for product words at build time; and there is no eval-shaped string anyw
 
 ### 4.3 Engine (§6; `src/offscreen/`, `src/core/engine/`)
 
-Stockfish 18 from `@lichess-org/stockfish-web`, vendored into `assets/engine/` and run in the
+Stockfish 19 from `@lichess-org/stockfish-web`, vendored into `assets/engine/` and run in the
 offscreen document because a service worker has neither `Worker` nor DOM. The document is
 cross-origin isolated (COOP/COEP manifest keys) so pthreads and `SharedArrayBuffer` work; the
-consequence is that it cannot fetch cross-origin assets itself. All three Stockfish NNUE nets
-ship in the extension and load from extension URLs. The large net is checked in as deterministic
+consequence is that it cannot fetch cross-origin assets itself. Both Stockfish NNUE nets — one
+per vendored build, since Stockfish 19 retired the secondary net inside the full build — ship in
+the extension and load from extension URLs. The large net is checked in as deterministic
 gzip to fit the Git host's file limit; the build verifies its decoded SHA-256 prefix, emits the
-raw `.nnue`, and excludes the compressed source. The SW relay remains a verified cache/download
-fallback for older installations and supplies missing ChessMimic bands over `sl-engine` chunks.
+raw `.nnue`, and excludes the compressed source. The SW relay provides a verified NNUE
+cache/download fallback over `sl-engine` chunks. ChessMimic's download relay exists but is not
+registered, and Maia remains bundled-only; neither is a working remote-delivery setup flow.
 `src/core/engine/uci-client.ts` is a transport-agnostic UCI framework: request/response mailbox,
 `info` coalescing, snapshot building, restart with backoff.
 
+Board ratings use a separate full-network, unrestricted SF19 instance through `ReviewEngine`.
+Complete before/after frames support ordinary expected-point ratings and legal sacrifice
+evidence for Brilliant. Playing-engine scores are never review evidence. Foreground move
+preparation pauses review search; planned waiting and mouse activity do not. Synchronous
+classification has a separate critical-input guard and yields between jobs. Separate UCI
+state does not remove CPU contention. See [review validation](qa/sf19-brilliant-review-2026-09-16.md)
+and [continuous-play scheduling](qa/review-latency-2026-09-16.md).
+
 ### 4.4 Strength and selection (§7; `src/core/strength/`)
 
-`UCI_Elo` alone produces recognisable engine play, so the shipped default is a hybrid: the engine
-supplies MultiPV lines, and `MoveSelector` picks among them with a persona-shaped policy —
-centipawn-loss priors, a blunder model, phase and time-pressure terms, an opening book
-(`book/`, the two bundled Polyglot files — there is no network source) and premove candidates.
-Every constant is in `src/core/strength/constants.ts`.
+Through target Elo 3000, Maia supplies rating-conditioned move probabilities, with phase,
+pressure, opening and safety constraints in `MoveSelector`. Below effective Elo 2800, the
+verifier compares two independent proposals sampled with replacement using finite shallow
+evidence; equal or missing evidence preserves the policy distribution. The upper policy retains
+its stronger verification. Above 3000, selection uses the strongest guarded engine continuation.
+The heuristic policy remains a fallback when Maia is unavailable. Three local Polyglot books
+cover club games, master games and named theory; review's Book label uses only the latter two.
+Registries live in `src/core/constants/` and `src/core/strength/constants.ts`.
 
 ### 4.5 Timing (§8; `src/core/timing/`)
 
@@ -138,13 +152,21 @@ is unavailable or too slow. Features are computed from the analysis, the chosen 
 and the persona; the plan that comes out carries an orientation latency, a decision pause, the
 exploration budget and the drop time.
 
+The learned elapsed time includes execution. The first accepted position arrival establishes
+one deadline for preparation, optional activity and the final mouse release; clock refreshes
+do not restart it. The executor omits optional actions that cannot fit, preserves the mandatory
+gesture when preparation overruns, and excludes that overrun from natural-pace learning.
+Lobby waiting is excluded from the first active move. See the
+[timing/execution contract](research/timing-execution-contract-2026-09-16.md).
+
 The clocks are two separate readings and both are the page's. Remaining time comes from the DOM
 clock elements (`clocks.ts`, including the sub-minute form with tenths); the *time control* comes
 from the MAIN-world bridge's `board.game.timeControl.get()` → `{baseTime, increment}` in ms
 (`time-control.ts`), because `game.times` / `game.timestamps` are empty on a live game. That object
 is **null until the game actually starts**, after the session has already been created, so the
 adapter republishes the unmoved position when it arrives and `GameSession.reprofile()` re-derives
-the preset, the timing model and the hand's motor class from it. Without it every game conditions
+the timing model (including its per-class move-time gain) and the hand's motor class from it.
+Without it every game conditions
 as `untimed`, which bypasses the compression factor, the hard caps, the §8.5 emergency regime and
 the §7.4 premove gate, and leaves a bullet game with a classical hand.
 
@@ -155,6 +177,12 @@ exploration and preview selections) dispatched as trusted `Input.dispatchMouseEv
 `chrome.debugger` from the service worker, then verified against the board. The pointer is
 *owned* by the hand for the duration (§13.5) so the trace never teleports, and the debugger
 attaches once before the game so its infobar's layout shift never lands inside a move window.
+
+A per-game repertoire retains an attention purpose briefly and regenerates its targets from
+current candidates. Elo, phase and clock context modulate preparation, inspection, comparison,
+verification, relation tracing and stillness. These mouse-rate weights are design priors.
+Safe preview selections reserve their complete gesture before optional routes. Queueable
+premoves take priority over holds and exploration; readiness suppresses optional movement.
 
 ### 4.7 Panel (§10, Appendix F; `src/panel/`, `css/`)
 
@@ -210,15 +238,24 @@ polls `URLS.websiteManifest` on the licence alarm and raises `LOCAL_KEYS.updateA
 
 ---
 
-## 7. Known gaps
+## 7. Operating boundaries and remaining validation
 
-The master toggle gap below is recorded here (and in `docs/qa-checklist.md`) so QA can track it.
 NNUE selection is now wired: `EngineController` selects the full engine above the product's
-3200 small-network cutoff, loads both packaged full-build nets locally, and holds searches until
-the new engine has replayed its options. Explicit Big selects
+one strength division, the Maia cutoff `MAIA.eloMax` (3000; owner, 2026-09-15 — it was a separate
+3200 small-network cutoff with a Maia-prior band between the two), loads the packaged full-build
+net locally, and holds searches until the new engine has replayed its options. Above the cutoff
+selection is the strongest guarded engine continuation, the opening book is off and the automatic
+depth ceiling is the maximum. Explicit Big selects
 the full engine at any target. At or below the cutoff, Auto and Small use the bundled smallnet.
 The 3800 endpoint selects maximum available search strength; it is not a calibrated human rating.
 
-| Setting | What actually happens | Where the wiring belongs |
-|---|---|---|
-| `Settings.enabled` — the master toggle (**a known bug, not a design gap**: the row's copy promises "Off stops analysis and recommendations until you turn it back on") | `set-enabled.ts` writes it and the snapshot carries it, but the only consumer is `moveCardState()` in `src/panel/views/live/move-section.ts`, which greys the move card. Nothing in `src/service/**` reads it: analysis, recommendation, highlighting and auto-play all continue while it is off. Being fixed separately. | The SW session (`src/service/game-session/**`): refuse to analyse, recommend, highlight or execute while it is false, and let the panel route to a disabled state rather than a greyed card. |
+`Settings.enabled` now gates session analysis, recommendations, highlights and execution;
+`test/behavioral/game/assistant-enabled.test.ts` covers stop and resume behavior. The Game
+auto-play switch owns both the current hand and the saved next-game preference. Settings links
+to that control instead of exposing a second switch.
+
+Offline simulations and real-engine/model runs validate invariants and selected distributions.
+They do not establish population-wide human equivalence, proprietary Chess.com rating parity,
+or native extension behavior. The September 16 work does not use the owner's Chrome for further
+live testing. Models remain bundled at roughly 300 MiB compressed; measured size alternatives
+and cache limits are in [the packaging audit](research/bundled-assets-and-cache-2026-09-16.md).

@@ -4,7 +4,7 @@ import { describe, expect, it } from "bun:test";
 import { applyMoves, legalMoves as legalMovesOf } from "@core/chess/san";
 import { BOOK } from "@core/constants/books";
 import { DEFAULT_SETTINGS } from "@core/constants/defaults";
-import { LIMITS } from "@core/constants/limits";
+import { LIMITS, SETTINGS_RANGES } from "@core/constants/limits";
 import { MAIA, MAIA_INPUT } from "@core/constants/maia";
 import { MAIA_SEARCH, SEARCH_BUDGET } from "@core/constants/search";
 import { humanDepth } from "@core/engine/depth-policy";
@@ -24,6 +24,7 @@ import { ChessMimicHead, type ChessMimicInputs } from "@core/timing/chessmimic-h
 import { pieceCounts } from "@core/timing/features";
 import { TimingModel } from "@core/timing/timing-model";
 import { V1ParametricHead } from "@core/timing/v1-head";
+import { timingSettingsFor } from "@service/game-session/presets";
 import {
 	clockBoundSearch,
 	estimatedThinkMs,
@@ -51,6 +52,13 @@ import type { Settings } from "@typedefs/settings";
 
 const START = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 const NOW = 1_700_000_000_000;
+
+/**
+ * The model's knobs through the one conversion point. With no time control the per-class gain is
+ * the blitz 1.0 and the default profile's preset knob is the identity, so this is numerically the
+ * raw defaults these tests used before the 2026-09-15 base-speed rework.
+ */
+const MODEL_TIMING = timingSettingsFor(DEFAULT_SETTINGS.timing, undefined);
 
 function settings(
 	patch: Partial<Settings["engine"]> = {},
@@ -166,7 +174,7 @@ function input(overrides: Partial<RecommendationInput> = {}): RecommendationInpu
 }
 
 function model(): TimingModel {
-	const m = new TimingModel(new V1ParametricHead(), DEFAULT_SETTINGS.timing, createRng("t"));
+	const m = new TimingModel(new V1ParametricHead(), MODEL_TIMING, createRng("t"));
 	m.startGame({
 		targetElo: 1500,
 		profile: "balanced",
@@ -240,9 +248,11 @@ describe("§6.4 / §7.5 search budget", () => {
 	it("depth follows active Elo across time controls, ignoring legacy manual ceilings", () => {
 		for (const tc of ["bullet", "blitz", "rapid", "classical", "untimed"] as const) {
 			const input = { ...comfortable(tc), targetElo: 1650 };
-			expect(searchBudget(input, settings({ depthCap: 6 })).depthCap).toBe(16);
-			expect(searchBudget(input, settings({ depthCap: 30 })).depthCap).toBe(16);
-			expect(searchBudget({ ...input, targetElo: 3201 }, settings({ depthCap: 6 })).depthCap).toBe(30);
+			// 17, not 16: the automatic depth curve ends at the Maia cutoff since 2026-09-15 (it ended
+			// at the removed 3200 network switch), and the maximum applies from one above it.
+			expect(searchBudget(input, settings({ depthCap: 6 })).depthCap).toBe(17);
+			expect(searchBudget(input, settings({ depthCap: 30 })).depthCap).toBe(17);
+			expect(searchBudget({ ...input, targetElo: 3001 }, settings({ depthCap: 6 })).depthCap).toBe(30);
 		}
 	});
 
@@ -262,7 +272,8 @@ describe("§6.4 / §7.5 search budget", () => {
 	it("1650 sampling gets meaningful alternatives without increasing its search budget or panel line setting", () => {
 		const s = settings({ multiPv: 4 });
 		const budget = searchBudget({ ...comfortable("blitz"), targetElo: 1650 }, s);
-		expect(budget).toEqual({ movetimeMs: 600, depthCap: 16, multiPv: 20 });
+		// depthCap 17 since the depth curve ends at the Maia cutoff (2026-09-15; it was 16).
+		expect(budget).toEqual({ movetimeMs: 600, depthCap: 17, multiPv: 20 });
 		expect(s.engine.multiPv).toBe(4);
 		expect(searchBudget({ ...comfortable("blitz"), targetElo: 3800 }, s).multiPv).toBe(6);
 		expect(searchBudget({ ...comfortable("blitz"), targetElo: 1650, legalMoves: 2 }, s).multiPv).toBe(
@@ -273,7 +284,11 @@ describe("§6.4 / §7.5 search budget", () => {
 		);
 	});
 
-	it("the estimate scales with the clock and the speed knob", () => {
+	// Updated 2026-09-15 (owner: "settings shouldnt really be modifying the model's ability to give
+	// good moves"). This test used to pin `slow ≈ normal × 2` for `speedScale: 2` — the search
+	// allocation moving with the user's speed slider, which is exactly what the rework removes.
+	// The clock half of the old assertion is untouched and still pinned below.
+	it("the estimate scales with the clock and with nothing the user sets for speed", () => {
 		const base = {
 			fen: START,
 			ply: 0,
@@ -285,11 +300,41 @@ describe("§6.4 / §7.5 search budget", () => {
 			budgetUsedRatio: 0,
 		};
 		const normal = estimatedThinkMs(base, settings());
-		const slow = estimatedThinkMs(base, settings({}, { speedScale: 2 }));
 		const lowClock = estimatedThinkMs({ ...base, myClockMs: 20_000 }, settings());
-		expect(slow).toBeCloseTo(normal * 2, 6);
 		expect(lowClock).toBeLessThan(normal);
 		expect(normal).toBeGreaterThan(0);
+		// The engine keeps the allocation the target rating implies at every base speed, across the
+		// whole slider and at both ends of the clock.
+		for (const baseSpeed of [
+			SETTINGS_RANGES.baseSpeed.min,
+			0.5,
+			1,
+			2,
+			SETTINGS_RANGES.baseSpeed.max,
+		]) {
+			expect(estimatedThinkMs(base, settings({}, { baseSpeed }))).toBe(normal);
+			expect(estimatedThinkMs({ ...base, myClockMs: 20_000 }, settings({}, { baseSpeed }))).toBe(
+				lowClock
+			);
+		}
+	});
+
+	it("the search budget itself is unchanged across the base-speed slider", () => {
+		// `searchBudget` is sized from `estimatedThinkMs`, so the decoupling has to be visible in
+		// the movetime the engine is actually given — depth and breadth included.
+		const position = {
+			fen: START,
+			ply: 20,
+			myClockMs: 60_000,
+			oppClockMs: 60_000,
+			timeControl: { baseMs: 180_000, incMs: 0 },
+			tau: 0.5,
+			budgetUsedRatio: 0,
+			targetElo: 1800,
+		};
+		const reference = ownMoveBudget(position, settings());
+		for (const baseSpeed of [SETTINGS_RANGES.baseSpeed.min, 0.5, 2, SETTINGS_RANGES.baseSpeed.max])
+			expect(ownMoveBudget(position, settings({}, { baseSpeed }))).toEqual(reference);
 	});
 
 	it("the search estimate uses the rating-aware clock allocation exactly once", () => {
@@ -350,7 +395,7 @@ describe("recommendation pipeline (§3.2)", () => {
 			},
 			fallback: new V1ParametricHead(),
 		});
-		const timing = new TimingModel(head, DEFAULT_SETTINGS.timing, createRng("native-timing"));
+		const timing = new TimingModel(head, MODEL_TIMING, createRng("native-timing"));
 		timing.startGame({
 			targetElo: 1650,
 			profile: "balanced",
@@ -405,7 +450,7 @@ describe("recommendation pipeline (§3.2)", () => {
 			},
 			fallback: new V1ParametricHead(),
 		});
-		const timing = new TimingModel(head, DEFAULT_SETTINGS.timing, createRng("cached-native"));
+		const timing = new TimingModel(head, MODEL_TIMING, createRng("cached-native"));
 		const engine = fakeEngine((req) => analysisOf(req, ["e2e4", "d2d4"], 14));
 		const pipeline = new RecommendationPipeline({ engine, timing, book: null });
 		const out = await pipeline.run(input());
@@ -417,7 +462,7 @@ describe("recommendation pipeline (§3.2)", () => {
 			fallback: new V1ParametricHead(),
 			budgetMs: 5,
 		});
-		const timing = new TimingModel(head, DEFAULT_SETTINGS.timing, createRng("timing-timeout"));
+		const timing = new TimingModel(head, MODEL_TIMING, createRng("timing-timeout"));
 		const engine = fakeEngine((req) => analysisOf(req, ["e2e4", "d2d4"], 14));
 		const pipeline = new RecommendationPipeline({ engine, timing, book: null });
 		const out = await pipeline.run(input());
@@ -439,7 +484,7 @@ describe("recommendation pipeline (§3.2)", () => {
 			},
 			fallback: new V1ParametricHead(),
 		});
-		const timing = new TimingModel(head, DEFAULT_SETTINGS.timing, createRng("timing-urgent"));
+		const timing = new TimingModel(head, MODEL_TIMING, createRng("timing-urgent"));
 		const engine = fakeEngine((req) => analysisOf(req, ["e2e4", "d2d4"], 14));
 		const pipeline = new RecommendationPipeline({ engine, timing, book: null });
 		const race = await pipeline.run(
@@ -777,7 +822,6 @@ function heldPolicy(result: PolicyResult, knownTopMoves?: string[]) {
 		historyPlies: 1,
 		identity: policyQueryIdentity({
 			inputs,
-			mode: "maia",
 			selectionMode: strength({}).strength.selectionMode,
 		}),
 		...(knownTopMoves ? { knownTopMoves } : {}),
@@ -838,7 +882,9 @@ describe("Maia-3 selection in the pipeline (2026-09-11)", () => {
 		expect(maiaHistoryFens({ fen: START, moves: moves.slice(0, 2) }, fen)).toEqual([fen]);
 	});
 
-	it("queries Maia through 3000 and its prior through 3200", async () => {
+	// Owner, 2026-09-15: one division at the Maia cutoff. This case pinned the prior's query at 3200;
+	// the prior band is removed, so above the cutoff Maia is never asked.
+	it("queries Maia through 3000 and nothing above it", async () => {
 		const engine = fakeEngine((req) => analysisOf(req, FOUR, 14));
 		const { port, calls } = fakePolicy(async () => MAIA_START);
 		const pipeline = new RecommendationPipeline({
@@ -853,15 +899,16 @@ describe("Maia-3 selection in the pipeline (2026-09-11)", () => {
 		// The primary ceiling is inclusive and still uses an unrestricted referee.
 		await pipeline.run(input({ targetElo: MAIA.eloMax, settings: strength({}) }));
 		expect(calls).toHaveLength(2);
-		expect(calls[1]?.size).toBe(MAIA.prior.size);
+		expect(calls[1]?.size).toBe(maiaSizeFor(MAIA.eloMax));
 		expect(engine.requests.at(-1)?.elo).toBeUndefined();
-		await pipeline.run(input({ targetElo: 3200, settings: strength({}) }));
-		expect(calls).toHaveLength(3);
-		expect(calls[2]?.selfElo).toBe(3000);
-		expect(engine.requests.at(-1)?.elo).toBe(requestEloForTarget(3200));
-		// the top setting is the pure-engine escape hatch: no query of either kind
+		for (const targetElo of [MAIA.eloMax + 1, 3200]) {
+			await pipeline.run(input({ targetElo, settings: strength({}) }));
+			expect(calls).toHaveLength(2);
+			expect(engine.requests.at(-1)?.elo).toBe(requestEloForTarget(targetElo));
+		}
+		// the top setting is the pure-engine escape hatch
 		await pipeline.run(input({ targetElo: LIMITS.eloMax, settings: strength({}) }));
-		expect(calls).toHaveLength(3);
+		expect(calls).toHaveLength(2);
 		expect(engine.requests.at(-1)?.elo).toBeUndefined();
 	});
 
@@ -1885,11 +1932,14 @@ describe("the human-depth frame (2026-09-13, H4)", () => {
 	});
 });
 
-describe("Maia-79M as a prior above 3000 through 3200", () => {
+// Owner, 2026-09-15: "we just go straight from that to big net at 3000". This block pinned the
+// Maia-79M prior over (3000, 3200] — a capped query and a 12-root native referee; the band is
+// removed, so it now pins the plain native search with no query above the cutoff.
+describe("No Maia above the cutoff: straight to the full-network engine", () => {
 	const SIX = ["e2e4", "d2d4", "g1f3", "c2c4", "b1c3", "g2g3"];
 
-	it("queries 79M at capped selfElo with the native referee at priorCandidates roots", async () => {
-		for (const targetElo of [3001, 3100, 3200]) {
+	it("above 3000 the referee is native at the ordinary breadth and Maia is never asked", async () => {
+		for (const targetElo of [MAIA.eloMax + 1, 3100, 3200]) {
 			const engine = fakeEngine((req) => analysisOf(req, SIX, 18));
 			const { port, calls } = fakePolicy(async () => ({ ...MAIA_START, size: "79m" }));
 			const pipeline = new RecommendationPipeline({
@@ -1901,22 +1951,19 @@ describe("Maia-79M as a prior above 3000 through 3200", () => {
 			const out = await pipeline.run(
 				input({ targetElo, settings: strength({ selectionMode: "hybrid" }) })
 			);
-			expect(calls).toHaveLength(1);
-			expect(calls[0]?.size).toBe(MAIA.prior.size);
-			expect(calls[0]?.selfElo).toBe(Math.min(targetElo, MAIA.conditioningEloMax));
+			expect(calls).toHaveLength(0);
 			expect(engine.requests).toHaveLength(1);
 			expect(engine.requests[0]?.elo).toBe(requestEloForTarget(targetElo));
-			expect(engine.requests[0]?.multiPv).toBe(SEARCH_BUDGET.priorCandidates);
+			expect(engine.requests[0]?.multiPv).toBe(6);
+			expect(engine.requests[0]?.searchmoves).toBeUndefined();
 			expect(engine.requests[0]?.featureDepth).toBeUndefined();
-			expect(out?.budget.multiPv).toBe(SEARCH_BUDGET.priorCandidates);
-			expect(out?.rec.maia).toMatchObject({
-				size: "79m",
-				selfElo: Math.min(targetElo, MAIA.conditioningEloMax),
-			});
+			expect(out?.rec.maia).toBeUndefined();
+			expect(out?.rec.chosen.source).toBe("engine-elo");
+			expect(out?.rec.chosen.uci).toBe("e2e4");
 		}
 	});
 
-	it("the prior never spends the extra referee search, and the top setting asks for no prior", async () => {
+	it("no extra referee search above the cutoff either, and the top setting asks for nothing", async () => {
 		const outside: PolicyResult = {
 			...MAIA_START,
 			size: "79m",
@@ -1934,7 +1981,7 @@ describe("Maia-79M as a prior above 3000 through 3200", () => {
 			policy: port,
 		});
 		await pipeline.run(input({ targetElo: 3100, settings: strength({}) }));
-		expect(calls).toHaveLength(1);
+		expect(calls).toHaveLength(0);
 		expect(engine.requests).toHaveLength(1);
 		expect(engine.requests[0]?.searchmoves).toBeUndefined();
 		const top = fakeEngine((req) => analysisOf(req, SIX, 18));
@@ -2215,7 +2262,7 @@ describe("one Maia-shaped search (2026-09-13, H10 / H17)", () => {
 		expect(late?.rec.chosen.source).toBe("maia");
 	});
 
-	it("a clock race and the H15 prior are untouched: no shaped search, whatever is held", async () => {
+	it("a clock race and targets above the Maia cutoff are untouched: no shaped search, whatever is held", async () => {
 		const race = fakeEngine(referee);
 		const { port, calls } = fakePolicy(async () => MAIA_OUTSIDE);
 		const out = await pipelineWith(race, port).run(
@@ -2233,15 +2280,18 @@ describe("one Maia-shaped search (2026-09-13, H10 / H17)", () => {
 		expect(race.requests).toHaveLength(1);
 		expect(race.requests[0]?.searchmoves).toBeUndefined();
 		expect(race.requests[0]?.elo).toBe(requestEloForTarget(1500));
-		// above MAIA.eloMax the prior keeps its 12-root native search
-		const prior = fakeEngine((req) => analysisOf(req, [...FOUR, "b1c3", "g2g3"], 14));
-		await pipelineWith(prior, fakePolicy(async () => MAIA_OUTSIDE).port).run(
+		// Above MAIA.eloMax there is no Maia at all since 2026-09-15 (this pinned the removed prior's
+		// 12-root search): the held answer is ignored and the search is the plain native one.
+		const high = fakeEngine((req) => analysisOf(req, [...FOUR, "b1c3", "g2g3"], 14));
+		const highPolicy = fakePolicy(async () => MAIA_OUTSIDE);
+		await pipelineWith(high, highPolicy.port).run(
 			input({ targetElo: 3100, settings: strength({}), policyAnswer: held(MAIA_OUTSIDE, FOUR) })
 		);
-		expect(prior.requests).toHaveLength(1);
-		expect(prior.requests[0]?.searchmoves).toBeUndefined();
-		expect(prior.requests[0]?.multiPv).toBe(SEARCH_BUDGET.priorCandidates);
-		expect(prior.requests[0]?.elo).toBe(requestEloForTarget(3100));
+		expect(highPolicy.calls).toHaveLength(0);
+		expect(high.requests).toHaveLength(1);
+		expect(high.requests[0]?.searchmoves).toBeUndefined();
+		expect(high.requests[0]?.shaped).toBeUndefined();
+		expect(high.requests[0]?.elo).toBe(requestEloForTarget(3100));
 	});
 
 	it("H17: a confident Maia shrinks the search's movetime toward the floor; the request and the outcome's budget agree", async () => {
@@ -2387,26 +2437,29 @@ describe("selection routing and independent engine evidence", () => {
 			expect(out).not.toBeNull();
 			expect(engine.requests.length).toBeGreaterThan(0);
 			for (const req of engine.requests) expect(req.targetElo).toBe(targetElo);
-			expect(calls).toHaveLength(targetElo <= 3200 ? 1 : 0);
+			// One division at the Maia cutoff since 2026-09-15 (Maia used to be asked through 3200).
+			expect(calls).toHaveLength(targetElo <= MAIA.eloMax ? 1 : 0);
 			if (calls[0]) {
 				expect(calls[0].selfElo).toBeLessThanOrEqual(3000);
 				expect(calls[0].oppoElo).toBe(3400);
 			}
-			if (targetElo > 3200) {
+			if (targetElo > MAIA.eloMax) {
 				expect(out?.rec.maia).toBeUndefined();
 				expect(out?.rec.chosen.uci).toBe("e2e4");
 			}
 		}
 	});
 
-	it("rejects a held answer when conditioning, mode or repetition history changes", async () => {
+	// The query "mode" (Maia vs. the upper prior at 3100) went with the prior band on 2026-09-15;
+	// that change is now a conditioning change inside Maia's range, at the cutoff itself.
+	it("rejects a held answer when conditioning or repetition history changes", async () => {
 		const repeats = ["g1f3", "g8f6", "f3g1", "f6g8"];
 		const changes: Partial<RecommendationInput>[] = [
 			{ targetElo: 1600 },
 			{ opponentElo: 1600 },
 			{ form: 0.5 },
 			{ settings: strength({ selectionMode: "persona-sampling" }) },
-			{ targetElo: 3100 },
+			{ targetElo: MAIA.eloMax },
 			{
 				snapshot: snapshot({ fen: applyMoves(START, repeats)!, ply: 4 }),
 				history: { fen: START, moves: repeats },

@@ -1,6 +1,6 @@
 // test/integration/engine.test.ts
 /**
- * Real Stockfish: boots the vendored `sf_18_smallnet` build through
+ * Real Stockfish: boots the vendored `sf_19_smallnet` build through
  * `bootEngine` (the offscreen loader with its Bun-side deps injected) using a
  * shared `WebAssembly.Memory`, loads the bundled net, and searches. The
  * Emscripten glue detects `process.versions.node` and takes its Node code
@@ -87,7 +87,7 @@ if (typeof SharedArrayBuffer === "undefined") {
 
 if (skipReason) console.log(`[integration/engine] SKIPPED: ${skipReason}`);
 
-describe("Stockfish 18 smallnet (real wasm)", () => {
+describe("Stockfish 19 smallnet (real wasm)", () => {
 	it.skipIf(skipReason !== undefined)(
 		"answers uci with uciok, loads the bundled net, and finds a bestmove at depth 8",
 		async () => {

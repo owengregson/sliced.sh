@@ -31,9 +31,12 @@ to shorten; "15 s ≈ today's 20 s" could not be met without making 15 s *slower
 `TIMING_CONSTANTS.lowClockPace` — `[seconds left, factor]` knots `[45, 1] [30, 0.82]
 [20, 0.62]`, linear between, 1 at and above 45 s, held at 0.62 under 20 s; and
 `handS = 0.85`, the natural hand. `lowClockPaceFactor` (`src/core/timing/pressure.ts`)
-is applied in the three places `speedScale` is, and only there:
+is applied in the three places the speed knob was, and only there (the knob itself was
+renamed and inverted on 2026-09-15 — `timing.speedScale` became `timing.baseSpeed`, and what
+the model reads is now `moveTimeScale`; the three sites below are unchanged, except that site 3
+no longer carries any speed setting at all):
 
-1. the head's think in `planMove` (`tSec *= speedScale * lowPace`, never a premove);
+1. the head's think in `planMove` (`tSec *= moveTimeScale * lowPace`, never a premove);
 2. the move-window cap in `capFor`: `max(budgetCap · g, min(budgetCap, handS))` —
    the cap scales with the factor but never under a natural hand, and a cap already
    under `handS` (the last ~15 s, where every draw is cap-bound and the plan *is* the

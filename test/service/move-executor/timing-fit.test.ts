@@ -44,7 +44,7 @@ describe("execution budget fitting", () => {
 		}
 	});
 	it("charges setup delays to the original window and keeps every phase inside it", () => {
-		for (const left of [1700, 700, 300]) {
+		for (const left of [1700, 700, 300, 240, 80, 20]) {
 			const fitted = fitTiming(plan, left);
 			expect(fitted.thinkMs).toBe(left);
 			expect(windowTotalMs(fitted.window)).toBeCloseTo(left, 8);
@@ -59,5 +59,11 @@ describe("execution budget fitting", () => {
 		expect(instant.thinkMs).toBe(plan.window.approachMs);
 		expect(windowTotalMs(instant.window)).toBe(instant.thinkMs);
 		expect(instant.window.scanMs + instant.window.previewMs + instant.window.decisionMs).toBe(0);
+	});
+	it("an expired normal window adds no fresh thinking, leaving physical feasibility to the hand", () => {
+		const fitted = fitTiming(plan, -100);
+		expect(fitted.thinkMs).toBe(0);
+		expect(windowTotalMs(fitted.window)).toBe(0);
+		expect(fitted.deadlineMs).toBe(plan.deadlineMs);
 	});
 });

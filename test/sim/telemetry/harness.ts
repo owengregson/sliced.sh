@@ -12,8 +12,10 @@
  * — the page half, the shadow, `assertHumanShapedAc` — stays as it is.
  */
 
+import { phase as phaseOf } from "@core/chess/phase";
 import { DEFAULT_SETTINGS } from "@core/constants/defaults";
 import { TELEMETRY_BANDS } from "@core/constants/telemetry";
+import { isSharp } from "@core/motor/opponent-candidates";
 import { createRng, type Rng } from "@core/rng";
 import { tcClass } from "@core/timing/features";
 import { TimingModel } from "@core/timing/timing-model";
@@ -113,6 +115,8 @@ export interface SimulatedMove {
 	nReasonable: number;
 	myClockMs: number;
 	result: ExecutionResult;
+	/** Arrival-to-submission duration used by the live timing feedback; null if nothing landed. */
+	actualMs: number | null;
 	commands: MouseCommand[];
 	/** The site's blur inside this window, when one was injected … */
 	blurAt?: number;
@@ -205,7 +209,8 @@ export function timingLogOf(game: SimulatedGame, gameId: string): TimingLogEntry
 			ply: m.ply,
 			mode: m.plan.mode,
 			plannedMs: m.plan.thinkMs,
-			actualMs: m.observation?.ac.MoveHoldTime ?? null,
+			actualMs: m.actualMs,
+			...(m.actualMs === null ? {} : { executionMs: m.result.elapsedMs }),
 			alloc: f.alloc ?? 0,
 			clockMs: m.myClockMs,
 			comp: f.comp ?? 0,
@@ -306,14 +311,15 @@ export async function runSimulatedGame(options: SimulatedGameOptions): Promise<S
 				// Through the session's own boundaries (`SETTING_GAIN`, 2026-09-13), so the bands
 				// measure what a default install runs, not the raw slider values.
 				previewScale:
-					options.previewScale ?? executorSettingsFor(DEFAULT_SETTINGS.execution).previewScale,
+					options.previewScale ??
+					executorSettingsFor(DEFAULT_SETTINGS.execution, DEFAULT_SETTINGS.timing).previewScale,
 				gameSeed: options.seed,
 			});
 			const timing = new TimingModel(
 				new V1ParametricHead(),
 				// The game's own clock, for the same reason the motor class above is derived and never
 				// handed in: `timingSettingsFor` reads the time control for the preset *and*, since
-				// 2026-09-13, for the per-class base-speed gain (`SETTING_GAIN.speedScale`). Passing
+				// 2026-09-13, for the per-class move-time gain (`SETTING_GAIN.moveTimeScale`). Passing
 				// `undefined` here ran every simulated game — a 10+0 included — on the blitz gain, which
 				// is a configuration no production session has.
 				timingSettingsFor(DEFAULT_SETTINGS.timing, {
@@ -414,6 +420,18 @@ export async function runSimulatedGame(options: SimulatedGameOptions): Promise<S
 		const plan = swHandle.timing.planMove(contextFor(chosen, lines, ply));
 		const rec = recommend(chosen, lines, plan);
 		const ctx: MoveContext = {
+			// Match GameSession.moveContext: without this the telemetry suite exercises the
+			// legacy independent-gesture planner instead of the live repertoire policy.
+			repertoire: {
+				targetElo,
+				phase: phaseOf(rec.fen, ply) ?? "middlegame",
+				persona,
+				sharp: isSharp(rec.fen, rec.lines),
+				inCheck: page.board.chess.isCheck(),
+				forced: page.board.chess.moves().length === 1,
+				// This driver schedules ordinary own-turn moves; it never queues or holds a premove.
+				premovePending: false,
+			},
 			myClockMs: clocks.w,
 			nReasonable,
 			candidates: lines.map((l, i) => ({
@@ -433,6 +451,7 @@ export async function runSimulatedGame(options: SimulatedGameOptions): Promise<S
 			plan,
 			nReasonable,
 			myClockMs: clocks.w,
+			actualMs: null,
 			result: {
 				ok: false,
 				outcome: "failed",
@@ -467,6 +486,17 @@ export async function runSimulatedGame(options: SimulatedGameOptions): Promise<S
 			sim,
 			...(hook ? { hook } : {}),
 		});
+		if (entry.result.ok) {
+			// Match GameSession.recordMove: the receipt can arrive after post-drop rest and
+			// verification, and the hand may have started after the original timing window.
+			const result = entry.result;
+			const submittedAt =
+				result.submittedAt ??
+				(result.startedAt === undefined
+					? (result.at ?? sim.now())
+					: result.startedAt + result.elapsedMs);
+			entry.actualMs = Math.max(result.elapsedMs, submittedAt - rec.computedAt);
+		}
 		entry.commands = flatten(sim.debugger.commands.slice(firstCommand));
 		const blurAt = page.lastBlurAt();
 		if (blurAt !== null && blurAt >= plan.deadlineMs - plan.thinkMs) {
@@ -493,9 +523,8 @@ export async function runSimulatedGame(options: SimulatedGameOptions): Promise<S
 		if (!chosen) break;
 		let move = await playOne(index, undefined, chosen, lines, nReasonable);
 		if (!move.result.ok && move.result.outcome === "skipped") {
-			// §13.4: the move is played only after a fresh position/window — the user clicks into the
-			// board again, the timing model observes the extra elapsed time, a new window opens.
-			swHandle.timing.observe(sim.now() - (move.plan.deadlineMs - move.plan.thinkMs), move.plan);
+			// A skipped attempt submitted nothing. Like the live session, do not train timing
+			// feedback on its abort/blur wait; refocus opens a fresh position window instead.
 			await swHandle.context.run(() => sim.time.advance(SIM_TELEMETRY.refocusPauseMs));
 			page.clickIntoBoard();
 			await sim.time.runMicrotasks();
@@ -503,9 +532,13 @@ export async function runSimulatedGame(options: SimulatedGameOptions): Promise<S
 			swHandle.focus.positionArrived(tabId, sim.now());
 			move = await playOne(index, index, chosen, lines, nReasonable);
 		}
-		if (!move.result.ok) break;
-		const hold = move.observation?.ac.MoveHoldTime ?? move.result.elapsedMs;
-		swHandle.timing.observe(hold, move.plan);
+		if (!move.result.ok || move.actualMs === null) break;
+		const hold = move.actualMs;
+		swHandle.timing.observe(hold, move.plan, {
+			gameId: options.seed,
+			ply: move.ply,
+			adaptPace: move.result.paceOverride !== true,
+		});
 		myThinkHistory.push(hold);
 		clocks.w = Math.max(0, clocks.w - hold + incSec * 1000);
 		uciHistory.push(

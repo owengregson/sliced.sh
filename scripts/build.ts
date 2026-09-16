@@ -1,8 +1,14 @@
 // scripts/build.ts
-import { cp, mkdir, rm } from "node:fs/promises";
+import { cp, mkdir, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import config from "../build.config.json" with { type: "json" };
 import pkg from "../package.json" with { type: "json" };
+import {
+	FORCED_MATE_SOUNDS,
+	MOVE_RATING_SOUNDS,
+	SOUNDS,
+	SOUNDS_DIR,
+} from "../src/core/constants/sounds";
 
 export interface BuildOptions {
 	dev: boolean;
@@ -19,6 +25,23 @@ export interface BuildEnv extends BuildOptions {
 }
 export const ROOT = path.resolve(import.meta.dir, "..");
 export const DIST = path.join(ROOT, "dist");
+
+/** Keep source recordings intact; the generated package needs only clips the runtime names. */
+export async function prunePackagedSounds(dist: string): Promise<string[]> {
+	const dir = path.join(dist, SOUNDS_DIR);
+	const required = new Set<string>([
+		...Object.values(SOUNDS),
+		...Object.values(MOVE_RATING_SOUNDS),
+		FORCED_MATE_SOUNDS.file,
+	]);
+	const files = await readdir(dir);
+	const present = new Set(files);
+	for (const name of required)
+		if (!present.has(name)) throw new Error(`package: registered sound ${name} is missing`);
+	const obsolete = files.filter((name) => /\.(?:mp3|wav|ogg)$/i.test(name) && !required.has(name));
+	for (const name of obsolete) await rm(path.join(dir, name));
+	return obsolete.sort();
+}
 
 /**
  * One seed per build: the page programs (`gen-pagescript`) and the content
@@ -63,8 +86,18 @@ export const steps: Step[] = [
 	{ name: "bundle", run: bundle },
 	{
 		name: "copy",
-		run: async () => {
+		run: async (o) => {
 			await (await import("./nnue-assets.ts")).copyBundledAssets(ROOT, DIST);
+			const omittedSounds = await prunePackagedSounds(DIST);
+			if (omittedSounds.length > 0)
+				console.log(`sounds: omitted ${omittedSounds.length} unregistered clips from the package`);
+			if (!o.dev) {
+				const savings = await (await import("./optimize-model-packages.ts")).optimizeModelPackages(
+					DIST
+				);
+				const saved = savings.reduce((sum, model) => sum + model.before - model.after, 0);
+				console.log(`models: lossless recompression saved ${saved.toLocaleString("en-US")} bytes`);
+			}
 			for (const d of ["css", "pages"])
 				await cp(path.join(ROOT, d), path.join(DIST, d), { recursive: true });
 		},

@@ -6,13 +6,7 @@
 import { describe, expect, it } from "bun:test";
 import { LIMITS } from "@core/constants/limits";
 import { MAIA, MAIA_SIZES } from "@core/constants/maia";
-import {
-	maiaConditioningElo,
-	maiaPriorGapCp,
-	maiaSizeFor,
-	usesMaia,
-	usesMaiaPrior,
-} from "@core/policy/maia-size";
+import { maiaConditioningElo, maiaSizeFor, usesMaia } from "@core/policy/maia-size";
 
 describe("usesMaia", () => {
 	it("selects through the inclusive Maia-led ceiling", () => {
@@ -23,23 +17,18 @@ describe("usesMaia", () => {
 		expect(usesMaia(800)).toBe(true);
 		expect(usesMaia(0)).toBe(true);
 	});
-	it("usesMaiaPrior covers only (3000, 3200], disjoint from direct Maia", () => {
-		expect(usesMaiaPrior(MAIA.eloMax - 1)).toBe(false);
-		expect(usesMaiaPrior(MAIA.eloMax)).toBe(false);
-		expect(usesMaiaPrior(3001)).toBe(true);
-		expect(usesMaiaPrior(3200)).toBe(true);
-		expect(usesMaiaPrior(3201)).toBe(false);
-		expect(usesMaiaPrior(LIMITS.eloMax)).toBe(false);
-		for (const target of [800, 2599, 2600, 3200, LIMITS.eloMax])
-			expect(usesMaia(target) && usesMaiaPrior(target)).toBe(false);
+	// Owner, 2026-09-15: one division at the Maia cutoff. This case used to pin the (3000, 3200]
+	// `usesMaiaPrior` band (and its 12 → 4 cp `maiaPriorGapCp`); the band is removed, so it now pins
+	// that nothing Maia remains above `MAIA.eloMax`.
+	it("is the one strength division: no Maia of any kind above the cutoff", () => {
+		for (const target of [MAIA.eloMax + 1, 3100, 3200, 3201, LIMITS.eloMax])
+			expect(usesMaia(target)).toBe(false);
+		expect(usesMaia(Number.NaN)).toBe(false);
 	});
-	it("caps conditioning independently of selection and narrows the upper prior", () => {
+	it("caps conditioning independently of selection", () => {
 		for (const elo of [400, 800, 2400, 2800, 3000]) expect(maiaConditioningElo(elo)).toBe(elo);
 		for (const elo of [3001, 3200, 3800, 5000]) expect(maiaConditioningElo(elo)).toBe(3000);
 		expect(maiaConditioningElo(Number.NaN)).toBe(MAIA.context.eloFloor);
-		expect(maiaPriorGapCp(3000)).toBe(12);
-		expect(maiaPriorGapCp(3100)).toBe(8);
-		expect(maiaPriorGapCp(3200)).toBe(4);
 	});
 	it("rounds the actual self-conditioning value only after clamping it", () => {
 		expect(maiaConditioningElo(-0.6)).toBe(0);
@@ -74,7 +63,6 @@ describe("maiaSizeFor", () => {
 	it("2026-09-13: one shipped size, the 79M model, for every rating (the Elo travels in the query)", () => {
 		expect(MAIA_SIZES).toEqual(["79m"]);
 		expect(MAIA.defaultSize).toBe("79m");
-		expect(MAIA.prior.size).toBe("79m");
 		expect(MAIA.sizeBands).toEqual([{ maxElo: MAIA.eloMax, size: "79m" }]);
 		for (const target of [-100, 0, 800, 1399, 1400, 1999, 2000, 2599, 2600, 3200, 5000])
 			expect(maiaSizeFor(target)).toBe("79m");

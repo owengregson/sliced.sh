@@ -1,20 +1,26 @@
 import { expect, it } from "bun:test";
 import { LIMITS } from "@core/constants/limits";
+import { MAIA } from "@core/constants/maia";
 import { HUMAN_DEPTH } from "@core/constants/search";
 import { automaticDepthForElo, humanDepth } from "@core/engine/depth-policy";
 
-it("uses the active Elo curve and the maximum setting strictly above 3200", () => {
+// Owner, 2026-09-15: the small-network curve now ends at the Maia cutoff, where the full network
+// takes over (it ended at the former 3200 network switch). The same 6 → 28 ceiling spans 400–3000
+// instead of 400–3200, so each rating below the cutoff gets a slightly deeper cap than before.
+it("uses the active Elo curve and the maximum setting strictly above the Maia cutoff", () => {
+	expect(MAIA.eloMax).toBe(3000);
 	for (const [elo, depth] of [
 		[400, 6],
 		[800, 9],
-		[1200, 12],
-		[1650, 16],
-		[1673, 16],
-		[2000, 19],
-		[2400, 22],
-		[2800, 25],
-		[3200, 28],
-		[3201, 30],
+		[1200, 13],
+		[1650, 17],
+		[1673, 17],
+		[2000, 20],
+		[2400, 23],
+		[2800, 26],
+		[3000, 28],
+		[3001, 30],
+		[3200, 30],
 		[3800, 30],
 	])
 		expect(automaticDepthForElo(elo!)).toBe(depth!);

@@ -163,8 +163,15 @@ describe("bundled books", () => {
 		expect(ucis).toContain("d2d4");
 	});
 
-	it("both books are sorted by key (binary search precondition)", () => {
-		for (const name of [BOOKS.gm2600, BOOKS.club]) {
+	it("theory holds every named first move, both main ones among them", () => {
+		const ucis = lookup(bookBytes(BOOKS.theory), START).map((m) => m.uci);
+		expect(ucis.length).toBeGreaterThanOrEqual(20);
+		expect(ucis).toContain("e2e4");
+		expect(ucis).toContain("d2d4");
+	});
+
+	it("every bundled book is sorted by key (binary search precondition)", () => {
+		for (const name of [BOOKS.gm2600, BOOKS.club, BOOKS.theory]) {
 			const bytes = bookBytes(name);
 			const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 			let prev = 0n;

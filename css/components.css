@@ -432,7 +432,6 @@
 
 .sl-toggle--locked .sl-toggle__thumb,
 .sl-toggle[aria-disabled="true"] .sl-toggle__thumb {
-	background: var(--sl-color-text-disabled);
 	box-shadow: none;
 }
 
@@ -564,10 +563,9 @@
 	transition-duration: var(--sl-motion-duration-1);
 }
 
-.sl-slider__scale {
-	display: flex;
-	justify-content: space-between;
-	color: var(--sl-color-text-tertiary);
+/* the current value's category under a strength slider ("Club"), in place of every category name */
+.sl-slider__caption {
+	color: var(--sl-color-text-secondary);
 }
 
 .sl-slider__value {

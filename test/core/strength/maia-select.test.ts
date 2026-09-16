@@ -304,16 +304,19 @@ describe("selectMove — Maia scope (f)(g)", () => {
 		expect(withMaia.source).not.toBe("maia");
 		expect(withMaia.rationale.join(" ")).not.toContain("maia");
 	});
-	it("(f) above MAIA.eloMax through3200 Maia is an engine-pool prior", () => {
-		for (const targetElo of [3001, 3100, 3200]) {
+	// Owner, 2026-09-15: one division at the Maia cutoff. This case pinned the engine-pool prior over
+	// (3000, 3200]; the band is removed, so above `MAIA.eloMax` the Maia context is ignored outright.
+	it("(f) above MAIA.eloMax the Maia context is ignored: same seed, same move as without it", () => {
+		for (const targetElo of [MAIA.eloMax + 1, 3100, 3200]) {
+			const without = selectMove(FOUR, ctx({ targetElo, rng: createRng(7) }), flatPrior(FOUR));
 			const m = selectMove(
 				FOUR,
 				ctx({ targetElo, maia: MAIA_FOUR, rng: createRng(7) }),
 				flatPrior(FOUR)
 			);
-			expect(m.source).toBe("maia");
-			expect(m.rationale.join(" ")).toContain("maia prior: 79m");
-			expect(m.rationale.join(" ")).not.toContain("maia E=");
+			expect(m).toEqual(without);
+			expect(m.source).not.toBe("maia");
+			expect(m.rationale.join(" ")).not.toContain("maia");
 		}
 	});
 	it("(f) just below the ceiling Maia decides — the target Elo alone is the switch", () => {

@@ -187,7 +187,7 @@ export function parseOption(line: string): { name: string; spec: UciOptionSpec }
 	return { name, spec };
 }
 
-/** `id name Stockfish 18` / `id author …` */
+/** `id name Stockfish 19` / `id author …` */
 export function parseId(line: string): { key: "name" | "author"; value: string } | undefined {
 	const t = tokenise(line);
 	if (t[0] !== "id") return undefined;

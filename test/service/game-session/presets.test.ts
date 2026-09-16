@@ -1,16 +1,17 @@
-// test/service/game-session/presets.test.ts — Task 30 checklist item 8 / Appendix F §4.6: the
-// timing preset a detected time control selects, and what it means numerically. The Settings
-// view's chips display exactly this, so the two can never drift apart.
+// test/service/game-session/presets.test.ts — the knobs the timing model actually runs with.
+//
+// 2026-09-15: the timing presets were removed at the owner's request ("remove the timing presets
+// 'fast natural slow' etc."). The assertions that pinned `PROFILE_FOR_TC_CLASS`,
+// `TIMING_PROFILE_KNOBS`, `effectiveTimingProfile` and `autoPlayAllowed` — the detected-preset
+// table, the preset knob, and `manual` never auto-playing — described a feature that no longer
+// exists and were deleted with it, not weakened. What remains is everything that still decides a
+// move's pace: the per-time-control gain, the user's base speed, and the knobs that carry their
+// own gains. The block below also pins that no preset factor survives anywhere in the product.
 import { describe, expect, it } from "bun:test";
 import { DEFAULT_SETTINGS } from "@core/constants/defaults";
+import { SETTINGS_RANGES } from "@core/constants/limits";
 import { effectivePremoveTendency, SETTING_GAIN } from "@core/constants/setting-gain";
-import { PROFILE_FOR_TC_CLASS, TIMING_PROFILE_KNOBS } from "@core/constants/timings";
-import { PROFILE_FOR_TC_CLASS as PANEL_PROFILE_FOR_TC_CLASS } from "@panel/views/settings/rows";
-import {
-	autoPlayAllowed,
-	effectiveTimingProfile,
-	timingSettingsFor,
-} from "@service/game-session/presets";
+import { timingSettingsFor } from "@service/game-session/presets";
 import type { TimeControl } from "@typedefs/game";
 import type { Settings } from "@typedefs/settings";
 
@@ -22,102 +23,76 @@ const BULLET: TimeControl = { baseMs: 60 * S, incMs: 0 }; // 60 s → bullet
 const BLITZ: TimeControl = { baseMs: 3 * M, incMs: 0 }; // 180 s → blitz
 const RAPID: TimeControl = { baseMs: 10 * M, incMs: 0 }; // 600 s → rapid
 const CLASSICAL: TimeControl = { baseMs: 30 * M, incMs: 0 }; // 1800 s → classical
-const UNTIMED: TimeControl = { baseMs: 0, incMs: 0 };
 
 const timing = (patch: Partial<Settings["timing"]> = {}): Settings["timing"] => ({
 	...DEFAULT_SETTINGS.timing,
 	...patch,
 });
 
-describe("timing presets (§4.6)", () => {
-	it("the panel's chips and the session read one table", () => {
-		expect(PANEL_PROFILE_FOR_TC_CLASS).toBe(PROFILE_FOR_TC_CLASS);
-		expect(PROFILE_FOR_TC_CLASS).toEqual({
-			bullet: "fast",
-			blitz: "natural",
-			rapid: "natural",
-			classical: "slow",
-		});
-	});
-
-	it("a detected class selects its preset over a stored preset", () => {
-		for (const stored of ["fast", "natural", "slow"] as const) {
-			expect(effectiveTimingProfile(stored, BULLET)).toBe("fast");
-			expect(effectiveTimingProfile(stored, BLITZ)).toBe("natural");
-			expect(effectiveTimingProfile(stored, RAPID)).toBe("natural");
-			expect(effectiveTimingProfile(stored, CLASSICAL)).toBe("slow");
-		}
-	});
-
-	it("manual and custom are the user's own choice and are never overridden", () => {
-		for (const tc of [BULLET, BLITZ, RAPID, CLASSICAL, UNTIMED, undefined]) {
-			expect(effectiveTimingProfile("manual", tc)).toBe("manual");
-			expect(effectiveTimingProfile("custom", tc)).toBe("custom");
-		}
-	});
-
-	it("an untimed game, or one whose time control is not known yet, keeps the stored profile", () => {
-		expect(effectiveTimingProfile("slow", UNTIMED)).toBe("slow");
-		expect(effectiveTimingProfile("slow", undefined)).toBe("slow");
-		expect(effectiveTimingProfile("fast", UNTIMED)).toBe("fast");
-	});
-
-	it("manual never auto-plays; every other profile does", () => {
-		expect(autoPlayAllowed("manual")).toBe(false);
-		for (const p of ["fast", "natural", "slow", "custom"] as const)
-			expect(autoPlayAllowed(p)).toBe(true);
-	});
-
-	it("the preset scales the user's speed slider (natural is the identity)", () => {
-		// The two multipliers are log-symmetric about `natural` on the slider's own 0.05 grid.
-		expect(TIMING_PROFILE_KNOBS).toEqual({
-			fast: { speedScale: 0.75 },
-			natural: { speedScale: 1 },
-			slow: { speedScale: 1.35 },
-		});
-		// The user's 2× is re-based by `SETTING_GAIN.speedScale` for the detected class first (owner,
-		// 2026-09-13), then the preset scales that: bullet 2 × 1 × 0.75, classical 2 × 1.3 × 1.35.
-		const g = SETTING_GAIN.speedScale;
-		const base = timing({ profile: "natural", speedScale: 2 });
-		const bullet = timingSettingsFor(base, BULLET);
-		expect(bullet.profile).toBe("fast");
-		expect(bullet.speedScale).toBeCloseTo(2 * g.bullet * 0.75, 12);
-		const blitz = timingSettingsFor(base, BLITZ);
-		expect(blitz.profile).toBe("natural");
-		expect(blitz.speedScale).toBeCloseTo(2 * g.blitz, 12);
-		const rapid = timingSettingsFor(base, RAPID);
-		expect(rapid.profile).toBe("natural");
-		expect(rapid.speedScale).toBeCloseTo(2 * g.rapid, 12);
-		const classical = timingSettingsFor(base, CLASSICAL);
-		expect(classical.profile).toBe("slow");
-		expect(classical.speedScale).toBeCloseTo(2 * g.classical * 1.35, 12);
+describe("the timing knobs a game runs with", () => {
+	it("the per-time-control gain is the only class-dependent factor left", () => {
+		const g = SETTING_GAIN.moveTimeScale;
+		// At the default base speed (1) the gain stands alone: no preset multiplies it any more.
+		// The numbers a preset used to contribute — bullet ×0.75, classical ×1.35 — are gone, so
+		// these products are the gains themselves.
+		for (const [tc, cls] of [
+			[BULLET, "bullet"],
+			[BLITZ, "blitz"],
+			[RAPID, "rapid"],
+			[CLASSICAL, "classical"],
+		] as const)
+			expect(timingSettingsFor(timing(), tc).moveTimeScale).toBeCloseTo(g[cls], 12);
 		// The gain that differs by class is the point of the 2026-09-13 change: a 3+0 is not paced
 		// like a 15+10.
 		expect(g.blitz).toBeLessThan(g.classical);
 	});
 
-	it("manual and custom take no preset knob — only the internal gains", () => {
-		for (const profile of ["manual", "custom"] as const) {
-			const base = timing({ profile, speedScale: 1.4, varianceScale: 0.3 });
-			for (const [tc, cls] of [
-				[BULLET, "bullet"],
-				[CLASSICAL, "classical"],
-			] as const) {
-				const out = timingSettingsFor(base, tc);
-				expect(out).toEqual({
-					...base,
-					speedScale: 1.4 * SETTING_GAIN.speedScale[cls],
-					longThinkFrequency: base.longThinkFrequency * SETTING_GAIN.longThinkFrequency,
-					premoveTendency: effectivePremoveTendency(base.premoveTendency),
-				});
-			}
-		}
+	it("no preset factor survives: bullet is not 0.75× and classical is not 1.35×", () => {
+		const g = SETTING_GAIN.moveTimeScale;
+		const base = timing({ baseSpeed: 0.5 });
+		// A user at half speed takes twice as long, re-based by the class gain — and by nothing
+		// else. The pre-2026-09-15 products were 2 × g.bullet × 0.75 and 2 × g.classical × 1.35.
+		expect(timingSettingsFor(base, BULLET).moveTimeScale).toBeCloseTo(2 * g.bullet, 12);
+		expect(timingSettingsFor(base, CLASSICAL).moveTimeScale).toBeCloseTo(2 * g.classical, 12);
+		// The model's knobs no longer carry a profile at all.
+		const out = timingSettingsFor(DEFAULT_SETTINGS.timing, BLITZ);
+		expect(Object.keys(out).sort()).toEqual([
+			"longThinkFrequency",
+			"moveTimeScale",
+			"premoveTendency",
+			"respectBudget",
+			"varianceScale",
+		]);
+		expect("profile" in out).toBe(false);
+	});
+
+	it("a `profile` left in storage by an older build cannot change the pace", () => {
+		// The leaf is gone from `Settings`, so a stored one can only ever arrive as an extra key
+		// on the object the normaliser rebuilt (which drops it) or on a hand-written patch.
+		const legacy = { ...DEFAULT_SETTINGS.timing, profile: "fast" } as Settings["timing"];
+		for (const tc of [BULLET, BLITZ, RAPID, CLASSICAL, undefined])
+			expect(timingSettingsFor(legacy, tc)).toEqual(timingSettingsFor(DEFAULT_SETTINGS.timing, tc));
+	});
+
+	// ── base speed, 2026-09-15: higher must mean faster, and it is inverted exactly here ──────
+	it("higher base speed is a shorter move, and this is the only place the inversion happens", () => {
+		const at = (baseSpeed: number) => timingSettingsFor(timing({ baseSpeed }), BLITZ).moveTimeScale;
+		// The owner's complaint in one line: the number the user raises must shorten the move.
+		expect(at(2)).toBeLessThan(at(1));
+		expect(at(1)).toBeLessThan(at(0.5));
+		// Exactly reciprocal, with the per-class gain (blitz 1.0) and nothing else beside it.
+		for (const baseSpeed of [0.35, 0.5, 1, 2, 4])
+			expect(at(baseSpeed)).toBeCloseTo(SETTING_GAIN.moveTimeScale.blitz / baseSpeed, 12);
+		// A stored value outside the slider cannot escape the range, and a non-number is ignored.
+		const { min, max } = SETTINGS_RANGES.baseSpeed;
+		expect(at(99)).toBeCloseTo(at(max), 12);
+		expect(at(0)).toBeCloseTo(at(min), 12);
+		expect(at(Number.NaN)).toBeCloseTo(at(1), 12);
 	});
 
 	it("every knob the model acts on is the user's number through its gain; the rest survive untouched", () => {
 		const base = timing({
-			profile: "natural",
-			speedScale: 1,
+			baseSpeed: 1,
 			varianceScale: 0.5,
 			premoveTendency: 0.9,
 			longThinkFrequency: 2,
@@ -125,9 +100,9 @@ describe("timing presets (§4.6)", () => {
 		});
 		const out = timingSettingsFor(base, BULLET);
 		expect(out).toEqual({
-			...base,
-			profile: "fast",
-			speedScale: SETTING_GAIN.speedScale.bullet * TIMING_PROFILE_KNOBS.fast.speedScale,
+			respectBudget: false,
+			varianceScale: 0.5,
+			moveTimeScale: SETTING_GAIN.moveTimeScale.bullet,
 			longThinkFrequency: 2 * SETTING_GAIN.longThinkFrequency,
 			premoveTendency: effectivePremoveTendency(0.9),
 		});
@@ -136,17 +111,17 @@ describe("timing presets (§4.6)", () => {
 	});
 
 	it("the default install runs the instructed effective values (owner, 2026-09-13)", () => {
-		// No time control yet: the base-speed gain takes the blitz value, because a live game whose
+		// No time control yet: the per-class gain takes the blitz value, because a live game whose
 		// clock has not been read yet is far more likely to be blitz than classical and erring slow is
-		// what loses games (`SETTING_GAIN.speedScale`).
+		// what loses games (`SETTING_GAIN.moveTimeScale`).
 		const unknown = timingSettingsFor(DEFAULT_SETTINGS.timing, undefined);
-		expect(unknown.profile).toBe("natural");
-		expect(unknown.speedScale).toBeCloseTo(SETTING_GAIN.speedScale.blitz, 12);
+		expect(unknown.moveTimeScale).toBeCloseTo(SETTING_GAIN.moveTimeScale.blitz, 12);
 		expect(unknown.longThinkFrequency).toBeCloseTo(0.8, 12);
 		expect(unknown.premoveTendency).toBeCloseTo(0.8, 12);
 		expect(unknown.varianceScale).toBe(DEFAULT_SETTINGS.timing.varianceScale);
-		// The instructed 1.3 is what a rapid game runs at; a 3+0 runs at 1.0.
-		expect(timingSettingsFor(DEFAULT_SETTINGS.timing, RAPID).speedScale).toBeCloseTo(1.3, 12);
-		expect(timingSettingsFor(DEFAULT_SETTINGS.timing, BLITZ).speedScale).toBeCloseTo(1, 12);
+		// The instructed 1.3 is what a rapid game runs at; a 3+0 runs at 1.0. Unchanged by the
+		// 2026-09-15 rework: the default `baseSpeed` is 1, so the gains stand alone.
+		expect(timingSettingsFor(DEFAULT_SETTINGS.timing, RAPID).moveTimeScale).toBeCloseTo(1.3, 12);
+		expect(timingSettingsFor(DEFAULT_SETTINGS.timing, BLITZ).moveTimeScale).toBeCloseTo(1, 12);
 	});
 });

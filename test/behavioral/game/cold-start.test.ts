@@ -106,7 +106,7 @@ async function bootOffscreen(): Promise<void> {
 			});
 		};
 		hooks.onLoadingNnue([...sf.recommended]);
-		return { sf, module: "sf_18_smallnet.js", nnue: [...sf.recommended] };
+		return { sf, module: "sf_19_smallnet.js", nnue: [...sf.recommended] };
 	};
 	off = await bootOffscreenContext(sim, {
 		entry: () => {

@@ -8,24 +8,27 @@ export const ENGINE_DIR = "assets/engine/";
  * `@lichess-org/stockfish-web` (§6.1–6.2). Names are bare file names; the offscreen host
  * resolves them with `chrome.runtime.getURL(ENGINE_DIR + name)`. Each `.js` is the Emscripten
  * ES-module factory and doubles as the pthread worker script. Net names are the SHA-256 prefix
- * of the file and live in `LIMITS` only; `full.nnue` is the bundled `[big, small]` pair.
+ * of the file and live in `LIMITS` only; `full.nnue` lists the full build's networks — one since
+ * Stockfish 19 retired the secondary net that used to sit inside that build (2026-09-15).
  *
  * Only the relaxed-SIMD builds ship (2026-09-13). Relaxed SIMD has been in Chrome since 114 and
- * the manifest requires 128, so the plain-SIMD `sf_18` / `sf_18_smallnet` programs the package
+ * the manifest requires 128, so the plain-SIMD `sf_19` / `sf_19_smallnet` programs the package
  * also publishes were dead weight (≈ 1.2 MB unpacked) — and the relaxed full build is what
  * lichess itself runs in Chrome (2026-09-12: the owner's pthread worker faults — "table index is
- * out of bounds" — were all on the plain build). The loader refuses to boot where the relaxed
+ * out of bounds" — were all on the plain build; 2026-09-15: the same fault on the relaxed build
+ * was the 512 MiB memory cap, not the build — see `LIMITS.engineMemoryMaxPages`). The loader
+ * refuses to boot where the relaxed
  * probe fails rather than falling back to a build that is not there.
  */
 export const ENGINE_FILES = {
 	smallnet: {
-		js: "sf_18_smallnet_relaxed-simd.js",
-		wasm: "sf_18_smallnet_relaxed-simd.wasm",
+		js: "sf_19_smallnet_relaxed-simd.js",
+		wasm: "sf_19_smallnet_relaxed-simd.wasm",
 		nnue: LIMITS.nnueSmallName,
 	},
 	full: {
-		js: "sf_18_relaxed-simd.js",
-		wasm: "sf_18_relaxed-simd.wasm",
+		js: "sf_19_relaxed-simd.js",
+		wasm: "sf_19_relaxed-simd.wasm",
 		nnue: LIMITS.nnueBigNames,
 	},
 } as const;
@@ -55,7 +58,7 @@ export const PACKAGED_ENGINE_FILES = [
 	...BUNDLED_NNUE,
 ] as const;
 
-/** The big source exceeds Git's hosting limit raw. Build expands it to its canonical name. */
+/** The full net is checked in gzipped to keep it small. Build expands it to its canonical name. */
 export const ENGINE_NNUE_SOURCES = BUNDLED_NNUE.map((name) => ({
 	name,
 	source: name === ENGINE_FILES.full.nnue[0] ? `${name}.gz` : name,

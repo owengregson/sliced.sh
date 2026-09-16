@@ -70,7 +70,7 @@ Useful surfaces while debugging:
 - **Side panel** — right-click inside the panel → Inspect.
 - **Offscreen document** — `chrome://extensions` → "Inspect views: offscreen.html" once the
   engine has booted.
-- **Log level** — Settings › Advanced, or the Engine view's level control.
+- **Log level** — Settings › Diagnostics, or the Engine view's level control.
 
 ---
 
@@ -118,7 +118,7 @@ Run as part of the build, or on its own with `bun run verify:dist`. It fails the
 - a junk file anywhere in the tree (`.DS_Store`, `Thumbs.db`, `._*`) — the copy step drops them,
   this proves it did;
 - `assets/engine/` holding anything but exactly `PACKAGED_ENGINE_FILES` (the two relaxed-SIMD
-  programs, the AGPL text and the three nets) — the copy step copies that directory by allowlist,
+  programs, the AGPL text and the two nets) — the copy step copies that directory by allowlist,
   so a build that stopped being vendored cannot ship just because it is still on disk.
 
 Those size ceilings are a specification, not a knob. If a build breaches one, the finding is the
@@ -187,7 +187,7 @@ regenerate it with `bun run vendor:engine`; never hand-edit it.
 ### 5.1 Stockfish (GPL-3.0-or-later) and stockfish-web (AGPL-3.0-or-later)
 
 `assets/engine/` holds unmodified copies of the published `@lichess-org/stockfish-web` files:
-Emscripten glue and build patches under **AGPL-3.0-or-later**, wrapping **Stockfish 18** under
+Emscripten glue and build patches under **AGPL-3.0-or-later**, wrapping **Stockfish 19** under
 **GPL-3.0-or-later**. sliced.sh's own code is not derived from Stockfish — it drives the engine
 over UCI through the package's public API — but the engine still ships inside the package. Only
 the relaxed-SIMD programs are vendored (`ENGINE_FILES`, since 2026-09-13: relaxed SIMD has been
@@ -199,7 +199,7 @@ written offer of corresponding source under GPL-3.0 §6 / AGPL-3.0 §6.** In pra
 
 1. The full AGPL text ships as `assets/engine/LICENSE` and is inside every zip.
 2. `docs/third-party.md` names the exact upstream sources — the stockfish-web repository at the
-   vendored npm version, and the Stockfish commit behind tag `sf_18` — and states that the
+   vendored npm version, and the Stockfish commit behind tag `sf_19` — and states that the
    maintainers will supply those sources on request, on a durable medium.
 3. That offer must remain honourable for as long as builds are distributed, and the contact route
    it points at (https://sliced.sh) must actually reach someone. **Confirm the contact route

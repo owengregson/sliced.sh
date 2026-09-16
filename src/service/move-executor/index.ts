@@ -22,6 +22,7 @@ import type { BoardGeometryReply, ExpectedMove } from "@core/constants/messages"
 import { TIMINGS } from "@core/constants/timings";
 import { log } from "@core/logger";
 import { FAST_TOUCH, LINE_PREVIEW, OPPONENT_EXPLORATION } from "@core/motor/constants";
+import { ExplorationPlanner } from "@core/motor/exploration";
 import { sampleRange } from "@core/motor/geometry";
 import { autoClickProbFor } from "@core/motor/input-style";
 import { type LinePreviewMode, planLinePreview } from "@core/motor/line-preview";
@@ -37,6 +38,7 @@ import {
 	type ExplorationSpell,
 	planOpponentExploration,
 } from "@core/motor/opponent-exploration";
+import type { MotorRepertoireContext, RepertoireState } from "@core/motor/repertoire";
 import { plausibleStart } from "@core/motor/sampling";
 import type {
 	ExecutionPlan,
@@ -49,6 +51,7 @@ import type {
 	TimeControlClass,
 } from "@core/motor/types";
 import { createRng } from "@core/rng";
+import { remainingMoveWindow } from "@core/timing/move-window";
 import { errorMessage } from "@core/util/errors";
 import {
 	defaultNow,
@@ -75,6 +78,7 @@ import {
 	preTouchMsOf,
 	type TimingWindow,
 } from "./hand-controller";
+import { type InputCriticalUpdate, InputCriticalWindow } from "./input-window";
 import { runWithRetry } from "./retry-policy";
 import { checkSquares, type VerifyResult, verifyMove } from "./verifier";
 
@@ -133,6 +137,7 @@ export interface MoveExecutorDeps extends ExecutorGameConfig {
 
 /** Per-move context the session knows and the recommendation does not carry. */
 export interface MoveContext {
+	repertoire?: MotorRepertoireContext;
 	myClockMs?: number;
 	/** A recovery must observe current square occupancy even when optional move verification is off. */
 	requirePositionCheck?: boolean;
@@ -170,6 +175,8 @@ export interface ExecutionReport {
 }
 
 export interface ExecutorEvents {
+	/** Classification-only admission; background review search may continue throughout input. */
+	inputCritical: InputCriticalUpdate;
 	executed: ExecutionReport;
 	/** Fix F: a premove gesture the hand completed during the opponent's turn (`MoveContext`). */
 	dispatched: ExecutionReport;
@@ -190,6 +197,7 @@ export interface ExecutorEvents {
 export type ExecutorEvent = keyof ExecutorEvents;
 
 interface Pending {
+	input: InputCriticalWindow;
 	rec: Recommendation;
 	timing: TimingPlan;
 	ctx: MoveContext;
@@ -264,7 +272,9 @@ export function instantTiming(plan: TimingPlan): TimingPlan {
  */
 export function fitTiming(plan: TimingPlan, availableMs: number): TimingPlan {
 	if (availableMs >= plan.thinkMs) return plan;
-	const thinkMs = Math.max(fastTouch(plan) ? fastFloor(plan) : EXECUTOR.minExecutionMs, availableMs);
+	// A positive remaining window is still the original release deadline. Physical motion
+	// limits belong to the hand; padding here silently turns short samples into a fixed floor.
+	const thinkMs = availableMs > 0 ? availableMs : fastTouch(plan) ? fastFloor(plan) : 0;
 	const touchBudget = Math.min(plan.window.approachMs, thinkMs);
 	const preTouch = Math.max(0, Math.min(preTouchMsOf(plan), thinkMs - touchBudget));
 	const fitted = withPreTouch(plan, preTouch);
@@ -362,6 +372,8 @@ export class MoveExecutor {
 	private inputVersion = 0;
 	private exploration: { ac: AbortController; done: Promise<void> } | null = null;
 	private explorationSeed = 0;
+	private readonly explorationPlanner = new ExplorationPlanner();
+	private opponentRepertoire: RepertoireState | undefined;
 	private waitingForExploration = 0;
 	/**
 	 * Line previews this game (`LINE_PREVIEW.maxPerGame`) and the moves (`fen:uci`) that already
@@ -675,9 +687,13 @@ export class MoveExecutor {
 							...candidates,
 							...(previousTarget ? { previousTarget } : {}),
 							...(previousSpell ? { previousSpell } : {}),
+							...(this.opponentRepertoire ? { repertoireState: this.opponentRepertoire } : {}),
 							quiet: !turn.ponder,
 						},
 						rng
+					);
+					const input = new InputCriticalWindow(this.now, this.scheduler, (update) =>
+						this.emit("inputCritical", update)
 					);
 					const controller = new HandController({
 						backend: this.createBackend(cursor),
@@ -688,15 +704,21 @@ export class MoveExecutor {
 						rng,
 						now: this.now,
 						scheduler: this.scheduler,
+						onInputDeadline: (at) => input.approachAt(at),
+						onCriticalInput: (busy) => input.setCritical(busy),
 						// No execution hand event: a position transition can arrive during any await.
 					});
 					const lowTime = candidates.policy?.lowTime === true;
 					const ownOnly = lowTime || candidates.policy?.ownOnly === true;
+					const ready = candidates.attention?.armed || candidates.attention?.repertoire?.premovePending;
 					try {
 						await controller.explore(this.tabId, plan.actions, ac.signal, geometry.boardRect, () => {
 							const live = source();
 							return (
-								live !== null && (!live.policy?.lowTime || lowTime) && (!live.policy?.ownOnly || ownOnly)
+								live !== null &&
+								(!live.policy?.lowTime || lowTime) &&
+								(!live.policy?.ownOnly || ownOnly) &&
+								(!(live.attention?.armed || live.attention?.repertoire?.premovePending) || !!ready)
 							);
 						});
 					} catch (error) {
@@ -704,9 +726,12 @@ export class MoveExecutor {
 						// Parent cancellation still exits the outer loop and retains the current endpoint.
 						if (isAbortedError(error) && !ac.signal.aborted) continue;
 						throw error;
+					} finally {
+						input.close();
 					}
 					previousTarget = plan.lastTarget ?? undefined;
 					previousSpell = plan.spell;
+					this.opponentRepertoire = plan.repertoireState;
 				}
 			})
 			.catch((error: unknown) => {
@@ -737,14 +762,15 @@ export class MoveExecutor {
 		const available = plan.deadlineMs - now;
 		const fireAt = available > plan.thinkMs ? plan.deadlineMs - plan.thinkMs : now;
 		const timing = fitTiming(plan, available);
+		const input = this.inputWindow(plan);
 		const timer = this.scheduler.setTimeout(
 			() => {
 				this.pending = null;
-				void this.execute(rec, timing, ctx);
+				void this.execute(rec, timing, ctx, input);
 			},
 			Math.max(0, fireAt - now)
 		);
-		this.pending = { rec, timing, ctx, fireAt, timer };
+		this.pending = { rec, timing, ctx, fireAt, timer, input };
 		log.debug("executor: scheduled", {
 			tabId: this.tabId,
 			uci: rec.chosen.uci,
@@ -832,7 +858,29 @@ export class MoveExecutor {
 	private async execute(
 		rec: Recommendation,
 		timing: TimingPlan,
-		ctx: MoveContext
+		ctx: MoveContext,
+		input = this.inputWindow(timing)
+	): Promise<ExecutionResult> {
+		try {
+			return await this.executeWithInput(rec, timing, ctx, input);
+		} finally {
+			input.close();
+		}
+	}
+
+	private inputWindow(timing: TimingPlan): InputCriticalWindow {
+		const input = new InputCriticalWindow(this.now, this.scheduler, (update) =>
+			this.emit("inputCritical", update)
+		);
+		input.approachAt(timing.deadlineMs - timing.window.approachMs);
+		return input;
+	}
+
+	private async executeWithInput(
+		rec: Recommendation,
+		timing: TimingPlan,
+		ctx: MoveContext,
+		input: InputCriticalWindow
 	): Promise<ExecutionResult> {
 		const version = this.inputVersion;
 		const exploration = this.exploration;
@@ -875,7 +923,7 @@ export class MoveExecutor {
 		}
 		if (this.disposed) return this.droppedReplacement(rec);
 		const ac = new AbortController();
-		const done = this.runOne(rec, timing, ctx, ac.signal, replacement);
+		const done = this.runOne(rec, timing, ctx, ac.signal, replacement, input);
 		this.running = { rec, timing, ctx, committed: false, ac, done, hold: null };
 		try {
 			return await done;
@@ -943,7 +991,8 @@ export class MoveExecutor {
 		timing: TimingPlan,
 		ctx: MoveContext,
 		signal: AbortSignal,
-		replacement: boolean
+		replacement: boolean,
+		input: InputCriticalWindow
 	): Promise<ExecutionResult> {
 		const t0 = this.now();
 		const fail = (reason: string, error?: string): ExecutionResult => {
@@ -971,7 +1020,7 @@ export class MoveExecutor {
 				result = fail(EXECUTOR.reasons.notAttached);
 			} else {
 				const reply = await this.readGeometry(this.tabId, undefined, signal);
-				if (reply) result = await this.dispatch(rec, timing, ctx, reply, signal, replacement);
+				if (reply) result = await this.dispatch(rec, timing, ctx, reply, signal, replacement, input);
 				else if (signal.aborted) {
 					// cancel() during the initial geometry read: nothing was dispatched
 					result = { ...fail(EXECUTOR.reasons.aborted), outcome: "aborted" };
@@ -981,7 +1030,17 @@ export class MoveExecutor {
 			result = fail(EXECUTOR.reasons.dispatchFailed, errorMessage(error));
 		}
 		this.setHand("rest");
-		if (timing.mode !== rec.plan.mode || result.attempts > 1 || this.fastForward?.rec === rec)
+		const preparationOverrun = (rec.plan.features.preparationOverrunMs ?? 0) > 0;
+		const releaseOverrun =
+			result.submittedAt !== undefined &&
+			result.submittedAt > rec.plan.deadlineMs + EXECUTOR.approachFitToleranceMs;
+		if (
+			timing.mode !== rec.plan.mode ||
+			result.attempts > 1 ||
+			this.fastForward?.rec === rec ||
+			preparationOverrun ||
+			releaseOverrun
+		)
 			result = { ...result, paceOverride: true };
 		this.lastSkipReason = result.outcome === "skipped" ? (result.reason ?? null) : null;
 		result = this.stamp(rec, result);
@@ -1006,7 +1065,8 @@ export class MoveExecutor {
 		ctx: MoveContext,
 		reply: BoardGeometryReply,
 		signal: AbortSignal,
-		replacement: boolean
+		replacement: boolean,
+		input: InputCriticalWindow
 	): Promise<ExecutionResult> {
 		const config = { ...this.config };
 		const readAt = this.now();
@@ -1063,6 +1123,7 @@ export class MoveExecutor {
 		const backend = this.createBackend(start);
 		const controller = new HandController({
 			backend,
+			planner: this.explorationPlanner,
 			focus: this.focus,
 			ownership: this.ownership,
 			geometry: this.geometry,
@@ -1071,6 +1132,8 @@ export class MoveExecutor {
 			now: this.now,
 			scheduler: this.scheduler,
 			onState: (s) => this.setHand(s),
+			onInputDeadline: (at) => input.approachAt(at),
+			onCriticalInput: (busy) => input.setCritical(busy),
 			onCommittedPress: () => {
 				const running = this.running;
 				if (!running || running.ac.signal !== signal || running.committed) return;
@@ -1103,6 +1166,14 @@ export class MoveExecutor {
 			expected: { san: rec.chosen.san, uci: rec.chosen.uci, premove: queued || holding },
 			geometry: { reply, readAt },
 			exploration: {
+				...(ctx.repertoire
+					? {
+							repertoire: {
+								...ctx.repertoire,
+								premovePending: queued || holding || ctx.repertoire.premovePending === true,
+							},
+						}
+					: {}),
 				candidates: ctx.candidates ?? candidatesFromLines(rec),
 				nReasonable: ctx.nReasonable ?? Math.max(1, rec.lines.length),
 				myClockMs: ctx.myClockMs ?? 0,
@@ -1162,7 +1233,8 @@ export class MoveExecutor {
 			verifyMove(this.link, this.tabId, expected, timeoutMs, checkSignal);
 		try {
 			// Setup and replacement verification consume the original move window too.
-			const readyTiming = fitTiming(timing, timing.deadlineMs - this.now());
+			const room = remainingMoveWindow(timing, this.now());
+			const readyTiming = fitTiming(timing, room.remainingMs);
 			if (this.running?.rec === rec) this.running.timing = readyTiming;
 			if (queued) return await this.enterPremove(controller, plan, readyTiming, signal);
 			// The line preview (`LINE_PREVIEW`): decided from its own stream so the motor's per-move
@@ -1409,6 +1481,7 @@ export class MoveExecutor {
 	private clearPending(): void {
 		if (!this.pending) return;
 		this.scheduler.clearTimeout(this.pending.timer);
+		this.pending.input.close();
 		this.pending = null;
 	}
 

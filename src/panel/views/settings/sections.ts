@@ -1,10 +1,6 @@
-/**
- * Section layout of the Settings view (settings layout, 2026-09-13 —
- * `docs/qa/settings-layout-2026-09-13.md` has the rationale): the ten sections in order, each
- * with the row paths it shows. Most-used and most-consequential first; a control's dependants
- * directly beneath it; paired ranges adjacent; dangerous and rare last. Account and Advanced
- * carry extra non-setting elements (license, plan, device, sign out; export / reset) that
- * `settings.ts` renders after the rows.
+/** Outcome-based settings sections. Dependants remain adjacent to their controlling switch;
+ * timing and hand controls share a section because they share the overall move clock.
+ * Account and Diagnostics add actions in settings.ts.
  */
 
 import type { FORCED_SETTING_VALUES } from "@core/constants/defaults";
@@ -16,6 +12,7 @@ export type SectionId = keyof typeof SETTINGS_COPY.sections;
 export interface SectionSpec {
 	id: SectionId;
 	title: string;
+	help: string;
 	rows: readonly SettingsLeafPath[];
 }
 
@@ -49,24 +46,30 @@ export const FORCED_SETTINGS: Readonly<Record<ForcedSettingPath, string>> = {
 const section = (id: SectionId, rows: readonly SettingsLeafPath[]): SectionSpec => ({
 	id,
 	title: SETTINGS_COPY.sections[id],
+	help: SETTINGS_COPY.sectionHelp[id],
 	rows,
 });
 
+/** Internal values that intentionally have no settings control. */
+export const MANAGED_SETTINGS = {
+	"automation.autoMove": "The Game switch owns saved auto-play intent.",
+	"strength.blunderScale":
+		"Legacy accuracy offset is normalized to neutral; target Elo owns accuracy.",
+	"display.tts": "Speech is requested with the shortcut, never automatically.",
+} satisfies Partial<Record<SettingsLeafPath, string>>;
+
 export const SECTIONS: readonly SectionSpec[] = [
 	// The one number every session is about. Target first (owner); matching replaces it, the
-	// persona offset only applies while matching; the accuracy offset is the finer modifier.
+	// persona offset only applies while matching.
 	section("strength", [
 		"strength.targetElo",
 		"strength.matchOpponentRating",
 		"strength.personaEloOffset",
-		"strength.blunderScale",
 		"strength.useOpeningBook",
 	]),
-	// Whether the assistant acts by itself: the master switch, the auto-play opt-in and what the
-	// armed hand does on its own, then the queue with its ranges and its rematch step beneath.
+	// Session behavior; auto-play itself is controlled only from Game.
 	section("automation", [
 		"enabled",
-		"automation.autoMove",
 		"automation.resignLostGames",
 		"automation.autoQueue",
 		"automation.autoQueueSessionMinMinutes",
@@ -75,30 +78,31 @@ export const SECTIONS: readonly SectionSpec[] = [
 		"automation.autoQueueBreakMaxMinutes",
 		"automation.rematchTitled",
 	]),
-	// When the hand plays: the preset, then the knobs the preset scales.
+	// When the hand plays: the user's own knobs, the whole-move speed first (2026-09-15: the
+	// preset row that used to head this section went with the timing presets).
 	section("timing", [
-		"timing.profile",
-		"timing.speedScale",
+		"timing.baseSpeed",
 		"timing.varianceScale",
 		"timing.longThinkFrequency",
 		"timing.premoveTendency",
-	]),
-	// How the pointer commits a move.
-	section("hand", [
+		// The same overall time includes the hand and input method.
 		"execution.inputMode",
 		"execution.motorSpeed",
 		"execution.previewSelectScale",
 		"execution.verifyMoves",
+		"display.virtualCursor",
+		"display.cursorEffects",
 	]),
-	// What is drawn on chess.com's board, each dependant beneath its switch.
+	// What is drawn on chess.com's board, each dependant beneath its switch. Move ratings sits
+	// beneath board effects as its neighbour, not its dependant (2026-09-15: independent switches).
 	section("board", [
 		"automation.highlightMoves",
 		"automation.highlightStyle",
 		"automation.boardEffects",
 		"automation.moveQualityChips",
+		"automation.moveQualityChipsFor",
 		"automation.moveRatingSounds",
-		"display.virtualCursor",
-		"display.cursorEffects",
+		"automation.forcedMateSounds",
 	]),
 	// This side panel: the Game view's content, then appearance, then feedback.
 	section("panel", [

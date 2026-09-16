@@ -9,9 +9,10 @@
  *      requires 128), so there is nothing to fall back to;
  *   3. `import()` the ES-module factory from its extension URL and instantiate
  *      it with a shared memory, shrinking the initial size on failure
- *      (`LIMITS.engineMemoryInitialPages`: 2560 → 1536 → 1024 pages);
- *   4. feed every recommended net (`getRecommendedNnue(i)`) from the
- *      `NnueStore` via `setNnueBuffer(buf, i)`.
+ *      (`LIMITS.engineMemoryInitialPages`: 2560 → 1536 → 1024 pages), always at
+ *      the builds' own maximum (`LIMITS.engineMemoryMaxPages`, 2 GiB);
+ *   4. fetch every recommended net (`getRecommendedNnue(i)`) from the
+ *      `NnueStore`, then hand them over back to back via `setNnueBuffer(buf, i)`.
  *
  * Every platform touchpoint is injectable so the loader is unit-testable and
  * runnable under Bun (the integration test boots the real wasm this way).
@@ -103,7 +104,7 @@ export interface BootDeps {
 
 export interface BootedEngine {
 	sf: StockfishWeb;
-	/** The `.js` module that was loaded (e.g. `sf_18_smallnet_relaxed-simd.js`). */
+	/** The `.js` module that was loaded (e.g. `sf_19_smallnet_relaxed-simd.js`). */
 	module: string;
 	/** Recommended nets, in `setNnueBuffer` index order. */
 	nnue: string[];
@@ -190,10 +191,10 @@ export async function bootEngineDetailed(
 	const nnue = recommendedNnue(sf);
 	deps.onLoadingNnue?.(nnue);
 	try {
-		for (let i = 0; i < nnue.length; i++) {
-			const name = nnue[i] as string;
-			sf.setNnueBuffer(await deps.nnueStore.get(name), i);
-		}
+		// Fetched first, set back to back: the engine copies its whole network object on every set,
+		// and a set left waiting on the next fetch keeps the heap at its peak for the whole wait.
+		const buffers = await Promise.all(nnue.map((name) => deps.nnueStore.get(name)));
+		for (let i = 0; i < buffers.length; i++) sf.setNnueBuffer(buffers[i] as Uint8Array, i);
 	} catch (error) {
 		// A failed download must not leak the newly allocated WASM instance and its workers.
 		try {

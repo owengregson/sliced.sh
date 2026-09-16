@@ -1,5 +1,11 @@
 # Bundled full NNUE — 2026-09-11
 
+> **Superseded in part on 2026-09-15** by the move to Stockfish 19, which retired the secondary
+> net that lived inside the full build. The extension now ships two nets, one per vendored build,
+> and the full build loads a single network. The three-network counts below — and the "both full
+> networks" load in the integration check — record the 2026-09-11 state under Stockfish 18. The
+> small/full *build* split is unchanged: lichess still publishes a separate `sf_19_smallnet`.
+
 The installed extension now contains all three Stockfish networks. Above the product's 3200
 small-network cutoff, switching to the full engine reads local extension bytes. The selectable
 3800 endpoint requests unlimited engine strength; the bundled engine still advertises native

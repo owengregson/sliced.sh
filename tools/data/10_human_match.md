@@ -75,7 +75,7 @@ For every row, the **full selection wrapper** as the pipeline runs it, with the 
    `maiaSizeFor(selfElo)` (or `--size`), through `encodeMaiaInputs → session.run →
    decodeMaiaOutputs` under the vendored onnxruntime-web (`maia.ts`; the parity test proves this
    path). `--maia` runs it; `--policies FILE` reuses a previous run's `--policies-out`.
-2. **Referee** (`engine.ts`, the vendored Stockfish 18 smallnet under Bun): the main MultiPV search
+2. **Referee** (`engine.ts`, the vendored Stockfish 19 smallnet under Bun): the main MultiPV search
    at `--movetime` (default `SEARCH_BUDGET.moveMs.blitz` = 600 ms), depth cap
    `automaticDepthForElo(selfElo)`, breadth `SEARCH_BUDGET.selectionCandidates` by rating
    (20 / 16 / 12), full strength (`refereeElo(…, maia = true)`); then the pipeline's extra

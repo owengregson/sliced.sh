@@ -16,14 +16,27 @@ import { BRIDGE_KINDS, type PageBridge } from "@content/adapters/adapter";
 import { runtimeSendMessage } from "@core/chrome/runtime";
 import type { BoardEffect } from "@core/constants/board-effects";
 import { type GamePortCommand, MSG } from "@core/constants/messages";
-import type { MoveQualityMark } from "@core/constants/move-quality";
+import { MOVE_QUALITY, type MoveQualityMark } from "@core/constants/move-quality";
 import { TIMINGS } from "@core/constants/timings";
 import { log } from "@core/logger";
 
 export interface BoardEffects {
+	/** The rays and the capture mark (`automation.boardEffects`). */
 	enabled(): boolean;
 	setEnabled(on: boolean): void;
+	/**
+	 * The rating chip (`automation.moveQualityChips`), independent of `setEnabled` (owner,
+	 * 2026-09-15): with the rays off a batch still draws and sounds its chip; with the ratings off a
+	 * batch draws only its rays. Turning either off erases the whole layer — the page overlay has
+	 * one clear — and the other kind resumes with the next move.
+	 */
+	setRatingsEnabled(on: boolean): void;
 	setSoundsEnabled(on: boolean): void;
+	/**
+	 * The forced-mate chip's own sound (`automation.forcedMateSounds`, owner 2026-09-14). Inert
+	 * while `setSoundsEnabled` is off; off, a forced-mate chip plays nothing at all.
+	 */
+	setForcedMateSoundsEnabled(on: boolean): void;
 	/** Apply a port command; returns whether it was one of the effect layer's. */
 	apply(cmd: GamePortCommand): boolean;
 	/** Resolves once the page side answered (a no-op when nothing was drawn). */
@@ -41,23 +54,44 @@ export interface BoardEffectsPayload {
 export interface BoardEffectsOptions {
 	/** Black at the bottom (`SiteAdapter.isFlipped`). */
 	flipped(): boolean;
+	/** The rays start on (tests; production waits for the `settings` command). */
 	initiallyEnabled?: boolean;
-	/** Override the extension-owned player in tests. */
-	sound?(quality: MoveQualityMark["quality"] | null): void;
+	/** The rating chip starts on (tests; production waits for the `settings` command). */
+	initiallyRatingsEnabled?: boolean;
+	/**
+	 * Override the extension-owned player in tests. `mateSemitones` accompanies a `mate` chip only,
+	 * as the pitch `forcedMateSemitones` settled on.
+	 */
+	sound?(quality: MoveQualityMark["quality"] | null, mateSemitones?: number): void;
+}
+
+/**
+ * The forced-mate pitch a chip names, clamped to `MOVE_QUALITY.mateMinSemitones` …
+ * `mateTopSemitones` (not rounded: a tangential move sits between steps); `null` when the chip
+ * carries no usable value, which plays nothing.
+ */
+export function forcedMateSemitones(semitones: number | undefined): number | null {
+	if (semitones === undefined || !Number.isFinite(semitones)) return null;
+	return Math.min(MOVE_QUALITY.mateTopSemitones, Math.max(MOVE_QUALITY.mateMinSemitones, semitones));
 }
 
 export function createBoardEffects(bridge: PageBridge, options: BoardEffectsOptions): BoardEffects {
 	let enabled = options.initiallyEnabled === true;
+	let ratingsEnabled = options.initiallyRatingsEnabled === true;
 	let drawn = false;
 	let disposed = false;
 	let soundsEnabled = false;
 	let soundGeneration = 0;
+	let forcedMateSoundsEnabled = false;
+	let forcedMateGeneration = 0;
 	const sound =
 		options.sound ??
-		((quality: MoveQualityMark["quality"] | null): void => {
-			void runtimeSendMessage({ type: MSG.OFFSCREEN_MOVE_RATING_SOUND, quality }).catch(
-				(error: unknown) => log.debug("board effects: sound unavailable", error)
-			);
+		((quality: MoveQualityMark["quality"] | null, mateSemitones?: number): void => {
+			void runtimeSendMessage({
+				type: MSG.OFFSCREEN_MOVE_RATING_SOUND,
+				quality,
+				...(mateSemitones === undefined ? {} : { mateSemitones }),
+			}).catch((error: unknown) => log.debug("board effects: sound unavailable", error));
 		});
 
 	const ready = (): PageBridge | null => (!disposed && bridge.isAvailable() ? bridge : null);
@@ -78,31 +112,48 @@ export function createBoardEffects(bridge: PageBridge, options: BoardEffectsOpti
 	};
 
 	const draw = (cmd: Extract<GamePortCommand, { kind: "effects" }>): void => {
-		if (!enabled) return;
+		// Each half of the batch passes its own gate; a batch left with nothing to draw is not sent.
+		const mark = ratingsEnabled ? cmd.quality : undefined;
+		if (!enabled && !mark) return;
 		const live = ready();
 		if (!live) return;
 		const payload: BoardEffectsPayload = {
 			orientation: options.flipped() ? "black" : "white",
 			mine: cmd.mine,
-			effects: cmd.effects,
-			...(cmd.quality ? { quality: cmd.quality } : {}),
+			effects: enabled ? cmd.effects : [],
+			...(mark ? { quality: mark } : {}),
 		};
 		drawn = true;
 		const generation = soundGeneration;
 		const playSound = soundsEnabled;
+		const mateGeneration = forcedMateGeneration;
+		const playForcedMate = forcedMateSoundsEnabled;
 		live
 			.call<boolean>(BRIDGE_KINDS.effects, payload, TIMINGS.adapterBridgeTimeoutMs)
 			.then((added) => {
 				if (
-					added === true &&
-					cmd.quality &&
-					playSound &&
-					soundsEnabled &&
-					enabled &&
-					!disposed &&
-					generation === soundGeneration
+					added !== true ||
+					!mark ||
+					!playSound ||
+					!soundsEnabled ||
+					!ratingsEnabled ||
+					disposed ||
+					generation !== soundGeneration
 				)
-					sound(cmd.quality.quality);
+					return;
+				if (mark.quality !== "mate") {
+					sound(mark.quality);
+					return;
+				}
+				// A forced-mate chip has its own switch and never falls back to a rating clip.
+				const semitones = forcedMateSemitones(mark.mateSemitones);
+				if (
+					semitones !== null &&
+					playForcedMate &&
+					forcedMateSoundsEnabled &&
+					mateGeneration === forcedMateGeneration
+				)
+					sound(mark.quality, semitones);
 			})
 			.catch((error: unknown) => {
 				log.debug("board effects: draw failed", error);
@@ -116,11 +167,24 @@ export function createBoardEffects(bridge: PageBridge, options: BoardEffectsOpti
 			enabled = on;
 			if (!on) void clear();
 		},
+		setRatingsEnabled(on) {
+			if (ratingsEnabled === on) return;
+			ratingsEnabled = on;
+			if (!on) void clear();
+		},
 		setSoundsEnabled(on) {
 			if (soundsEnabled === on) return;
 			soundsEnabled = on;
 			soundGeneration += 1;
 			if (!on) sound(null);
+		},
+		setForcedMateSoundsEnabled(on) {
+			if (forcedMateSoundsEnabled === on) return;
+			forcedMateSoundsEnabled = on;
+			forcedMateGeneration += 1;
+			// The player stops a tab's voices together, so this silences a rating clip still
+			// sounding as well — the same stop the rating switch sends.
+			if (!on && soundsEnabled) sound(null);
 		},
 		apply(cmd) {
 			switch (cmd.kind) {

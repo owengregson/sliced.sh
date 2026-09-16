@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { existsSync } from "node:fs";
+import path from "node:path";
 import type { RuntimeMessageHandler } from "@core/chrome/runtime";
 import { MSG } from "@core/constants/messages";
+import { MOVE_QUALITY } from "@core/constants/move-quality";
+import { FORCED_MATE_SOUNDS, MOVE_RATING_PLAYBACK, SOUNDS_DIR } from "@core/constants/sounds";
 import { installMessageRouter } from "@core/messaging/router";
 import {
 	createMoveRatingSoundPlayer,
@@ -10,6 +14,10 @@ import {
 
 class FakeAudio implements MoveRatingAudio {
 	preload = "";
+	// Deliberately not the media defaults, so a test can see the player set every one of them.
+	volume = 0.5;
+	playbackRate = 0.5;
+	preservesPitch = false;
 	plays = 0;
 	pauses = 0;
 	playResult: Promise<void> | undefined;
@@ -74,16 +82,84 @@ function setup() {
 }
 
 describe("move-rating sounds", () => {
-	it("preloads only the five requested clips silently and reuses them for first playback", () => {
+	it("preloads only the five rating clips and the one forced-mate clip silently and reuses them for first playback", () => {
 		const { player, sources } = setup();
 		const names = ["brilliant", "great", "inaccuracy", "mistake", "blunder"];
-		expect(sources.map((source) => source.url.split("/").at(-1))).toEqual(
-			names.map((name) => `${name}.mp3`)
-		);
+		expect(sources.map((source) => source.url.split("/").at(-1))).toEqual([
+			...names.map((name) => `${name}.mp3`),
+			"forced.mp3",
+		]);
 		expect(sources.every((source) => source.preload === "auto" && source.plays === 0)).toBe(true);
 		for (const name of names) expect(player.play(1, name)).toBe(true);
-		expect(sources).toHaveLength(5);
+		expect(player.play(1, "mate", 0)).toBe(true);
+		expect(sources).toHaveLength(6);
 		expect(sources.every((source) => source.plays === 1)).toBe(true);
+		player.dispose();
+	});
+
+	it("registers the one forced-mate clip, shipped under the sounds directory, and no numbered steps", () => {
+		// Owner, 2026-09-15: "just use forced.mp3 without a number, don't swap between the sound files".
+		expect(FORCED_MATE_SOUNDS.file).toBe("forced.mp3");
+		const root = path.resolve(import.meta.dir, "../..");
+		expect(existsSync(path.join(root, SOUNDS_DIR, FORCED_MATE_SOUNDS.file))).toBe(true);
+		expect(JSON.stringify(FORCED_MATE_SOUNDS)).not.toMatch(/forced_\d/);
+		expect(FORCED_MATE_SOUNDS.volumeScale).toBe(0.8);
+		expect(FORCED_MATE_SOUNDS.semitonesPerOctave).toBe(12);
+	});
+
+	it("plays the forced-mate clip at its pitch, resampled as the panel pitches, at 0.8 of the rating volume", () => {
+		const { player, sources, source } = setup();
+		expect(player.play(1, "great")).toBe(true);
+		const great = source("great.mp3");
+		expect(great.volume).toBe(MOVE_RATING_PLAYBACK.volume);
+		expect(great.playbackRate).toBe(MOVE_RATING_PLAYBACK.playbackRate);
+		expect(great.preservesPitch).toBe(true);
+		// The checkmate: +3 semitones.
+		expect(player.play(1, "mate", MOVE_QUALITY.mateTopSemitones)).toBe(true);
+		const top = source("forced.mp3");
+		expect(top.plays).toBe(1);
+		expect(top.playbackRate).toBeCloseTo(2 ** (3 / 12), 9);
+		expect(top.preservesPitch).toBe(false);
+		expect(top.volume).toBeCloseTo(MOVE_RATING_PLAYBACK.volume * 0.8, 9);
+		// Only the requested clip sounded.
+		expect(sources.filter((audio) => audio.plays === 1)).toHaveLength(2);
+		// Every other move of a sequence: the same file, a fresh element, its own pitch.
+		for (const [semitones, rate] of [
+			[MOVE_QUALITY.mateMinSemitones, 0.5],
+			[0, 1],
+			[1.5, 2 ** (1.5 / 12)],
+		] as const) {
+			expect(player.play(1, "mate", semitones)).toBe(true);
+			const voice = sources.at(-1);
+			expect(voice?.url.endsWith("forced.mp3")).toBe(true);
+			expect(voice).not.toBe(top);
+			expect(voice?.plays).toBe(1);
+			expect(voice?.playbackRate).toBeCloseTo(rate, 9);
+			expect(voice?.preservesPitch).toBe(false);
+			expect(voice?.volume).toBeCloseTo(0.8, 9);
+		}
+		player.dispose();
+	});
+
+	it("rejects a forced-mate chip without a playable pitch", () => {
+		const { player, sources } = setup();
+		for (const semitones of [
+			undefined,
+			null,
+			MOVE_QUALITY.mateTopSemitones + 0.5,
+			MOVE_QUALITY.mateMinSemitones - 0.5,
+			Number.NaN,
+			Number.POSITIVE_INFINITY,
+			"3",
+			[3],
+		]) {
+			expect(player.play(1, "mate", semitones)).toBe(false);
+		}
+		// A pitch never turns a rating clip into a forced-mate one.
+		expect(player.play(1, "great", 3)).toBe(true);
+		expect(sources.filter((audio) => audio.plays === 1).map((audio) => audio.url)).toEqual([
+			expect.stringContaining("great.mp3"),
+		]);
 		player.dispose();
 	});
 
@@ -199,6 +275,16 @@ describe("offscreen sound messaging", () => {
 			{ success: true, response: true },
 		]);
 		expect(source("great.mp3").plays).toBe(1);
+		expect(
+			dispatch({ type: MSG.OFFSCREEN_MOVE_RATING_SOUND, quality: "mate", mateSemitones: 2, tabId: 99 })
+		).toEqual([{ success: true, response: true }]);
+		expect(source("forced.mp3").plays).toBe(1);
+		expect(source("forced.mp3").playbackRate).toBeCloseTo(2 ** (2 / 12), 9);
+		expect(source("forced.mp3").preservesPitch).toBe(false);
+		expect(dispatch({ type: MSG.OFFSCREEN_MOVE_RATING_SOUND, quality: "mate" })).toEqual([
+			{ success: true, response: false },
+		]);
+		expect(source("forced.mp3").pauses).toBe(0);
 		for (const invalid of [
 			{ ...sender, id: "other-extension" },
 			{ ...sender, frameId: 1 },
@@ -213,6 +299,7 @@ describe("offscreen sound messaging", () => {
 			{ success: true, response: true },
 		]);
 		expect(source("great.mp3").pauses).toBe(1);
+		expect(source("forced.mp3").pauses).toBe(1);
 		stop();
 		expect(runtimeListeners.size).toBe(1);
 		expect(dispatch({ type: MSG.OFFSCREEN_MOVE_RATING_SOUND, quality: "great" })).toEqual([]);

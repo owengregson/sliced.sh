@@ -25,7 +25,6 @@
 // `forbidPremove` only covers the `replan("opponent-moved")` path and a session re-entering through
 // `onPosition` → `runPipeline` reaches `planMove` with it false.
 import { describe, expect, it } from "bun:test";
-import { DEFAULT_SETTINGS } from "@core/constants/defaults";
 import { createRng, type Rng } from "@core/rng";
 import { TIMING_CONSTANTS } from "@core/timing/constants";
 import { TimingModel } from "@core/timing/timing-model";
@@ -37,7 +36,7 @@ import type {
 	HeadSample,
 	Persona,
 } from "@core/timing/types";
-import { ctx } from "./helpers";
+import { ctx, MODEL_TIMING } from "./helpers";
 
 const START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
@@ -79,7 +78,7 @@ function firstMove(over: Partial<Parameters<typeof ctx>[0]> = {}) {
 }
 
 function model(seed: string) {
-	const m = new TimingModel(new AlwaysPremoveHead(), DEFAULT_SETTINGS.timing, createRng(seed));
+	const m = new TimingModel(new AlwaysPremoveHead(), MODEL_TIMING, createRng(seed));
 	m.startGame(meta);
 	return m;
 }

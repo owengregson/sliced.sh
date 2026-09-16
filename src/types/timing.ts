@@ -37,6 +37,8 @@ export interface TimingPlan {
 	dragDurationMs: number;
 	fakeout?: { piece: Square; holdMs: number; gapMs: number };
 	promotionDelayMs?: number;
+	/** The timing input expects a picker; false preserves an auto-queen pawn-release deadline. */
+	promotionPickerExpected?: boolean;
 	deadlineMs: number;
 	rationale: string[];
 	features: Record<string, number>;

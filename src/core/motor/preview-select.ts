@@ -233,13 +233,20 @@ export function planPreview(input: PreviewPlanInput, rng: Rng): PreviewSelection
 	if (style === "drag") {
 		const disp = sampleRange(PREVIEW.dragDisplacementPx, rng);
 		const angle = rng.next() * 2 * Math.PI;
-		const outPt = { x: pressAt.x + Math.cos(angle) * disp, y: pressAt.y + Math.sin(angle) * disp };
-		const outPath = generatePath(
-			pressAt,
-			outPt,
-			smallRect(outPt, PREVIEW.dragTargetRectPx),
-			profile,
-			rng
+		// The executor must release immediately on cancellation. Keep the entire held
+		// path inside the origin, not just its final point, so that release cannot move.
+		const contain = (points: PathPoint[]): PathPoint[] =>
+			points.map((point) => ({
+				...point,
+				...clampIntoRect(point, pieceRect, PREVIEW.dragBoundaryPadPx),
+			}));
+		const outPt = clampIntoRect(
+			{ x: pressAt.x + Math.cos(angle) * disp, y: pressAt.y + Math.sin(angle) * disp },
+			pieceRect,
+			PREVIEW.dragBoundaryPadPx
+		);
+		const outPath = contain(
+			generatePath(pressAt, outPt, smallRect(outPt, PREVIEW.dragTargetRectPx), profile, rng)
 		);
 		const outEnd = lastPoint(outPath, outPt);
 		const pad = (pieceRect.width * (1 - SAMPLING.release.innerFrac)) / 2;
@@ -251,7 +258,11 @@ export function planPreview(input: PreviewPlanInput, rng: Rng): PreviewSelection
 			pieceRect,
 			pad
 		);
-		const backPath = generatePath(outEnd, back, pieceRect, profile, rng);
+		const backPath = contain(generatePath(outEnd, back, pieceRect, profile, rng));
+		// Consider the excursion before taking it back. The hand already checks cancellation
+		// throughout path waits; storing this in the return leg also accounts for it in maxMs.
+		const returnStart = backPath[0];
+		if (returnStart) returnStart.dtMs += sampleRange(PREVIEW.dragReconsiderMs, rng);
 		dragPath = [...outPath, ...backPath];
 		release = lastPoint(dragPath, back);
 		grabDelayMs = sampleRange(profile.grabDelayMs, rng);

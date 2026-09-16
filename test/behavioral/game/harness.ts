@@ -5,7 +5,9 @@
 // The page half is `createSimulatedSite` — the same one Task 33's telemetry harness drives.
 import { onCommand } from "@core/chrome/commands";
 import { DEFAULT_SETTINGS } from "@core/constants/defaults";
+import { ENGINE_FILES } from "@core/constants/engine-files";
 import type { GamePortCommand, PanelPortMessage, PanelSnapshot } from "@core/constants/messages";
+import { REVIEW } from "@core/constants/review";
 import { LOCAL_KEYS } from "@core/constants/storage-keys";
 import { AnalysisCache } from "@core/engine/analysis-cache";
 import { UciEngine } from "@core/engine/uci-client";
@@ -29,6 +31,7 @@ import { registerPanelHandlers } from "@service/handlers/panel";
 import { Keepalive } from "@service/keepalive";
 import type { MoveExecutor } from "@service/move-executor";
 import { PanelBroadcaster } from "@service/panel-broadcaster";
+import { ReviewEngine } from "@service/review-engine";
 import { createSimulator, type Simulator } from "@test/sim";
 import { bootSwContext, type SwContext } from "@test/sim/contexts/sw-context";
 import { createSimulatedSite, type SimulatedSite } from "@test/sim/telemetry/sim-site";
@@ -57,6 +60,11 @@ export interface GameHarnessOptions {
 	 */
 	premoves?: boolean;
 	script?: ScriptOptions;
+	/**
+	 * 2026-09-14: the move-review engine's own scripted answers — a second fake offscreen engine,
+	 * independent of `script`. Default: frames at `REVIEW.targetDepth`.
+	 */
+	reviewScript?: ScriptOptions;
 	head?: DistributionHead;
 	/** 2026-09-11: the Maia-3 policy port the pipeline queries (none by default: engine policy). */
 	policy?: PolicyPort;
@@ -95,6 +103,10 @@ export interface GameHarness {
 	broadcaster: PanelBroadcaster;
 	link: ContentLink;
 	transport: ScriptedEngineTransport;
+	/** The move-review engine's wire (board ratings only; never the playing engine's). */
+	reviewTransport: ScriptedEngineTransport;
+	/** The move-review engine itself (`status()` is null until something boots it). */
+	review: ReviewEngine;
 	controller: EngineController;
 	keepalive: Keepalive;
 	timingLog: TimingLogWriter;
@@ -142,14 +154,19 @@ export async function createGameHarness(options: GameHarnessOptions = {}): Promi
 	// that default moves. Seeded as *stored* settings so no settings-write event fires before the
 	// stack is up. A test about the switch itself passes `settings: { enabled: false }`, which wins
 	// below.
-	// `automation.boardEffects` ships **on**, and it issues its own full-strength `panel` search per
-	// ply (`BoardEffectsReporter`). Every test that counts `go` lines or asserts the exact sequence
-	// of searches is about the *move* pipeline, so the fixture states the lane off — the same
-	// discipline as `execution.inputMode` below. `board-effects.test.ts` turns it back on.
+	// `automation.boardEffects` and `automation.moveQualityChips` both ship **on**, and the ratings
+	// issue their own full-strength `panel` search per ply (`BoardEffectsReporter`). Every test that
+	// counts `go` lines or asserts the exact sequence of searches is about the *move* pipeline, so
+	// the fixture states both off — the same discipline as `execution.inputMode` below.
+	// `board-effects.test.ts` turns them back on. Both are named since 2026-09-15: the ratings no
+	// longer depend on board effects, so `boardEffects: false` alone would leave the searches on.
 	const sim = createSimulator({
 		startAt: START_AT,
 		storageLocal: {
-			[LOCAL_KEYS.settings]: { enabled: true, automation: { boardEffects: false } },
+			[LOCAL_KEYS.settings]: {
+				enabled: true,
+				automation: { boardEffects: false, moveQualityChips: false },
+			},
 			...options.storage,
 		},
 	});
@@ -165,7 +182,7 @@ export async function createGameHarness(options: GameHarnessOptions = {}): Promi
 	let settings: Settings = {
 		...DEFAULT_SETTINGS,
 		execution: { ...DEFAULT_SETTINGS.execution, inputMode: "drag" },
-		automation: { ...DEFAULT_SETTINGS.automation, boardEffects: false },
+		automation: { ...DEFAULT_SETTINGS.automation, boardEffects: false, moveQualityChips: false },
 	};
 	let keepalive!: Keepalive;
 	let debuggerManager!: DebuggerManager;
@@ -174,6 +191,9 @@ export async function createGameHarness(options: GameHarnessOptions = {}): Promi
 	let ownership!: HandOwnership;
 	let transport!: ScriptedEngineTransport;
 	let engine!: UciEngine;
+	let reviewTransport!: ScriptedEngineTransport;
+	let reviewUci!: UciEngine;
+	let review!: ReviewEngine;
 	let controller!: EngineController;
 	let registry!: SessionRegistry;
 	let broadcaster!: PanelBroadcaster;
@@ -212,10 +232,35 @@ export async function createGameHarness(options: GameHarnessOptions = {}): Promi
 				now: sim.now,
 			});
 			await engine.init();
+			reviewTransport = new ScriptedEngineTransport({
+				depth: REVIEW.targetDepth,
+				...options.reviewScript,
+			});
+			reviewUci = new UciEngine(reviewTransport);
+			await reviewUci.init();
+			// The real `ReviewEngine` queue over its own scripted engine: only the offscreen boot is
+			// replaced (`createBackend`), so priorities, preemption and bounds are production's.
+			review = new ReviewEngine({
+				ensureHost: async () => {},
+				now: sim.now,
+				createBackend: () => ({
+					warm: async () => {},
+					analyse: (request) => reviewUci.analyse(request),
+					status: () => ({
+						state: "ready",
+						variant: "full",
+						threads: 1,
+						nnue: [...ENGINE_FILES.full.nnue],
+						version: "Stockfish 19",
+					}),
+					dispose: () => {},
+				}),
+			});
 			router = installMessageRouter();
 			registry = new SessionRegistry({
 				link,
 				engine: controller,
+				review,
 				book: null,
 				createHead: () => options.head ?? new V1ParametricHead(),
 				debugger: debuggerManager,
@@ -276,7 +321,11 @@ export async function createGameHarness(options: GameHarnessOptions = {}): Promi
 		const patch = {
 			...options.settings,
 			execution: { inputMode: "drag" as const, ...options.settings.execution },
-			automation: { boardEffects: false, ...options.settings.automation },
+			automation: {
+				boardEffects: false,
+				moveQualityChips: false,
+				...options.settings.automation,
+			},
 		};
 		await sw.run(async () => {
 			settings = await setSettings(patch);
@@ -320,6 +369,8 @@ export async function createGameHarness(options: GameHarnessOptions = {}): Promi
 		broadcaster,
 		link,
 		transport,
+		reviewTransport,
+		review,
 		controller,
 		keepalive,
 		timingLog,
@@ -392,6 +443,8 @@ export async function createGameHarness(options: GameHarnessOptions = {}): Promi
 				debuggerManager.dispose();
 				controller.dispose();
 				void engine.dispose();
+				review.dispose();
+				void reviewUci.dispose();
 				router.dispose();
 				offCommands();
 				offSettings();

@@ -11,7 +11,6 @@ import { isLoneKing } from "@core/chess/material";
 import { parseUci } from "@core/chess/san";
 import type { Rng } from "@core/rng";
 import { clamp } from "@core/util/clamp";
-import type { Settings } from "@typedefs/settings";
 import { budgetController, scheduleAlloc } from "./budget";
 import { TIMING_CONSTANTS } from "./constants";
 import { uniform } from "./distributions";
@@ -38,6 +37,7 @@ import type {
 	TimingMode,
 	TimingPlan,
 	TimingPreparation,
+	TimingSettings,
 } from "./types";
 
 const C = TIMING_CONSTANTS;
@@ -52,7 +52,7 @@ function floorFor(mode: TimingMode): number {
 		: PHYSICAL_FLOOR_S;
 }
 
-export type TimingSettings = Settings["timing"];
+export type { TimingSettings };
 
 export { isBotPace };
 
@@ -217,7 +217,8 @@ export class TimingModel {
 		ctx: TimingContext,
 		mode: TimingMode
 	): MotorTimes & { fakeout?: TimingPlan["fakeout"] } {
-		const motor = motorModel(f, ctx, this._persona, this.rng);
+		const autoQueen = ctx.autoQueen && ctx.chosenMove.endsWith("q");
+		const motor = motorModel(f, { ...ctx, autoQueen }, this._persona, this.rng);
 		if (mode !== "normal" || (f.tc !== "untimed" && f.clock_s <= C.fakeout.minClockS)) return motor;
 		if (this.rng.next() >= C.fakeout.pBase + C.fakeout.pElo * (1 - f.elo_z)) return motor;
 		const alt =
@@ -243,11 +244,12 @@ export class TimingModel {
 		const budget = createMoveBudget(
 			f,
 			this._persona,
-			this.settings.speedScale,
+			this.settings.moveTimeScale,
 			this.settings.respectBudget ? undefined : alloc
 		);
 		const sample = this.head.sample(f, this._persona, st, this.rng, alloc);
 		let { tSec, mode } = sample;
+		const headSampleSec = tSec;
 		const why = [...sample.why];
 		const rawMedian = this.head.median(f, this._persona, st, alloc);
 		const rawMean = Math.max(
@@ -257,13 +259,30 @@ export class TimingModel {
 		// The learned distribution supplies relative difficulty and variation; the actual game clock
 		// supplies scale. Normalize by the mean, because a median does not budget a heavy tail.
 		const target = budget.targetSec * Math.exp(this._persona.s_game);
+		// Scale the duration above its feasible lower endpoint. Multiplying the entire
+		// learned duration and then clamping it created an atom at exactly 250 ms.
+		const supportSec = sample.includesExecution ? floorFor(mode) : 0;
 		const comp =
 			f.tc === "untimed"
-				? this.settings.speedScale
-				: Math.min(this.settings.speedScale, target / rawMean);
-		if (mode === "normal" || mode === "long") tSec *= comp;
-		else if (mode === "instant") tSec *= Math.min(1, this.settings.speedScale);
-		const median = rawMedian * comp;
+				? this.settings.moveTimeScale
+				: Math.min(
+						this.settings.moveTimeScale,
+						Math.max(0, target - supportSec) /
+							Math.max(C.moveBudget.minimumShapeMeanS, rawMean - supportSec)
+					);
+		if (mode === "normal" || mode === "long")
+			tSec = supportSec + Math.max(0, tSec - supportSec) * comp;
+		else if (mode === "instant")
+			tSec = supportSec + Math.max(0, tSec - supportSec) * Math.min(1, this.settings.moveTimeScale);
+		if (sample.includesExecution && comp === 0 && (mode === "normal" || mode === "long")) {
+			// A recognition-weighted allocation can be smaller than a feasible cold reply.
+			// Preserve sample order in a compact physical interval instead of emitting the same
+			// 250 ms value on every such turn. Clock emergency policy may compress it further.
+			mode = "instant";
+			tSec = PHYSICAL_FLOOR_S * (1 + headSampleSec / (headSampleSec + rawMean));
+			why.push("allocation below physical support: compact execution window");
+		}
+		const median = supportSec + Math.max(0, rawMedian - supportSec) * comp;
 		why.push(
 			`move budget ${target.toFixed(2)} s; effort ${budget.effort.toFixed(2)}, recognition ${budget.recognition.toFixed(2)}`
 		);
@@ -289,13 +308,20 @@ export class TimingModel {
 		const orientationMs = race || mode === "premove" ? 0 : sampleOrientationMs(f, this.rng);
 		const physicalS = orientationMs / 1000 + motor.totalS;
 		const clockEmergency = f.tc !== "untimed" && ctx.myClockMs < C.replan.emergencyClockMs;
-		const capSec = Math.min(budget.capSec, Math.max(physicalS, budget.recognitionCapSec));
+		// A mean-constrained learned distribution may spend several allocations on one rare
+		// decision. Capping it again at the routine allocation erased its affordable long tail.
+		const capSec = Math.min(
+			sample.includesExecution ? budget.distributionCapSec : budget.capSec,
+			Math.max(physicalS, budget.recognitionCapSec)
+		);
 		const value =
 			mode === "premove"
 				? motor.totalS + tSec
-				: mode === "instant"
-					? physicalS + tSec
-					: Math.max(tSec, physicalS);
+				: sample.includesExecution
+					? tSec
+					: mode === "instant"
+						? physicalS + tSec
+						: Math.max(tSec, physicalS);
 		const bounded = boundByCap(value, capSec, floorFor(mode), clockEmergency, this.rng);
 		let totalS = bounded.totalSec;
 		let emergency = bounded.emergency;
@@ -328,8 +354,8 @@ export class TimingModel {
 			{ thinkMs, mode, orientationMs, motorMs, previewCount: mode === "long" ? 1 : 0, emergency },
 			this.rng
 		);
-		const dragDurationMs =
-			mode === "premove" ? 0 : Math.max(0, Math.min(motor.dragS * 1000, window.approachMs));
+		const motorScale = Math.min(1, window.approachMs / Math.max(1, motor.totalS * 1000));
+		const dragDurationMs = mode === "premove" ? 0 : motor.dragS * 1000 * motorScale;
 		const features: Record<string, number> = {
 			...featuresToRecord(f),
 			alloc,
@@ -340,6 +366,8 @@ export class TimingModel {
 			recognition: budget.recognition,
 			complexity: budget.complexity,
 			headMeanSec: rawMean,
+			headSampleSec,
+			executionIncluded: sample.includesExecution ? 1 : 0,
 			opponentPressure,
 			clockRace: race?.urgency ?? 0,
 			opponentOnlyRace: race?.opponentOnly ? 1 : 0,
@@ -359,8 +387,10 @@ export class TimingModel {
 			orientationMs: window.orientationMs,
 			window,
 		};
-		if (!race && motor.fakeout) plan.fakeout = motor.fakeout;
-		if (!race && motor.promoS > 0) plan.promotionDelayMs = motor.promoS * 1000;
+		if (!race && motor.fakeout && motorScale === 1) plan.fakeout = motor.fakeout;
+		if (f.is_promotion)
+			plan.promotionPickerExpected = !(ctx.autoQueen && ctx.chosenMove.endsWith("q"));
+		if (!race && motor.promoS > 0) plan.promotionDelayMs = motor.promoS * 1000 * motorScale;
 		st.plannedMs.push(thinkMs);
 		st.lastPlan = plan;
 		st.lastEvalOurPov = f.eval_cp;
@@ -466,7 +496,8 @@ export class TimingModel {
 			}
 			case "clock-jump": {
 				const f = computeFeatures(ctx, this._state);
-				const capSec = createMoveBudget(f, this._persona, this.settings.speedScale).capSec;
+				const budget = createMoveBudget(f, this._persona, this.settings.moveTimeScale);
+				const capSec = plan.features.executionIncluded ? budget.distributionCapSec : budget.capSec;
 				if (plan.thinkMs / 1000 <= capSec)
 					return this.withElapsed(plan, ctx, plan.thinkMs, plan.window, "clock-jump: within caps");
 				const clockEmergency = f.tc !== "untimed" && ctx.myClockMs < C.replan.emergencyClockMs;

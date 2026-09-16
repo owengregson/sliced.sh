@@ -8,7 +8,7 @@ Nothing here ships; every script runs `src/` modules under plain `bun` (see `def
 | File | What |
 |---|---|
 | `defines.ts` | the bundler's compile-time `define` globals, so `src/` modules load outside `bun test`; **must be the first import** of every entry script here |
-| `engine.ts` | `createRefereeEngine()` — the vendored Stockfish 18 smallnet booted through the offscreen loader under Bun (as `test/integration/engine.test.ts`), one `go` at a time, answering the **last complete MultiPV cycle** as `EvalLine[]` with `pvSan` filled — the collection rule of every `stockfish18-*.json` fixture |
+| `engine.ts` | `createRefereeEngine()` — the vendored Stockfish 19 smallnet booted through the offscreen loader under Bun (as `test/integration/engine.test.ts`), one `go` at a time, answering the **last complete MultiPV cycle** as `EvalLine[]` with `pvSan` filled — the collection rule of every `stockfish18-*.json` fixture |
 | `maia.ts` | `createMaiaRunner()` — the shipped Maia-3 ONNX models under the vendored onnxruntime-web wasm backend, `encodeMaiaInputs → session.run → decodeMaiaOutputs`, i.e. the offscreen host's exact path (`test/integration/maia-onnx.test.ts` is the parity proof) |
 | `make-fixture.ts` | writes `test/fixtures/strength/maia-draw.json` (below) |
 | `replay.ts` | the §8.1 harness: corpus rows → referee frames + Maia policies → seeded `selectMove` draws → per-bucket report (markdown + JSON) |
@@ -26,7 +26,7 @@ up to 8 plies of history, self/opponent Elo drawn from 800–2700). Per position
   summing to 1, plus the `wdl`. Decoded by the real encoder and `decodeMaiaOutputs` under the
   vendored runtime, so it is bit-faithful to what the offscreen host answers; the generator aborts
   unless the argmax agrees with the torch reference on all 60 (it did, 60/60 for both sizes);
-- `lines` — one **real** Stockfish 18 smallnet MultiPV frame at full strength (the referee), one
+- `lines` — one **real** Stockfish 19 smallnet MultiPV frame at full strength (the referee), one
   thread, 32 MB hash, `go movetime 600 depth 18 searchmoves <union of each size's top-8 moves>`,
   so the frame covers exactly Maia's favourites (8–11 roots, mean 8.25); `pvSan` is filled from
   the position so `hangsPiece` reads the PV instead of re-classifying. All 60 frames completed a

@@ -6,16 +6,48 @@
 
 import type { TcClass } from "@core/timing/types";
 
-/** Polyglot books bundled in `dir`; loaded in the SW via `runtimeGetURL(dir + name)`. */
+/**
+ * Polyglot books bundled in `dir`; loaded in the SW via `runtimeGetURL(dir + name)`. Every book's
+ * filters and inputs are in its `<book>.build.json` manifest (rendered into `docs/third-party.md`).
+ *
+ * The move review's Book rating reads only `THEORY_BOOKS`; the club book is the bot's alone.
+ */
 export const BOOKS = {
-	/** Both players ≥ 2600 (Lichess ratings): the `E ≥ 1800` book. */
+	/**
+	 * Master theory: rated over-the-board games (Lichess broadcasts, both players ≥ 1800, a move
+	 * played at least 3 times, first 40 plies) — the `E ≥ 1800` book and the review's Book. The key
+	 * keeps the plan's name. Built by `scripts/build-club-book.py`.
+	 */
 	gm2600: "gm2600.bin",
-	/** 1200–1800 club games: the book below `E = 1800`. Built by `scripts/build-club-book.py`. */
+	/**
+	 * Club games (Lichess, both players 1000–2100, a position reached ≥ 100 times and a move ≥ 1 % of
+	 * it, first 30 plies): the book below `E = 1800`. Built by `scripts/build-club-book.py`.
+	 */
 	club: "club.bin",
+	/**
+	 * Every named opening line, both sides' moves (lichess-org/chess-openings): theory the game
+	 * books may be too thin to hold. Built by `scripts/build-theory-book.py`.
+	 */
+	theory: "theory.bin",
 	dir: "assets/books/",
 } as const;
 
 export type BookName = Exclude<keyof typeof BOOKS, "dir">;
+
+/**
+ * The books behind the move review's Book rating (`BookPolicy.bookMoves`): any move of the master
+ * book or the named theory. chess.com's Book is master theory, measured on 2026-09-15 against the
+ * deepest named opening of 2,433 public chess.com games (`ECOUrl`): amateur games hold the traps
+ * chess.com badges brilliant instead — the Scotch Haxo 6.Bxf7+ (175 times in unrated OTB games,
+ * popular at 1000–2100 online) and the QGD Elephant ...Nxd5 — and no build filter on the club book
+ * (min count 5–30, position ≥ 50–500, share ≥ 0.5–2 %) kept more than two of the benchmark's seven
+ * such brilliants out of Book, while rated over-the-board games held none of them. Taking chess.com's
+ * Book to end at its named line, the master book and the theory call 96.5 % of those Book moves Book
+ * (the Sep 4 books: 78.5 %) at 86.1 % precision — about 1.3 moves per game called Book just past
+ * chess.com's named line. Online 2400+ games (the Lichess Elite Database) raised recall to 99 % but
+ * held the traps at every threshold tried, with precision under 80 %.
+ */
+export const THEORY_BOOKS: readonly BookName[] = ["gm2600", "theory"];
 
 /** Opening-book policy constants (§7.3, Appendix E §2.2–§2.3). */
 export const BOOK = {

@@ -36,7 +36,7 @@ const page = (await Bun.file(path.join(root, "pages/panel.html")).text()).replac
 	"/preview.js"
 );
 const server = Bun.serve({
-	port: 4179,
+	port: Number(process.env.SL_PREVIEW_PORT ?? 4179),
 	hostname: "127.0.0.1",
 	fetch(request) {
 		const url = new URL(request.url);

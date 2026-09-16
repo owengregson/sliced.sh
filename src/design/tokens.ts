@@ -33,8 +33,8 @@ export const palette = {
 	"danger.300": "#FF8A7A", // Danger text on dark.
 	"danger.500": "#E5533D", // Auto-play armed, errors.
 	"danger.700": "#A8301F", // Danger pressed.
-	"azure.500": "#8DB4EC", // Board effects: the owner's own attacks — pastel (owner, 2026-09-13: "more pastel, less opacity").
-	"crimson.500": "#F0A3A3", // Board effects: the opponent's attacks — pastel (owner, 2026-09-13).
+	"azure.500": "#5A94F2", // Board effects: the owner's own attacks — bluer than the 2026-09-13 pastel (owner, 2026-09-15: "increase the blueness").
+	"crimson.500": "#F25A5A", // Board effects: the opponent's attacks — redder than the 2026-09-13 pastel (owner, 2026-09-15: "increase the redness").
 } as const;
 
 export type PaletteName = keyof typeof palette;

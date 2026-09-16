@@ -1,10 +1,9 @@
 import { expect, it } from "bun:test";
-import { DEFAULT_SETTINGS } from "@core/constants/defaults";
 import { createRng } from "@core/rng";
 import { TimingModel } from "@core/timing/timing-model";
 import type { GameMeta, TimingLogEntry } from "@core/timing/types";
 import { V1ParametricHead } from "@core/timing/v1-head";
-import { ctx } from "./helpers";
+import { ctx, MODEL_TIMING } from "./helpers";
 
 const meta: GameMeta = {
 	gameId: "live-settings",
@@ -14,7 +13,7 @@ const meta: GameMeta = {
 	incSec: 0,
 	site: "chesscom",
 };
-const settings = { ...DEFAULT_SETTINGS.timing, respectBudget: false, speedScale: 1 };
+const settings = { ...MODEL_TIMING, respectBudget: false, moveTimeScale: 1 };
 const position = (ply: number) => ctx({ ply, baseSec: 0, incSec: 0, myClockMs: 0, oppClockMs: 0 });
 function model() {
 	const entries: TimingLogEntry[] = [];
@@ -53,7 +52,9 @@ it("a live speed adjustment changes future planning without changing the pending
 	const pending = a.m.planMove(position(20));
 	const controlPending = b.m.planMove(position(20));
 	const saved = structuredClone(pending);
-	a.m.updateSettings({ ...settings, speedScale: 0.5 }, meta);
+	// A *faster* hand: the model consumes a duration factor, so half the move time (2026-09-15 —
+	// the user-facing knob that produces this is `timing.baseSpeed: 2`).
+	a.m.updateSettings({ ...settings, moveTimeScale: 0.5 }, meta);
 	expect(pending).toEqual(saved);
 	a.m.observe(pending.thinkMs, pending);
 	b.m.observe(controlPending.thinkMs, controlPending);

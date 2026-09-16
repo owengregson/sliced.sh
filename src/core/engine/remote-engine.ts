@@ -34,6 +34,8 @@ import type { EngineStatus, EngineVariant } from "@typedefs/engine";
 import type { EngineTransport } from "./types";
 
 export interface RemoteEngineOptions {
+	/** Independent engine channel; defaults to the playing engine. */
+	portName?: typeof PORT_NAMES.engine | typeof PORT_NAMES.reviewEngine;
 	/** Makes sure the offscreen document exists (Task 9 `ensureOffscreen`). Default: no-op. */
 	ensureHost?: () => Promise<void>;
 	/** Drives the port's reconnect backoff and the restart timeout (tests inject a fake). */
@@ -73,6 +75,7 @@ export class RemoteEngine implements EngineTransport {
 	readonly ready: Promise<void>;
 	private resolveReady: () => void = () => {};
 	private readonly ensureHost: () => Promise<void>;
+	private readonly portName: typeof PORT_NAMES.engine | typeof PORT_NAMES.reviewEngine;
 	private readonly scheduler: PortScheduler;
 	private readonly readyTimeoutMs: number;
 	private port: ConnectedPort<EnginePortCommand> | undefined;
@@ -95,6 +98,7 @@ export class RemoteEngine implements EngineTransport {
 	private readonly configurationCancels = new Set<() => void>();
 
 	constructor(opts: RemoteEngineOptions = {}) {
+		this.portName = opts.portName ?? PORT_NAMES.engine;
 		this.ensureHost = opts.ensureHost ?? (() => Promise.resolve());
 		this.scheduler = opts.scheduler ?? DEFAULT_SCHEDULER;
 		this.readyTimeoutMs = opts.readyTimeoutMs ?? TIMINGS.engineReadyTimeoutMs;
@@ -277,7 +281,7 @@ export class RemoteEngine implements EngineTransport {
 		if (this.disposed) return;
 		let port: ConnectedPort<EnginePortCommand>;
 		try {
-			port = connectPort<EnginePortCommand, EnginePortMessage>(PORT_NAMES.engine, {
+			port = connectPort<EnginePortCommand, EnginePortMessage>(this.portName, {
 				onMessage: (m) => this.onPortMessage(m),
 				onDisconnect: (reason) => {
 					this.synced = false;

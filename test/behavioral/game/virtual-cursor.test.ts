@@ -134,8 +134,8 @@ describe("game session: the pointer mirror follows what the hand dispatched", ()
 		expect(await h.until(() => h.session().currentState() === "game-over", 5_000)).toBe(true);
 		expect(hides()).toBe(0);
 		expect(mirror().at(-1)?.kind).toBe("cursorTo");
-		// the debugger detaching between games moves no pointer and hides nothing
-		await h.drive(() => h.sim.debugger.detachByUser(h.tabId));
+		// A routine detach preserves saved intent; an explicit user cancel turns auto-play off.
+		await h.drive(() => h.debuggerManager.detach(h.tabId));
 		expect(h.debuggerManager.isAttached(h.tabId)).toBe(false);
 		expect(hides()).toBe(0);
 		// a quiet stretch: still parked
@@ -278,9 +278,8 @@ describe("game session: the pointer mirror follows what the hand dispatched", ()
 
 	/**
 	 * The infobar's Cancel. §13.4 forbids re-attaching mid-game, so after a Cancel the hand owns no
-	 * pointer for the rest of this game — but the pointer has not moved, and the next game re-arms
-	 * from where it rests (`attachExecutor`). 2026-09-13: the arrow stays; a detach is not one of
-	 * the three hide reasons.
+	 * pointer until explicitly re-armed. The single auto-play switch also clears the saved
+	 * preference. The arrow stays; a detach is not one of the three hide reasons.
 	 */
 	it("a user-cancelled debugger leaves the mirror parked", async () => {
 		h = await createGameHarness({ settings: { automation: { autoMove: true } } });
@@ -289,6 +288,7 @@ describe("game session: the pointer mirror follows what the hand dispatched", ()
 		expect(h.debuggerManager.isAttached(h.tabId)).toBe(true);
 		await h.drive(() => h.sim.debugger.detachByUser(h.tabId));
 		expect(h.debuggerManager.isAttached(h.tabId)).toBe(false);
+		expect(h.settings().automation.autoMove).toBe(false);
 		expect(hides()).toBe(0);
 		expect(mirror().at(-1)?.kind).toBe("cursorTo");
 	});

@@ -14,7 +14,7 @@
 import { runtimeSendMessage } from "@core/chrome/runtime";
 import { tabsSendMessage } from "@core/chrome/tabs";
 import { type MessageType, MSG, type PanelSnapshot } from "@core/constants/messages";
-import type { MoveRatingSoundQuality } from "@core/constants/sounds";
+import type { ForcedMateSoundQuality, MoveRatingSoundQuality } from "@core/constants/sounds";
 import type { LogSeverity } from "@core/logger";
 import type { SerializedValue } from "@core/serialization";
 import type { EngineStatus } from "@typedefs/engine";
@@ -60,7 +60,14 @@ export interface MessagePayloadMap {
 	// offscreen ↔ SW
 	[MSG.OFFSCREEN_PING]: EmptyPayload;
 	[MSG.OFFSCREEN_ENGINE_STATUS]: EmptyPayload;
-	[MSG.OFFSCREEN_MOVE_RATING_SOUND]: { quality: MoveRatingSoundQuality | null };
+	/**
+	 * A rating clip, the forced-mate clip at a pitch (`mateSemitones`: `MOVE_QUALITY.mateMinSemitones`
+	 * … `mateTopSemitones`, a number, so the file name never travels), or `quality: null` to stop
+	 * the sender tab's voices.
+	 */
+	[MSG.OFFSCREEN_MOVE_RATING_SOUND]:
+		| { quality: MoveRatingSoundQuality | null }
+		| { quality: ForcedMateSoundQuality; mateSemitones: number };
 	// shared (the logger's `LogEnvelope` is assignable to this)
 	[MSG.LOG]: {
 		level: LogSeverity;

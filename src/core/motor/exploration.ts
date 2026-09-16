@@ -14,10 +14,16 @@ import type { Rng } from "@core/rng";
 import type { Square } from "@typedefs/game";
 import type { PersonaId } from "@typedefs/settings";
 import type { TimingMode } from "@typedefs/timing";
-import { EXPLORATION, PREVIEW, SAMPLING } from "./constants";
+import { EXPLORATION, PREVIEW, REPERTOIRE, SAMPLING } from "./constants";
 import { lastPoint, pathMs, sampleRange, smallRect } from "./geometry";
 import { generatePath, idleTremor } from "./path-generator";
 import { planPreview, previewProbability, selectedAfter } from "./preview-select";
+import {
+	chooseRepertoire,
+	type MotorRepertoireContext,
+	type RepertoireState,
+	repertoireRoute,
+} from "./repertoire";
 import { pointInBand, samplePointInRect } from "./sampling";
 import type {
 	BoardGeometry,
@@ -34,6 +40,7 @@ import type {
 export type ExplorationCandidate = MoveCandidate;
 
 export interface ExplorationOptions {
+	repertoire?: MotorRepertoireContext;
 	thinkMs: number;
 	mode: TimingMode;
 	nReasonable: number;
@@ -108,6 +115,13 @@ interface Budget {
 }
 
 export class ExplorationPlanner {
+	private repertoireState: RepertoireState | undefined;
+
+	/** A new game must not inherit the preceding game's current attention bout. */
+	reset(): void {
+		this.repertoireState = undefined;
+	}
+
 	plan(
 		waitMs: number,
 		candidates: readonly MoveCandidate[],
@@ -117,9 +131,15 @@ export class ExplorationPlanner {
 		opts: ExplorationOptions
 	): HandAction[] {
 		const reaction = sampleRange(profile.reactionMs, rng);
-		const budget = waitMs - reaction;
+		const budget = Number.isFinite(waitMs) ? Math.max(0, waitMs - reaction) : 0;
 		let cursor = opts.cursor;
-		if (budget < EXPLORATION.minWindowMs) return [{ kind: "rest", dwellMs: Math.max(0, budget) }];
+		if (budget < EXPLORATION.minWindowMs) {
+			this.reset();
+			return [{ kind: "rest", dwellMs: budget }];
+		}
+		if (opts.repertoire) {
+			return this.planRepertoire(budget, candidates, geometry, profile, rng, opts, opts.repertoire);
+		}
 
 		const actions: HandAction[] = [];
 		const pauseMs = sampleRange(EXPLORATION.decisionPauseFrac, rng) * budget;
@@ -230,6 +250,126 @@ export class ExplorationPlanner {
 		const rest: HandAction = { kind: "rest", dwellMs: restMs - pathMs(tremor) };
 		if (tremor.length > 0) rest.path = tremor;
 		actions.push(rest);
+		return actions;
+	}
+
+	/** One purpose for this window, with fresh geometry and candidate targets every time. */
+	private planRepertoire(
+		budget: number,
+		candidates: readonly MoveCandidate[],
+		geometry: BoardGeometry,
+		profile: MotorProfile,
+		rng: Rng,
+		opts: ExplorationOptions,
+		context: MotorRepertoireContext
+	): HandAction[] {
+		const pool = candidates.filter((c) => opts.legalDestinations(c.from).includes(c.to));
+		const state = chooseRepertoire(
+			{
+				...context,
+				persona: context.persona ?? opts.persona,
+				premovePending: context.premovePending || opts.mode === "premove" || opts.mode === "instant",
+			},
+			this.repertoireState,
+			{ budgetMs: budget, myClockMs: opts.myClockMs, candidates: pool.length },
+			rng
+		);
+		this.repertoireState = state;
+		// A deliberate selection is an inspection bout of its own. Admit it at the
+		// existing preview rate before hover appetite, intent filtering, or a route can
+		// dilute that rate or consume its budget. Stillness chosen by the repertoire
+		// is a preference; urgency and forced-move constraints remain hard guards.
+		const previewAllowed =
+			!context.forced &&
+			!context.premovePending &&
+			pool.length > 0 &&
+			budget >= REPERTOIRE.minWindowMs &&
+			Number.isFinite(opts.myClockMs) &&
+			opts.myClockMs >= REPERTOIRE.lowClockMs;
+		if (
+			previewAllowed &&
+			rng.chance(previewProbability({ ...opts, previewBase: profile.exploration.previewBase }))
+		) {
+			const pauseMs = EXPLORATION.decisionPauseFrac[0] * budget;
+			const preview = this.preview(
+				opts.cursor,
+				pool,
+				geometry,
+				profile,
+				rng,
+				opts,
+				{ spent: 0, explore: budget - pauseMs, pauseMs },
+				[],
+				null
+			);
+			if (preview) {
+				// Reserve the complete sampled gesture first, including its safe return /
+				// deselection. Only then allocate a stationary orientation from the surplus.
+				const durationMs = actionDurationMs(preview.action);
+				const orientationMs = Math.min(
+					sampleRange(REPERTOIRE.orientationFrac, rng) * budget,
+					Math.max(0, budget - pauseMs - durationMs)
+				);
+				this.repertoireState = { ...state, intent: "inspect" };
+				return [
+					{ kind: "rest", dwellMs: orientationMs },
+					preview.action,
+					{ kind: "rest", dwellMs: Math.max(0, budget - orientationMs - durationMs) },
+				];
+			}
+		}
+		// Retain the fitted profile/time-control appetite; the new repertoire must not
+		// restore the old always-hover behavior or ignore a profile with exploration off.
+		if (state.intent === "still" || !rng.chance(hoverAnyProb(profile, opts.nReasonable, budget))) {
+			return [{ kind: "rest", dwellMs: budget }];
+		}
+		const actions: HandAction[] = [];
+		let cursor = opts.cursor;
+		let spent = 0;
+		const push = (action: HandAction): void => {
+			actions.push(action);
+			spent += actionDurationMs(action);
+			cursor = actionEnd(action, cursor);
+		};
+		const pauseMs = sampleRange(EXPLORATION.decisionPauseFrac, rng) * budget;
+		const activeUntil = budget - pauseMs;
+		push({ kind: "rest", dwellMs: sampleRange(REPERTOIRE.orientationFrac, rng) * activeUntil });
+		const route = repertoireRoute(state.intent, pool, rng, opts.committed);
+		for (const target of route) {
+			let rect: Rect;
+			if ("square" in target) rect = geometry.squareRect(target.square);
+			else {
+				const a = geometry.squareRect(target.between[0]);
+				const b = geometry.squareRect(target.between[1]);
+				rect = smallRect(
+					{
+						x: (a.left + a.width / 2 + b.left + b.width / 2) / 2,
+						y: (a.top + a.height / 2 + b.top + b.height / 2) / 2,
+					},
+					EXPLORATION.tracePointRectPx
+				);
+			}
+			if (
+				![rect.left, rect.top, rect.width, rect.height].every(Number.isFinite) ||
+				rect.width <= 0 ||
+				rect.height <= 0
+			)
+				break;
+			const point = samplePointInRect(rect, SAMPLING.hover.sigmaFrac, SAMPLING.hover.innerFrac, rng);
+			const path = generatePath(cursor, point, rect, profile, rng);
+			const dwellRange = state.intent === "verify" ? REPERTOIRE.verifyDwellMs : REPERTOIRE.dwellMs;
+			const remaining = activeUntil - spent - pathMs(path);
+			// Refuse whole legs. Never accelerate an optional route or cut out its dwell to fit.
+			if (remaining < dwellRange[0]) break;
+			push({
+				kind: "square" in target ? "hover" : "trace",
+				rect,
+				target: lastPoint(path, point),
+				path,
+				dwellMs: Math.min(sampleRange(dwellRange, rng), remaining),
+			});
+		}
+		push({ kind: "rest", dwellMs: Math.max(0, budget - spent) });
 		return actions;
 	}
 

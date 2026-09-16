@@ -1,38 +1,76 @@
 /**
- * Publish landed-move effects immediately and add a rating when sufficient scores arrive.
- * Recommendation, arrival, and live ponder/panel frames share the position-indexed score cache;
- * an unranked move uses the following position's score, flipped to the mover's perspective.
- * Complete background frames can therefore finish a verdict while the board stays unchanged.
+ * Board effects and move ratings for every landed move (owner's briefs, 2026-09-13 / 2026-09-14).
  *
- * Dedicated low-priority searches remain a fallback. A late rating repeats its effect list so
- * the overlay adds the marker without replaying animations. Ratings remain eligible within the
- * landed window, unless a later move owns the same square. Cancellation clears pending jobs.
+ * The effect list is pure chess and goes out the moment a move lands. The rating is chess.com's
+ * Game Review verdict (`classifyMoveQuality`), and it rests **only** on review frames: complete
+ * MultiPV searches by the dedicated full-network review engine (`ReviewEngine`), never on the
+ * playing engine's strength-limited, shaped or shallow lines.
+ *
+ * On time, not after the fact. One frame per position answers both halves of a verdict, so the
+ * reporter keeps a small store of frames and a single review search in flight, always on the most
+ * urgent position still short of `REVIEW.targetDepth`:
+ *
+ *   0  a landed move's missing half — the position it was played from, or the position it made
+ *   1  the current position (the side to move is thinking: it is the next move's "before")
+ *   2  the result of our planned move (the opponent's next "before", searched while we wait out
+ *      the human think time)
+ *   3  the results of the likeliest replies (the current frame's top lines), once the current
+ *      position is final — so the opponent's move and our answer to it are ready in advance
+ *
+ * A more urgent need stops the search in flight; what it completed stays in the store and the
+ * position is picked up again later. A landed move publishes when its frames reach
+ * `REVIEW.targetDepth`, or after `REVIEW.landedWaitMs` from frames at `REVIEW.publishDepth` — a
+ * late rating repeats its effect list, so the overlay adds the chip without replaying the rays.
+ * `setPlayBusy` suspends search and classification only during foreground preparation. Input
+ * activity gates classification separately; background search keeps producing frames. Heavy
+ * classification yields between jobs and admits work before the caller's input lead boundary.
+ * Existing verdicts, forced/checkmate marks and rays publish immediately. Only two live plies wait.
  */
 
 import { boardEffectsFor } from "@core/chess/board-effects";
+import { loadPosition } from "@core/chess/fen";
 import { positionKey } from "@core/chess/history";
 import { applyMoves, legalMoves } from "@core/chess/san";
 import type { BoardEffect } from "@core/constants/board-effects";
 import type { GamePortCommand } from "@core/constants/messages";
 import { type MoveQualityMark, MOVE_QUALITY as Q } from "@core/constants/move-quality";
-import { classifyMoveQuality, type MoveQualityVerdict } from "@core/engine/move-quality";
-import type { AnalysisHandle, AnalysisRequest } from "@core/engine/types";
+import { BRILLIANT, MOVE_CLASSIFICATION, REVIEW, reviewRetryDelayMs } from "@core/constants/review";
+import {
+	classifyMoveQuality,
+	forcedMoveVerdict,
+	type MoveQualityVerdict,
+	passedBrilliantGates,
+	type ReviewFrame,
+	reviewLines,
+} from "@core/engine/move-quality";
+import type { AnalysisHandle, AnalysisPriority, AnalysisRequest } from "@core/engine/types";
 import { log } from "@core/logger";
 import { rankedLines } from "@core/strength/quality";
 import { newId } from "@core/util/ids";
-import type { Eval, EvalLine } from "@typedefs/engine";
+import type { Scheduler } from "@core/util/scheduler";
 import type { Square } from "@typedefs/game";
+import type { MoveQualityChipSide } from "@typedefs/settings";
 
-/** The searcher surface this needs (`EngineController` satisfies it). */
-export interface BoardEffectsSearcher {
+/** The review engine surface this needs (`ReviewEngine` satisfies it). */
+export interface ReviewSearcher {
 	analyse(req: AnalysisRequest): AnalysisHandle;
+	/** Shared engine admission; the session owns its per-tab lease independently of this reporter. */
+	setPlayBusy?(owner: string, busy: boolean): void;
+	/** Boot the engine without searching; rejects when it cannot start. */
+	warm?(): Promise<void>;
+}
+
+/** A position and the history that reaches it (the engine sees repetitions). */
+export interface ReviewedPosition {
+	fen: string;
+	history: { fen: string; moves: readonly string[] };
 }
 
 /** A move to classify: the position it is played in, the history root of that position, the move. */
 export interface ClassifiedMove {
 	/** Position before the move. */
 	beforeFen: string;
-	/** Root of the session's history for that position (repetition-aware cache identity). */
+	/** Root of the session's history for that position. */
 	historyFen: string;
 	/** Moves from `historyFen` up to, but not including, the move. */
 	historyMoves: readonly string[];
@@ -40,26 +78,17 @@ export interface ClassifiedMove {
 	uci: string;
 	/** Ply index of `beforeFen` (0 = the start position). */
 	ply: number;
-	/** The move came out of the opening book; only our own moves can know. */
+	/** `true` when the move is known to come from the opening book; otherwise the books are asked. */
 	inBook?: boolean;
 }
 
-/** Lines an existing search produced for a position: the referee's, the ponder's, a cache hit. */
-export interface KnownLines {
-	lines: readonly EvalLine[];
-	/** The search ran with no `elo` (`UCI_LimitStrength false`). */
-	fullStrength: boolean;
-}
-
-/** Our own planned move, known before it is played (`prepare`): the session's history root as is. */
+/** Our own planned move, known before it is played (`prepare`). */
 export interface PlannedMove {
 	beforeFen: string;
 	history: { fen: string; moves: readonly string[] };
 	uci: string;
 	ply: number;
 	inBook?: boolean;
-	/** The own-move search's lines for `beforeFen`, when there was a search. */
-	analysis?: KnownLines;
 }
 
 export interface LandedMove extends ClassifiedMove {
@@ -67,62 +96,59 @@ export interface LandedMove extends ClassifiedMove {
 	mine: boolean;
 }
 
-/** Everything one position arrival says about the moves that produced it. */
+/** The plies that produced a position: one, or two when a queued premove fired on the reply. */
 export interface Arrival {
-	/** The plies that landed, in order: one, or two when a queued premove fired on the reply. */
 	moves: LandedMove[];
-	/** Lines the session already holds for `moves[0].beforeFen` (the ponder's), any strength. */
-	lines?: readonly EvalLine[];
-	/**
-	 * The `UCI_Elo` the session's own searches run at (absent = full strength). A position the
-	 * session analysed at that strength answers from the cache when asked at the same strength.
-	 */
-	strengthElo?: number;
 }
 
 export interface BoardEffectsReporterDeps {
-	/** `null` while no searcher is attached: the effects still go out, the verdict does not. */
-	searcher(): BoardEffectsSearcher | null;
-	/** Active session target selects the network independently of referee strength. */
-	getTargetElo?: () => number;
+	/** `null` while no review engine is attached: the effects still go out, the rating does not. */
+	reviewer(): ReviewSearcher | null;
 	post(cmd: GamePortCommand): void;
 	/**
-	 * `Settings.automation.moveQualityChips` (2026-09-13). `false`: the rays still go out, but no
-	 * verdict is prepared, searched or sent — the chip is the one part of the effect layer that
-	 * costs engine time. Absent means on.
+	 * `Settings.automation.moveQualityChips`. `false`: the rays still go out, but nothing is
+	 * reviewed or sent. Absent means on.
 	 */
 	chips?: () => boolean;
+	/**
+	 * `Settings.automation.boardEffects`: whether a batch carries the rays and the capture mark.
+	 * `false` (owner, 2026-09-15: the two switches no longer depend on each other): ratings are
+	 * reviewed and sent exactly as with it on, each chip beside an empty effect list, and a move
+	 * with no chip to send posts nothing. Absent means on.
+	 */
+	rays?: () => boolean;
+	/**
+	 * `Settings.automation.moveQualityChipsFor`: whose moves carry the chip. A hidden side's moves
+	 * still post their effects — without `quality`, so no rating sound either — and are neither
+	 * delivered nor dropped. Both sides' positions are still reviewed: every frame is also a half
+	 * of the other side's verdicts, and our plan's result is the opponent's next "before". Absent
+	 * means both.
+	 */
+	chipsFor?: () => MoveQualityChipSide;
+	/** Opening-book moves for a position (`BookPolicy.bookMoves`); absent = no Book verdicts. */
+	bookMoves?: (fen: string) => Promise<readonly string[]>;
+	/** The rating a mover is graded at (chess.com's expected points depend on it). */
+	rating?: (mine: boolean) => number | undefined;
+	scheduler: Scheduler;
+	now: () => number;
 }
 
 /** Why a landed move ended without a chip. */
-export type DropReason =
-	| "no-line"
-	| "shallow"
-	| "unscored"
-	| "superseded"
-	| "stale"
-	| "failed"
-	| "no-searcher";
+export type DropReason = "no-frame" | "shallow" | "unscored" | "stale" | "failed" | "no-reviewer";
 
 export interface VerdictStats {
 	delivered: number;
 	dropped: Record<string, number>;
 }
 
-/** Flip a score to the other side's point of view. */
-function negate(score: Eval): Eval {
-	if (score.mate !== undefined) return { mate: -score.mate };
-	return { cp: -(score.cp ?? 0) };
-}
-
-/** Identity of a classification: the position the move is played in, and the move. */
-function keyOf(move: ClassifiedMove): string {
-	return `${positionKey(move.beforeFen)}|${move.uci}`;
-}
-
 /** Placement, side to move and castling/ep rights — what "the same position" means here. */
 function boardKey(fen: string): string {
 	return positionKey(fen);
+}
+
+/** Halfmove count separates repetitions and positions approaching the fifty-move draw. */
+function reviewKey(fen: string): string {
+	return fen.trim().split(/\s+/).slice(0, 5).join(" ");
 }
 
 function uciOf(fen: string, from: Square, to: Square): string | null {
@@ -157,8 +183,68 @@ export function landedPlies(
 	return null;
 }
 
-interface Known extends KnownLines {
-	depth: number;
+interface StoredFrame extends ReviewFrame {
+	/** The search for this position ran to its end: nothing deeper is coming. */
+	done: boolean;
+}
+
+/** The mover's previous `mate` rating in a sequence, as its sound was pitched. */
+export interface MateNote {
+	/** Moves to checkmate, that move included. */
+	mateIn: number;
+	/** The semitones its sound was given. */
+	semitones: number;
+}
+
+/**
+ * The forced-mate pitch of a move `mateIn` moves from checkmate (1 = the checkmate), in semitones
+ * from `forced.mp3`: `MOVE_QUALITY.mateTopSemitones` at the checkmate, one `mateSemitoneStep`
+ * lower per move further out, never below `mateMinSemitones` nor above the top.
+ */
+export function matePitch(mateIn: number): number {
+	const pitch = Q.mateTopSemitones - (mateIn - 1) * Q.mateSemitoneStep;
+	return Math.min(Q.mateTopSemitones, Math.max(Q.mateMinSemitones, pitch));
+}
+
+/**
+ * The semitones a `mate` rating's sound plays at, given the same mover's previous move in the
+ * sequence (owner, 2026-09-15). The checkmate is always the top step. A sequence starting here,
+ * making progress, or restarting because mate grew further away plays `matePitch(mateIn)`. A
+ * tangential move — mate exactly as far away as before — plays the average of the previous pitch
+ * and the next step's, so repeated ones creep upward and never pass that step.
+ */
+export function mateSemitones(mateIn: number, previous?: MateNote): number {
+	if (mateIn <= 1) return Q.mateTopSemitones;
+	if (previous === undefined || mateIn !== previous.mateIn) return matePitch(mateIn);
+	return (previous.semitones + matePitch(mateIn - 1)) / 2;
+}
+
+/**
+ * A checkmate on the board, rated as the classifier rates one — `mate`, mate in 1, above the whole
+ * ladder — without waiting for a review frame; nothing is graded, as for a forced move.
+ */
+function checkmateVerdict(): MoveQualityVerdict {
+	return { ...forcedMoveVerdict(), quality: "mate", mateIn: 1 };
+}
+
+/** A frame no further search will improve on. */
+function final(frame: StoredFrame | undefined): boolean {
+	return frame !== undefined && (frame.done || frame.depth >= REVIEW.targetDepth);
+}
+
+/** A position the reporter wants searched, and how urgently (0 = most). */
+interface Want {
+	key: string;
+	root: string;
+	moves: string[];
+	urgency: number;
+}
+
+interface ActiveSearch {
+	key: string;
+	urgency: number;
+	handle: AnalysisHandle;
+	stopping: boolean;
 }
 
 /** One classification: a planned or landed move, and what still stands between it and a chip. */
@@ -166,33 +252,132 @@ interface VerdictJob {
 	key: string;
 	move: ClassifiedMove;
 	mine: boolean;
-	/** Position key after the move (where its "played" score comes from). */
-	afterKey: string | null;
-	/** Set once the move landed: the effect list its chip is sent beside. */
-	landed: { effects: BoardEffect[] } | null;
+	beforeKey: string;
+	/** The position after the move, `null` when it is illegal. */
+	after: { key: string; fen: string } | null;
+	/** The position before the previous ply (Miss), when the history reaches back that far. */
+	previousKey: string | null;
+	/** Set once the move landed: the effect list its chip is sent beside, and when. */
+	landed: { effects: BoardEffect[]; at: number } | null;
+	/** The position had exactly one legal move: rated `forced` at once, no review needed. */
+	forced: boolean;
+	/**
+	 * The move checkmates: rated `mate` at once — ahead of `forced`, so the final move of a mating
+	 * sequence always carries its chip and its top-step sound.
+	 */
+	checkmate: boolean;
+	/** Opening-book membership; `undefined` while the books are being read. */
+	book: boolean | undefined;
 	verdict: MoveQualityVerdict | null;
 	delivered: boolean;
-	/** Why it is not classified yet, and which half is missing. */
 	blocker: DropReason;
-	missing: "before" | "after" | null;
-	/** Dedicated searches issued for each half — at most one per half, ever. */
-	searched: { before: boolean; after: boolean };
 	closed: boolean;
+	timer: unknown;
 }
 
 export class BoardEffectsReporter {
-	/** Lines per position key, bounded to `MOVE_QUALITY.knownPositions` (oldest first). */
-	private readonly known = new Map<string, Known>();
+	private generation = 0;
+	private playBusy = false;
+	private inputBusy = false;
+	private availableUntil: number | null = null;
+	private classificationTimer: unknown = null;
+	private readonly classifications = new Set<VerdictJob>();
+	private readonly frames = new Map<string, StoredFrame>();
 	/** The last `MOVE_QUALITY.landedWindow` landed moves, oldest first. */
 	private landed: VerdictJob[] = [];
 	/** The job started by `prepare()` for our planned move, waiting for it to land. */
 	private prepared: VerdictJob | null = null;
-	/** Dedicated searches in flight, by the position key they answer. */
-	private readonly inFlight = new Map<string, AnalysisHandle>();
+	private current: ReviewedPosition | null = null;
+	private active: ActiveSearch | null = null;
+	/** After a failed search, nothing is issued before this time (and a timer pumps then). */
+	private retryAt = 0;
+	private retryTimer: unknown = null;
+	/** Review searches that failed in a row: the step of `REVIEW.retryBackoffMs` to wait. */
+	private failures = 0;
+	/** `report()` is assembling its first batch: a rating found now ships inside it. */
+	private reporting = false;
 	private readonly counters: VerdictStats = { delivered: 0, dropped: {} };
+	/** Per ply of a `mate` rating: its distance to mate and its sound's pitch (`mateSemitones`). */
+	private readonly mateNotes = new Map<number, MateNote>();
+	/** Plies whose move passed every brilliant gate (`BRILLIANT.sequencePlies` reads them). */
+	private readonly sacrificePlies = new Set<number>();
 	private disposed = false;
 
 	constructor(private readonly deps: BoardEffectsReporterDeps) {}
+
+	/** Foreground preparation alone suspends search; preserve evidence from cooperative stop. */
+	setPlayBusy(busy: boolean): void {
+		if (this.disposed || this.playBusy === busy) return;
+		this.playBusy = busy;
+		if (busy) {
+			const active = this.active;
+			if (active && !active.stopping) {
+				active.stopping = true;
+				void active.handle.stop().catch((error: unknown) => {
+					log.debug("board effects: preparation stop failed", { error });
+				});
+			}
+		} else {
+			this.resolveAll();
+			this.pump();
+		}
+	}
+
+	/** Mouse-critical input blocks only synchronous classification, never background review. */
+	setInputBusy(busy: boolean): void {
+		if (this.disposed || this.inputBusy === busy) return;
+		this.inputBusy = busy;
+		if (!busy) this.resolveAll();
+	}
+
+	/** Absolute scheduler-clock lead boundary, already ahead of input; null is unlimited. */
+	setAvailableUntil(until: number | null): void {
+		if (this.disposed) return;
+		this.availableUntil = until;
+		this.scheduleClassification();
+	}
+
+	private canClassify(): boolean {
+		return (
+			!this.disposed &&
+			!this.playBusy &&
+			!this.inputBusy &&
+			this.chipsOn() &&
+			(this.availableUntil === null || this.deps.now() < this.availableUntil)
+		);
+	}
+
+	/** At most one costly verdict per timer turn; every turn rechecks input admission. */
+	private scheduleClassification(): void {
+		if (this.classificationTimer !== null || !this.canClassify() || !this.classifications.size)
+			return;
+		this.classificationTimer = this.deps.scheduler.setTimeout(() => {
+			this.classificationTimer = null;
+			if (!this.canClassify()) return;
+			let next = this.openJobs().find((job) => this.classifications.has(job));
+			if (next?.landed) {
+				// A premove recapture shares its square with the preceding move. Resolve that
+				// predecessor first so its chip is not overwritten before it can be delivered.
+				const at = this.landed.indexOf(next);
+				const square = next.move.uci.slice(2, 4);
+				const predecessor = this.landed
+					.slice(0, at)
+					.find(
+						(job) =>
+							!job.closed &&
+							!job.verdict &&
+							this.classifications.has(job) &&
+							job.move.uci.slice(2, 4) === square
+					);
+				if (predecessor) next = predecessor;
+			}
+			if (next) {
+				this.classifications.delete(next);
+				this.resolve(next, true);
+			}
+			this.scheduleClassification();
+		}, 0);
+	}
 
 	/** `landedPlies`, reachable through the class for callers that only import it. */
 	static landedPlies(
@@ -208,34 +393,26 @@ export class BoardEffectsReporter {
 		return { delivered: this.counters.delivered, dropped: { ...this.counters.dropped } };
 	}
 
-	/**
-	 * Lines an existing search produced for `fen`. Remembered for the last few positions and
-	 * used for any classification that needs them — the "before" half of the move played from
-	 * `fen`, the "played" half of the move that led to `fen`.
-	 */
-	supply(fen: string, lines: readonly EvalLine[], fullStrength: boolean): void {
-		if (this.disposed || lines.length === 0) return;
-		const key = boardKey(fen);
-		const depth = rankedLines(lines)[0]?.depth ?? 0;
-		const existing = this.known.get(key);
-		if (existing && existing.depth > depth && !(fullStrength && !existing.fullStrength)) return;
-		this.known.delete(key);
-		this.known.set(key, { lines, fullStrength, depth });
-		while (this.known.size > Q.knownPositions) {
-			const oldest = this.known.keys().next().value;
-			if (oldest === undefined) break;
-			this.known.delete(oldest);
-		}
-		this.resolveAll();
+	/** The frame the reporter holds for `fen` (for the tests and the panel). */
+	frameFor(fen: string): ReviewFrame | null {
+		const frame = this.frames.get(reviewKey(fen));
+		return frame ? { lines: frame.lines, depth: frame.depth } : null;
 	}
 
 	/**
-	 * Our next move is decided: classify it now, while the engine is idle and the hand is still
-	 * waiting out the human think time, so the verdict is ready when the move lands. The
-	 * recommendation's own lines answer when they were searched at full strength; otherwise the
-	 * dedicated search runs now. A repeat for the same (position, move) is a no-op; a different
-	 * plan replaces the previous one. Any landed move still waiting for lines gets its dedicated
-	 * searches here too — this is the one moment the engine has nothing else to do.
+	 * The position on the board now. Reviewed right away: it is the "before" of the next move and
+	 * the "after" of the one that produced it, whichever side is thinking.
+	 */
+	observe(position: ReviewedPosition): void {
+		if (this.disposed || !this.chipsOn()) return;
+		this.current = position;
+		this.pump();
+	}
+
+	/**
+	 * Our next move is decided: open its verdict now and review the position it will produce
+	 * while the hand waits out the think time, so the chip is ready when the move lands. A repeat
+	 * for the same (position, move) is a no-op; a different plan replaces the previous one.
 	 */
 	prepare(planned: PlannedMove): void {
 		if (this.disposed || !this.chipsOn()) return;
@@ -247,35 +424,27 @@ export class BoardEffectsReporter {
 			ply: planned.ply,
 			...(planned.inBook === undefined ? {} : { inBook: planned.inBook }),
 		};
-		const key = keyOf(move);
+		const key = this.keyOf(move);
 		if (this.prepared?.key !== key) {
-			if (this.prepared && !this.prepared.closed) {
-				this.prepared.closed = true;
-				log.debug("board effects: prepared verdict replaced by a new plan", {
-					uci: this.prepared.move.uci,
-					next: move.uci,
-				});
-			}
+			if (this.prepared) this.close(this.prepared, null);
 			this.prepared = this.open(key, move, true);
 		}
-		if (planned.analysis)
-			this.supply(planned.beforeFen, planned.analysis.lines, planned.analysis.fullStrength);
 		this.resolveAll();
-		if (this.prepared && !this.prepared.verdict) this.searchMissing(this.prepared, undefined);
-		for (const job of this.landed)
-			if (!job.closed && !job.verdict) this.searchMissing(job, undefined);
+		this.pump();
 	}
 
 	/**
 	 * Report the moves that produced the current position. Returns at once — one `effects`
-	 * command per landed move goes out synchronously (the opponent's first), each with its verdict
-	 * inside when that is already known; a verdict found later follows as its own command.
+	 * command per landed move goes out synchronously (the opponent's first), each with its rating
+	 * inside when it is already decided; a rating decided later follows as its own command.
 	 */
 	report(arrival: Arrival): void {
 		if (this.disposed || arrival.moves.length === 0) return;
+		const rays = this.raysOn();
 		if (!this.chipsOn()) {
-			// Rays only: nothing is opened, so nothing is searched and no chip can follow later.
+			// Rays only: nothing is opened, so nothing is reviewed and no chip can follow later.
 			this.cancel();
+			if (!rays) return;
 			for (const move of arrival.moves)
 				this.deps.post({
 					kind: "effects",
@@ -284,69 +453,110 @@ export class BoardEffectsReporter {
 				});
 			return;
 		}
-		const jobs: Array<{ job: VerdictJob; effects: BoardEffect[] }> = [];
+		const at = this.deps.now();
+		const batches: Array<{ job: VerdictJob | null; effects: BoardEffect[]; mine: boolean }> = [];
 		for (const move of arrival.moves) {
-			const effects = boardEffectsFor({ fen: move.beforeFen, uci: move.uci });
-			const key = keyOf(move);
+			// Board effects off: the chip alone, beside an empty list (the page draws just the chip).
+			const effects = rays ? boardEffectsFor({ fen: move.beforeFen, uci: move.uci }) : [];
+			const key = this.keyOf(move);
+			if (!this.shows(move.mine)) {
+				// A side whose ratings are hidden: its effects go out, nothing is tracked or counted. A
+				// plan for this very move (ours, under "theirs") has done its job — the position it
+				// made was reviewed for the opponent's reply — and closes quietly.
+				if (this.prepared?.key === key) {
+					this.close(this.prepared, null);
+					this.prepared = null;
+				}
+				batches.push({ job: null, effects, mine: move.mine });
+				continue;
+			}
 			let job: VerdictJob;
 			if (this.prepared?.key === key && !this.prepared.closed) {
-				// The move we planned is the move that landed: its verdict is ready or on its way.
+				// The move we planned is the move that landed: its rating is ready or on its way.
 				job = this.prepared;
 				this.prepared = null;
 			} else {
 				job = this.open(key, move, move.mine);
 			}
-			job.landed = { effects };
+			job.landed = { effects, at };
+			job.timer = this.deps.scheduler.setTimeout(() => {
+				job.timer = null;
+				this.resolve(job);
+				this.pump();
+			}, REVIEW.landedWaitMs);
 			this.landed.push(job);
-			jobs.push({ job, effects });
+			batches.push({ job, effects, mine: move.mine });
 		}
-		if (this.prepared && !this.prepared.closed) {
+		if (this.prepared) {
 			// A plan for a move we did not play: abandoned, never counted (it never landed).
-			this.prepared.closed = true;
-			log.debug("board effects: prepared verdict discarded, a different move landed", {
+			log.debug("board effects: prepared rating discarded, a different move landed", {
 				planned: this.prepared.move.uci,
 			});
+			// Its pitch was never played: the next move of ours must not count it as tangential.
+			this.mateNotes.delete(this.prepared.move.ply);
+			this.close(this.prepared, null);
+			this.prepared = null;
 		}
-		this.prepared = null;
-		while (this.landed.length > Q.landedWindow) {
-			const evicted = this.landed.shift();
-			if (evicted) this.close(evicted, evicted.missing === null ? "stale" : evicted.blocker);
+		this.trimLanded();
+		// Resolved here, the rating rides inside the first batch rather than as a second command.
+		this.reporting = true;
+		try {
+			this.resolveAll();
+		} finally {
+			this.reporting = false;
 		}
-		const first = arrival.moves[0];
-		if (arrival.lines && first) this.supply(first.beforeFen, arrival.lines, false);
-		this.resolveAll();
-		for (const { job, effects } of jobs) {
-			const mine = job.mine;
-			if (job.verdict && !job.delivered) {
+		for (const { job, effects, mine } of batches) {
+			if (job?.verdict && !job.delivered) {
 				job.delivered = true;
 				this.counters.delivered += 1;
 				this.close(job, null);
-				this.deps.post({ kind: "effects", effects, mine, ...this.mark(job.verdict, job.move) });
-			} else {
-				this.deps.post({ kind: "effects", effects, mine });
+				this.deps.post({ kind: "effects", effects, mine: job.mine, ...this.mark(job) });
+			} else if (rays) {
+				this.deps.post({ kind: "effects", effects, mine: job?.mine ?? mine });
 			}
+			// With the rays off a move whose chip is not decided yet posts nothing now: an empty batch
+			// would draw nothing, and its chip, if one comes, follows on its own (`deliver`).
 		}
-		// A "before" position nobody analysed is asked for at the session's own strength: a
-		// position the session searched (a premove's) answers from the cache; anything else is a
-		// best-effort search the next `move`/`ponder` request may supersede.
-		for (const { job } of jobs)
-			if (!job.closed && !job.verdict && job.missing === "before")
-				this.searchMissing(job, arrival.strengthElo);
+		this.pump();
 	}
 
 	/**
-	 * The board no longer carries the moves that were classified (the game is over, the setting is
-	 * off, a new game): stop every search and orphan every verdict, prepared or landed.
+	 * The board no longer carries the moves being rated (the game is over, the setting is off, a
+	 * new game): stop the review search and orphan every rating, prepared or landed.
 	 */
 	cancel(): void {
-		// The reason is what still stood between the move and its chip, not the cancel itself.
-		for (const job of this.landed) this.close(job, job.missing === null ? "stale" : job.blocker);
+		this.generation += 1;
+		if (this.classificationTimer !== null) this.deps.scheduler.clearTimeout(this.classificationTimer);
+		this.classificationTimer = null;
+		this.classifications.clear();
+		for (const job of this.landed) this.close(job, job.blocker);
 		this.landed = [];
-		if (this.prepared) this.prepared.closed = true;
+		if (this.prepared) this.close(this.prepared, null);
 		this.prepared = null;
-		for (const handle of this.inFlight.values()) void handle.stop();
-		this.inFlight.clear();
-		this.known.clear();
+		this.current = null;
+		const active = this.active;
+		this.active = null;
+		if (active) void active.handle.stop();
+		this.frames.clear();
+		this.mateNotes.clear();
+		this.sacrificePlies.clear();
+		if (this.retryTimer !== null) this.deps.scheduler.clearTimeout(this.retryTimer);
+		this.retryTimer = null;
+		this.retryAt = 0;
+	}
+
+	/**
+	 * A page where a game is played opened: start booting the review engine now, so the first
+	 * rating does not also wait for the full network to load. Nothing is searched, and a boot that
+	 * fails is left to the back-off.
+	 */
+	warm(): void {
+		if (this.disposed || this.playBusy || !this.chipsOn() || this.deps.now() < this.retryAt) return;
+		const reviewer = this.deps.reviewer();
+		if (!reviewer?.warm) return;
+		reviewer.warm().catch((error: unknown) => {
+			log.debug("board effects: the review engine did not warm up", { error });
+		});
 	}
 
 	dispose(): void {
@@ -359,34 +569,105 @@ export class BoardEffectsReporter {
 		return this.deps.chips?.() !== false;
 	}
 
+	private raysOn(): boolean {
+		return this.deps.rays?.() !== false;
+	}
+
+	/** Whether a move by this side (`mine` = the owner's) carries a chip (`chipsFor`). */
+	private shows(mine: boolean): boolean {
+		const side = this.deps.chipsFor?.() ?? "both";
+		return side === "both" || (side === "mine") === mine;
+	}
+
+	private keyOf(move: ClassifiedMove): string {
+		return `${reviewKey(move.beforeFen)}|${move.uci}`;
+	}
+
 	private open(key: string, move: ClassifiedMove, mine: boolean): VerdictJob {
-		const after = applyMoves(move.beforeFen, [move.uci]);
-		return {
+		const afterFen = applyMoves(move.beforeFen, [move.uci]);
+		const previousRoot =
+			move.historyMoves.length > 0
+				? applyMoves(move.historyFen, move.historyMoves.slice(0, -1))
+				: null;
+		const job: VerdictJob = {
 			key,
 			move,
 			mine,
-			afterKey: after === null ? null : boardKey(after),
+			beforeKey: reviewKey(move.beforeFen),
+			after: afterFen === null ? null : { key: reviewKey(afterFen), fen: afterFen },
+			previousKey: previousRoot === null ? null : reviewKey(previousRoot),
+			forced: legalMoves(move.beforeFen).length === 1,
+			checkmate: afterFen !== null && loadPosition(afterFen)?.isCheckmate() === true,
 			landed: null,
+			book: move.inBook === true ? true : undefined,
 			verdict: null,
 			delivered: false,
-			blocker: "no-line",
-			missing: "before",
-			searched: { before: false, after: false },
+			blocker: "no-frame",
 			closed: false,
+			timer: null,
 		};
+		if (job.book === undefined) {
+			const lookup = this.deps.bookMoves;
+			if (!lookup) job.book = false;
+			else
+				void lookup(move.beforeFen).then(
+					(moves) => {
+						job.book = moves.includes(move.uci);
+						this.resolve(job);
+					},
+					(error: unknown) => {
+						log.debug("board effects: book lookup failed", { error });
+						job.book = false;
+						this.resolve(job);
+					}
+				);
+		}
+		return job;
 	}
 
-	private mark(verdict: MoveQualityVerdict, move: ClassifiedMove): { quality: MoveQualityMark } {
-		return { quality: { square: move.uci.slice(2, 4) as Square, quality: verdict.quality } };
+	private mark(job: VerdictJob): { quality: MoveQualityMark } {
+		const verdict = job.verdict;
+		const square = job.move.uci.slice(2, 4) as Square;
+		if (verdict?.quality !== "mate" || verdict.mateIn === null)
+			return { quality: { square, quality: verdict?.quality ?? "good" } };
+		const semitones = this.mateNotes.get(job.move.ply)?.semitones ?? mateSemitones(verdict.mateIn);
+		return { quality: { square, quality: "mate", mateSemitones: semitones } };
+	}
+
+	/** The same side's move within `BRILLIANT.sequencePlies` before `ply` passed the brilliant gates. */
+	private recentSacrifice(ply: number): boolean {
+		for (let back = 2; back <= BRILLIANT.sequencePlies; back += 2)
+			if (this.sacrificePlies.has(ply - back)) return true;
+		return false;
+	}
+
+	/**
+	 * Record a `mate` rating's pitch against the mover's previous move (two plies back):
+	 * `mateSemitones` tells progress, a tangential move and a restart apart.
+	 */
+	private noteMate(job: VerdictJob): void {
+		const mateIn = job.verdict?.quality === "mate" ? job.verdict.mateIn : null;
+		if (mateIn === null) {
+			this.mateNotes.delete(job.move.ply);
+			return;
+		}
+		const previous = this.mateNotes.get(job.move.ply - 2);
+		this.mateNotes.set(job.move.ply, { mateIn, semitones: mateSemitones(mateIn, previous) });
 	}
 
 	/** Close a job; a landed move closing without a chip is logged and counted. */
 	private close(job: VerdictJob, reason: DropReason | null): void {
 		if (job.closed) return;
 		job.closed = true;
-		if (reason === null || job.delivered || !job.landed) return;
+		this.classifications.delete(job);
+		if (job.timer !== null) {
+			this.deps.scheduler.clearTimeout(job.timer);
+			job.timer = null;
+		}
+		// A side hidden since its move landed is not a missing chip: nothing is counted for it.
+		if (reason === null || job.delivered || !job.landed || !this.shows(job.mine)) return;
 		this.counters.dropped[reason] = (this.counters.dropped[reason] ?? 0) + 1;
-		log.debug("board effects: no chip for the landed move", {
+		log.debug("board effects: no rating for the landed move", {
 			uci: job.move.uci,
 			ply: job.move.ply,
 			mine: job.mine,
@@ -394,73 +675,104 @@ export class BoardEffectsReporter {
 		});
 	}
 
-	private resolveAll(): void {
-		for (const job of this.landed) this.resolve(job);
-		if (this.prepared) this.resolve(this.prepared);
+	private openJobs(): VerdictJob[] {
+		const jobs = this.landed.filter((job) => !job.closed && !job.verdict).reverse();
+		if (this.prepared && !this.prepared.closed && !this.prepared.verdict) jobs.push(this.prepared);
+		return jobs;
 	}
 
-	/** Try to classify `job` from the lines known now; on success post it if it has landed. */
-	private resolve(job: VerdictJob): void {
-		if (job.closed || job.verdict) return;
-		const before = this.known.get(boardKey(job.move.beforeFen));
-		// Before landing there is time for the full-strength search, so shaped lines are not
-		// accepted yet; once landed, whatever the session has is better than nothing.
-		if (!before || (!job.landed && !before.fullStrength)) {
-			this.setBlocker(job, "no-line", "before");
+	private trimLanded(): void {
+		while (this.landed.length > Q.landedWindow) {
+			const oldest = this.landed.shift();
+			if (oldest) this.close(oldest, oldest.blocker);
+		}
+	}
+
+	private resolveAll(): void {
+		for (const job of this.openJobs()) this.resolve(job);
+	}
+
+	/** Classify `job` from the frames held now; a landed job's rating is posted at once. */
+	private resolve(job: VerdictJob, admitted = false): void {
+		if (job.closed || job.verdict || this.disposed) return;
+		if (job.checkmate) {
+			// Checkmate is on the board: the last move of its sequence is rated, and sounds on the top
+			// step, the moment it lands — also as the only legal move, or with no review frame ready.
+			job.verdict = checkmateVerdict();
+			this.noteMate(job);
+			this.sacrificePlies.delete(job.move.ply);
+			if (job.landed && !this.reporting) this.deliver(job);
 			return;
 		}
-		const ranked = rankedLines(before.lines);
-		const best = ranked[0];
-		if (!best) {
-			this.setBlocker(job, "no-line", "before");
+		if (job.forced) {
+			// The only legal move needs no review: its rating is known the moment it is played.
+			job.verdict = forcedMoveVerdict();
+			this.mateNotes.delete(job.move.ply);
+			this.sacrificePlies.delete(job.move.ply);
+			if (job.landed && !this.reporting) this.deliver(job);
 			return;
 		}
-		if (best.depth < Q.minDepth) {
-			this.setBlocker(job, "shallow", "before");
+		// Board-known outcomes above are cheap. Frames alone are not a cached verdict: producing
+		// a new rating below can run the costly sacrifice scans, so it must wait out live input.
+		if (!admitted) {
+			this.classifications.add(job);
+			this.scheduleClassification();
 			return;
 		}
-		let playedScore: Eval | undefined;
-		if (!ranked.some((line) => line.pvUci[0] === job.move.uci)) {
-			const after = job.afterKey === null ? undefined : this.known.get(job.afterKey);
-			const top = after ? rankedLines(after.lines)[0] : undefined;
-			if (!after || !top) {
-				this.setBlocker(job, "unscored", "after");
-				return;
-			}
-			if (top.depth < Q.minDepth) {
-				this.setBlocker(job, "shallow", "after");
-				return;
-			}
-			playedScore = negate(top.score);
+		const waited = job.landed !== null && this.deps.now() - job.landed.at >= REVIEW.landedWaitMs;
+		const usable = (frame: StoredFrame | undefined): frame is StoredFrame =>
+			frame !== undefined && (final(frame) || (waited && frame.depth >= REVIEW.publishDepth));
+		const before = this.frames.get(job.beforeKey);
+		if (!usable(before)) {
+			job.blocker = before ? "shallow" : "no-frame";
+			return;
 		}
+		if (before.depth < MOVE_CLASSIFICATION.minDepth) {
+			// A review that ran to its end without reaching a depth worth grading.
+			job.blocker = "shallow";
+			return;
+		}
+		if (job.book === undefined) return;
+		const after = job.after ? this.frames.get(job.after.key) : undefined;
+		const previous = job.previousKey ? this.frames.get(job.previousKey) : undefined;
 		const verdict = classifyMoveQuality({
 			fen: job.move.beforeFen,
 			uci: job.move.uci,
-			ply: job.move.ply,
-			lines: before.lines,
-			...(playedScore ? { playedScore } : {}),
-			...(job.move.inBook === undefined ? {} : { inBook: job.move.inBook }),
+			before,
+			after: usable(after) ? after : undefined,
+			previous: previous && previous.depth >= REVIEW.publishDepth ? previous : undefined,
+			moverRating: this.deps.rating?.(job.mine),
+			inBook: job.book,
+			recentSacrifice: this.recentSacrifice(job.move.ply),
 		});
 		if (!verdict) {
-			this.setBlocker(job, "unscored", "after");
+			job.blocker = after ? "shallow" : "unscored";
+			return;
+		}
+		// A shallow candidate is still being reviewed. Do not freeze an ordinary badge before
+		// its tactical gates have enough evidence; a completed shallow search can still publish.
+		if (
+			verdict.brilliant?.reason === "insufficient-evidence" &&
+			(!final(before) || (this.needsAfter(job) && !final(after)))
+		) {
+			job.blocker = "shallow";
 			return;
 		}
 		job.verdict = verdict;
-		job.missing = null;
-		if (job.landed) this.deliver(job);
+		this.noteMate(job);
+		if (passedBrilliantGates(verdict)) this.sacrificePlies.add(job.move.ply);
+		else this.sacrificePlies.delete(job.move.ply);
+		if (job.landed && !this.reporting) this.deliver(job);
 	}
 
-	private setBlocker(job: VerdictJob, blocker: DropReason, missing: "before" | "after"): void {
-		// "superseded" is the more telling reason for the same missing half: a re-read of the same
-		// shallow frame must not hide that the search which produced it was cut short.
-		if (job.blocker === "superseded" && blocker === "shallow" && job.missing === missing) return;
-		job.blocker = blocker;
-		job.missing = missing;
-	}
-
-	/** A verdict for a landed move that `report()` did not ship inside the first command. */
+	/** A rating for a landed move that `report()` did not ship inside the first command. */
 	private deliver(job: VerdictJob): void {
 		if (job.closed || job.delivered || !job.landed || !job.verdict) return;
+		if (!this.shows(job.mine)) {
+			// The side's ratings were hidden after the move landed: no chip, and nothing counted.
+			this.close(job, null);
+			return;
+		}
 		const at = this.landed.indexOf(job);
 		if (at < 0) {
 			this.close(job, "stale");
@@ -468,98 +780,195 @@ export class BoardEffectsReporter {
 		}
 		const to = job.move.uci.slice(2, 4);
 		for (const later of this.landed.slice(at + 1))
-			if (later.move.uci.slice(2, 4) === to) {
-				// A later move landed on the same square: its chip is the one that belongs there.
+			if (later.move.uci.slice(2, 4) === to && later.delivered) {
+				// A later move on the same square already has its chip there: an older one would cover
+				// it. Until then the chips go out in the order the moves landed (a premove recapture).
 				this.close(job, "stale");
 				return;
 			}
+		// Board effects turned off since the move landed: the layer was erased, so the chip goes
+		// alone. Turned on since: the rays were never computed, and nothing is drawn retroactively.
+		const effects = this.raysOn() ? job.landed.effects : [];
 		job.delivered = true;
 		this.counters.delivered += 1;
 		this.close(job, null);
 		// The same effect list, so the page's dedupe skips the rays it has already drawn and only
 		// adds the chip. Sending an empty list here would look like a new batch.
-		this.deps.post({
-			kind: "effects",
-			effects: job.landed.effects,
-			mine: job.mine,
-			...this.mark(job.verdict, job.move),
-		});
+		this.deps.post({ kind: "effects", effects, mine: job.mine, ...this.mark(job) });
 	}
 
-	/**
-	 * Issue the dedicated search for the half `job` is missing — full strength (`elo` omitted,
-	 * which the UCI client turns into `UCI_LimitStrength false`) with the classifier's depth cap,
-	 * or at `strengthElo` with no depth cap, the shape the session's own searches answer from the
-	 * cache with. Once per half, and never twice for one position.
-	 */
-	private searchMissing(job: VerdictJob, strengthElo: number | undefined): void {
-		if (job.closed || job.verdict || job.missing === null) return;
-		const half = job.missing;
-		if (job.searched[half]) return;
-		const searcher = this.deps.searcher();
-		if (!searcher) {
-			this.setBlocker(job, "no-searcher", half);
+	/** The move's "after" position is needed: the "before" frame does not score the move itself. */
+	private needsAfter(job: VerdictJob): boolean {
+		if (!job.after || legalMoves(job.after.fen).length === 0) return false;
+		const before = this.frames.get(job.beforeKey);
+		return !reviewLines(before, MOVE_CLASSIFICATION.minDepth).some(
+			(line) => line.pvUci[0] === job.move.uci
+		);
+	}
+
+	/** Every position worth reviewing now, most urgent first (duplicates keep the first). */
+	private wants(): Want[] {
+		const out: Want[] = [];
+		const seen = new Set<string>();
+		const add = (key: string, root: string, moves: readonly string[], urgency: number): void => {
+			if (seen.has(key)) return;
+			seen.add(key);
+			out.push({ key, root, moves: [...moves], urgency });
+		};
+		const halves = (job: VerdictJob, urgency: number, always: boolean): void => {
+			add(job.beforeKey, job.move.historyFen, job.move.historyMoves, urgency);
+			if (job.after && (always || this.needsAfter(job)))
+				add(job.after.key, job.move.historyFen, [...job.move.historyMoves, job.move.uci], urgency);
+		};
+		for (const job of [...this.landed].reverse())
+			if (!job.closed && !job.verdict && this.shows(job.mine)) halves(job, 0, false);
+		const current = this.current;
+		if (current) add(reviewKey(current.fen), current.history.fen, current.history.moves, 1);
+		const prepared = this.prepared;
+		if (prepared && !prepared.closed) halves(prepared, 2, true);
+		if (current) {
+			const frame = this.frames.get(reviewKey(current.fen));
+			if (final(frame) && frame)
+				for (const line of rankedLines(frame.lines).slice(0, REVIEW.speculativeReplies)) {
+					const reply = line.pvUci[0];
+					const next = reply ? applyMoves(current.fen, [reply]) : null;
+					if (reply && next && legalMoves(next).length > 0)
+						add(reviewKey(next), current.history.fen, [...current.history.moves, reply], 3);
+				}
+		}
+		return out;
+	}
+
+	/** Keep the one review search on the most urgent position that is not final yet. */
+	private pump(): void {
+		if (this.disposed || this.playBusy || !this.chipsOn()) return;
+		const reviewer = this.deps.reviewer();
+		if (!reviewer) {
+			for (const job of this.landed) if (!job.verdict) job.blocker = "no-reviewer";
 			return;
 		}
-		job.searched[half] = true;
-		const moves =
-			half === "before" ? job.move.historyMoves : [...job.move.historyMoves, job.move.uci];
-		const target = half === "before" ? boardKey(job.move.beforeFen) : job.afterKey;
-		if (target === null || this.inFlight.has(target)) return;
+		if (this.deps.now() < this.retryAt) return;
+		const wants = this.wants().filter((want) => !final(this.frames.get(want.key)));
+		const next = wants[0];
+		const active = this.active;
+		if (active) {
+			if (active.stopping) return;
+			const wanted = wants.find((want) => want.key === active.key);
+			if (wanted && !(next && next.urgency < active.urgency && next.key !== active.key)) {
+				active.urgency = wanted.urgency;
+				return;
+			}
+			active.stopping = true;
+			void active.handle.stop();
+			return;
+		}
+		if (next) this.issue(reviewer, next);
+	}
+
+	private issue(reviewer: ReviewSearcher, want: Want): void {
+		const priority: AnalysisPriority =
+			want.urgency === 0 ? "move" : want.urgency === 1 ? "ponder" : "panel";
 		const req: AnalysisRequest = {
 			id: newId(),
-			...(this.deps.getTargetElo ? { targetElo: this.deps.getTargetElo() } : {}),
-			fen: job.move.historyFen,
-			...(moves.length > 0 ? { moves: [...moves] } : {}),
-			multiPv: Q.multiPv,
-			limit:
-				strengthElo === undefined
-					? { movetimeMs: Q.movetimeMs, depth: Q.depthCap }
-					: { movetimeMs: Q.movetimeMs },
-			...(strengthElo === undefined ? {} : { elo: strengthElo }),
-			// The lowest rank the queue has: never delays a `move` or a `ponder` search.
-			priority: "panel",
+			fen: want.root,
+			...(want.moves.length > 0 ? { moves: want.moves } : {}),
+			multiPv: REVIEW.multiPv,
+			limit: { depth: REVIEW.targetDepth, movetimeMs: REVIEW.movetimeMs },
+			priority,
 		};
 		let handle: AnalysisHandle;
 		try {
-			handle = searcher.analyse(req);
+			handle = reviewer.analyse(req);
 		} catch (error) {
-			log.debug("board effects: search refused", { error });
-			this.setBlocker(job, "failed", half);
+			log.debug("board effects: review refused", { error });
+			this.failed();
 			return;
 		}
-		this.inFlight.set(target, handle);
+		const active: ActiveSearch = { key: want.key, urgency: want.urgency, handle, stopping: false };
+		const generation = this.generation;
+		this.active = active;
+		void this.follow(active);
 		handle.result.then(
 			(result) => {
-				if (this.inFlight.get(target) === handle) this.inFlight.delete(target);
-				if (this.disposed) return;
+				if (this.active === active) this.active = null;
+				if (this.disposed || generation !== this.generation) return;
 				if (result.status === "failed") {
-					for (const waiting of this.waitingOn(target))
-						this.setBlocker(waiting, "failed", waiting.missing ?? half);
+					this.failed();
 					return;
 				}
-				this.supply(target, result.final.lines, req.elo === undefined);
-				if (result.status !== "superseded") return;
-				for (const waiting of this.waitingOn(target))
-					if (waiting.blocker === "shallow" || waiting.blocker === "no-line")
-						this.setBlocker(waiting, "superseded", waiting.missing ?? half);
+				this.failures = 0;
+				if (
+					result.final.complete &&
+					result.id === req.id &&
+					result.final.id === req.id &&
+					result.request.fen === req.fen &&
+					(result.request.moves ?? []).join(" ") === (req.moves ?? []).join(" ")
+				)
+					this.store(active.key, result.final, result.status === "complete" && !active.stopping);
+				this.resolveAll();
+				this.pump();
 			},
 			(error: unknown) => {
-				if (this.inFlight.get(target) === handle) this.inFlight.delete(target);
-				log.debug("board effects: search failed", { error });
-				for (const waiting of this.waitingOn(target))
-					this.setBlocker(waiting, "failed", waiting.missing ?? half);
+				if (this.active === active) this.active = null;
+				log.debug("board effects: review failed", { error });
+				if (!this.disposed && generation === this.generation) this.failed();
 			}
 		);
 	}
 
-	/** Open jobs whose missing half is the position `key`. */
-	private waitingOn(key: string): VerdictJob[] {
-		const jobs = this.prepared ? [...this.landed, this.prepared] : this.landed;
-		return jobs.filter((job) => {
-			if (job.closed || job.verdict || job.missing === null) return false;
-			const want = job.missing === "before" ? boardKey(job.move.beforeFen) : job.afterKey;
-			return want === key;
+	/** Every complete iteration of the search in flight goes into the store as it arrives. */
+	private async follow(active: ActiveSearch): Promise<void> {
+		try {
+			for await (const update of active.handle.updates) {
+				if (this.disposed || this.active !== active) return;
+				if (!update.complete || update.id !== active.handle.id) continue;
+				this.store(active.key, update, false);
+				this.resolveAll();
+				this.pump();
+			}
+		} catch (error) {
+			log.debug("board effects: review updates ended", { error });
+		}
+	}
+
+	private store(key: string, frame: ReviewFrame, done: boolean): void {
+		// Remember completed shallow searches too: they cannot grade moves, but forgetting the
+		// exhausted budget would immediately queue the same hopeless position forever.
+		const lines = reviewLines(frame, 0);
+		if (lines.length === 0 && !done) return;
+		const existing = this.frames.get(key);
+		if (existing && existing.depth > frame.depth) {
+			if (done) existing.done = true;
+			return;
+		}
+		this.frames.delete(key);
+		this.frames.set(key, {
+			lines,
+			depth: frame.depth,
+			done: done || (existing?.done === true && existing.depth === frame.depth),
 		});
+		if (this.frames.size <= REVIEW.knownPositions) return;
+		const keep = new Set(this.wants().map((want) => want.key));
+		for (const job of this.openJobs()) if (job.previousKey) keep.add(job.previousKey);
+		for (const oldest of this.frames.keys()) {
+			if (this.frames.size <= REVIEW.knownPositions) break;
+			if (!keep.has(oldest)) this.frames.delete(oldest);
+		}
+	}
+
+	/**
+	 * The review engine could not answer: mark the waiting ratings, back off along
+	 * `REVIEW.retryBackoffMs` (longer only while it keeps failing), try again then.
+	 */
+	private failed(): void {
+		for (const job of this.landed) if (!job.verdict) job.blocker = "failed";
+		this.failures += 1;
+		const wait = reviewRetryDelayMs(this.failures);
+		this.retryAt = this.deps.now() + wait;
+		if (this.retryTimer !== null) this.deps.scheduler.clearTimeout(this.retryTimer);
+		this.retryTimer = this.deps.scheduler.setTimeout(() => {
+			this.retryTimer = null;
+			this.pump();
+		}, wait);
 	}
 }

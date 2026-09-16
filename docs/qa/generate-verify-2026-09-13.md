@@ -62,11 +62,11 @@ All in `GENERATE_VERIFY` (`src/core/constants/generate-verify.ts`).
 | Knob | Value | Rests on |
 |---|---|---|
 | `enabled` | `true` | The research doc says ship behind a flag; the flag is this constant plus `GvInput.enabled`. |
-| `candidates.knots` | `[800, 2] [1400, 3] [2000, 4] [2500, 5]` (flat outside, linear between, rounded) | de Groot's masters generated few, relevant candidates; Connors, Burns & Campitelli (2011): breadth grows with skill only modestly. |
+| `candidates.knots` | `[800, 2] [1400, 3] [2000, 4] [2500, 5]` (flat outside, linear between, rounded) — **2 through 2800 since 2026-09-15** | de Groot's masters generated few, relevant candidates; Connors, Burns & Campitelli (2011): breadth grows with skill only modestly. Recalibrated against chess.com humans (see "Recalibration" below). |
 | `candidates.jitter` | `±1`, uniform, per move | "with a per-move jitter" (H3). |
 | `candidates.min` / `max` | 2 / 6 | `k = 1` is reserved for the intuition path so the flag means one thing; the pool binds before 6 in practice. |
-| `intuition` | 0.55 at 800 → 0.10 at 2500, linear (`eloRamp`), flat outside | HvS §2.3: "the move played on recognition alone"; high at club level, never zero at master level. |
-| `verifySigmaFloorCp` | `[800, 60] [1400, 45] [2000, 30] [2500, 20]` (flat outside, linear between) | The floor on the compare stage's noise (added at wiring time): the shallow frame's own error is part of the human's misevaluation (HvS §5.4); `sigmaFor` alone made the top band an argmax. Chosen so the typical pool stays inside the budget and the 2300–2500 strength rise is ≤ ~25 % (measured below). |
+| `intuition` | 0.55 at 800 → 0.10 at 2500, linear (`eloRamp`), flat outside — **0.70 → 0.60 since 2026-09-15** | HvS §2.3: "the move played on recognition alone"; high at club level, never zero at master level. Recalibrated (see "Recalibration"). |
+| `verifySigmaFloorCp` | `[800, 60] [1400, 45] [2000, 30] [2500, 20]` (flat outside, linear between) — **90 / 80 / 80 / 80 (80 at 2800) since 2026-09-15** | The floor on the compare stage's noise (added at wiring time): the shallow frame's own error is part of the human's misevaluation (HvS §5.4); `sigmaFor` alone made the top band an argmax. Originally chosen so the typical pool stayed inside the budget and the 2300–2500 strength rise was ≤ ~25 %; on real positions that still meant −43 % loss at 2300 (see "Recalibration"). |
 | `meterSamples` | 400 | Monte Carlo samples for the per-move `klFromMaia` meter (≈ 1.4 µs a call). |
 
 Realised values (`σ_verify` is what the compare stage uses; `σ` is `sigmaFor` alone):
@@ -84,7 +84,79 @@ Realised values (`σ_verify` is what the compare stage uses; `σ` is `sigmaFor` 
 | 2500 | 5 | 0.10 | 8.0 | 20.0 |
 
 The `candidates` knots were left alone: with the floor the typical pool meets the budget and the
-strength bound without lowering `k` at the top.
+strength bound without lowering `k` at the top. (Superseded — see below.)
+
+## Recalibration against chess.com humans (2026-09-15)
+
+**Why.** The owner reported the extension outplaying a chess.com "2500" bot at persona offset
+−200 (target 2300). `.scratch/bot-strength/pipeline-strength.ts` measured the real
+`RecommendationPipeline` (EngineController + SF18 smallnet under Bun, fresh Maia-3 79M queries,
+V1 timing head, book off) on 180 positions from public chess.com blitz games — 60 per bucket, one
+per game, the mover rated within ±100 of 1800 / 2300 / 2800, ply ≥ 16, clock ≥ 30 s — with 12
+seeded draws per position. Every pick, the human's move and Maia's top moves were scored in one
+SF18 full-network frame (depth 18 best move, depth 16 MultiPV over the union); loss = best − move,
+cp clamped ±1000; 95 % intervals are bootstrap over positions, paired on the same positions.
+
+**Before (the values above, live run).** Pipeline − human mean loss −28.0 [−64.0, +3.7] /
+−20.6 [−36.9, −5.8] / −35.0 [−64.4, −13.1] cp at targets 1800 / 2300 / 2800; ≥ 100 cp errors
+16 / 6.4 / 2.9 % against 25 / 18 / 13 % for the humans. Switching generate-and-verify off (the plain
+Maia draw over the same rails) removed the gap: +1.0 [−12.5, +12.4] cp at 2300. The wrapper cut mean
+loss by 43 % at 2300 on real positions (28.4 vs 49.9 cp) — the ≤ 25 % bound above held only on the
+synthetic pool. Raw Maia at the queried rating matched the humans' error tail closely (≥ 100 cp
+share 26.0 / 19.2 / 13.5 % vs 25.0 / 18.3 / 13.3 %), and turning the hang rail and loss cap off
+changed the plain draw by only +1.1 cp at 2300 and +5.3 cp at 2800, so the rails were not the
+cause and were left alone.
+
+**Tuning.** Engine results and Maia answers were recorded once and replayed (`PS_STORE`) so only
+selection changed between variants. Raising `intuition` alone (0.80 → 0.70) left 2800 at
+−20.3 [−46.9, −0.7]; more noise with fewer candidates alone left 2300 / 2800 at
+−13.0 / −26.7 cp. The chosen set — `intuition` 0.70 → 0.60, `candidates` 2 through 2800,
+`verifySigmaFloorCp` 90 at 800 and 80 from 1400 to 2800 — replayed at −19.0 [−55.2, +13.2] /
+−0.6 [−13.7, +11.1] / −16.9 [−43.5, +2.6] cp, ≥ 100 cp share gaps −4.9 / −2.8 / −3.5 pp (all
+intervals include 0), verified-vs-plain-draw −2.9 / −0.6 / +0.3 cp, and the untimed-vs-2500
+configuration −2.0 [−7.9, +4.9] cp against the game clock. The live re-measurement with the values in
+source is recorded at the end of this section. The 3000 knots (k 7, σ 12, intuition 0.03) are
+unchanged, so nothing at 3000+ became stronger; the 2800 → 3000 ramp is now steeper and has no
+human sample of that rating behind it.
+
+Realised values after the recalibration:
+
+| E | `candidateBase` | `pIntuition` | `σ(E)` cp | `σ_verify(E)` cp |
+|---:|---:|---:|---:|---:|
+| 900 | 2 | 0.69 | 47.4 | 88.3 |
+| 1500 | 2 | 0.66 | 31.6 | 80.0 |
+| 2100 | 2 | 0.62 | 15.9 | 80.0 |
+| 2300 | 2 | 0.61 | 10.6 | 80.0 |
+| 2500 | 2 | 0.60 | 8.0 | 80.0 |
+| 2800 | 2 | 0.60 | 8.0 | 80.0 |
+| 2900 | 5 | 0.32 | 8.0 | 46.0 |
+| 3000 | 7 | 0.03 | 8.0 | 12.0 |
+
+On the typical pool below the wrapper is now within Monte Carlo noise of Maia alone at every
+rating through 2500 (20 000 samples: KL 0.001–0.004, mean deep loss 33.7–34.5 against 34.55); the
+KL ceilings and the ≤ 30 % bound in the test still hold with wide margins. The QA tables below
+are the 2026-09-13 measurement of the former values.
+
+**Live re-measurement (values in source, fresh searches, same 180 positions and seeds).**
+
+| Target | Pipeline − human, all | competitive | ≥ 100 cp share, pipeline vs human | ≥ 300 cp |
+|---:|---|---|---|---|
+| 1800 before | −28.0 [−65.3, +2.9] | −0.7 [−28.6, +29.1] | 16.0 vs 25.0 % (−9.0 [−18.9, +0.1]) | 3.3 vs 6.7 % |
+| 1800 after | −18.7 [−51.8, +11.3] | +4.2 [−22.5, +34.4] | 21.1 vs 25.0 % (−3.9 [−13.8, +5.7]) | 3.9 vs 6.7 % |
+| 2300 before | −20.6 [−36.5, −5.5] | −14.4 [−29.5, −1.4] | 6.4 vs 18.3 % (−11.9 [−21.5, −3.3]) | 1.0 vs 1.7 % |
+| 2300 after | −1.6 [−14.6, +10.0] | +6.7 [−3.5, +16.8] | 15.3 vs 18.3 % (−3.1 [−11.5, +4.9]) | 1.7 vs 1.7 % |
+| 2800 before | −35.0 [−62.8, −13.3] | −30.9 [−62.6, −9.2] | 2.9 vs 13.3 % (−10.4 [−19.6, −2.1]) | 0.1 vs 3.3 % |
+| 2800 after | −19.6 [−45.7, −0.9] | −15.9 [−47.0, +4.5] | 9.3 vs 13.3 % (−4.0 [−12.5, +3.2]) | 0.1 vs 3.3 % |
+
+Untimed-vs-2500 at target 2300: −24.6 → −3.1 [−15.9, +8.8] cp against the humans; untimed − game
+−4.0 [−9.1, +0.5] → −1.5 [−5.9, +3.3]. The residual at 2800 (all positions, the interval misses 0
+by under 1 cp) is the plain Maia draw's own gap, −17.2 [−45.6, +4.8] on the replayed searches: the
+wrapper is neutral there, and what remains is the rails removing the human ≥ 300 cp tail
+(0.1 vs 3.3 %) — turning the hang rail and the loss cap both off added +5.3 cp to the plain draw at
+2800, either alone nothing. A moderate loosening of both (hang rail certain only from 3200, loss
+cap 0.45 from 2000) replayed at −2.4 [−7.6, +2.3] cp against the chosen values at 2800 — no
+measurable gain. Closing that residual means letting a 2800 hang pieces as often as the humans
+did, which is a product decision rather than a verification knob, so the rails were left unchanged.
 
 `shallowDepth` is the pipeline's (H4: `humanDepth(E)` ≈ 2 at 800, 4 at 1200, 6 at 1600, 8 at
 2000, 10 at 2400); the module only reports it as `verifyDepth` (0 when no frame existed).
@@ -218,8 +290,9 @@ candidates with `k` per the table; the k = 1 draw equals Maia's (Pearson χ², 3
 critical 16.27); the intuition coin's frequency; the pick follows the shallow score when it
 reverses the deep order; a missing shallow score falls back to deep and is marked unverified
 (table and rationale); no-frame → `verifyDepth` 0; the argmax bias (5 equal-`p` candidates,
-best +300 cp shallow: > 80 % at 2300, < 60 % at 900, KL ordered the same way); rationale shape
-for both paths (σ = 30 at 2000, the floored value); `null` on disabled / < 2 survivors / no mass;
+best +300 cp: since the 2026-09-15 recalibration 0.22–0.40 at 2300 and at 900 and > 0.60 at
+2900 in the upper band — formerly > 80 % at 2300 — KL ordered 900 < 2300 < 2900); rationale shape
+for both paths (σ = 80 at 2000, the floored value); `null` on disabled / < 2 survivors / no mass;
 a massless survivor is never drawn; `drawDistribution` sums to 1 and falls back to Maia's
 renormalised mass when the path is off; `gvKl` identities; and the fidelity budget above on the
 typical pool (KL per band, monotone loss, the ≤ 30 % top-band drop, intuition-only KL < 0.01).
@@ -227,8 +300,9 @@ typical pool (KL per band, monotone loss, the ≤ 30 % top-band drop, intuition-
 `test/core/strength/generate-verify-wiring.test.ts`, 16 tests, end to end through `selectMove`:
 with a frame the meters carry `candidates` / `verifyDepth`, the rationale the stages and the
 skip row, `maiaProb` and `rank` are Maia's, and `klFromMaia` equals `gvKl(drawDistribution(…))`
-recomputed in the test on the fen-seeded rng; the verification decides (a 0.05-mass move the
-frame rates +300 cp is drawn > 45 % at ≈ 2200 and ≈ 10 % at 900, < 9 % on the plain draw);
+recomputed in the test on the fen-seeded rng; the verification lifts the shallow favourite (a
+0.05-mass move the frame rates +300 cp is drawn ≈ 11 % at ≈ 2200, ≈ 9 % at ≈ 900 and ≈ 25 % at
+≈ 2850 since the 2026-09-15 recalibration — formerly ≈ 62 % at ≈ 2200 — and < 9 % on the plain draw);
 without a frame the plain draw runs with Maia's frequencies (±0.035 over 2000 draws) and no
 `candidates`; a `shallowDepth` alone is not a frame; an unranked survivor is verified against
 its deep score and marked; a railed line is never a candidate; determinism per seed; the split
@@ -237,11 +311,11 @@ halves reproduce `drawMaiaMove`; and the H13 cases recorded in
 
 ## Open items
 
-1. Run the human-move harness (§8.1) at 1100 / 1500 / 1900 / 2300 before trusting
-   `enabled: true` in play; the 2300 cell is where the argmax effect was largest and the floor's
-   knots are set from the synthetic pools, not from human moves.
-2. The `verifySigmaFloorCp` knots and the `candidates` top knot are two ways of bounding the same
-   rise; only the floor was used. If the harness says the top band still over-corrects, lower
-   `candidates` to 4 at 2500 before touching intuition.
+1. Done in part on 2026-09-15 (see "Recalibration"): the paired chess.com-human measurement showed
+   the top band over-correcting and all three knots were lowered together. Still open: a
+   move-match likelihood run (§8.1) at 1100 / 1500 / 1900, and any human sample at 2900–3000,
+   where the unchanged 3000 knots now sit at the top of a steeper ramp.
+2. The recalibration used `intuition`, `candidates` and `verifySigmaFloorCp` together; no single
+   knot reached the goal on its own (intuition alone left 2800 at −20.3 [−46.9, −0.7] cp).
 3. `ctx.shallowLines` is the pipeline's `atFeatureDepth` frame at `humanDepth(maiaE)`; the
    selector trusts `shallowDepth` as reported and only echoes it as `verifyDepth`.

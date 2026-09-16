@@ -46,7 +46,7 @@ import {
 const MODELS: readonly PackagedModel[] = [{ path: "assets/models/maia3/maia3-79m.onnx", bytes: 4 }];
 
 /** A stand-in for the engine registry: rule 10 wants `assets/engine/` to be exactly this. */
-const ENGINE: readonly string[] = ["assets/engine/sf_18_relaxed-simd.wasm"];
+const ENGINE: readonly string[] = ["assets/engine/sf_19_relaxed-simd.wasm"];
 
 const MANIFEST = {
 	manifest_version: 3,
@@ -75,7 +75,7 @@ const MANIFEST_WITH_WAR = {
 const CLEAN_FILES = [
 	"manifest.json",
 	"assets/images/sliced_128.png",
-	"assets/engine/sf_18_relaxed-simd.wasm",
+	"assets/engine/sf_19_relaxed-simd.wasm",
 	"pages/panel.html",
 	"js/service-worker.js",
 	"js/content.js",
@@ -131,7 +131,7 @@ describe("checkManifest", () => {
 
 	it("reports a missing file and an unmatched resource pattern", () => {
 		const files = CLEAN_FILES.filter(
-			(f) => f !== "js/content.js" && f !== "assets/engine/sf_18_relaxed-simd.wasm"
+			(f) => f !== "js/content.js" && f !== "assets/engine/sf_19_relaxed-simd.wasm"
 		);
 		const problems = checkManifest(MANIFEST_WITH_WAR, files, "2.0.0");
 		expect(problems).toHaveLength(2);
@@ -438,7 +438,7 @@ describe("rule 10: the engine directory is exactly the registry", () => {
 			[...ENGINE_PROGRAM_FILES, ENGINE_LICENSE_FILE, ...BUNDLED_NNUE].map((n) => ENGINE_DIR + n)
 		);
 		// The plain-SIMD builds stopped shipping on 2026-09-13.
-		for (const dropped of ["sf_18.js", "sf_18.wasm", "sf_18_smallnet.js", "sf_18_smallnet.wasm"])
+		for (const dropped of ["sf_19.js", "sf_19.wasm", "sf_19_smallnet.js", "sf_19_smallnet.wasm"])
 			expect(files).not.toContain(ENGINE_DIR + dropped);
 		expect(files.some((f) => f.endsWith(".nnue.gz"))).toBe(false);
 	});
@@ -451,11 +451,11 @@ describe("rule 10: the engine directory is exactly the registry", () => {
 		expect(missing).toHaveLength(2);
 		expect(missing[0]).toContain("assets/engine/a.wasm is missing");
 		const extra = checkEngineDir(
-			[...others, ...expected, "assets/engine/sf_18.wasm", "assets/engine/nn-x.nnue.gz"],
+			[...others, ...expected, "assets/engine/sf_19.wasm", "assets/engine/nn-x.nnue.gz"],
 			expected
 		);
 		expect(extra).toHaveLength(2);
-		expect(extra[0]).toContain("assets/engine/sf_18.wasm");
+		expect(extra[0]).toContain("assets/engine/sf_19.wasm");
 		expect(extra[0]).toContain("dead weight");
 		expect(extra[1]).toContain("assets/engine/nn-x.nnue.gz");
 	});
@@ -480,7 +480,7 @@ describe("verifyDist over a built tree", () => {
 	const clean = (): Record<string, string> => ({
 		"manifest.json": JSON.stringify(MANIFEST),
 		"assets/images/sliced_128.png": "png",
-		"assets/engine/sf_18_relaxed-simd.wasm": "wasm",
+		"assets/engine/sf_19_relaxed-simd.wasm": "wasm",
 		"assets/models/maia3/maia3-79m.onnx": "onnx",
 		"pages/panel.html": `<script type="module" src="../js/panel.js"></script>`,
 		"js/panel.js": "export {};",
@@ -514,7 +514,7 @@ describe("verifyDist over a built tree", () => {
 	it("fails on a junk file and on an engine file the registry does not name", () => {
 		const files = clean();
 		files["assets/.DS_Store"] = "finder";
-		files["assets/engine/sf_18.wasm"] = "stale plain-SIMD build";
+		files["assets/engine/sf_19.wasm"] = "stale plain-SIMD build";
 		expect(() =>
 			verifyDist(build(files), { version: "2.0.0", models: MODELS, engineFiles: ENGINE })
 		).toThrow(/2 problem/);
@@ -522,10 +522,10 @@ describe("verifyDist over a built tree", () => {
 
 	it("fails when a registered engine file did not ship", () => {
 		const files = clean();
-		delete files["assets/engine/sf_18_relaxed-simd.wasm"];
+		delete files["assets/engine/sf_19_relaxed-simd.wasm"];
 		expect(() =>
 			verifyDist(build(files), { version: "2.0.0", models: MODELS, engineFiles: ENGINE })
-		).toThrow(/sf_18_relaxed-simd\.wasm is missing/);
+		).toThrow(/sf_19_relaxed-simd\.wasm is missing/);
 	});
 
 	it("fails when the manifest was never stamped", () => {

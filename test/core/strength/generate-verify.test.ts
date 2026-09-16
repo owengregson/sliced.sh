@@ -1,3 +1,5 @@
+// Historical distinct-candidate kernel retained for upper-band behavior and audit baselines.
+// New ordinary-range invariants and sampler parity live in recognition-verify.test.ts.
 // test/core/strength/generate-verify.test.ts — generate-and-verify below 2600 (2026-09-13, H3/H4):
 // the rating tables, the distinct draw from Maia's distribution, verification at the human depth,
 // the argmax with perception noise, the fallbacks, and the KL meter. Pure and seeded throughout.
@@ -10,7 +12,7 @@ import {
 	candidateCount,
 	drawDistribution,
 	type GvCandidate,
-	generateAndVerify,
+	distinctCandidateVerification as generateAndVerify,
 	gvKl,
 	intuitionProb,
 	verifySigmaFor,
@@ -35,13 +37,16 @@ function maiaOver(survivors: readonly GvCandidate[]): Map<string, number> {
 }
 
 describe("rating tables", () => {
-	it("candidateBase follows the knots (2 at 800, 3 at 1400, 4 at 2000, 5 at 2500) and is monotone", () => {
+	it("candidateBase follows the knots (2 through 2800, 7 at 3000) and is monotone", () => {
+		// 2026-09-15 recalibration: two candidates below the upper verification band, measured
+		// against chess.com humans (docs/qa/generate-verify-2026-09-13.md, "Recalibration").
 		expect(candidateBase(800)).toBe(2);
-		expect(candidateBase(1400)).toBe(3);
-		expect(candidateBase(2000)).toBe(4);
-		expect(candidateBase(2500)).toBe(5);
+		expect(candidateBase(1400)).toBe(2);
+		expect(candidateBase(2000)).toBe(2);
+		expect(candidateBase(2500)).toBe(2);
 		expect(candidateBase(500)).toBe(2);
-		expect(candidateBase(2800)).toBe(5);
+		expect(candidateBase(2800)).toBe(2);
+		expect(candidateBase(2900)).toBe(5);
 		expect(candidateBase(3000)).toBe(7);
 		let prev = 0;
 		for (let E = 400; E <= 3200; E += 50) {
@@ -71,24 +76,25 @@ describe("rating tables", () => {
 	});
 	it("verifySigmaFor is sigmaFor floored by the verifySigmaFloorCp knots, flat outside them", () => {
 		// The floor binds everywhere in range: sigmaFor is 47.4 at 900 and 8 at 2500.
-		expect(verifySigmaFor(900)).toBeCloseTo(57.5, 9);
-		expect(verifySigmaFor(2000)).toBe(30);
-		expect(verifySigmaFor(2500)).toBe(20);
-		expect(verifySigmaFor(2800)).toBe(20);
+		expect(verifySigmaFor(900)).toBeCloseTo(88.333333333, 6);
+		expect(verifySigmaFor(2000)).toBe(80);
+		expect(verifySigmaFor(2500)).toBe(80);
+		expect(verifySigmaFor(2800)).toBe(80);
 		expect(verifySigmaFor(3000)).toBe(12);
-		expect(verifySigmaFor(500)).toBe(60);
+		expect(verifySigmaFor(500)).toBe(90);
 		for (let E = 400; E <= 3200; E += 50) {
 			expect(verifySigmaFor(E)).toBeGreaterThanOrEqual(sigmaFor(E));
 			expect(verifySigmaFor(E)).toBeGreaterThanOrEqual(GV.verifySigmaFloorCp.at(-1)?.[1] ?? 0);
 		}
 	});
-	it("intuitionProb ramps 0.55 at 800 → 0.10 at 2500, flat outside, monotone non-increasing", () => {
-		expect(intuitionProb(800)).toBeCloseTo(0.55, 12);
-		expect(intuitionProb(2500)).toBeCloseTo(0.1, 12);
-		expect(intuitionProb(500)).toBeCloseTo(0.55, 12);
-		expect(intuitionProb(2800)).toBeCloseTo(0.1, 12);
+	it("intuitionProb ramps 0.70 at 800 → 0.60 at 2500, flat to 2800, 0.03 at 3000, monotone non-increasing", () => {
+		expect(intuitionProb(800)).toBeCloseTo(0.7, 12);
+		expect(intuitionProb(2500)).toBeCloseTo(0.6, 12);
+		expect(intuitionProb(500)).toBeCloseTo(0.7, 12);
+		expect(intuitionProb(2800)).toBeCloseTo(0.6, 12);
+		expect(intuitionProb(2900)).toBeCloseTo(0.315, 12);
 		expect(intuitionProb(3000)).toBeCloseTo(0.03, 12);
-		expect(intuitionProb(1650)).toBeCloseTo(0.325, 12);
+		expect(intuitionProb(1650)).toBeCloseTo(0.65, 12);
 		let prev = 1;
 		for (let E = 400; E <= 3200; E += 50) {
 			const p = intuitionProb(E);
@@ -190,22 +196,31 @@ describe("verify and compare", () => {
 		expect(r?.considered.every((c) => !c.verified)).toBe(true);
 		expect(r?.rationale[0]).toContain("no shallow frame, deep scores stood in");
 	});
-	it("the argmax bias scales with E: 5 equal-p candidates, the best 300 cp ahead at the human depth", () => {
+	it("the argmax bias scales with E: 5 equal-p candidates, the best 300 cp ahead (shallow and deep)", () => {
 		const survivors: GvCandidate[] = ["a", "b", "c", "d", "e"].map((uci, i) => ({
 			uci,
 			p: 0.2,
-			deepCp: 0,
+			deepCp: i === 0 ? 300 : 0,
 			shallowCp: i === 0 ? 300 : 0,
 		}));
 		const N = 4000;
+		const upper = drawDistribution({ survivors, E: 2900, shallowDepth: 12 }, N, createRng("2900"));
 		const strong = drawDistribution({ survivors, E: 2300, shallowDepth: 10 }, N, createRng("2300"));
 		const weak = drawDistribution({ survivors, E: 900, shallowDepth: 2 }, N, createRng("900"));
-		expect(strong.get("a") ?? 0).toBeGreaterThan(0.8);
-		expect(weak.get("a") ?? 0).toBeLessThan(0.6);
+		// 2026-09-15 recalibration: below 2800 the verification is a light touch — 60–70 % of moves
+		// on recognition, two candidates, an 80–90 cp floor — because the former near-argmax (> 0.8
+		// here at 2300) made the extension play hundreds of Elo above its target against chess.com
+		// humans. The favourite still gains over its 0.2 mass; the comparison sharpens in the upper
+		// band (k 5, σ 46, intuition 0.32 at 2900) on its way to the unchanged 3000 knots.
+		expect(strong.get("a") ?? 0).toBeGreaterThan(0.22);
+		expect(strong.get("a") ?? 0).toBeLessThan(0.4);
 		expect(weak.get("a") ?? 0).toBeGreaterThan(0.2);
-		// σ is larger and k smaller at 900: the wrapper moves less far from Maia there.
+		expect(weak.get("a") ?? 0).toBeLessThan(0.4);
+		expect(upper.get("a") ?? 0).toBeGreaterThan(0.6);
+		// σ and intuition are larger at 900: the wrapper moves least far from Maia there.
 		expect(sigmaFor(900)).toBeGreaterThan(sigmaFor(2300));
 		expect(gvKl(weak, maiaOver(survivors))).toBeLessThan(gvKl(strong, maiaOver(survivors)));
+		expect(gvKl(strong, maiaOver(survivors))).toBeLessThan(gvKl(upper, maiaOver(survivors)));
 	});
 	it("the rationale names k, the pool, the depth, σ and every candidate's scores", () => {
 		const r = generateAndVerify({
@@ -215,10 +230,10 @@ describe("verify and compare", () => {
 			rng: fixed("rows", false),
 		});
 		const text = r?.rationale.join("\n") ?? "";
-		// σ is the verification noise: sigmaFor(2000) = 18.5 floored to the 30 cp knot.
-		expect(verifySigmaFor(2000)).toBe(30);
+		// σ is the verification noise: sigmaFor(2000) = 18.5 floored to the 80 cp knot.
+		expect(verifySigmaFor(2000)).toBe(80);
 		expect(text).toMatch(
-			/^generate-verify: k=[2-4] of 4 survivors \(pIntuition 0\.23\), verified at depth 8, σ=30/m
+			/^generate-verify: k=[2-3] of 4 survivors \(pIntuition 0\.63\), verified at depth 8, σ=80/m
 		);
 		expect(text).toMatch(/^ {2}[a-h][1-8][a-h][1-8] p=0\.\d+ shallow -?\d+ → -?\d+/m);
 		expect(text).toContain("✓");
@@ -228,7 +243,7 @@ describe("verify and compare", () => {
 		const r = generateAndVerify({ survivors: FOUR, E: 1000, rng: fixed("one-row", true) });
 		expect(r?.rationale).toHaveLength(1);
 		expect(r?.rationale[0]).toMatch(
-			/^generate-verify: intuition — played on recognition alone \(p=0\.5 at E, 4 survivors\)$/
+			/^generate-verify: intuition — played on recognition alone \(p=0\.69 at E, 4 survivors\)$/
 		);
 	});
 });

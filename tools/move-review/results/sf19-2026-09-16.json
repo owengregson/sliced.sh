@@ -1,0 +1,4211 @@
+{
+	"date": "2026-09-16",
+	"description": "SF19 full shipped WASM. Initial and selected shallow-frame repeat results are separate; no claimed production precision. Mate display precedence remains enabled.",
+	"runs": {
+		"baseline": {
+			"summary": {
+				"frames": 300,
+				"labelled": {
+					"classified": 100,
+					"brilliant": 89,
+					"of": 100
+				},
+				"labelledQualities": {
+					"brilliant": 81,
+					"excellent": 3,
+					"good": 4,
+					"mate": 8,
+					"best": 4
+				},
+				"labelledReasons": {
+					"sound-sacrifice": 89,
+					"illusion": 1,
+					"trivial-win": 7,
+					"no-safe-alternative": 2,
+					"unsound": 1
+				},
+				"others": {
+					"classified": 170,
+					"brilliant": 2,
+					"per1000": 11.76
+				},
+				"unclassified": 25,
+				"distribution": {
+					"good": 23,
+					"brilliant": 83,
+					"best": 80,
+					"excellent": 20,
+					"blunder": 17,
+					"mistake": 13,
+					"inaccuracy": 16,
+					"mate": 8,
+					"great": 7,
+					"forced": 3
+				}
+			},
+			"recalled": [
+				{
+					"game": 0,
+					"ply": 45,
+					"san": "hxg6",
+					"rating": 1791,
+					"loss": 0,
+					"played": 0.952,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:1"]
+				},
+				{
+					"game": 1,
+					"ply": 31,
+					"san": "f6",
+					"rating": 1779,
+					"loss": 0,
+					"played": 1,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2"]
+				},
+				{
+					"game": 3,
+					"ply": 38,
+					"san": "Qxf2",
+					"rating": 1719,
+					"loss": 0.045,
+					"played": 0.916,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:4"]
+				},
+				{
+					"game": 4,
+					"ply": 25,
+					"san": "Nxg6",
+					"rating": 1230,
+					"loss": 0,
+					"played": 0.913,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2", "capture-sacrifice:1"]
+				},
+				{
+					"game": 5,
+					"ply": 81,
+					"san": "Qxc6+",
+					"rating": 1252,
+					"loss": 0.02,
+					"played": 0.919,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 6,
+					"ply": 21,
+					"san": "Qxb8+",
+					"rating": 1229,
+					"loss": 0,
+					"played": 0.479,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:4", "capture-sacrifice:4"]
+				},
+				{
+					"game": 7,
+					"ply": 74,
+					"san": "Rxf6",
+					"rating": 1178,
+					"loss": 0,
+					"played": 0.792,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 9,
+					"ply": 52,
+					"san": "Qc1+",
+					"rating": 1318,
+					"loss": 0,
+					"played": 1,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:4"]
+				},
+				{
+					"game": 10,
+					"ply": 49,
+					"san": "Bxf5+",
+					"rating": 1331,
+					"loss": 0,
+					"played": 0.538,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:1"]
+				},
+				{
+					"game": 11,
+					"ply": 23,
+					"san": "Nxc7+",
+					"rating": 912,
+					"loss": 0.023,
+					"played": 0.759,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 12,
+					"ply": 34,
+					"san": "Ba3",
+					"rating": 920,
+					"loss": 0,
+					"played": 0.497,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:3", "hanging-piece:3"]
+				},
+				{
+					"game": 14,
+					"ply": 27,
+					"san": "Nd5",
+					"rating": 890,
+					"loss": 0.03,
+					"played": 0.666,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:3", "hanging-piece:1"]
+				},
+				{
+					"game": 15,
+					"ply": 30,
+					"san": "Ne4",
+					"rating": 871,
+					"loss": 0,
+					"played": 0.516,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:2"]
+				},
+				{
+					"game": 16,
+					"ply": 18,
+					"san": "Nxd4",
+					"rating": 929,
+					"loss": 0.016,
+					"played": 0.555,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 17,
+					"ply": 91,
+					"san": "Bb6",
+					"rating": 1317,
+					"loss": 0,
+					"played": 0.5,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:3"]
+				},
+				{
+					"game": 18,
+					"ply": 50,
+					"san": "Rxb6",
+					"rating": 912,
+					"loss": 0.043,
+					"played": 0.716,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:1"]
+				},
+				{
+					"game": 20,
+					"ply": 48,
+					"san": "Bd3",
+					"rating": 970,
+					"loss": 0,
+					"played": 0.538,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:3"]
+				},
+				{
+					"game": 21,
+					"ply": 23,
+					"san": "Nf6+",
+					"rating": 933,
+					"loss": 0,
+					"played": 0.843,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:2"]
+				},
+				{
+					"game": 23,
+					"ply": 37,
+					"san": "Nxc3",
+					"rating": 1010,
+					"loss": 0,
+					"played": 0.492,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 24,
+					"ply": 7,
+					"san": "Nxe5",
+					"rating": 977,
+					"loss": 0.037,
+					"played": 0.533,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 25,
+					"ply": 25,
+					"san": "Nxc6",
+					"rating": 808,
+					"loss": 0.049,
+					"played": 0.838,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2", "capture-sacrifice:2"]
+				},
+				{
+					"game": 26,
+					"ply": 11,
+					"san": "Bxf7+",
+					"rating": 510,
+					"loss": 0,
+					"played": 0.543,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 27,
+					"ply": 20,
+					"san": "Bc5",
+					"rating": 976,
+					"loss": 0.037,
+					"played": 0.5,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:3"]
+				},
+				{
+					"game": 28,
+					"ply": 51,
+					"san": "Bxd4",
+					"rating": 804,
+					"loss": 0,
+					"played": 0.778,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2", "capture-sacrifice:2"]
+				},
+				{
+					"game": 29,
+					"ply": 11,
+					"san": "Bxf7+",
+					"rating": 1180,
+					"loss": 0,
+					"played": 0.568,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 30,
+					"ply": 31,
+					"san": "Qxd4",
+					"rating": 960,
+					"loss": 0.025,
+					"played": 0.5,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2"]
+				},
+				{
+					"game": 31,
+					"ply": 39,
+					"san": "Qf3",
+					"rating": 992,
+					"loss": 0.028,
+					"played": 0.621,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2"]
+				},
+				{
+					"game": 32,
+					"ply": 54,
+					"san": "Qe1+",
+					"rating": 482,
+					"loss": 0,
+					"played": 1,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:4"]
+				},
+				{
+					"game": 33,
+					"ply": 41,
+					"san": "Bb4",
+					"rating": 445,
+					"loss": 0.025,
+					"played": 0.758,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:3"]
+				},
+				{
+					"game": 34,
+					"ply": 22,
+					"san": "Nxd5",
+					"rating": 461,
+					"loss": 0,
+					"played": 0.818,
+					"reason": "sound-sacrifice",
+					"offers": ["indirect:4", "capture-sacrifice:2"]
+				},
+				{
+					"game": 35,
+					"ply": 18,
+					"san": "Bxh4",
+					"rating": 1362,
+					"loss": 0.014,
+					"played": 0.517,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2", "capture-sacrifice:2"]
+				},
+				{
+					"game": 36,
+					"ply": 52,
+					"san": "cxd2",
+					"rating": 1002,
+					"loss": 0,
+					"played": 0.508,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:1"]
+				},
+				{
+					"game": 37,
+					"ply": 23,
+					"san": "Bxb5",
+					"rating": 562,
+					"loss": 0.061,
+					"played": 0.732,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:1"]
+				},
+				{
+					"game": 38,
+					"ply": 24,
+					"san": "Nxe5",
+					"rating": 524,
+					"loss": 0.035,
+					"played": 0.485,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 39,
+					"ply": 27,
+					"san": "Ne5",
+					"rating": 954,
+					"loss": 0,
+					"played": 0.572,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:3"]
+				},
+				{
+					"game": 40,
+					"ply": 12,
+					"san": "Qxh6",
+					"rating": 652,
+					"loss": 0,
+					"played": 0.85,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2"]
+				},
+				{
+					"game": 41,
+					"ply": 11,
+					"san": "Bxf7+",
+					"rating": 1075,
+					"loss": 0,
+					"played": 0.559,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 42,
+					"ply": 32,
+					"san": "Bxc3",
+					"rating": 592,
+					"loss": 0,
+					"played": 0.669,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2", "capture-sacrifice:2"]
+				},
+				{
+					"game": 44,
+					"ply": 39,
+					"san": "Bxg5",
+					"rating": 960,
+					"loss": 0,
+					"played": 0.479,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 45,
+					"ply": 11,
+					"san": "Bxf7+",
+					"rating": 1089,
+					"loss": 0,
+					"played": 0.563,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 46,
+					"ply": 20,
+					"san": "Qb6",
+					"rating": 818,
+					"loss": 0.012,
+					"played": 0.499,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:3"]
+				},
+				{
+					"game": 48,
+					"ply": 34,
+					"san": "Bxd4",
+					"rating": 1384,
+					"loss": 0,
+					"played": 0.934,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 49,
+					"ply": 59,
+					"san": "Bc7+",
+					"rating": 1398,
+					"loss": 0,
+					"played": 0.998,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:3"]
+				},
+				{
+					"game": 50,
+					"ply": 49,
+					"san": "Bg6+",
+					"rating": 682,
+					"loss": 0.072,
+					"played": 0.745,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:3"]
+				},
+				{
+					"game": 51,
+					"ply": 24,
+					"san": "Bg4",
+					"rating": 651,
+					"loss": 0.018,
+					"played": 0.562,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:3"]
+				},
+				{
+					"game": 52,
+					"ply": 13,
+					"san": "Nxe5",
+					"rating": 659,
+					"loss": 0,
+					"played": 0.634,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 53,
+					"ply": 48,
+					"san": "Bxh2+",
+					"rating": 639,
+					"loss": 0,
+					"played": 0.492,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 55,
+					"ply": 39,
+					"san": "h3",
+					"rating": 653,
+					"loss": 0.115,
+					"played": 0.652,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2"]
+				},
+				{
+					"game": 56,
+					"ply": 22,
+					"san": "Nc2+",
+					"rating": 679,
+					"loss": 0.029,
+					"played": 0.809,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:3"]
+				},
+				{
+					"game": 57,
+					"ply": 15,
+					"san": "O-O",
+					"rating": 671,
+					"loss": 0.022,
+					"played": 0.51,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:3"]
+				},
+				{
+					"game": 58,
+					"ply": 54,
+					"san": "Rxh2",
+					"rating": 706,
+					"loss": 0.012,
+					"played": 0.746,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2"]
+				},
+				{
+					"game": 59,
+					"ply": 23,
+					"san": "Bxh6",
+					"rating": 952,
+					"loss": 0,
+					"played": 0.802,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:1"]
+				},
+				{
+					"game": 60,
+					"ply": 33,
+					"san": "Qh5",
+					"rating": 673,
+					"loss": 0,
+					"played": 1,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:3"]
+				},
+				{
+					"game": 61,
+					"ply": 38,
+					"san": "Qh6",
+					"rating": 658,
+					"loss": 0.043,
+					"played": 0.811,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:3"]
+				},
+				{
+					"game": 62,
+					"ply": 32,
+					"san": "Bh3",
+					"rating": 1059,
+					"loss": 0,
+					"played": 0.596,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:3"]
+				},
+				{
+					"game": 63,
+					"ply": 79,
+					"san": "Qd8+",
+					"rating": 1335,
+					"loss": 0,
+					"played": 1,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:4"]
+				},
+				{
+					"game": 64,
+					"ply": 33,
+					"san": "Rxf6",
+					"rating": 1117,
+					"loss": 0,
+					"played": 0.878,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 65,
+					"ply": 13,
+					"san": "Bxf7+",
+					"rating": 1109,
+					"loss": 0,
+					"played": 0.594,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 66,
+					"ply": 31,
+					"san": "c5",
+					"rating": 1103,
+					"loss": 0,
+					"played": 0.527,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2"]
+				},
+				{
+					"game": 67,
+					"ply": 50,
+					"san": "Qb1",
+					"rating": 1003,
+					"loss": 0.014,
+					"played": 0.887,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:4"]
+				},
+				{
+					"game": 68,
+					"ply": 69,
+					"san": "Nxc4",
+					"rating": 2215,
+					"loss": 0,
+					"played": 0.663,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 69,
+					"ply": 72,
+					"san": "Qc1+",
+					"rating": 2215,
+					"loss": 0,
+					"played": 1,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:4"]
+				},
+				{
+					"game": 70,
+					"ply": 34,
+					"san": "Qxc5",
+					"rating": 1027,
+					"loss": 0,
+					"played": 0.748,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:4"]
+				},
+				{
+					"game": 71,
+					"ply": 11,
+					"san": "Bxf7+",
+					"rating": 1107,
+					"loss": 0,
+					"played": 0.571,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 72,
+					"ply": 13,
+					"san": "Bxc4",
+					"rating": 1033,
+					"loss": 0,
+					"played": 0.519,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 73,
+					"ply": 74,
+					"san": "Rxe3",
+					"rating": 1430,
+					"loss": 0,
+					"played": 0.944,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 74,
+					"ply": 23,
+					"san": "Bg5",
+					"rating": 2238,
+					"loss": 0.015,
+					"played": 0.51,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:3"]
+				},
+				{
+					"game": 75,
+					"ply": 59,
+					"san": "fxg6",
+					"rating": 1509,
+					"loss": 0,
+					"played": 0.952,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:1"]
+				},
+				{
+					"game": 76,
+					"ply": 25,
+					"san": "Nxe6+",
+					"rating": 1502,
+					"loss": 0,
+					"played": 0.955,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 77,
+					"ply": 59,
+					"san": "Qh6",
+					"rating": 1925,
+					"loss": 0,
+					"played": 1,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:3"]
+				},
+				{
+					"game": 78,
+					"ply": 37,
+					"san": "Qxf8+",
+					"rating": 1559,
+					"loss": 0,
+					"played": 0.939,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:4"]
+				},
+				{
+					"game": 79,
+					"ply": 51,
+					"san": "Qxe2",
+					"rating": 1995,
+					"loss": 0,
+					"played": 0.5,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:4"]
+				},
+				{
+					"game": 80,
+					"ply": 47,
+					"san": "c6",
+					"rating": 1951,
+					"loss": 0,
+					"played": 0.971,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2"]
+				},
+				{
+					"game": 81,
+					"ply": 75,
+					"san": "Nxd5",
+					"rating": 2001,
+					"loss": 0,
+					"played": 0.934,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:4"]
+				},
+				{
+					"game": 82,
+					"ply": 31,
+					"san": "cxb6",
+					"rating": 1996,
+					"loss": 0,
+					"played": 0.925,
+					"reason": "sound-sacrifice",
+					"offers": ["indirect:2"]
+				},
+				{
+					"game": 83,
+					"ply": 39,
+					"san": "Nxf7",
+					"rating": 2907,
+					"loss": 0,
+					"played": 0.999,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2"]
+				},
+				{
+					"game": 84,
+					"ply": 50,
+					"san": "Rxb4",
+					"rating": 2888,
+					"loss": 0,
+					"played": 0.5,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2", "capture-sacrifice:2"]
+				},
+				{
+					"game": 85,
+					"ply": 23,
+					"san": "f5",
+					"rating": 2943,
+					"loss": 0.001,
+					"played": 0.972,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:3"]
+				},
+				{
+					"game": 86,
+					"ply": 50,
+					"san": "Qxe1+",
+					"rating": 1855,
+					"loss": 0,
+					"played": 0.974,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:1"]
+				},
+				{
+					"game": 87,
+					"ply": 62,
+					"san": "fxg5",
+					"rating": 1520,
+					"loss": 0.004,
+					"played": 0.496,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2", "ignored-threat:2"]
+				},
+				{
+					"game": 88,
+					"ply": 35,
+					"san": "Bxh7+",
+					"rating": 2342,
+					"loss": 0,
+					"played": 1,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 89,
+					"ply": 12,
+					"san": "Nxd5",
+					"rating": 1732,
+					"loss": 0,
+					"played": 0.924,
+					"reason": "sound-sacrifice",
+					"offers": ["indirect:3"]
+				},
+				{
+					"game": 90,
+					"ply": 32,
+					"san": "Rh6",
+					"rating": 2917,
+					"loss": 0,
+					"played": 1,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:3"]
+				},
+				{
+					"game": 91,
+					"ply": 64,
+					"san": "Rxf4",
+					"rating": 2918,
+					"loss": 0,
+					"played": 0.956,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2"]
+				},
+				{
+					"game": 92,
+					"ply": 21,
+					"san": "exd5",
+					"rating": 2937,
+					"loss": 0.007,
+					"played": 0.534,
+					"reason": "sound-sacrifice",
+					"offers": ["indirect:2"]
+				},
+				{
+					"game": 93,
+					"ply": 47,
+					"san": "Qxc5",
+					"rating": 1775,
+					"loss": 0,
+					"played": 0.595,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:6", "capture-sacrifice:6"]
+				},
+				{
+					"game": 96,
+					"ply": 56,
+					"san": "Rg6",
+					"rating": 1912,
+					"loss": 0.033,
+					"played": 0.749,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2"]
+				},
+				{
+					"game": 97,
+					"ply": 26,
+					"san": "Bb7",
+					"rating": 3084,
+					"loss": 0,
+					"played": 0.607,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2"]
+				},
+				{
+					"game": 98,
+					"ply": 53,
+					"san": "Kxf1",
+					"rating": 3097,
+					"loss": 0,
+					"played": 0.971,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2"]
+				}
+			],
+			"missed": [
+				{
+					"game": 2,
+					"ply": 49,
+					"san": "Qd5",
+					"rating": 1664,
+					"loss": 0.011,
+					"played": 0.973,
+					"reason": "illusion",
+					"offers": ["ignored-threat:3", "ignored-threat:1"]
+				},
+				{
+					"game": 8,
+					"ply": 39,
+					"san": "Bb3",
+					"rating": 898,
+					"loss": 0.032,
+					"played": 0.85,
+					"reason": "trivial-win",
+					"offers": ["hanging-piece:2"]
+				},
+				{
+					"game": 13,
+					"ply": 55,
+					"san": "Bxd5",
+					"rating": 911,
+					"loss": 0,
+					"played": 0.888,
+					"reason": "no-safe-alternative",
+					"offers": ["ignored-threat:1"]
+				},
+				{
+					"game": 19,
+					"ply": 35,
+					"san": "Bxg4",
+					"rating": 911,
+					"loss": 0.009,
+					"played": 0.822,
+					"reason": "trivial-win",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 22,
+					"ply": 22,
+					"san": "Nxg4",
+					"rating": 941,
+					"loss": 0.032,
+					"played": 0.462,
+					"reason": "unsound",
+					"offers": ["capture-sacrifice:1"]
+				},
+				{
+					"game": 43,
+					"ply": 39,
+					"san": "Nxc6",
+					"rating": 600,
+					"loss": 0.034,
+					"played": 0.786,
+					"reason": "trivial-win",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 47,
+					"ply": 46,
+					"san": "Rf1+",
+					"rating": 527,
+					"loss": 0,
+					"played": 0.855,
+					"reason": "no-safe-alternative",
+					"offers": ["hanging-piece:5"]
+				},
+				{
+					"game": 54,
+					"ply": 37,
+					"san": "Nxf6+",
+					"rating": 640,
+					"loss": 0,
+					"played": 0.856,
+					"reason": "trivial-win",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 94,
+					"ply": 41,
+					"san": "Bf6",
+					"rating": 2323,
+					"loss": 0.026,
+					"played": 0.942,
+					"reason": "trivial-win",
+					"offers": ["hanging-piece:2"]
+				},
+				{
+					"game": 95,
+					"ply": 100,
+					"san": "e1=Q+",
+					"rating": 1784,
+					"loss": 0,
+					"played": 0.998,
+					"reason": "trivial-win",
+					"offers": ["hanging-piece:1"]
+				},
+				{
+					"game": 99,
+					"ply": 66,
+					"san": "Bxd4",
+					"rating": 3186,
+					"loss": 0.014,
+					"played": 0.973,
+					"reason": "trivial-win",
+					"offers": ["ignored-threat:2"]
+				}
+			],
+			"overCalls": [
+				{
+					"game": 6,
+					"ply": 20,
+					"san": "Rb8",
+					"rating": 1187,
+					"loss": 0,
+					"played": 0.529,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:3"]
+				},
+				{
+					"game": 36,
+					"ply": 51,
+					"san": "Rb1",
+					"rating": 944,
+					"loss": 0,
+					"played": 0.488,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2"]
+				}
+			],
+			"tuning": {
+				"classification": {
+					"goodLoss": 0.02,
+					"inaccuracyLoss": 0.05,
+					"mistakeLoss": 0.1,
+					"blunderLoss": 0.2,
+					"zeroLossTolerance": 1e-9,
+					"minDepth": 10,
+					"winningPoints": 0.8,
+					"greatGapNovice": 0.1,
+					"greatGapExpert": 0.15,
+					"greatMinAfter": 0.4,
+					"greatMaxAlternative": 0.7,
+					"missMinOpportunity": 0.1,
+					"missMinLoss": 0.1,
+					"missMaxWorsening": 0.2,
+					"bookMaxLoss": 0.1
+				},
+				"brilliant": {
+					"minOfferedPiece": 3,
+					"minConcession": 1,
+					"maxExchangeNodes": 256,
+					"maxExchangePlies": 16,
+					"maxLossNovice": 0.12,
+					"maxLossExpert": 0.07,
+					"minAfter": 0.45,
+					"trivialAlternative": 0.97,
+					"illusionRegainTolerance": 1,
+					"sequencePlies": 4,
+					"sequenceDecisiveGap": 0.3,
+					"fastestMateNotTrivial": 1,
+					"fasterMateDecisive": 1,
+					"gratuitousWinning": 0.9,
+					"gratuitousGain": 0.02,
+					"gratuitousMaxConcession": 2,
+					"nearBestRatedLoss": 1,
+					"decisiveNeedsMovedPiece": 1,
+					"movedPieceOffersOnly": 0,
+					"tradeRegainAnyShape": 0,
+					"sacrificialAlternativeNotTrivial": 1
+				}
+			}
+		},
+		"initial": {
+			"summary": {
+				"provenance": [
+					{
+						"version": "Stockfish 19",
+						"module": "sf_19_relaxed-simd.js",
+						"networks": {
+							"nn-1a298aa575a0.nnue": "1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2"
+						},
+						"variant": "full",
+						"limitedStrength": false,
+						"wasmSha256": "11ebe6bdbae23c4e2b8d665f55c4d13500dc110ce83755663ce6533e6bb36b1b",
+						"runtime": "v25.6.1",
+						"threads": 2,
+						"hashMb": 64,
+						"datasetSha256": "1fa9f85e0037f0e402539689a6f4aaab9d23c37c488b61c97dedcbda9d486731",
+						"requestedDepth": 18,
+						"movetimeMs": 5000,
+						"multiPv": 3
+					}
+				],
+				"legacyEvidenceAllowed": false,
+				"frames": 300,
+				"labelled": {
+					"classified": 100,
+					"brilliant": 94,
+					"of": 100
+				},
+				"labelledQualities": {
+					"brilliant": 87,
+					"excellent": 1,
+					"mate": 8,
+					"best": 4
+				},
+				"labelledReasons": {
+					"sound-sacrifice": 94,
+					"illusion": 1,
+					"insufficient-evidence": 3,
+					"no-safe-alternative": 1,
+					"trivial-win": 1
+				},
+				"others": {
+					"meaning": "Unpinned moves, NOT verified negatives; extra calls here do not measure precision.",
+					"classified": 170,
+					"brilliant": 2,
+					"per1000": 11.76
+				},
+				"unclassified": 25,
+				"missingFrames": 7257,
+				"verifiedNegatives": {
+					"classified": 0,
+					"falsePositives": 0,
+					"trueNegatives": 0
+				},
+				"distribution": {
+					"good": 19,
+					"brilliant": 89,
+					"best": 80,
+					"excellent": 18,
+					"blunder": 17,
+					"mistake": 13,
+					"inaccuracy": 16,
+					"mate": 8,
+					"great": 7,
+					"forced": 3
+				}
+			},
+			"recalled": [
+				{
+					"game": 0,
+					"ply": 45,
+					"san": "hxg6",
+					"rating": 1791,
+					"loss": 0,
+					"played": 0.952,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:1"]
+				},
+				{
+					"game": 1,
+					"ply": 31,
+					"san": "f6",
+					"rating": 1779,
+					"loss": 0,
+					"played": 1,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2"]
+				},
+				{
+					"game": 3,
+					"ply": 38,
+					"san": "Qxf2",
+					"rating": 1719,
+					"loss": 0.045,
+					"played": 0.916,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:4"]
+				},
+				{
+					"game": 4,
+					"ply": 25,
+					"san": "Nxg6",
+					"rating": 1230,
+					"loss": 0,
+					"played": 0.913,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2", "capture-sacrifice:1"]
+				},
+				{
+					"game": 5,
+					"ply": 81,
+					"san": "Qxc6+",
+					"rating": 1252,
+					"loss": 0.02,
+					"played": 0.919,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 6,
+					"ply": 21,
+					"san": "Qxb8+",
+					"rating": 1229,
+					"loss": 0,
+					"played": 0.479,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:4", "capture-sacrifice:4"]
+				},
+				{
+					"game": 7,
+					"ply": 74,
+					"san": "Rxf6",
+					"rating": 1178,
+					"loss": 0,
+					"played": 0.792,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 8,
+					"ply": 39,
+					"san": "Bb3",
+					"rating": 898,
+					"loss": 0.032,
+					"played": 0.85,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:2"]
+				},
+				{
+					"game": 9,
+					"ply": 52,
+					"san": "Qc1+",
+					"rating": 1318,
+					"loss": 0,
+					"played": 1,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:4"]
+				},
+				{
+					"game": 10,
+					"ply": 49,
+					"san": "Bxf5+",
+					"rating": 1331,
+					"loss": 0,
+					"played": 0.538,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:1"]
+				},
+				{
+					"game": 11,
+					"ply": 23,
+					"san": "Nxc7+",
+					"rating": 912,
+					"loss": 0.023,
+					"played": 0.759,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 12,
+					"ply": 34,
+					"san": "Ba3",
+					"rating": 920,
+					"loss": 0,
+					"played": 0.497,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:3", "hanging-piece:3"]
+				},
+				{
+					"game": 14,
+					"ply": 27,
+					"san": "Nd5",
+					"rating": 890,
+					"loss": 0.03,
+					"played": 0.666,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:3", "hanging-piece:1"]
+				},
+				{
+					"game": 15,
+					"ply": 30,
+					"san": "Ne4",
+					"rating": 871,
+					"loss": 0,
+					"played": 0.516,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:2"]
+				},
+				{
+					"game": 16,
+					"ply": 18,
+					"san": "Nxd4",
+					"rating": 929,
+					"loss": 0.016,
+					"played": 0.555,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 17,
+					"ply": 91,
+					"san": "Bb6",
+					"rating": 1317,
+					"loss": 0,
+					"played": 0.5,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:3"]
+				},
+				{
+					"game": 18,
+					"ply": 50,
+					"san": "Rxb6",
+					"rating": 912,
+					"loss": 0.043,
+					"played": 0.716,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:1"]
+				},
+				{
+					"game": 19,
+					"ply": 35,
+					"san": "Bxg4",
+					"rating": 911,
+					"loss": 0.009,
+					"played": 0.822,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 20,
+					"ply": 48,
+					"san": "Bd3",
+					"rating": 970,
+					"loss": 0,
+					"played": 0.538,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:3"]
+				},
+				{
+					"game": 21,
+					"ply": 23,
+					"san": "Nf6+",
+					"rating": 933,
+					"loss": 0,
+					"played": 0.843,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:2"]
+				},
+				{
+					"game": 22,
+					"ply": 22,
+					"san": "Nxg4",
+					"rating": 941,
+					"loss": 0.032,
+					"played": 0.462,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:1"]
+				},
+				{
+					"game": 23,
+					"ply": 37,
+					"san": "Nxc3",
+					"rating": 1010,
+					"loss": 0,
+					"played": 0.492,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 24,
+					"ply": 7,
+					"san": "Nxe5",
+					"rating": 977,
+					"loss": 0.037,
+					"played": 0.533,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 25,
+					"ply": 25,
+					"san": "Nxc6",
+					"rating": 808,
+					"loss": 0.049,
+					"played": 0.838,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2", "capture-sacrifice:2"]
+				},
+				{
+					"game": 26,
+					"ply": 11,
+					"san": "Bxf7+",
+					"rating": 510,
+					"loss": 0,
+					"played": 0.543,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 27,
+					"ply": 20,
+					"san": "Bc5",
+					"rating": 976,
+					"loss": 0.037,
+					"played": 0.5,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:3"]
+				},
+				{
+					"game": 28,
+					"ply": 51,
+					"san": "Bxd4",
+					"rating": 804,
+					"loss": 0,
+					"played": 0.778,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2", "capture-sacrifice:2"]
+				},
+				{
+					"game": 29,
+					"ply": 11,
+					"san": "Bxf7+",
+					"rating": 1180,
+					"loss": 0,
+					"played": 0.568,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 30,
+					"ply": 31,
+					"san": "Qxd4",
+					"rating": 960,
+					"loss": 0.025,
+					"played": 0.5,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2"]
+				},
+				{
+					"game": 31,
+					"ply": 39,
+					"san": "Qf3",
+					"rating": 992,
+					"loss": 0.028,
+					"played": 0.621,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2"]
+				},
+				{
+					"game": 32,
+					"ply": 54,
+					"san": "Qe1+",
+					"rating": 482,
+					"loss": 0,
+					"played": 1,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:4"]
+				},
+				{
+					"game": 33,
+					"ply": 41,
+					"san": "Bb4",
+					"rating": 445,
+					"loss": 0.025,
+					"played": 0.758,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:3"]
+				},
+				{
+					"game": 34,
+					"ply": 22,
+					"san": "Nxd5",
+					"rating": 461,
+					"loss": 0,
+					"played": 0.818,
+					"reason": "sound-sacrifice",
+					"offers": ["indirect:4", "capture-sacrifice:2"]
+				},
+				{
+					"game": 35,
+					"ply": 18,
+					"san": "Bxh4",
+					"rating": 1362,
+					"loss": 0.014,
+					"played": 0.517,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2", "capture-sacrifice:2"]
+				},
+				{
+					"game": 36,
+					"ply": 52,
+					"san": "cxd2",
+					"rating": 1002,
+					"loss": 0,
+					"played": 0.508,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:1"]
+				},
+				{
+					"game": 37,
+					"ply": 23,
+					"san": "Bxb5",
+					"rating": 562,
+					"loss": 0.061,
+					"played": 0.732,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:1"]
+				},
+				{
+					"game": 38,
+					"ply": 24,
+					"san": "Nxe5",
+					"rating": 524,
+					"loss": 0.035,
+					"played": 0.485,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 39,
+					"ply": 27,
+					"san": "Ne5",
+					"rating": 954,
+					"loss": 0,
+					"played": 0.572,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:3"]
+				},
+				{
+					"game": 40,
+					"ply": 12,
+					"san": "Qxh6",
+					"rating": 652,
+					"loss": 0,
+					"played": 0.85,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2"]
+				},
+				{
+					"game": 41,
+					"ply": 11,
+					"san": "Bxf7+",
+					"rating": 1075,
+					"loss": 0,
+					"played": 0.559,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 42,
+					"ply": 32,
+					"san": "Bxc3",
+					"rating": 592,
+					"loss": 0,
+					"played": 0.669,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2", "capture-sacrifice:2"]
+				},
+				{
+					"game": 43,
+					"ply": 39,
+					"san": "Nxc6",
+					"rating": 600,
+					"loss": 0.034,
+					"played": 0.786,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 44,
+					"ply": 39,
+					"san": "Bxg5",
+					"rating": 960,
+					"loss": 0,
+					"played": 0.479,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 45,
+					"ply": 11,
+					"san": "Bxf7+",
+					"rating": 1089,
+					"loss": 0,
+					"played": 0.563,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 46,
+					"ply": 20,
+					"san": "Qb6",
+					"rating": 818,
+					"loss": 0.012,
+					"played": 0.499,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:3"]
+				},
+				{
+					"game": 48,
+					"ply": 34,
+					"san": "Bxd4",
+					"rating": 1384,
+					"loss": 0,
+					"played": 0.934,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 49,
+					"ply": 59,
+					"san": "Bc7+",
+					"rating": 1398,
+					"loss": 0,
+					"played": 0.998,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:3"]
+				},
+				{
+					"game": 50,
+					"ply": 49,
+					"san": "Bg6+",
+					"rating": 682,
+					"loss": 0.072,
+					"played": 0.745,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:3"]
+				},
+				{
+					"game": 51,
+					"ply": 24,
+					"san": "Bg4",
+					"rating": 651,
+					"loss": 0.018,
+					"played": 0.562,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:3"]
+				},
+				{
+					"game": 52,
+					"ply": 13,
+					"san": "Nxe5",
+					"rating": 659,
+					"loss": 0,
+					"played": 0.634,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 53,
+					"ply": 48,
+					"san": "Bxh2+",
+					"rating": 639,
+					"loss": 0,
+					"played": 0.492,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 54,
+					"ply": 37,
+					"san": "Nxf6+",
+					"rating": 640,
+					"loss": 0,
+					"played": 0.856,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 55,
+					"ply": 39,
+					"san": "h3",
+					"rating": 653,
+					"loss": 0.115,
+					"played": 0.652,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2"]
+				},
+				{
+					"game": 56,
+					"ply": 22,
+					"san": "Nc2+",
+					"rating": 679,
+					"loss": 0.029,
+					"played": 0.809,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:3"]
+				},
+				{
+					"game": 57,
+					"ply": 15,
+					"san": "O-O",
+					"rating": 671,
+					"loss": 0.022,
+					"played": 0.51,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:3"]
+				},
+				{
+					"game": 58,
+					"ply": 54,
+					"san": "Rxh2",
+					"rating": 706,
+					"loss": 0.012,
+					"played": 0.746,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2"]
+				},
+				{
+					"game": 59,
+					"ply": 23,
+					"san": "Bxh6",
+					"rating": 952,
+					"loss": 0,
+					"played": 0.802,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:1"]
+				},
+				{
+					"game": 60,
+					"ply": 33,
+					"san": "Qh5",
+					"rating": 673,
+					"loss": 0,
+					"played": 1,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:3"]
+				},
+				{
+					"game": 61,
+					"ply": 38,
+					"san": "Qh6",
+					"rating": 658,
+					"loss": 0.043,
+					"played": 0.811,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:3"]
+				},
+				{
+					"game": 62,
+					"ply": 32,
+					"san": "Bh3",
+					"rating": 1059,
+					"loss": 0,
+					"played": 0.596,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:3"]
+				},
+				{
+					"game": 64,
+					"ply": 33,
+					"san": "Rxf6",
+					"rating": 1117,
+					"loss": 0,
+					"played": 0.878,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 65,
+					"ply": 13,
+					"san": "Bxf7+",
+					"rating": 1109,
+					"loss": 0,
+					"played": 0.594,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 66,
+					"ply": 31,
+					"san": "c5",
+					"rating": 1103,
+					"loss": 0,
+					"played": 0.527,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2"]
+				},
+				{
+					"game": 67,
+					"ply": 50,
+					"san": "Qb1",
+					"rating": 1003,
+					"loss": 0.014,
+					"played": 0.887,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:4"]
+				},
+				{
+					"game": 68,
+					"ply": 69,
+					"san": "Nxc4",
+					"rating": 2215,
+					"loss": 0,
+					"played": 0.663,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 69,
+					"ply": 72,
+					"san": "Qc1+",
+					"rating": 2215,
+					"loss": 0,
+					"played": 1,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:4"]
+				},
+				{
+					"game": 70,
+					"ply": 34,
+					"san": "Qxc5",
+					"rating": 1027,
+					"loss": 0,
+					"played": 0.748,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:4"]
+				},
+				{
+					"game": 71,
+					"ply": 11,
+					"san": "Bxf7+",
+					"rating": 1107,
+					"loss": 0,
+					"played": 0.571,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 72,
+					"ply": 13,
+					"san": "Bxc4",
+					"rating": 1033,
+					"loss": 0,
+					"played": 0.519,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 73,
+					"ply": 74,
+					"san": "Rxe3",
+					"rating": 1430,
+					"loss": 0,
+					"played": 0.944,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 74,
+					"ply": 23,
+					"san": "Bg5",
+					"rating": 2238,
+					"loss": 0.015,
+					"played": 0.51,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:3"]
+				},
+				{
+					"game": 75,
+					"ply": 59,
+					"san": "fxg6",
+					"rating": 1509,
+					"loss": 0,
+					"played": 0.952,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:1"]
+				},
+				{
+					"game": 76,
+					"ply": 25,
+					"san": "Nxe6+",
+					"rating": 1502,
+					"loss": 0,
+					"played": 0.955,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 77,
+					"ply": 59,
+					"san": "Qh6",
+					"rating": 1925,
+					"loss": 0,
+					"played": 1,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:3"]
+				},
+				{
+					"game": 78,
+					"ply": 37,
+					"san": "Qxf8+",
+					"rating": 1559,
+					"loss": 0,
+					"played": 0.939,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:4"]
+				},
+				{
+					"game": 79,
+					"ply": 51,
+					"san": "Qxe2",
+					"rating": 1995,
+					"loss": 0,
+					"played": 0.5,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:4"]
+				},
+				{
+					"game": 80,
+					"ply": 47,
+					"san": "c6",
+					"rating": 1951,
+					"loss": 0,
+					"played": 0.971,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2"]
+				},
+				{
+					"game": 81,
+					"ply": 75,
+					"san": "Nxd5",
+					"rating": 2001,
+					"loss": 0,
+					"played": 0.934,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:4"]
+				},
+				{
+					"game": 82,
+					"ply": 31,
+					"san": "cxb6",
+					"rating": 1996,
+					"loss": 0,
+					"played": 0.925,
+					"reason": "sound-sacrifice",
+					"offers": ["indirect:2"]
+				},
+				{
+					"game": 84,
+					"ply": 50,
+					"san": "Rxb4",
+					"rating": 2888,
+					"loss": 0,
+					"played": 0.5,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2", "capture-sacrifice:2"]
+				},
+				{
+					"game": 85,
+					"ply": 23,
+					"san": "f5",
+					"rating": 2943,
+					"loss": 0.001,
+					"played": 0.972,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:3"]
+				},
+				{
+					"game": 86,
+					"ply": 50,
+					"san": "Qxe1+",
+					"rating": 1855,
+					"loss": 0,
+					"played": 0.974,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:1"]
+				},
+				{
+					"game": 87,
+					"ply": 62,
+					"san": "fxg5",
+					"rating": 1520,
+					"loss": 0.004,
+					"played": 0.496,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2", "ignored-threat:2"]
+				},
+				{
+					"game": 88,
+					"ply": 35,
+					"san": "Bxh7+",
+					"rating": 2342,
+					"loss": 0,
+					"played": 1,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 89,
+					"ply": 12,
+					"san": "Nxd5",
+					"rating": 1732,
+					"loss": 0,
+					"played": 0.924,
+					"reason": "sound-sacrifice",
+					"offers": ["indirect:3"]
+				},
+				{
+					"game": 90,
+					"ply": 32,
+					"san": "Rh6",
+					"rating": 2917,
+					"loss": 0,
+					"played": 1,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:3"]
+				},
+				{
+					"game": 91,
+					"ply": 64,
+					"san": "Rxf4",
+					"rating": 2918,
+					"loss": 0,
+					"played": 0.956,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2"]
+				},
+				{
+					"game": 92,
+					"ply": 21,
+					"san": "exd5",
+					"rating": 2937,
+					"loss": 0.007,
+					"played": 0.534,
+					"reason": "sound-sacrifice",
+					"offers": ["indirect:2"]
+				},
+				{
+					"game": 93,
+					"ply": 47,
+					"san": "Qxc5",
+					"rating": 1775,
+					"loss": 0,
+					"played": 0.595,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:6", "capture-sacrifice:6"]
+				},
+				{
+					"game": 94,
+					"ply": 41,
+					"san": "Bf6",
+					"rating": 2323,
+					"loss": 0.026,
+					"played": 0.942,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:2"]
+				},
+				{
+					"game": 96,
+					"ply": 56,
+					"san": "Rg6",
+					"rating": 1912,
+					"loss": 0.033,
+					"played": 0.749,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2"]
+				},
+				{
+					"game": 97,
+					"ply": 26,
+					"san": "Bb7",
+					"rating": 3084,
+					"loss": 0,
+					"played": 0.607,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2"]
+				},
+				{
+					"game": 98,
+					"ply": 53,
+					"san": "Kxf1",
+					"rating": 3097,
+					"loss": 0,
+					"played": 0.971,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2"]
+				},
+				{
+					"game": 99,
+					"ply": 66,
+					"san": "Bxd4",
+					"rating": 3186,
+					"loss": 0.014,
+					"played": 0.973,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2"]
+				}
+			],
+			"missed": [
+				{
+					"game": 2,
+					"ply": 49,
+					"san": "Qd5",
+					"rating": 1664,
+					"loss": 0.011,
+					"played": 0.973,
+					"reason": "illusion",
+					"offers": ["ignored-threat:3", "ignored-threat:1"]
+				},
+				{
+					"game": 13,
+					"ply": 55,
+					"san": "Bxd5",
+					"rating": 911,
+					"loss": 0,
+					"played": 0.888,
+					"reason": "insufficient-evidence",
+					"offers": ["ignored-threat:1"]
+				},
+				{
+					"game": 47,
+					"ply": 46,
+					"san": "Rf1+",
+					"rating": 527,
+					"loss": 0,
+					"played": 0.855,
+					"reason": "no-safe-alternative",
+					"offers": ["hanging-piece:5"]
+				},
+				{
+					"game": 63,
+					"ply": 79,
+					"san": "Qd8+",
+					"rating": 1335,
+					"loss": 0,
+					"played": 1,
+					"reason": "insufficient-evidence",
+					"offers": ["hanging-piece:4"]
+				},
+				{
+					"game": 83,
+					"ply": 39,
+					"san": "Nxf7",
+					"rating": 2907,
+					"loss": 0,
+					"played": 0.999,
+					"reason": "insufficient-evidence",
+					"offers": ["ignored-threat:2"]
+				},
+				{
+					"game": 95,
+					"ply": 100,
+					"san": "e1=Q+",
+					"rating": 1784,
+					"loss": 0,
+					"played": 0.998,
+					"reason": "trivial-win",
+					"offers": ["hanging-piece:1"]
+				}
+			],
+			"overCalls": [
+				{
+					"game": 6,
+					"ply": 20,
+					"san": "Rb8",
+					"rating": 1187,
+					"loss": 0,
+					"played": 0.529,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:3"]
+				},
+				{
+					"game": 36,
+					"ply": 51,
+					"san": "Rb1",
+					"rating": 944,
+					"loss": 0,
+					"played": 0.488,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2"]
+				}
+			],
+			"negativeCalls": [],
+			"tuning": {
+				"classification": {
+					"goodLoss": 0.02,
+					"inaccuracyLoss": 0.05,
+					"mistakeLoss": 0.1,
+					"blunderLoss": 0.2,
+					"zeroLossTolerance": 1e-9,
+					"minDepth": 10,
+					"winningPoints": 0.8,
+					"greatGapNovice": 0.1,
+					"greatGapExpert": 0.15,
+					"greatMinAfter": 0.4,
+					"greatMaxAlternative": 0.7,
+					"missMinOpportunity": 0.1,
+					"missMinLoss": 0.1,
+					"missMaxWorsening": 0.2,
+					"bookMaxLoss": 0.1
+				},
+				"brilliant": {
+					"minOfferedPiece": 3,
+					"minConcession": 1,
+					"maxExchangeNodes": 256,
+					"maxExchangePlies": 16,
+					"maxLossNovice": 0.12,
+					"maxLossExpert": 0.07,
+					"minAfter": 0.45,
+					"trivialAlternative": 0.97,
+					"illusionRegainTolerance": 1,
+					"sequencePlies": 4,
+					"sequenceDecisiveGap": 0.3,
+					"fastestMateNotTrivial": 1,
+					"fasterMateDecisive": 1,
+					"gratuitousWinning": 0.95,
+					"gratuitousGain": 0.02,
+					"gratuitousMaxConcession": 2,
+					"nearBestRatedLoss": 1,
+					"decisiveNeedsMovedPiece": 1,
+					"movedPieceOffersOnly": 0,
+					"tradeRegainAnyShape": 0,
+					"sacrificialAlternativeNotTrivial": 1
+				}
+			}
+		},
+		"shallowRepeat": {
+			"summary": {
+				"provenance": [
+					{
+						"version": "Stockfish 19",
+						"module": "sf_19_relaxed-simd.js",
+						"networks": {
+							"nn-1a298aa575a0.nnue": "1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2"
+						},
+						"variant": "full",
+						"limitedStrength": false,
+						"wasmSha256": "11ebe6bdbae23c4e2b8d665f55c4d13500dc110ce83755663ce6533e6bb36b1b",
+						"runtime": "v25.6.1",
+						"threads": 2,
+						"hashMb": 64,
+						"datasetSha256": "1fa9f85e0037f0e402539689a6f4aaab9d23c37c488b61c97dedcbda9d486731",
+						"requestedDepth": 18,
+						"movetimeMs": 5000,
+						"multiPv": 3
+					}
+				],
+				"legacyEvidenceAllowed": false,
+				"frames": 300,
+				"labelled": {
+					"classified": 100,
+					"brilliant": 96,
+					"of": 100
+				},
+				"labelledQualities": {
+					"brilliant": 88,
+					"excellent": 1,
+					"mate": 8,
+					"best": 3
+				},
+				"labelledReasons": {
+					"sound-sacrifice": 96,
+					"illusion": 1,
+					"no-safe-alternative": 2,
+					"trivial-win": 1
+				},
+				"others": {
+					"meaning": "Unpinned moves, NOT verified negatives; extra calls here do not measure precision.",
+					"classified": 170,
+					"brilliant": 2,
+					"per1000": 11.76
+				},
+				"unclassified": 25,
+				"missingFrames": 7257,
+				"verifiedNegatives": {
+					"classified": 0,
+					"falsePositives": 0,
+					"trueNegatives": 0
+				},
+				"distribution": {
+					"good": 19,
+					"brilliant": 90,
+					"best": 79,
+					"excellent": 18,
+					"blunder": 17,
+					"mistake": 13,
+					"inaccuracy": 16,
+					"mate": 8,
+					"great": 7,
+					"forced": 3
+				}
+			},
+			"recalled": [
+				{
+					"game": 0,
+					"ply": 45,
+					"san": "hxg6",
+					"rating": 1791,
+					"loss": 0,
+					"played": 0.952,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:1"]
+				},
+				{
+					"game": 1,
+					"ply": 31,
+					"san": "f6",
+					"rating": 1779,
+					"loss": 0,
+					"played": 1,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2"]
+				},
+				{
+					"game": 3,
+					"ply": 38,
+					"san": "Qxf2",
+					"rating": 1719,
+					"loss": 0.045,
+					"played": 0.916,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:4"]
+				},
+				{
+					"game": 4,
+					"ply": 25,
+					"san": "Nxg6",
+					"rating": 1230,
+					"loss": 0,
+					"played": 0.913,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2", "capture-sacrifice:1"]
+				},
+				{
+					"game": 5,
+					"ply": 81,
+					"san": "Qxc6+",
+					"rating": 1252,
+					"loss": 0.02,
+					"played": 0.919,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 6,
+					"ply": 21,
+					"san": "Qxb8+",
+					"rating": 1229,
+					"loss": 0,
+					"played": 0.479,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:4", "capture-sacrifice:4"]
+				},
+				{
+					"game": 7,
+					"ply": 74,
+					"san": "Rxf6",
+					"rating": 1178,
+					"loss": 0,
+					"played": 0.792,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 8,
+					"ply": 39,
+					"san": "Bb3",
+					"rating": 898,
+					"loss": 0.032,
+					"played": 0.85,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:2"]
+				},
+				{
+					"game": 9,
+					"ply": 52,
+					"san": "Qc1+",
+					"rating": 1318,
+					"loss": 0,
+					"played": 1,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:4"]
+				},
+				{
+					"game": 10,
+					"ply": 49,
+					"san": "Bxf5+",
+					"rating": 1331,
+					"loss": 0,
+					"played": 0.538,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:1"]
+				},
+				{
+					"game": 11,
+					"ply": 23,
+					"san": "Nxc7+",
+					"rating": 912,
+					"loss": 0.023,
+					"played": 0.759,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 12,
+					"ply": 34,
+					"san": "Ba3",
+					"rating": 920,
+					"loss": 0,
+					"played": 0.497,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:3", "hanging-piece:3"]
+				},
+				{
+					"game": 14,
+					"ply": 27,
+					"san": "Nd5",
+					"rating": 890,
+					"loss": 0.03,
+					"played": 0.666,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:3", "hanging-piece:1"]
+				},
+				{
+					"game": 15,
+					"ply": 30,
+					"san": "Ne4",
+					"rating": 871,
+					"loss": 0,
+					"played": 0.516,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:2"]
+				},
+				{
+					"game": 16,
+					"ply": 18,
+					"san": "Nxd4",
+					"rating": 929,
+					"loss": 0.016,
+					"played": 0.555,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 17,
+					"ply": 91,
+					"san": "Bb6",
+					"rating": 1317,
+					"loss": 0,
+					"played": 0.5,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:3"]
+				},
+				{
+					"game": 18,
+					"ply": 50,
+					"san": "Rxb6",
+					"rating": 912,
+					"loss": 0.043,
+					"played": 0.716,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:1"]
+				},
+				{
+					"game": 19,
+					"ply": 35,
+					"san": "Bxg4",
+					"rating": 911,
+					"loss": 0.009,
+					"played": 0.822,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 20,
+					"ply": 48,
+					"san": "Bd3",
+					"rating": 970,
+					"loss": 0,
+					"played": 0.538,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:3"]
+				},
+				{
+					"game": 21,
+					"ply": 23,
+					"san": "Nf6+",
+					"rating": 933,
+					"loss": 0,
+					"played": 0.843,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:2"]
+				},
+				{
+					"game": 22,
+					"ply": 22,
+					"san": "Nxg4",
+					"rating": 941,
+					"loss": 0.032,
+					"played": 0.462,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:1"]
+				},
+				{
+					"game": 23,
+					"ply": 37,
+					"san": "Nxc3",
+					"rating": 1010,
+					"loss": 0,
+					"played": 0.492,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 24,
+					"ply": 7,
+					"san": "Nxe5",
+					"rating": 977,
+					"loss": 0.037,
+					"played": 0.533,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 25,
+					"ply": 25,
+					"san": "Nxc6",
+					"rating": 808,
+					"loss": 0.049,
+					"played": 0.838,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2", "capture-sacrifice:2"]
+				},
+				{
+					"game": 26,
+					"ply": 11,
+					"san": "Bxf7+",
+					"rating": 510,
+					"loss": 0,
+					"played": 0.543,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 27,
+					"ply": 20,
+					"san": "Bc5",
+					"rating": 976,
+					"loss": 0.037,
+					"played": 0.5,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:3"]
+				},
+				{
+					"game": 28,
+					"ply": 51,
+					"san": "Bxd4",
+					"rating": 804,
+					"loss": 0,
+					"played": 0.778,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2", "capture-sacrifice:2"]
+				},
+				{
+					"game": 29,
+					"ply": 11,
+					"san": "Bxf7+",
+					"rating": 1180,
+					"loss": 0,
+					"played": 0.568,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 30,
+					"ply": 31,
+					"san": "Qxd4",
+					"rating": 960,
+					"loss": 0.025,
+					"played": 0.5,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2"]
+				},
+				{
+					"game": 31,
+					"ply": 39,
+					"san": "Qf3",
+					"rating": 992,
+					"loss": 0.028,
+					"played": 0.621,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2"]
+				},
+				{
+					"game": 32,
+					"ply": 54,
+					"san": "Qe1+",
+					"rating": 482,
+					"loss": 0,
+					"played": 1,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:4"]
+				},
+				{
+					"game": 33,
+					"ply": 41,
+					"san": "Bb4",
+					"rating": 445,
+					"loss": 0.025,
+					"played": 0.758,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:3"]
+				},
+				{
+					"game": 34,
+					"ply": 22,
+					"san": "Nxd5",
+					"rating": 461,
+					"loss": 0,
+					"played": 0.818,
+					"reason": "sound-sacrifice",
+					"offers": ["indirect:4", "capture-sacrifice:2"]
+				},
+				{
+					"game": 35,
+					"ply": 18,
+					"san": "Bxh4",
+					"rating": 1362,
+					"loss": 0.014,
+					"played": 0.517,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2", "capture-sacrifice:2"]
+				},
+				{
+					"game": 36,
+					"ply": 52,
+					"san": "cxd2",
+					"rating": 1002,
+					"loss": 0,
+					"played": 0.508,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:1"]
+				},
+				{
+					"game": 37,
+					"ply": 23,
+					"san": "Bxb5",
+					"rating": 562,
+					"loss": 0.061,
+					"played": 0.732,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:1"]
+				},
+				{
+					"game": 38,
+					"ply": 24,
+					"san": "Nxe5",
+					"rating": 524,
+					"loss": 0.035,
+					"played": 0.485,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 39,
+					"ply": 27,
+					"san": "Ne5",
+					"rating": 954,
+					"loss": 0,
+					"played": 0.572,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:3"]
+				},
+				{
+					"game": 40,
+					"ply": 12,
+					"san": "Qxh6",
+					"rating": 652,
+					"loss": 0,
+					"played": 0.85,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2"]
+				},
+				{
+					"game": 41,
+					"ply": 11,
+					"san": "Bxf7+",
+					"rating": 1075,
+					"loss": 0,
+					"played": 0.559,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 42,
+					"ply": 32,
+					"san": "Bxc3",
+					"rating": 592,
+					"loss": 0,
+					"played": 0.669,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2", "capture-sacrifice:2"]
+				},
+				{
+					"game": 43,
+					"ply": 39,
+					"san": "Nxc6",
+					"rating": 600,
+					"loss": 0.034,
+					"played": 0.786,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 44,
+					"ply": 39,
+					"san": "Bxg5",
+					"rating": 960,
+					"loss": 0,
+					"played": 0.479,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 45,
+					"ply": 11,
+					"san": "Bxf7+",
+					"rating": 1089,
+					"loss": 0,
+					"played": 0.563,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 46,
+					"ply": 20,
+					"san": "Qb6",
+					"rating": 818,
+					"loss": 0.012,
+					"played": 0.499,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:3"]
+				},
+				{
+					"game": 48,
+					"ply": 34,
+					"san": "Bxd4",
+					"rating": 1384,
+					"loss": 0,
+					"played": 0.934,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 49,
+					"ply": 59,
+					"san": "Bc7+",
+					"rating": 1398,
+					"loss": 0,
+					"played": 0.998,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:3"]
+				},
+				{
+					"game": 50,
+					"ply": 49,
+					"san": "Bg6+",
+					"rating": 682,
+					"loss": 0.072,
+					"played": 0.745,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:3"]
+				},
+				{
+					"game": 51,
+					"ply": 24,
+					"san": "Bg4",
+					"rating": 651,
+					"loss": 0.018,
+					"played": 0.562,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:3"]
+				},
+				{
+					"game": 52,
+					"ply": 13,
+					"san": "Nxe5",
+					"rating": 659,
+					"loss": 0,
+					"played": 0.634,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 53,
+					"ply": 48,
+					"san": "Bxh2+",
+					"rating": 639,
+					"loss": 0,
+					"played": 0.492,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 54,
+					"ply": 37,
+					"san": "Nxf6+",
+					"rating": 640,
+					"loss": 0,
+					"played": 0.856,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 55,
+					"ply": 39,
+					"san": "h3",
+					"rating": 653,
+					"loss": 0.115,
+					"played": 0.652,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2"]
+				},
+				{
+					"game": 56,
+					"ply": 22,
+					"san": "Nc2+",
+					"rating": 679,
+					"loss": 0.029,
+					"played": 0.809,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:3"]
+				},
+				{
+					"game": 57,
+					"ply": 15,
+					"san": "O-O",
+					"rating": 671,
+					"loss": 0.022,
+					"played": 0.51,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:3"]
+				},
+				{
+					"game": 58,
+					"ply": 54,
+					"san": "Rxh2",
+					"rating": 706,
+					"loss": 0.012,
+					"played": 0.746,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2"]
+				},
+				{
+					"game": 59,
+					"ply": 23,
+					"san": "Bxh6",
+					"rating": 952,
+					"loss": 0,
+					"played": 0.802,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:1"]
+				},
+				{
+					"game": 60,
+					"ply": 33,
+					"san": "Qh5",
+					"rating": 673,
+					"loss": 0,
+					"played": 1,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:3"]
+				},
+				{
+					"game": 61,
+					"ply": 38,
+					"san": "Qh6",
+					"rating": 658,
+					"loss": 0.043,
+					"played": 0.811,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:3"]
+				},
+				{
+					"game": 62,
+					"ply": 32,
+					"san": "Bh3",
+					"rating": 1059,
+					"loss": 0,
+					"played": 0.596,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:3"]
+				},
+				{
+					"game": 63,
+					"ply": 79,
+					"san": "Qd8+",
+					"rating": 1335,
+					"loss": 0,
+					"played": 1,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:4"]
+				},
+				{
+					"game": 64,
+					"ply": 33,
+					"san": "Rxf6",
+					"rating": 1117,
+					"loss": 0,
+					"played": 0.878,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 65,
+					"ply": 13,
+					"san": "Bxf7+",
+					"rating": 1109,
+					"loss": 0,
+					"played": 0.594,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 66,
+					"ply": 31,
+					"san": "c5",
+					"rating": 1103,
+					"loss": 0,
+					"played": 0.527,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2"]
+				},
+				{
+					"game": 67,
+					"ply": 50,
+					"san": "Qb1",
+					"rating": 1003,
+					"loss": 0.014,
+					"played": 0.887,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:4"]
+				},
+				{
+					"game": 68,
+					"ply": 69,
+					"san": "Nxc4",
+					"rating": 2215,
+					"loss": 0,
+					"played": 0.663,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 69,
+					"ply": 72,
+					"san": "Qc1+",
+					"rating": 2215,
+					"loss": 0,
+					"played": 1,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:4"]
+				},
+				{
+					"game": 70,
+					"ply": 34,
+					"san": "Qxc5",
+					"rating": 1027,
+					"loss": 0,
+					"played": 0.748,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:4"]
+				},
+				{
+					"game": 71,
+					"ply": 11,
+					"san": "Bxf7+",
+					"rating": 1107,
+					"loss": 0,
+					"played": 0.571,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 72,
+					"ply": 13,
+					"san": "Bxc4",
+					"rating": 1033,
+					"loss": 0,
+					"played": 0.519,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 73,
+					"ply": 74,
+					"san": "Rxe3",
+					"rating": 1430,
+					"loss": 0,
+					"played": 0.944,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 74,
+					"ply": 23,
+					"san": "Bg5",
+					"rating": 2238,
+					"loss": 0.015,
+					"played": 0.51,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:3"]
+				},
+				{
+					"game": 75,
+					"ply": 59,
+					"san": "fxg6",
+					"rating": 1509,
+					"loss": 0,
+					"played": 0.952,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:1"]
+				},
+				{
+					"game": 76,
+					"ply": 25,
+					"san": "Nxe6+",
+					"rating": 1502,
+					"loss": 0,
+					"played": 0.955,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 77,
+					"ply": 59,
+					"san": "Qh6",
+					"rating": 1925,
+					"loss": 0,
+					"played": 1,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:3"]
+				},
+				{
+					"game": 78,
+					"ply": 37,
+					"san": "Qxf8+",
+					"rating": 1559,
+					"loss": 0,
+					"played": 0.939,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:4"]
+				},
+				{
+					"game": 79,
+					"ply": 51,
+					"san": "Qxe2",
+					"rating": 1995,
+					"loss": 0,
+					"played": 0.5,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:4"]
+				},
+				{
+					"game": 80,
+					"ply": 47,
+					"san": "c6",
+					"rating": 1951,
+					"loss": 0,
+					"played": 0.971,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2"]
+				},
+				{
+					"game": 81,
+					"ply": 75,
+					"san": "Nxd5",
+					"rating": 2001,
+					"loss": 0,
+					"played": 0.934,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:4"]
+				},
+				{
+					"game": 82,
+					"ply": 31,
+					"san": "cxb6",
+					"rating": 1996,
+					"loss": 0,
+					"played": 0.925,
+					"reason": "sound-sacrifice",
+					"offers": ["indirect:2"]
+				},
+				{
+					"game": 83,
+					"ply": 39,
+					"san": "Nxf7",
+					"rating": 2907,
+					"loss": 0,
+					"played": 0.998,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2"]
+				},
+				{
+					"game": 84,
+					"ply": 50,
+					"san": "Rxb4",
+					"rating": 2888,
+					"loss": 0,
+					"played": 0.5,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2", "capture-sacrifice:2"]
+				},
+				{
+					"game": 85,
+					"ply": 23,
+					"san": "f5",
+					"rating": 2943,
+					"loss": 0.001,
+					"played": 0.972,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:3"]
+				},
+				{
+					"game": 86,
+					"ply": 50,
+					"san": "Qxe1+",
+					"rating": 1855,
+					"loss": 0,
+					"played": 0.974,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:1"]
+				},
+				{
+					"game": 87,
+					"ply": 62,
+					"san": "fxg5",
+					"rating": 1520,
+					"loss": 0.004,
+					"played": 0.496,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2", "ignored-threat:2"]
+				},
+				{
+					"game": 88,
+					"ply": 35,
+					"san": "Bxh7+",
+					"rating": 2342,
+					"loss": 0,
+					"played": 1,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 89,
+					"ply": 12,
+					"san": "Nxd5",
+					"rating": 1732,
+					"loss": 0,
+					"played": 0.924,
+					"reason": "sound-sacrifice",
+					"offers": ["indirect:3"]
+				},
+				{
+					"game": 90,
+					"ply": 32,
+					"san": "Rh6",
+					"rating": 2917,
+					"loss": 0,
+					"played": 1,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:3"]
+				},
+				{
+					"game": 91,
+					"ply": 64,
+					"san": "Rxf4",
+					"rating": 2918,
+					"loss": 0,
+					"played": 0.956,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2"]
+				},
+				{
+					"game": 92,
+					"ply": 21,
+					"san": "exd5",
+					"rating": 2937,
+					"loss": 0.007,
+					"played": 0.534,
+					"reason": "sound-sacrifice",
+					"offers": ["indirect:2"]
+				},
+				{
+					"game": 93,
+					"ply": 47,
+					"san": "Qxc5",
+					"rating": 1775,
+					"loss": 0,
+					"played": 0.595,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:6", "capture-sacrifice:6"]
+				},
+				{
+					"game": 94,
+					"ply": 41,
+					"san": "Bf6",
+					"rating": 2323,
+					"loss": 0.026,
+					"played": 0.942,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:2"]
+				},
+				{
+					"game": 96,
+					"ply": 56,
+					"san": "Rg6",
+					"rating": 1912,
+					"loss": 0.033,
+					"played": 0.749,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2"]
+				},
+				{
+					"game": 97,
+					"ply": 26,
+					"san": "Bb7",
+					"rating": 3084,
+					"loss": 0,
+					"played": 0.607,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2"]
+				},
+				{
+					"game": 98,
+					"ply": 53,
+					"san": "Kxf1",
+					"rating": 3097,
+					"loss": 0,
+					"played": 0.971,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2"]
+				},
+				{
+					"game": 99,
+					"ply": 66,
+					"san": "Bxd4",
+					"rating": 3186,
+					"loss": 0.014,
+					"played": 0.973,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2"]
+				}
+			],
+			"missed": [
+				{
+					"game": 2,
+					"ply": 49,
+					"san": "Qd5",
+					"rating": 1664,
+					"loss": 0.011,
+					"played": 0.973,
+					"reason": "illusion",
+					"offers": ["ignored-threat:3", "ignored-threat:1"]
+				},
+				{
+					"game": 13,
+					"ply": 55,
+					"san": "Bxd5",
+					"rating": 911,
+					"loss": 0,
+					"played": 0.893,
+					"reason": "no-safe-alternative",
+					"offers": ["ignored-threat:1"]
+				},
+				{
+					"game": 47,
+					"ply": 46,
+					"san": "Rf1+",
+					"rating": 527,
+					"loss": 0,
+					"played": 0.855,
+					"reason": "no-safe-alternative",
+					"offers": ["hanging-piece:5"]
+				},
+				{
+					"game": 95,
+					"ply": 100,
+					"san": "e1=Q+",
+					"rating": 1784,
+					"loss": 0,
+					"played": 0.998,
+					"reason": "trivial-win",
+					"offers": ["hanging-piece:1"]
+				}
+			],
+			"overCalls": [
+				{
+					"game": 6,
+					"ply": 20,
+					"san": "Rb8",
+					"rating": 1187,
+					"loss": 0,
+					"played": 0.529,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:3"]
+				},
+				{
+					"game": 36,
+					"ply": 51,
+					"san": "Rb1",
+					"rating": 944,
+					"loss": 0,
+					"played": 0.488,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:2"]
+				}
+			],
+			"negativeCalls": [],
+			"tuning": {
+				"classification": {
+					"goodLoss": 0.02,
+					"inaccuracyLoss": 0.05,
+					"mistakeLoss": 0.1,
+					"blunderLoss": 0.2,
+					"zeroLossTolerance": 1e-9,
+					"minDepth": 10,
+					"winningPoints": 0.8,
+					"greatGapNovice": 0.1,
+					"greatGapExpert": 0.15,
+					"greatMinAfter": 0.4,
+					"greatMaxAlternative": 0.7,
+					"missMinOpportunity": 0.1,
+					"missMinLoss": 0.1,
+					"missMaxWorsening": 0.2,
+					"bookMaxLoss": 0.1
+				},
+				"brilliant": {
+					"minOfferedPiece": 3,
+					"minConcession": 1,
+					"maxExchangeNodes": 256,
+					"maxExchangePlies": 16,
+					"maxLossNovice": 0.12,
+					"maxLossExpert": 0.07,
+					"minAfter": 0.45,
+					"trivialAlternative": 0.97,
+					"illusionRegainTolerance": 1,
+					"sequencePlies": 4,
+					"sequenceDecisiveGap": 0.3,
+					"fastestMateNotTrivial": 1,
+					"fasterMateDecisive": 1,
+					"gratuitousWinning": 0.95,
+					"gratuitousGain": 0.02,
+					"gratuitousMaxConcession": 2,
+					"nearBestRatedLoss": 1,
+					"decisiveNeedsMovedPiece": 1,
+					"movedPieceOffersOnly": 0,
+					"tradeRegainAnyShape": 0,
+					"sacrificialAlternativeNotTrivial": 1
+				}
+			}
+		},
+		"ownerInitial": {
+			"summary": {
+				"provenance": [
+					{
+						"version": "Stockfish 19",
+						"module": "sf_19_relaxed-simd.js",
+						"networks": {
+							"nn-1a298aa575a0.nnue": "1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2"
+						},
+						"variant": "full",
+						"limitedStrength": false,
+						"wasmSha256": "11ebe6bdbae23c4e2b8d665f55c4d13500dc110ce83755663ce6533e6bb36b1b",
+						"runtime": "v25.6.1",
+						"threads": 2,
+						"hashMb": 64,
+						"datasetSha256": "dcad91eead00ea734286739a1a987fb7f4456ab62015a7480361f8fddab4b51c",
+						"requestedDepth": 18,
+						"movetimeMs": 5000,
+						"multiPv": 3
+					}
+				],
+				"legacyEvidenceAllowed": false,
+				"frames": 50,
+				"labelled": {
+					"classified": 14,
+					"brilliant": 13,
+					"of": 14
+				},
+				"labelledQualities": {
+					"brilliant": 9,
+					"best": 1,
+					"mate": 4
+				},
+				"labelledReasons": {
+					"sound-sacrifice": 13,
+					"insufficient-evidence": 1
+				},
+				"others": {
+					"meaning": "Unpinned moves, NOT verified negatives; extra calls here do not measure precision.",
+					"classified": 32,
+					"brilliant": 0,
+					"per1000": 0
+				},
+				"unclassified": 3,
+				"missingFrames": 480,
+				"verifiedNegatives": {
+					"classified": 6,
+					"falsePositives": 0,
+					"trueNegatives": 6
+				},
+				"distribution": {
+					"best": 16,
+					"brilliant": 9,
+					"book": 1,
+					"mistake": 4,
+					"great": 1,
+					"good": 2,
+					"excellent": 3,
+					"blunder": 3,
+					"mate": 5,
+					"inaccuracy": 1,
+					"forced": 1
+				},
+				"marks": [
+					{
+						"game": 1,
+						"ply": 15,
+						"san": "Qd2",
+						"chesscom": "Blunder",
+						"ours": "mistake"
+					},
+					{
+						"game": 1,
+						"ply": 17,
+						"san": "Rb1",
+						"chesscom": "GreatFind",
+						"ours": "best"
+					},
+					{
+						"game": 4,
+						"ply": 29,
+						"san": "Qd3",
+						"chesscom": "Mistake",
+						"ours": "blunder"
+					},
+					{
+						"game": 8,
+						"ply": 42,
+						"san": "Kxh7",
+						"chesscom": "Mistake",
+						"ours": "inaccuracy"
+					},
+					{
+						"game": 8,
+						"ply": 46,
+						"san": "Qb7",
+						"chesscom": "Mistake",
+						"ours": "excellent"
+					},
+					{
+						"game": 9,
+						"ply": 34,
+						"san": "bxa6",
+						"chesscom": "Blunder",
+						"ours": "blunder"
+					}
+				]
+			},
+			"recalled": [
+				{
+					"game": 0,
+					"ply": 46,
+					"san": "Bxg2",
+					"rating": 2646,
+					"loss": 0,
+					"played": 0.994,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 1,
+					"ply": 40,
+					"san": "Qc1+",
+					"rating": 2632,
+					"loss": 0,
+					"played": 1,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:9"]
+				},
+				{
+					"game": 2,
+					"ply": 12,
+					"san": "Nxe4",
+					"rating": 2450,
+					"loss": 0,
+					"played": 0.557,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 4,
+					"ply": 28,
+					"san": "Qf2",
+					"rating": 2390,
+					"loss": 0,
+					"played": 0.784,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:4"]
+				},
+				{
+					"game": 4,
+					"ply": 30,
+					"san": "Rxh3+",
+					"rating": 2390,
+					"loss": 0,
+					"played": 1,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:4", "capture-sacrifice:4"]
+				},
+				{
+					"game": 5,
+					"ply": 35,
+					"san": "Nxf7",
+					"rating": 2391,
+					"loss": 0,
+					"played": 0.971,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 6,
+					"ply": 24,
+					"san": "Bxe6",
+					"rating": 2132,
+					"loss": 0,
+					"played": 0.963,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:1"]
+				},
+				{
+					"game": 6,
+					"ply": 36,
+					"san": "Bg4",
+					"rating": 2132,
+					"loss": 0.041,
+					"played": 0.954,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:3"]
+				},
+				{
+					"game": 7,
+					"ply": 63,
+					"san": "Rxf7+",
+					"rating": 1744,
+					"loss": 0,
+					"played": 1,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:4"]
+				},
+				{
+					"game": 7,
+					"ply": 65,
+					"san": "Rh7+",
+					"rating": 1744,
+					"loss": 0,
+					"played": 1,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:5"]
+				},
+				{
+					"game": 8,
+					"ply": 39,
+					"san": "Bxh7+",
+					"rating": 1298,
+					"loss": 0,
+					"played": 0.861,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 8,
+					"ply": 47,
+					"san": "Nf6+",
+					"rating": 1298,
+					"loss": 0,
+					"played": 1,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:2"]
+				},
+				{
+					"game": 9,
+					"ply": 33,
+					"san": "Bxa6",
+					"rating": 1396,
+					"loss": 0,
+					"played": 0.75,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:1"]
+				}
+			],
+			"missed": [
+				{
+					"game": 3,
+					"ply": 41,
+					"san": "Rxf7",
+					"rating": 2424,
+					"loss": 0,
+					"played": 0.998,
+					"reason": "insufficient-evidence",
+					"offers": ["capture-sacrifice:4"]
+				}
+			],
+			"overCalls": [],
+			"negativeCalls": [],
+			"tuning": {
+				"classification": {
+					"goodLoss": 0.02,
+					"inaccuracyLoss": 0.05,
+					"mistakeLoss": 0.1,
+					"blunderLoss": 0.2,
+					"zeroLossTolerance": 1e-9,
+					"minDepth": 10,
+					"winningPoints": 0.8,
+					"greatGapNovice": 0.1,
+					"greatGapExpert": 0.15,
+					"greatMinAfter": 0.4,
+					"greatMaxAlternative": 0.7,
+					"missMinOpportunity": 0.1,
+					"missMinLoss": 0.1,
+					"missMaxWorsening": 0.2,
+					"bookMaxLoss": 0.1
+				},
+				"brilliant": {
+					"minOfferedPiece": 3,
+					"minConcession": 1,
+					"maxExchangeNodes": 256,
+					"maxExchangePlies": 16,
+					"maxLossNovice": 0.12,
+					"maxLossExpert": 0.07,
+					"minAfter": 0.45,
+					"trivialAlternative": 0.97,
+					"illusionRegainTolerance": 1,
+					"sequencePlies": 4,
+					"sequenceDecisiveGap": 0.3,
+					"fastestMateNotTrivial": 1,
+					"fasterMateDecisive": 1,
+					"gratuitousWinning": 0.95,
+					"gratuitousGain": 0.02,
+					"gratuitousMaxConcession": 2,
+					"nearBestRatedLoss": 1,
+					"decisiveNeedsMovedPiece": 1,
+					"movedPieceOffersOnly": 0,
+					"tradeRegainAnyShape": 0,
+					"sacrificialAlternativeNotTrivial": 1
+				}
+			}
+		},
+		"ownerRepeat": {
+			"summary": {
+				"provenance": [
+					{
+						"version": "Stockfish 19",
+						"module": "sf_19_relaxed-simd.js",
+						"networks": {
+							"nn-1a298aa575a0.nnue": "1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2"
+						},
+						"variant": "full",
+						"limitedStrength": false,
+						"wasmSha256": "11ebe6bdbae23c4e2b8d665f55c4d13500dc110ce83755663ce6533e6bb36b1b",
+						"runtime": "v25.6.1",
+						"threads": 2,
+						"hashMb": 64,
+						"datasetSha256": "dcad91eead00ea734286739a1a987fb7f4456ab62015a7480361f8fddab4b51c",
+						"requestedDepth": 18,
+						"movetimeMs": 5000,
+						"multiPv": 3
+					}
+				],
+				"legacyEvidenceAllowed": false,
+				"frames": 50,
+				"labelled": {
+					"classified": 14,
+					"brilliant": 13,
+					"of": 14
+				},
+				"labelledQualities": {
+					"brilliant": 9,
+					"excellent": 1,
+					"mate": 4
+				},
+				"labelledReasons": {
+					"sound-sacrifice": 13,
+					"trivial-win": 1
+				},
+				"others": {
+					"meaning": "Unpinned moves, NOT verified negatives; extra calls here do not measure precision.",
+					"classified": 32,
+					"brilliant": 0,
+					"per1000": 0
+				},
+				"unclassified": 3,
+				"missingFrames": 480,
+				"verifiedNegatives": {
+					"classified": 6,
+					"falsePositives": 0,
+					"trueNegatives": 6
+				},
+				"distribution": {
+					"best": 15,
+					"brilliant": 9,
+					"book": 1,
+					"mistake": 4,
+					"great": 1,
+					"good": 2,
+					"excellent": 4,
+					"blunder": 3,
+					"mate": 5,
+					"inaccuracy": 1,
+					"forced": 1
+				},
+				"marks": [
+					{
+						"game": 1,
+						"ply": 15,
+						"san": "Qd2",
+						"chesscom": "Blunder",
+						"ours": "mistake"
+					},
+					{
+						"game": 1,
+						"ply": 17,
+						"san": "Rb1",
+						"chesscom": "GreatFind",
+						"ours": "best"
+					},
+					{
+						"game": 4,
+						"ply": 29,
+						"san": "Qd3",
+						"chesscom": "Mistake",
+						"ours": "blunder"
+					},
+					{
+						"game": 8,
+						"ply": 42,
+						"san": "Kxh7",
+						"chesscom": "Mistake",
+						"ours": "inaccuracy"
+					},
+					{
+						"game": 8,
+						"ply": 46,
+						"san": "Qb7",
+						"chesscom": "Mistake",
+						"ours": "excellent"
+					},
+					{
+						"game": 9,
+						"ply": 34,
+						"san": "bxa6",
+						"chesscom": "Blunder",
+						"ours": "blunder"
+					}
+				]
+			},
+			"recalled": [
+				{
+					"game": 0,
+					"ply": 46,
+					"san": "Bxg2",
+					"rating": 2646,
+					"loss": 0,
+					"played": 0.994,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 1,
+					"ply": 40,
+					"san": "Qc1+",
+					"rating": 2632,
+					"loss": 0,
+					"played": 1,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:9"]
+				},
+				{
+					"game": 2,
+					"ply": 12,
+					"san": "Nxe4",
+					"rating": 2450,
+					"loss": 0,
+					"played": 0.557,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 4,
+					"ply": 28,
+					"san": "Qf2",
+					"rating": 2390,
+					"loss": 0,
+					"played": 0.784,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:4"]
+				},
+				{
+					"game": 4,
+					"ply": 30,
+					"san": "Rxh3+",
+					"rating": 2390,
+					"loss": 0,
+					"played": 1,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:4", "capture-sacrifice:4"]
+				},
+				{
+					"game": 5,
+					"ply": 35,
+					"san": "Nxf7",
+					"rating": 2391,
+					"loss": 0,
+					"played": 0.971,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 6,
+					"ply": 24,
+					"san": "Bxe6",
+					"rating": 2132,
+					"loss": 0,
+					"played": 0.963,
+					"reason": "sound-sacrifice",
+					"offers": ["ignored-threat:1"]
+				},
+				{
+					"game": 6,
+					"ply": 36,
+					"san": "Bg4",
+					"rating": 2132,
+					"loss": 0.041,
+					"played": 0.954,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:3"]
+				},
+				{
+					"game": 7,
+					"ply": 63,
+					"san": "Rxf7+",
+					"rating": 1744,
+					"loss": 0,
+					"played": 1,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:4"]
+				},
+				{
+					"game": 7,
+					"ply": 65,
+					"san": "Rh7+",
+					"rating": 1744,
+					"loss": 0,
+					"played": 1,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:5"]
+				},
+				{
+					"game": 8,
+					"ply": 39,
+					"san": "Bxh7+",
+					"rating": 1298,
+					"loss": 0,
+					"played": 0.861,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:2"]
+				},
+				{
+					"game": 8,
+					"ply": 47,
+					"san": "Nf6+",
+					"rating": 1298,
+					"loss": 0,
+					"played": 1,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:2"]
+				},
+				{
+					"game": 9,
+					"ply": 33,
+					"san": "Bxa6",
+					"rating": 1396,
+					"loss": 0,
+					"played": 0.75,
+					"reason": "sound-sacrifice",
+					"offers": ["capture-sacrifice:1"]
+				}
+			],
+			"missed": [
+				{
+					"game": 3,
+					"ply": 41,
+					"san": "Rxf7",
+					"rating": 2424,
+					"loss": 0,
+					"played": 0.996,
+					"reason": "trivial-win",
+					"offers": ["capture-sacrifice:4"]
+				}
+			],
+			"overCalls": [],
+			"negativeCalls": [],
+			"tuning": {
+				"classification": {
+					"goodLoss": 0.02,
+					"inaccuracyLoss": 0.05,
+					"mistakeLoss": 0.1,
+					"blunderLoss": 0.2,
+					"zeroLossTolerance": 1e-9,
+					"minDepth": 10,
+					"winningPoints": 0.8,
+					"greatGapNovice": 0.1,
+					"greatGapExpert": 0.15,
+					"greatMinAfter": 0.4,
+					"greatMaxAlternative": 0.7,
+					"missMinOpportunity": 0.1,
+					"missMinLoss": 0.1,
+					"missMaxWorsening": 0.2,
+					"bookMaxLoss": 0.1
+				},
+				"brilliant": {
+					"minOfferedPiece": 3,
+					"minConcession": 1,
+					"maxExchangeNodes": 256,
+					"maxExchangePlies": 16,
+					"maxLossNovice": 0.12,
+					"maxLossExpert": 0.07,
+					"minAfter": 0.45,
+					"trivialAlternative": 0.97,
+					"illusionRegainTolerance": 1,
+					"sequencePlies": 4,
+					"sequenceDecisiveGap": 0.3,
+					"fastestMateNotTrivial": 1,
+					"fasterMateDecisive": 1,
+					"gratuitousWinning": 0.95,
+					"gratuitousGain": 0.02,
+					"gratuitousMaxConcession": 2,
+					"nearBestRatedLoss": 1,
+					"decisiveNeedsMovedPiece": 1,
+					"movedPieceOffersOnly": 0,
+					"tradeRegainAnyShape": 0,
+					"sacrificialAlternativeNotTrivial": 1
+				}
+			}
+		},
+		"controls": {
+			"summary": {
+				"provenance": [
+					{
+						"version": "Stockfish 19",
+						"module": "sf_19_relaxed-simd.js",
+						"networks": {
+							"nn-1a298aa575a0.nnue": "1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2"
+						},
+						"variant": "full",
+						"limitedStrength": false,
+						"wasmSha256": "11ebe6bdbae23c4e2b8d665f55c4d13500dc110ce83755663ce6533e6bb36b1b",
+						"runtime": "v25.6.1",
+						"threads": 2,
+						"hashMb": 64,
+						"datasetSha256": "4b3cfbccdac39ad6d2d5d868fc8b786cb979a68d9b281032df761ca1edf335ac",
+						"requestedDepth": 18,
+						"movetimeMs": 5000,
+						"multiPv": 3
+					}
+				],
+				"legacyEvidenceAllowed": false,
+				"frames": 24,
+				"labelled": {
+					"classified": 0,
+					"brilliant": 0,
+					"of": 0
+				},
+				"labelledQualities": {},
+				"labelledReasons": {},
+				"others": {
+					"meaning": "Unpinned moves, NOT verified negatives; extra calls here do not measure precision.",
+					"classified": 13,
+					"brilliant": 1,
+					"per1000": 76.92
+				},
+				"unclassified": 0,
+				"missingFrames": 0,
+				"verifiedNegatives": {
+					"classified": 12,
+					"falsePositives": 0,
+					"trueNegatives": 12
+				},
+				"distribution": {
+					"book": 2,
+					"brilliant": 1,
+					"excellent": 2,
+					"best": 3,
+					"blunder": 2,
+					"forced": 1,
+					"mate": 2
+				},
+				"marks": [
+					{
+						"game": 0,
+						"ply": 1,
+						"san": "e4",
+						"chesscom": "NegativeControl",
+						"ours": "book"
+					},
+					{
+						"game": 1,
+						"ply": 1,
+						"san": "Nf3",
+						"chesscom": "NegativeControl",
+						"ours": "book"
+					},
+					{
+						"game": 3,
+						"ply": 1,
+						"san": "Nf6+",
+						"chesscom": "NegativeControl",
+						"ours": "excellent"
+					},
+					{
+						"game": 4,
+						"ply": 1,
+						"san": "Ne4",
+						"chesscom": "NegativeControl",
+						"ours": "best"
+					},
+					{
+						"game": 5,
+						"ply": 1,
+						"san": "b4",
+						"chesscom": "NegativeControl",
+						"ours": "excellent"
+					},
+					{
+						"game": 6,
+						"ply": 1,
+						"san": "Qxd6",
+						"chesscom": "NegativeControl",
+						"ours": "blunder"
+					},
+					{
+						"game": 7,
+						"ply": 1,
+						"san": "Nxe5",
+						"chesscom": "NegativeControl",
+						"ours": "best"
+					},
+					{
+						"game": 8,
+						"ply": 1,
+						"san": "Kb8",
+						"chesscom": "NegativeControl",
+						"ours": "forced"
+					},
+					{
+						"game": 9,
+						"ply": 1,
+						"san": "Kd1",
+						"chesscom": "NegativeControl",
+						"ours": "best"
+					},
+					{
+						"game": 10,
+						"ply": 1,
+						"san": "Ne6",
+						"chesscom": "NegativeControl",
+						"ours": "mate"
+					},
+					{
+						"game": 11,
+						"ply": 1,
+						"san": "Qh4#",
+						"chesscom": "NegativeControl",
+						"ours": "mate"
+					},
+					{
+						"game": 12,
+						"ply": 1,
+						"san": "Ne6",
+						"chesscom": "NegativeControl",
+						"ours": "blunder"
+					}
+				]
+			},
+			"recalled": [],
+			"missed": [],
+			"overCalls": [
+				{
+					"game": 2,
+					"ply": 1,
+					"san": "Ne6",
+					"loss": 0.037,
+					"played": 0.463,
+					"reason": "sound-sacrifice",
+					"offers": ["hanging-piece:3"]
+				}
+			],
+			"negativeCalls": [],
+			"tuning": {
+				"classification": {
+					"goodLoss": 0.02,
+					"inaccuracyLoss": 0.05,
+					"mistakeLoss": 0.1,
+					"blunderLoss": 0.2,
+					"zeroLossTolerance": 1e-9,
+					"minDepth": 10,
+					"winningPoints": 0.8,
+					"greatGapNovice": 0.1,
+					"greatGapExpert": 0.15,
+					"greatMinAfter": 0.4,
+					"greatMaxAlternative": 0.7,
+					"missMinOpportunity": 0.1,
+					"missMinLoss": 0.1,
+					"missMaxWorsening": 0.2,
+					"bookMaxLoss": 0.1
+				},
+				"brilliant": {
+					"minOfferedPiece": 3,
+					"minConcession": 1,
+					"maxExchangeNodes": 256,
+					"maxExchangePlies": 16,
+					"maxLossNovice": 0.12,
+					"maxLossExpert": 0.07,
+					"minAfter": 0.45,
+					"trivialAlternative": 0.97,
+					"illusionRegainTolerance": 1,
+					"sequencePlies": 4,
+					"sequenceDecisiveGap": 0.3,
+					"fastestMateNotTrivial": 1,
+					"fasterMateDecisive": 1,
+					"gratuitousWinning": 0.95,
+					"gratuitousGain": 0.02,
+					"gratuitousMaxConcession": 2,
+					"nearBestRatedLoss": 1,
+					"decisiveNeedsMovedPiece": 1,
+					"movedPieceOffersOnly": 0,
+					"tradeRegainAnyShape": 0,
+					"sacrificialAlternativeNotTrivial": 1
+				}
+			}
+		}
+	},
+	"evidence": [
+		{
+			"path": "/tmp/sliced-sf19-brilliant-0-49.jsonl",
+			"sha256": "74fbccf67129869751227304ca175861579b068cadb08594aedf37232d3a1d0c",
+			"frames": 150
+		},
+		{
+			"path": "/tmp/sliced-sf19-brilliant-50-99.jsonl",
+			"sha256": "38aa25bac1c9170bb3136b726223a314a9536004a34b02fe957c1961668f388a",
+			"frames": 150
+		},
+		{
+			"path": "/tmp/sliced-sf19-shallow-repeat.jsonl",
+			"sha256": "78715588560d14cffded54cd48028308e8d1a2c6d8e4a4edf58fc338c95c37d4",
+			"frames": 3
+		},
+		{
+			"path": "/tmp/sliced-sf19-owner-marked.jsonl",
+			"sha256": "df32ceeb49a813a0d5786ba35f07fad88bcc7eca706493b62251ab81e0d793f9",
+			"frames": 50
+		},
+		{
+			"path": "/tmp/sliced-sf19-owner-shallow-repeat.jsonl",
+			"sha256": "3ac48be785ff3e65de17ae688fd85ba821f71d2c6a12555b12210e046e4079e9",
+			"frames": 1
+		},
+		{
+			"path": "/tmp/sliced-sf19-negative-controls-final.jsonl",
+			"sha256": "c0cd887c6cd5c43be4b03b78c9b49d4d62dc1a9c911628cd5f5b3c4060e03f28",
+			"frames": 24
+		}
+	]
+}

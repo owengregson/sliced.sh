@@ -10,6 +10,8 @@
  * host needs (`configure`: variant + threads, `loadNnue`) arrives over the port.
  */
 
+import type { NnueChunk } from "@core/constants/messages";
+import { PORT_NAMES } from "@core/constants/ports";
 import { EngineHost, serveEnginePort } from "./engine-host";
 import { MaiaStore } from "./maia-store";
 import { ModelStore } from "./model-store";
@@ -20,12 +22,15 @@ import { createPolicyInference, policyThreads } from "./policy-inference";
 import { bootEngineDetailed } from "./stockfish-loader";
 import { createTimingInference } from "./timing-inference";
 
+let nnueStore: NnueStore;
 const served = serveEnginePort({
-	createStore: (post) =>
-		new NnueStore({
+	createStore: (post) => {
+		nnueStore = new NnueStore({
 			post,
 			onProgress: (name, progress) => post({ kind: "nnue-progress", name, progress }),
-		}),
+		});
+		return nnueStore;
+	},
 	createHost: (post, store) =>
 		new EngineHost({
 			boot: (variant, hooks) => bootEngineDetailed(variant, { nnueStore: store, ...hooks }),
@@ -44,6 +49,24 @@ const served = serveEnginePort({
 		}),
 });
 
+// Both engines read the same verified packaged assets. Their mutable WASM memory,
+// transposition tables and UCI streams remain independent.
+const review = serveEnginePort({
+	portName: PORT_NAMES.reviewEngine,
+	disposeOnDisconnect: true,
+	createStore: () => ({
+		handleChunk: (message: NnueChunk) => nnueStore.handleChunk(message),
+		abortAll: () => {},
+	}),
+	createHost: (post) =>
+		new EngineHost({
+			boot: (variant, hooks) => bootEngineDetailed(variant, { nnueStore, ...hooks }),
+			nnueStore,
+			post,
+			allowSmallnetFallback: false,
+		}),
+});
+
 const stopSounds = serveMoveRatingSounds();
 
 // The document is closed by `chrome.offscreen.closeDocument()` (or an extension
@@ -52,6 +75,7 @@ globalThis.addEventListener?.(
 	"pagehide",
 	() => {
 		stopSounds();
+		review.stop();
 		served.stop();
 	},
 	{ once: true }

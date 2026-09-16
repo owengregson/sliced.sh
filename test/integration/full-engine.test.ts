@@ -10,7 +10,7 @@ import type { FullEngineReport } from "./full-engine.node";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 
-describe("Stockfish 18 full (real packaged NNUE and wasm)", () => {
+describe("Stockfish 19 full (real packaged NNUE and wasm)", () => {
 	it("boots and searches using installed raw networks with no cache or download relay", async () => {
 		const node = Bun.which("node");
 		if (!node)

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { MAIA } from "@core/constants/maia";
 import type { PolicyResult } from "@core/policy/types";
 import { createRng } from "@core/rng";
 import { drawDistribution } from "@core/strength/generate-verify";
@@ -14,7 +15,7 @@ const policy = (moves: Array<[string, number]>): PolicyResult => ({
 });
 
 describe("upper Maia verification", () => {
-	it("preserves the established 2500–2800 draw, then resolves a shallow horizon error", () => {
+	it("uses bounded recognition at 2500–2800, then preserves upper verification of a horizon error", () => {
 		const survivors = [
 			{ uci: "e2e4", p: 0.4, shallowCp: 10, deepCp: 60 },
 			{ uci: "d2d4", p: 0.3, shallowCp: 5, deepCp: 40 },
@@ -23,8 +24,17 @@ describe("upper Maia verification", () => {
 		const run = (E: number) =>
 			drawDistribution({ survivors, E, shallowDepth: 10 }, 3000, createRng("upper-horizon"));
 		expect(run(2500)).toEqual(run(2800));
-		expect(run(2800).get("g1f3")).toBeGreaterThan(0.85);
-		expect(run(2900).get("g1f3") ?? 0).toBeLessThan(0.1);
+		// Exact law: the error looks appealing at human depth, but its likelihood ratio cannot
+		// exceed 2 - pIntuition = 1.4. The independently tested upper-band algorithm is unchanged.
+		const transfer =
+			0.4 *
+			2 *
+			0.3 *
+			(0.4 * (1 / (1 + Math.exp((10 - 300) / 80)) - 0.5) +
+				0.3 * (1 / (1 + Math.exp((5 - 300) / 80)) - 0.5));
+		expect(run(2800).get("g1f3")).toBeCloseTo(0.3 + transfer, 12);
+		expect(run(2900).get("g1f3") ?? 0).toBeLessThan(0.3);
+		expect(run(2950).get("g1f3") ?? 0).toBeLessThan(0.1);
 		expect(run(3000).get("g1f3") ?? 0).toBeLessThan(0.025);
 	});
 
@@ -67,7 +77,11 @@ describe("upper Maia verification", () => {
 			expect(move.rationale.join(" ")).toContain("comparison frame unavailable");
 			expect(move.maiaMeters?.verifyDepth).toBe(0);
 		}
-		expect(best).toBeGreaterThan(75);
+		// The bounded referee score lifts e2e4 far above its 0.3 Maia mass. The effective rating here is
+		// 2894 (target 3000 less the ambiguity penalty), inside the 2800–3000 ramp; since the
+		// 2026-09-15 recalibration that ramp starts from the calibrated 2800 end, so the measured
+		// share is 62 / 100 (610 / 1000) rather than 93 / 100 (942 / 1000) before.
+		expect(best).toBeGreaterThan(50);
 	});
 
 	it("does not label an unrestricted-referee fallback as native strength limiting", () => {
@@ -98,43 +112,38 @@ describe("upper Maia verification", () => {
 	});
 });
 
-describe("upper prior and pure-engine boundary", () => {
-	it("keeps a missing-policy native3100 answer inside the scored quality bound", () => {
-		const lines = [line(START, "e2e4", { cp: 50 }, 1), line(START, "d2d4", { cp: -55 }, 2)];
-		for (const engineBestmove of ["d2d4", "g1f3"]) {
-			const move = selectMove(
-				lines,
-				ctx({
-					targetElo: 3100,
-					selectionMode: "hybrid",
-					engineResultKind: "native-limited",
-					engineBestmove,
-				})
-			);
-			expect(move.uci).toBe("e2e4");
-			expect(move.source).toBe("engine-elo");
-			expect(move.rationale.join(" ")).toContain("within 8 cp");
+// Owner, 2026-09-15: one division at the Maia cutoff ("we just go straight from that to big net").
+// The former (3000, 3200] band — Maia ranking a narrowing pool of small-network lines ("within 8 cp"
+// at 3100, "within 4 cp" at 3200, Maia's d2d4 drawn at 3001) — is removed, so these cases now pin
+// its absence: every target above `MAIA.eloMax` plays the strongest guarded engine continuation.
+describe("one division at the Maia cutoff: pure engine above it", () => {
+	it("plays the strongest guarded continuation just above the cutoff, whatever the native choice", () => {
+		const lines = [line(START, "e2e4", { cp: 50 }, 1), line(START, "d2d4", { cp: 45 }, 2)];
+		for (const targetElo of [MAIA.eloMax + 1, 3100, 3200]) {
+			for (const engineBestmove of ["d2d4", "g1f3"]) {
+				const move = selectMove(
+					lines,
+					ctx({
+						targetElo,
+						selectionMode: "hybrid",
+						engineResultKind: "native-limited",
+						engineBestmove,
+					})
+				);
+				expect(move.uci).toBe("e2e4");
+				expect(move.source).toBe("engine-elo");
+				expect(move.rationale.join(" ")).toContain("full-strength engine");
+				expect(move.rationale.join(" ")).not.toContain("within");
+			}
 		}
-		const close = [lines[0]!, line(START, "d2d4", { cp: 45 }, 2)];
-		expect(
-			selectMove(
-				close,
-				ctx({
-					targetElo: 3100,
-					selectionMode: "hybrid",
-					engineResultKind: "native-limited",
-					engineBestmove: "d2d4",
-				})
-			).uci
-		).toBe("d2d4");
 	});
-	it("retains the upper prior's quality bound when Maia fails on an unrestricted3200 search", () => {
+	it("does not sample an unrestricted search above the cutoff when no policy answer came", () => {
 		const lines = [line(START, "e2e4", { cp: 1800 }, 1), line(START, "d2d4", { cp: 1600 }, 2)];
 		for (let seed = 0; seed < 30; seed++) {
 			const move = selectMove(
 				lines,
 				ctx({
-					targetElo: 3200,
+					targetElo: MAIA.eloMax + 1,
 					selectionMode: "hybrid",
 					engineResultKind: "unrestricted",
 					engineBestmove: "d2d4",
@@ -142,34 +151,36 @@ describe("upper prior and pure-engine boundary", () => {
 				})
 			);
 			expect(move.uci).toBe("e2e4");
-			expect(move.source).toBe("sampled");
-			expect(move.rationale.join(" ")).toContain("within 4 cp");
+			expect(move.source).toBe("engine-elo");
 		}
 	});
-	it("narrows actual score alternatives toward3200 even when both evaluations exceed1000", () => {
+	it("a policy answer on hand draws nothing above the cutoff, while the cutoff itself is Maia's", () => {
 		const lines = [line(START, "e2e4", { cp: 1800 }, 1), line(START, "d2d4", { cp: 1790 }, 2)];
 		const maia = policy([
 			["e2e4", 0.01],
 			["d2d4", 0.99],
 		]);
-		let nearBoundaryAlternative = 0;
+		let maiaAtCutoff = 0;
 		for (let seed = 0; seed < 100; seed++) {
-			nearBoundaryAlternative += Number(
-				selectMove(lines, ctx({ targetElo: 3001, maia, rng: createRng(seed) })).uci === "d2d4"
+			const above = selectMove(lines, ctx({ targetElo: MAIA.eloMax + 1, maia, rng: createRng(seed) }));
+			expect(above.uci).toBe("e2e4");
+			expect(above.source).toBe("engine-elo");
+			expect(above.maiaMeters).toBeUndefined();
+			maiaAtCutoff += Number(
+				selectMove(lines, ctx({ targetElo: MAIA.eloMax, maia, rng: createRng(seed) })).source === "maia"
 			);
-			expect(selectMove(lines, ctx({ targetElo: 3200, maia, rng: createRng(seed) })).uci).toBe("e2e4");
 		}
-		expect(nearBoundaryAlternative).toBeGreaterThan(85);
+		expect(maiaAtCutoff).toBeGreaterThan(85);
 	});
 
-	it("never re-enters Maia above3200 due to form, pressure, stale policy or selection mode", () => {
+	it("never re-enters Maia above the cutoff due to form, pressure, stale policy or selection mode", () => {
 		const lines = [line(START, "e2e4", { cp: 50 }, 1), line(START, "d2d4", { cp: 20 }, 2)];
 		const maia = policy([["d2d4", 1]]);
 		for (const selectionMode of ["hybrid", "engine-elo", "persona-sampling"] as const) {
 			const move = selectMove(
 				lines,
 				ctx({
-					targetElo: 3201,
+					targetElo: MAIA.eloMax + 1,
 					form: -1,
 					oppClockMs: 100,
 					myClockMs: 1000,

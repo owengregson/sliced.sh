@@ -1,113 +1,311 @@
 /**
- * The move-quality verdict behind the board-effect chip (owner's brief, 2026-09-13). Pure: it is
- * handed full-strength MultiPV lines for the position *before* a move and (when the lines do not
- * already score it) the score of the move that was actually played, and it answers one of the ten
- * `MOVE_QUALITY_ORDER` categories.
+ * Move classification — chess.com's Game Review ladder (`MOVE_CLASSIFICATION`,
+ * `@core/constants/review`), from review frames only.
  *
- * The bands, the overrides and the reasoning behind every number live in
- * `@core/constants/move-quality`; this file is the ladder, nothing else.
+ * A *frame* is one complete MultiPV review search of a position. A verdict reads up to three:
  *
- * Deliberately *not* `@core/strength/quality`'s `moveQuality`: that one answers "may this move be
- * counted in the session's accuracy statistics", which refuses mates, forced positions and
- * mismatched depths on purpose. A chip has to have an opinion about exactly those.
+ *   before    the position the move was played from — the best move and its expected points,
+ *             the runner-up (Great), the other scored roots (Brilliant);
+ *   after     the position the move produced — the played move's score, negated, whenever the
+ *             move is not one of `before`'s lines (a checkmate or a draw on the board needs none);
+ *   previous  the position before the opponent's last move — how much that move handed over
+ *             (Miss). Optional; without it there is no Miss.
+ *
+ *   loss = expectedPoints(best) − expectedPoints(played), for the mover, at the mover's rating
+ *
+ * Precedence is chess.com's — Book → Brilliant → Great → Miss → Best → Excellent → Good →
+ * Inaccuracy → Mistake → Blunder — under the owner's two additions: Forced (the only legal move)
+ * first, then Mate (a move of a forced mating sequence). Pure: no engine, no clock, no chrome.
  */
 
 import { loadPosition } from "@core/chess/fen";
-import { PIECE_VALUES, type PieceType } from "@core/chess/material";
-import { hangsOutright } from "@core/chess/safety";
-import { parseUci } from "@core/chess/san";
-import { type MoveQuality, MOVE_QUALITY as Q } from "@core/constants/move-quality";
-import { cpEffective, winProb } from "@core/strength/elo-map";
+import { playUci } from "@core/chess/san";
+import type { MoveQuality } from "@core/constants/move-quality";
+import { BRILLIANT, MOVE_CLASSIFICATION, REVIEW } from "@core/constants/review";
 import { rankedLines } from "@core/strength/quality";
 import type { Eval, EvalLine } from "@typedefs/engine";
+import {
+	type BrilliantTuning,
+	type BrilliantVerdict,
+	evaluateBrilliant,
+	planBrilliant,
+	staticExchange,
+} from "./brilliant";
+import { byRating, expectedPoints, negateScore } from "./expected-points";
+
+/** One complete review search of a position (side-to-move point of view). */
+export interface ReviewFrame {
+	lines: readonly EvalLine[];
+	depth: number;
+	/** Explicit incomplete frames cannot grade a move. Omitted for manually authored fixtures. */
+	complete?: boolean;
+}
 
 export interface MoveQualityInput {
 	/** Position before the move. */
 	fen: string;
-	/** The move that was played, in UCI. */
+	/** The move, in UCI. */
 	uci: string;
-	/** Ply index of `fen` (0 = the start position), for the opening-book approximation. */
-	ply: number;
-	/** Full-strength MultiPV lines at `fen`, from the mover's point of view. */
-	lines: readonly EvalLine[];
-	/**
-	 * The played move's score from the mover's point of view, for the common case where it is not
-	 * one of the MultiPV lines. The caller gets it by negating the best score of the position
-	 * after the move.
-	 */
-	playedScore?: Eval;
-	/** The caller knows the move came out of the opening book (`RecommendationOutcome.fromBook`). */
-	inBook?: boolean;
+	before: ReviewFrame;
+	after?: ReviewFrame | undefined;
+	previous?: ReviewFrame | undefined;
+	/** The mover's rating; absent = the expected-points reference rating. */
+	moverRating?: number | undefined;
+	/** The move is opening theory (the bundled books know it from this position). */
+	inBook?: boolean | undefined;
+	/** The mover's move within `BRILLIANT.sequencePlies` passed the brilliant gates (`BrilliantEvidence`). */
+	recentSacrifice?: boolean | undefined;
+}
+
+/** Every brilliant gate passed — badged, or held back only as the continuation of a sequence. */
+export function passedBrilliantGates(verdict: MoveQualityVerdict | null): boolean {
+	const brilliant = verdict?.brilliant;
+	return (
+		brilliant !== null &&
+		brilliant !== undefined &&
+		(brilliant.brilliant || brilliant.reason === "continuation")
+	);
 }
 
 export interface MoveQualityVerdict {
 	quality: MoveQuality;
-	/** Win-probability loss against the best move, in [0, 1]. */
-	lossWp: number;
-	/** Centipawn loss on the `cpEffective` scale (a mate is ±(1000 + 100 − |N|)). */
-	cpLoss: number;
-	/** The move was the engine's first choice (or within `bestTieCp` of it). */
+	/** Expected points given up against the best move, in [0, 1]. */
+	loss: number;
+	bestPoints: number;
+	playedPoints: number;
+	/** The engine's first choice (or a move scoring exactly as well). */
 	top: boolean;
-	/** Deepest complete depth the verdict rests on. */
+	/** The shallowest frame the verdict rests on. */
 	depth: number;
+	/**
+	 * Moves to checkmate for the mover, this move included (1 = the move is checkmate), when the
+	 * move keeps a forced mate; `null` otherwise. Such a move is rated `mate`.
+	 */
+	mateIn: number | null;
+	/** The brilliant gates' answer when the move offered material (diagnostics). */
+	brilliant: BrilliantVerdict | null;
 }
 
-/** A sacrifice worth calling brilliant: a real piece left to be taken, not a pawn gambit. */
-function isSacrifice(fen: string, uci: string): boolean {
-	const parts = parseUci(uci);
-	if (!parts) return false;
-	const piece = loadPosition(fen)?.get(parts.from);
-	if (!piece) return false;
-	const given = parts.promotion ?? (piece.type as PieceType);
-	if (PIECE_VALUES[given] < Q.brilliantMinPieceValue) return false;
-	return hangsOutright(fen, uci);
+export type ClassificationTuning = { readonly [K in keyof typeof MOVE_CLASSIFICATION]: number };
+
+export interface MoveQualityTuning {
+	classification: ClassificationTuning;
+	brilliant: BrilliantTuning;
+}
+
+export const DEFAULT_MOVE_QUALITY_TUNING: MoveQualityTuning = {
+	classification: MOVE_CLASSIFICATION,
+	brilliant: BRILLIANT,
+};
+
+/**
+ * The only legal move: there was nothing to choose, so nothing is graded (no points, no depth).
+ * Needs no review frame — the reporter rates such a move the moment it lands.
+ */
+export function forcedMoveVerdict(): MoveQualityVerdict {
+	return {
+		quality: "forced",
+		loss: 0,
+		bestPoints: 0,
+		playedPoints: 0,
+		top: true,
+		depth: 0,
+		mateIn: null,
+		brilliant: null,
+	};
+}
+
+/** The published bands: Best only at zero loss, a boundary belongs to the more severe band. */
+export function ordinaryMoveQuality(
+	loss: number,
+	top: boolean,
+	c: ClassificationTuning = MOVE_CLASSIFICATION
+): MoveQuality {
+	if (loss >= c.blunderLoss) return "blunder";
+	if (loss >= c.mistakeLoss) return "mistake";
+	if (loss >= c.inaccuracyLoss) return "inaccuracy";
+	if (loss >= c.goodLoss) return "good";
+	return top || loss <= c.zeroLossTolerance ? "best" : "excellent";
+}
+
+/** Review frames must contain one exact iteration, never the playing selector's merged pool. */
+export function reviewLines(frame: ReviewFrame | undefined, minDepth: number): EvalLine[] {
+	if (!frame || frame.complete === false || !Number.isInteger(frame.depth) || frame.depth < minDepth)
+		return [];
+	return rankedLines(
+		frame.lines.filter((line) => line.depth === frame.depth && expectedPoints(line.score) !== null)
+	);
+}
+
+function scoredTop(frame: ReviewFrame | undefined, minDepth: number): EvalLine | null {
+	const top = reviewLines(frame, minDepth)[0];
+	return top && top.depth >= minDepth ? top : null;
 }
 
 /**
- * The verdict for `uci` played in `fen`, or `null` when there is not enough to say: no usable
- * line, a frame shallower than `MOVE_QUALITY.minDepth`, or a played move nothing scored.
+ * The verdict for `uci` played in `fen`, or `null` when the frames cannot support one: an illegal
+ * move, no exact best line, a frame shallower than `minDepth`, or a move neither frame scores.
  */
-export function classifyMoveQuality(input: MoveQualityInput): MoveQualityVerdict | null {
-	const ranked = rankedLines(input.lines);
+export function classifyMoveQuality(
+	input: MoveQualityInput,
+	tuning: MoveQualityTuning = DEFAULT_MOVE_QUALITY_TUNING
+): MoveQualityVerdict | null {
+	const c = tuning.classification;
+	const board = loadPosition(input.fen);
+	if (!board || board.isGameOver()) return null;
+	const legal = board.moves({ verbose: true });
+	const legalSet = new Set(legal.map((m) => m.from + m.to + (m.promotion ?? "")));
+	if (!legalSet.has(input.uci)) return null;
+	// Forced (owner, 2026-09-15): the only legal move is rated before anything else, frames or not.
+	if (legal.length === 1) return forcedMoveVerdict();
+	const ranked = reviewLines(input.before, c.minDepth).filter((line) =>
+		legalSet.has(line.pvUci[0] ?? "")
+	);
 	const best = ranked[0];
-	if (!best || best.depth < Q.minDepth) return null;
-	const played = ranked.find((line) => line.pvUci[0] === input.uci);
-	const playedEval = played?.score ?? input.playedScore;
-	if (!playedEval) return null;
-	const bestCp = cpEffective(best.score);
-	const playedCp = cpEffective(playedEval);
-	const cpLoss = Math.max(0, bestCp - playedCp);
-	const wpBest = winProb(bestCp);
-	const wpPlayed = winProb(playedCp);
-	const lossWp = Math.max(0, wpBest - wpPlayed);
-	const top = best.pvUci[0] === input.uci || cpLoss <= Q.bestTieCp;
+	if (!best || best.depth < c.minDepth) return null;
+	const rating = input.moverRating;
+	const bestPoints = expectedPoints(best.score, rating);
+	if (bestPoints === null) return null;
+
+	const afterBoard = loadPosition(input.fen);
+	const move = afterBoard ? playUci(afterBoard, input.uci) : null;
+	if (!afterBoard || !move) return null;
+	const terminal: Eval | null = afterBoard.isCheckmate()
+		? { mate: 1 }
+		: afterBoard.isDraw()
+			? { cp: 0 }
+			: null;
+	const playedLine = ranked.find((line) => line.pvUci[0] === input.uci);
+	let playedScore: Eval;
+	let playedDepth: number;
+	let playedPv: readonly string[] = [input.uci];
+	// UCI counts mate in the side to move's moves: `mate n` on the move's own line includes the
+	// move, `mate -n` at the position it made counts only the moves still to come.
+	let mateIn: number | null = null;
+	if (terminal) {
+		playedScore = terminal;
+		playedDepth = best.depth;
+		if (terminal.mate !== undefined) mateIn = 1;
+	} else if (playedLine) {
+		playedScore = playedLine.score;
+		playedDepth = playedLine.depth;
+		playedPv = playedLine.pvUci;
+		if ((playedLine.score.mate ?? 0) > 0) mateIn = playedLine.score.mate ?? null;
+	} else {
+		const reply = scoredTop(input.after, c.minDepth);
+		if (
+			!reply ||
+			!afterBoard
+				.moves({ verbose: true })
+				.some((m) => m.from + m.to + (m.promotion ?? "") === reply.pvUci[0])
+		)
+			return null;
+		playedScore = negateScore(reply.score);
+		playedDepth = reply.depth;
+		playedPv = [input.uci, ...reply.pvUci];
+		if ((reply.score.mate ?? 0) < 0) mateIn = 1 - (reply.score.mate ?? 0);
+	}
+	const playedPoints = expectedPoints(playedScore, rating);
+	if (playedPoints === null) return null;
+	const loss = Math.max(0, bestPoints - playedPoints);
+	const top = best.pvUci[0] === input.uci || loss <= c.zeroLossTolerance;
+	// Great and Brilliant compare moves with each other rather than grade a loss, and chess.com is
+	// "more generous" with both for newer players. On the rating-scaled curve a stronger player's
+	// gaps grow faster than any threshold could rise, so those comparisons use the reference curve
+	// and only their thresholds move with the rating.
+	const refPlayed = expectedPoints(playedScore) ?? playedPoints;
+	const refLoss = Math.max(0, (expectedPoints(best.score) ?? bestPoints) - refPlayed);
+	const alternatives = ranked
+		.filter((line) => line.pvUci[0] !== input.uci)
+		.flatMap((line) => {
+			const points = expectedPoints(line.score);
+			return points === null
+				? []
+				: [{ uci: line.pvUci[0] ?? "", points, mate: line.score.mate, depth: line.depth }];
+		});
+	const specialEvidence =
+		Math.min(best.depth, playedDepth) >= REVIEW.specialDepth &&
+		Math.abs(best.depth - playedDepth) <= REVIEW.specialDepthTolerance &&
+		alternatives.length > 0;
+
+	let brilliant: BrilliantVerdict | null = null;
 	const settle = (quality: MoveQuality): MoveQualityVerdict => ({
 		quality,
-		lossWp,
-		cpLoss,
+		loss,
+		bestPoints,
+		playedPoints,
 		top,
-		depth: best.depth,
+		depth: Math.min(best.depth, playedDepth),
+		mateIn,
+		brilliant,
 	});
 
-	// Losing bands first, worst down. `miss` sits between blunder and mistake: failing to finish a
-	// won game is worse than an ordinary mistake, and never worse than throwing it away.
-	if (lossWp >= Q.blunderLoss) return settle("blunder");
-	if (wpBest >= Q.missWinBefore && wpPlayed < Q.missKeptAfter && lossWp >= Q.missMinLoss)
-		return settle("miss");
-	if (lossWp >= Q.mistakeLoss) return settle("mistake");
-	if (lossWp >= Q.inaccuracyLoss) return settle("inaccuracy");
+	// The brilliant gates run whenever the move offers material — also under a Mate or Book
+	// rating, so the verdict still says whether the sacrifice itself was sound.
+	if (!terminal || terminal.mate !== undefined) {
+		const plan = planBrilliant(
+			{ fen: input.fen, uci: input.uci, inBook: input.inBook },
+			tuning.brilliant
+		);
+		if (plan && (plan.offers.length > 0 || !plan.materialComplete))
+			brilliant = !specialEvidence
+				? { brilliant: false, reason: "insufficient-evidence", offers: plan.offers }
+				: evaluateBrilliant(
+						plan,
+						{
+							playedPoints: refPlayed,
+							ratedPlayedPoints: playedPoints,
+							// Moves to mate counting the move itself, comparable with the other roots' `mate n`.
+							playedMate: mateIn ?? playedScore.mate,
+							playedPv,
+							loss: refLoss,
+							ratedLoss: loss,
+							recentSacrifice: input.recentSacrifice,
+							alternatives,
+							moverRating: rating,
+						},
+						tuning.brilliant
+					);
+	}
 
-	// A fine move, upgraded along the ladder. Each test can only move it up.
-	let quality: MoveQuality = "good";
-	if (lossWp < Q.excellentMaxLoss) quality = "excellent";
-	if (top) quality = "best";
-	const inBook = input.inBook ?? (input.ply < Q.bookMaxPly && lossWp <= Q.bookMaxLoss);
-	if (inBook) quality = "book";
-	const runnerUp = ranked[1];
-	const onlyMove =
-		top && runnerUp !== undefined && wpBest - winProb(cpEffective(runnerUp.score)) >= Q.greatGapWp;
-	if (onlyMove) quality = "great";
-	if ((onlyMove || top) && wpPlayed >= Q.brilliantMinWinAfter && isSacrifice(input.fen, input.uci))
-		quality = "brilliant";
-	return settle(quality);
+	// Mate (owner, 2026-09-14): every move of a forced mating sequence, the checkmate included,
+	// outranks the whole ladder.
+	if (mateIn !== null) return settle("mate");
+
+	// Book: theory is recognised rather than graded — unless it is a trap that loses real points.
+	if (input.inBook === true && loss < c.bookMaxLoss) return settle("book");
+
+	// Brilliant: a sound sacrifice the player chose.
+	if (brilliant?.brilliant) return settle("brilliant");
+
+	// Great: the best move, and the only good one.
+	const runnerUp = alternatives[0];
+	if (
+		top &&
+		specialEvidence &&
+		!terminal &&
+		legal.length >= 2 &&
+		runnerUp !== undefined &&
+		refPlayed >= c.greatMinAfter &&
+		runnerUp.points <= c.greatMaxAlternative &&
+		refPlayed - runnerUp.points >= byRating(c.greatGapNovice, c.greatGapExpert, rating) &&
+		!(move.captured && (staticExchange(input.fen, input.uci, tuning.brilliant) ?? 0) > 0)
+	)
+		return settle("great");
+
+	// Miss: the opponent's last move handed over a win, and this move handed it back.
+	const previous = scoredTop(input.previous, c.minDepth);
+	const previousPoints = previous ? expectedPoints(negateScore(previous.score), rating) : null;
+	if (
+		previousPoints !== null &&
+		bestPoints >= c.winningPoints &&
+		previousPoints < c.winningPoints &&
+		bestPoints - previousPoints >= c.missMinOpportunity &&
+		playedPoints < c.winningPoints &&
+		loss >= c.missMinLoss &&
+		playedPoints >= previousPoints - c.missMaxWorsening
+	)
+		return settle("miss");
+
+	return settle(ordinaryMoveQuality(loss, top, c));
 }

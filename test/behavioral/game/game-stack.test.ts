@@ -58,7 +58,7 @@ async function bootOffscreen(): Promise<void> {
 		sf.listen = hooks.listen;
 		sf.onError = hooks.onError;
 		hooks.onLoadingNnue([...sf.recommended]);
-		return { sf, module: "sf_18_smallnet.js", nnue: [...sf.recommended] };
+		return { sf, module: "sf_19_smallnet.js", nnue: [...sf.recommended] };
 	};
 	off = await bootOffscreenContext(sim, {
 		entry: () => {
@@ -290,13 +290,16 @@ describe("createGameStack: the real service-worker stack", () => {
 		});
 		const after = (site as SimulatedSite).commands().filter((c) => c.kind === "settings");
 		expect(after.length).toBeGreaterThan(before);
-		// Both drawing gates travel in the one command (§13.3 rule 4): the recommendation mark and
-		// the board-effect layer, each `enabled && <its own setting>`.
+		// Every drawing gate travels in the one command (§13.3 rule 4): the recommendation mark, the
+		// board-effect rays and the rating chip, each `enabled && <its own setting>`. `moveRatings`
+		// is its own gate since 2026-09-15 — the chip no longer rides on `boardEffects`.
 		expect(after.at(-1)).toEqual({
 			kind: "settings",
 			highlightMoves: true,
 			boardEffects: true,
+			moveRatings: true,
 			moveRatingSounds: false,
+			forcedMateSounds: false,
 		});
 	});
 
@@ -363,13 +366,14 @@ describe("createGameStack: the real service-worker stack", () => {
 	it("clears Maia reconnect preload for engine-only settings and matched active targets", async () => {
 		const built = stack as GameStack;
 		await (sw as SwContext).run(async () => {
-			await setSettings({ strength: { targetElo: 3201, matchOpponentRating: false } });
+			// Engine-only from one above the Maia cutoff (2026-09-15; the removed prior band reached 3200).
+			await setSettings({ strength: { targetElo: MAIA.eloMax + 1, matchOpponentRating: false } });
 			await settle();
 		});
 		expect(built.transport.warmPolicySize()).toBeUndefined();
 		await (sw as SwContext).run(async () => {
 			await setSettings({
-				strength: { targetElo: 3100, matchOpponentRating: true, personaEloOffset: 0 },
+				strength: { targetElo: MAIA.eloMax, matchOpponentRating: true, personaEloOffset: 0 },
 			});
 			(site as SimulatedSite).hello();
 			(site as SimulatedSite).startGame();

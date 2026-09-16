@@ -2,9 +2,13 @@
 // bubble text from the human-label function, danger zone hint; the detent-scheduled scrub sounds
 // and the numeric readout under the thumb (settings layout, 2026-09-13).
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { LIMITS } from "@core/constants";
+import { MAIA } from "@core/constants/maia";
 import { SLIDER_SOUND, SOUNDS } from "@core/constants/sounds";
 import { STRENGTH_UI, UI_TIMINGS } from "@core/constants/ui";
+import { TOKENS } from "@design/tokens.generated";
 import { createSlider, type SliderHandle } from "@panel/components/slider";
 import { COPY } from "@panel/copy";
 import {
@@ -408,7 +412,12 @@ it("without markers the track carries none", () => {
 	expect(handle.el.querySelectorAll(".sl-slider__marker")).toHaveLength(0);
 });
 
-it("strength heat increases continuously and only high Elo adds the glow", () => {
+// Owner, 2026-09-15: the glow starts at the product's one strength division, the Maia cutoff (it
+// started at 3200 with the old network switch), and the sweep cadence is no longer a CSS custom
+// property written by the slider (`--sl-slider-flow-gap` asserted here before) — see the sweep tests.
+it("strength heat increases continuously and only the range from the Maia cutoff adds the glow", () => {
+	const cutoff = STRENGTH_UI.glowElo;
+	expect(cutoff).toBe(MAIA.eloMax);
 	handle = createSlider(document.body, {
 		min: LIMITS.eloMin,
 		max: LIMITS.eloMax,
@@ -417,38 +426,27 @@ it("strength heat increases continuously and only high Elo adds the glow", () =>
 		label,
 		strength: true,
 		threshold: {
-			value: 3200,
-			label: "3200",
+			value: cutoff,
+			label: String(cutoff),
 			lowerLabel: "Small NNUE",
 			upperLabel: "Large NNUE",
-			description: "Large NNUE starts at 3200",
+			description: `Large NNUE above ${cutoff}`,
 		},
 		onChange: () => {},
 	});
 	let previous = -1;
-	for (const value of [400, 1200, 2000, 2600, 3200, 3800]) {
+	for (const value of [400, 1200, 2000, 2600, 3000, 3400, 3800]) {
 		handle.update({ value });
 		const heat = Number(handle.el.style.getPropertyValue("--sl-slider-heat"));
 		expect(heat).toBeGreaterThan(previous);
 		previous = heat;
-		expect(handle.el.classList.contains("sl-slider--hot")).toBe(value >= 3200);
+		expect(handle.el.classList.contains("sl-slider--hot")).toBe(value >= cutoff);
 		expect(Number(handle.el.style.getPropertyValue("--sl-slider-energy"))).toBe(
-			Math.max(0, (value - 3200) / (LIMITS.eloMax - 3200))
+			Math.max(0, (value - cutoff) / (LIMITS.eloMax - cutoff))
 		);
 	}
 	expect(previous).toBe(1);
-	// The sweep's idle gap closes as the energy rises (its crossing speed is fixed in CSS).
-	expect(handle.el.style.getPropertyValue("--sl-slider-flow-gap")).toBe(
-		STRENGTH_UI.flowGapMin.toFixed(3)
-	);
-	handle.update({ value: 3200 });
-	expect(handle.el.style.getPropertyValue("--sl-slider-flow-gap")).toBe(
-		STRENGTH_UI.flowGapMax.toFixed(3)
-	);
-	handle.update({ value: 3500 });
-	const midGap = Number(handle.el.style.getPropertyValue("--sl-slider-flow-gap"));
-	expect(midGap).toBeLessThan(STRENGTH_UI.flowGapMax);
-	expect(midGap).toBeGreaterThan(STRENGTH_UI.flowGapMin);
+	expect(handle.el.style.getPropertyValue("--sl-slider-flow-gap")).toBe("");
 	handle.update({ value: 1500 });
 	expect(handle.el.classList.contains("sl-slider--hot")).toBe(false);
 	// Energy stays mounted so opacity can fade out after leaving the high-strength range.
@@ -457,18 +455,207 @@ it("strength heat increases continuously and only high Elo adds the glow", () =>
 	// The fire particles are gone: the glow is a single gradient layer with no children.
 	expect(handle.el.querySelectorAll(".sl-slider__glow > *")).toHaveLength(0);
 	expect(handle.el.style.getPropertyValue("--sl-slider-energy")).toBe("0");
-	expect(handle.el.style.getPropertyValue("--sl-slider-flow-gap")).toBe(
-		STRENGTH_UI.flowGapMax.toFixed(3)
-	);
 	const ticks = [...handle.el.querySelectorAll<HTMLElement>(".sl-slider__tick")];
 	expect(ticks.length).toBeGreaterThan(10);
 	expect(ticks[0]?.dataset.value).toBe("400");
 	expect(ticks[0]?.style.left).toBe("0.000%");
 	expect(ticks.at(-1)?.dataset.value).toBe("3800");
 	expect(ticks.at(-1)?.style.left).toBe("100.000%");
-	const thresholdTick = ticks.find((tick) => tick.dataset.value === "3200");
+	const thresholdTick = ticks.find((tick) => tick.dataset.value === String(cutoff));
 	expect(thresholdTick).toBeDefined();
 	expect(thresholdTick?.style.left).toBe(
 		handle.el.querySelector<HTMLElement>(".sl-slider__divider")?.style.left
 	);
+});
+
+// Owner, 2026-09-15: "when sliding the elo slider when its above 3200 the animation timeskips when I
+// let go of the slider knob". The sweep cadence was the running CSS animation's duration, written
+// on release; a running animation re-maps its elapsed time onto a new duration, so the sweeps
+// jumped. The slider now launches each fixed-length crossing itself and only the wait before the
+// next launch follows the energy.
+describe("strength sweeps", () => {
+	const sweepMs = TOKENS.motion.durationMs["strength-sweep"];
+	/** The wait between launches at `energy` with `sweeps` sweeps taking turns. */
+	const waitAt = (energy: number, sweeps: number): number =>
+		(sweepMs *
+			(STRENGTH_UI.sweepTravelWidths +
+				STRENGTH_UI.flowGapMax -
+				(STRENGTH_UI.flowGapMax - STRENGTH_UI.flowGapMin) * energy)) /
+		(STRENGTH_UI.sweepTravelWidths * sweeps);
+	const strengthSlider = (value: number): SliderHandle =>
+		createSlider(document.body, {
+			min: LIMITS.eloMin,
+			max: LIMITS.eloMax,
+			step: 50,
+			value,
+			label,
+			strength: true,
+			onChange: () => {},
+		});
+	const sweepsOf = (slider: SliderHandle): HTMLElement[] => [
+		...slider.el.querySelectorAll<HTMLElement>(".sl-slider__energy > span"),
+	];
+	const names = (sweeps: readonly HTMLElement[]): string[] =>
+		sweeps.map((sweep) => sweep.dataset.sweep ?? "");
+
+	it("letting go of the knob re-times no sweep in flight; the new cadence starts at the next launch", async () => {
+		handle = strengthSlider(LIMITS.eloMax);
+		const sweeps = sweepsOf(handle);
+		expect(sweeps).toHaveLength(2);
+		const fast = waitAt(1, sweeps.length);
+		const slow = waitAt(0, sweeps.length);
+		// Hot at the maximum: the first sweep starts at once, the second one wait later.
+		expect(names(sweeps)).toEqual(["a", ""]);
+		await dom.tick(fast - 1);
+		expect(names(sweeps)).toEqual(["a", ""]);
+		await dom.tick(1);
+		expect(names(sweeps)).toEqual(["a", "a"]);
+		// Half-way through the next wait, drag the knob from the maximum down to the cutoff and let go.
+		const track = handle.el.querySelector<HTMLElement>(".sl-slider__track")!;
+		Object.defineProperty(track, "getBoundingClientRect", {
+			value: () => ({ left: 0, width: LIMITS.eloMax - LIMITS.eloMin }),
+		});
+		await dom.tick(fast / 2);
+		const xOf = (elo: number): number => elo - LIMITS.eloMin;
+		pointer(track, "pointerdown", { pointerId: 1, clientX: xOf(LIMITS.eloMax), isPrimary: true });
+		pointer(track, "pointermove", { pointerId: 1, clientX: xOf(STRENGTH_UI.glowElo) });
+		pointer(track, "pointerup", { pointerId: 1, clientX: xOf(STRENGTH_UI.glowElo) });
+		expect(handle.value).toBe(STRENGTH_UI.glowElo);
+		expect(handle.el.classList.contains("sl-slider--hot")).toBe(true);
+		// The release restarts nothing and writes nothing an animation's timing is read from.
+		expect(names(sweeps)).toEqual(["a", "a"]);
+		expect(handle.el.style.getPropertyValue("--sl-slider-flow-gap")).toBe("");
+		for (const sweep of sweeps) expect(sweep.getAttribute("style")).toBeNull();
+		// The wait already running keeps the cadence it was launched with …
+		await dom.tick(fast / 2);
+		expect(names(sweeps)).toEqual(["b", "a"]);
+		// … and the slower cadence at the cutoff applies from that launch on.
+		await dom.tick(slow - 1);
+		expect(names(sweeps)).toEqual(["b", "a"]);
+		await dom.tick(1);
+		expect(names(sweeps)).toEqual(["b", "b"]);
+	});
+
+	it("never relaunches a sweep before its crossing ends, and stops launching when cold, disabled or disposed", async () => {
+		// A sweep's next turn comes `sweeps × wait` after its last, longer than one crossing at any
+		// energy — the margin `flowGapMin > 0` keeps.
+		expect(STRENGTH_UI.flowGapMin).toBeGreaterThan(0);
+		for (const energy of [0, 0.25, 0.5, 0.75, 1])
+			expect(2 * waitAt(energy, 2)).toBeGreaterThan(sweepMs);
+		handle = strengthSlider(LIMITS.eloMax);
+		const sweeps = sweepsOf(handle);
+		const long = waitAt(0, sweeps.length) * 4;
+		expect(names(sweeps)).toEqual(["a", ""]);
+		handle.update({ value: 2000 });
+		await dom.tick(long);
+		expect(names(sweeps)).toEqual(["a", ""]);
+		// Back in the hot range the next sweep launches at once.
+		handle.update({ value: LIMITS.eloMax });
+		expect(names(sweeps)).toEqual(["a", "a"]);
+		handle.update({ disabled: true });
+		await dom.tick(long);
+		expect(names(sweeps)).toEqual(["a", "a"]);
+		handle.update({ disabled: false });
+		expect(names(sweeps)).toEqual(["b", "a"]);
+		handle.dispose();
+		handle = null;
+		await dom.tick(long);
+		expect(names(sweeps)).toEqual(["b", "a"]);
+		// A slider that is not a strength slider never launches one.
+		handle = createSlider(document.body, {
+			min: 0,
+			max: 100,
+			step: 1,
+			value: 100,
+			label: String,
+			onChange: () => {},
+		});
+		await dom.tick(long);
+		expect(names(sweepsOf(handle))).toEqual(["", ""]);
+	});
+
+	it("its CSS runs one fixed-duration crossing per launch, with nothing the slider writes in its timing", () => {
+		const css = readFileSync(
+			path.resolve(import.meta.dir, "../../../css/views/live-progress.css"),
+			"utf8"
+		);
+		expect(css).not.toContain("--sl-slider-flow-gap");
+		const base = /\.sl-slider__energy > span \{([^}]*)\}/.exec(css)?.[1] ?? "";
+		expect(base).toContain("animation-duration: var(--sl-motion-duration-strength-sweep);");
+		expect(base).not.toContain("infinite");
+		expect(base).not.toContain("animation-delay");
+		for (const [name, keyframes] of [
+			["a", "sl-strength-flow"],
+			["b", "sl-strength-flow-again"],
+		] as const) {
+			expect(css).toContain(
+				`.sl-slider__energy > span[data-sweep="${name}"] {\n\tanimation-name: ${keyframes};\n}`
+			);
+			const body = new RegExp(`@keyframes ${keyframes} \\{([^@]*?)\\n\\}`).exec(css)?.[1] ?? "";
+			expect(body).toContain("from { transform: translateX(-100%); }");
+			expect(body).toContain("to { transform: translateX(100%); }");
+		}
+		// Reduced motion still silences a launched sweep (the attribute rule must not out-rank it).
+		expect(css).toContain(
+			'[data-reduced-motion="true"] .sl-slider__energy > span[data-sweep] { animation: none; opacity: 0; }'
+		);
+	});
+});
+
+it("captions the current value's category in one aria-hidden line that follows the value", () => {
+	handle = createSlider(document.body, {
+		min: LIMITS.eloMin,
+		max: LIMITS.eloMax,
+		step: 50,
+		value: 1200,
+		label,
+		caption: band,
+		onChange: () => {},
+	});
+	const caption = handle.el.querySelector<HTMLElement>(".sl-slider__caption")!;
+	expect(caption.hidden).toBe(false);
+	expect(caption.getAttribute("aria-hidden")).toBe("true");
+	expect(caption.textContent).toBe("Club");
+	const thumb = handle.el.querySelector<HTMLElement>(".sl-slider__thumb")!;
+	key(thumb, "keydown", { key: "PageUp" });
+	expect(caption.textContent).toBe("Expert");
+	handle.update({ value: 2650 });
+	expect(caption.textContent).toBe("Elite");
+	handle.dispose();
+	handle = createSlider(document.body, {
+		min: 0,
+		max: 100,
+		step: 1,
+		value: 40,
+		label: String,
+		onChange: () => {},
+	});
+	expect(handle.el.querySelector<HTMLElement>(".sl-slider__caption")?.hidden).toBe(true);
+});
+
+it("shows an exact reading unsnapped and clamped, keeps it across value-less updates, and snaps on the next step", () => {
+	handle = createSlider(document.body, {
+		min: LIMITS.eloMin,
+		max: LIMITS.eloMax,
+		step: 50,
+		value: 1537,
+		exact: true,
+		label,
+		onChange: () => {},
+	});
+	const thumb = handle.el.querySelector<HTMLElement>(".sl-slider__thumb")!;
+	expect(handle.value).toBe(1537);
+	expect(thumb.getAttribute("aria-valuenow")).toBe("1537");
+	handle.update({ disabled: true });
+	expect(handle.value).toBe(1537);
+	handle.update({ value: 1612, exact: true });
+	expect(handle.value).toBe(1612);
+	handle.update({ value: 99_999, exact: true });
+	expect(handle.value).toBe(LIMITS.eloMax);
+	// Without `exact` an external value snaps as before.
+	handle.update({ value: 1612 });
+	expect(handle.value).toBe(1600);
+	handle.update({ value: 1537, exact: true, disabled: false });
+	key(thumb, "keydown", { key: "ArrowRight" });
+	expect(handle.value).toBe(1600);
 });

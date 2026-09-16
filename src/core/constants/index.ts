@@ -10,6 +10,7 @@ export * from "./limits";
 export * from "./lobby";
 export * from "./maia";
 export * from "./match-patterns";
+export * from "./max-strength";
 export * from "./messages";
 export * from "./models";
 export * from "./ports";

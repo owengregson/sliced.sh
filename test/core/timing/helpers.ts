@@ -1,7 +1,21 @@
 // test/core/timing/helpers.ts — shared fixtures for the timing-model tests.
 
-import type { TimingContext } from "@core/timing/types";
+import { DEFAULT_SETTINGS } from "@core/constants/defaults";
+import type { TimingContext, TimingSettings } from "@core/timing/types";
+import { timingSettingsFor } from "@service/game-session/presets";
 import type { EvalLine } from "@typedefs/engine";
+
+/**
+ * The knobs a default install's timing model runs on, through the one conversion point
+ * (`timingSettingsFor`) rather than hand-built here — since 2026-09-15 the model consumes
+ * `moveTimeScale` (a duration factor) and no longer the user's `baseSpeed` (a speed), and only
+ * that function knows the mapping.
+ *
+ * With no time control the per-class gain takes its blitz value, 1.0, and the default profile
+ * carries the identity preset knob, so this is numerically the raw `DEFAULT_SETTINGS.timing`
+ * these tests used before the rework: every number they pin is unchanged.
+ */
+export const MODEL_TIMING: TimingSettings = timingSettingsFor(DEFAULT_SETTINGS.timing, undefined);
 
 export const START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 /** A generic middlegame (Ruy Lopez-ish structure), white to move. */

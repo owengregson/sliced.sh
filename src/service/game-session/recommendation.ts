@@ -12,7 +12,7 @@ import { automaticDepthForElo, humanDepth } from "@core/engine/depth-policy";
 import { requestEloForTarget } from "@core/engine/options";
 import type { AnalysisHandle, AnalysisRequest, AnalysisResult } from "@core/engine/types";
 import { log } from "@core/logger";
-import { maiaConditioningElo, maiaSizeFor, usesMaia, usesMaiaPrior } from "@core/policy/maia-size";
+import { maiaConditioningElo, maiaSizeFor, usesMaia } from "@core/policy/maia-size";
 import { policyQueryIdentity } from "@core/policy/policy-query";
 import type { PolicyInferenceInputs, PolicyPort, PolicyResult } from "@core/policy/types";
 import type { Rng } from "@core/rng";
@@ -20,6 +20,7 @@ import type { BookContext, BookPolicy } from "@core/strength/book/book-policy";
 import { isTrap, lineFacts } from "@core/strength/book/book-policy";
 import { conversionPool, isImmediateMate } from "@core/strength/conversion";
 import { effectiveElo } from "@core/strength/elo-map";
+import { isMaxStrength } from "@core/strength/max-strength";
 import { selectMove } from "@core/strength/move-selector";
 import { avoidRepetition, repetitionRisk } from "@core/strength/repetition";
 import { maiaSelfElo, type PressureTerms, pressureTerms } from "@core/strength/selection-elo";
@@ -28,9 +29,10 @@ import type { SelectionContext, SelectionState } from "@core/strength/types";
 import { budgetController, scheduleAlloc } from "@core/timing/budget";
 import { TIMING_CONSTANTS } from "@core/timing/constants";
 import { pieceCounts, tcClass } from "@core/timing/features";
+import { remainingMoveWindow } from "@core/timing/move-window";
 import { clockRacePolicy } from "@core/timing/opponent-pressure";
 import type { TimingModel } from "@core/timing/timing-model";
-import type { TcClass, TimingContext } from "@core/timing/types";
+import type { TcClass, TimingContext, TimingPlan } from "@core/timing/types";
 import { clamp } from "@core/util/clamp";
 import { errorMessage } from "@core/util/errors";
 import { newId } from "@core/util/ids";
@@ -76,8 +78,16 @@ export interface BudgetPosition {
 }
 
 /**
- * Expected think time before analysis, using the timing model's allocation and user speed
- * setting. The allocation already includes own-clock pressure.
+ * Expected think time before analysis, from the timing model's allocation alone. The allocation
+ * already includes own-clock pressure.
+ *
+ * **Independent of `timing.baseSpeed`** (owner, 2026-09-15: "settings shouldnt really be
+ * modifying the model's ability to give good moves"). This number sizes the engine's search
+ * (`searchBudget`) and the Maia short-think penalty (`maiaContextPenalty`), so a user asking for
+ * faster moves must not thereby get a shorter search or a lower effective rating — the engine
+ * keeps the allocation the target rating implies, and only the wall-clock wrapper around it
+ * moves. It used to multiply by the raw `timing.speedScale` slider, which was 1 at the default,
+ * so nothing about a default install's search changes with this.
  */
 export function estimatedThinkMs(p: BudgetPosition, settings: Settings): number {
 	const { pieces, pawns } = pieceCounts(p.fen);
@@ -108,7 +118,32 @@ export function estimatedThinkMs(p: BudgetPosition, settings: Settings): number 
 				motor_k: 1,
 			})
 		: scheduleAlloc(inputs);
-	return allocSec * MS_PER_S * Math.max(0, settings.timing.speedScale);
+	return allocSec * MS_PER_S;
+}
+
+/**
+ * Charge preparation to the sampled opponent-arrival-to-release window. A late search cannot
+ * retroactively become a longer human think. The hand sheds optional actions and retains its
+ * physical limits; any resulting overrun is measured separately and excluded from pace learning.
+ * Move choice is still completed before execution; this never trades away search quality.
+ */
+export function accountPreparation(plan: TimingPlan, searchDoneMs: number): TimingPlan {
+	const room = remainingMoveWindow(plan, searchDoneMs);
+	return {
+		...plan,
+		features: {
+			...plan.features,
+			preparationMs: room.elapsedMs,
+			preparationOverrunMs: room.overrunMs,
+		},
+		rationale:
+			room.overrunMs > 0
+				? [
+						...plan.rationale,
+						`preparation: release target short by ${room.overrunMs.toFixed(0)} ms; optional actions omitted`,
+					]
+				: plan.rationale,
+	};
 }
 
 /** Inputs for an own-move search's clock and think-time limits. */
@@ -129,11 +164,6 @@ export interface SearchBudgetInput {
 	 * `selectionMode` — the human policy needs the alternatives the engine would otherwise not score.
 	 */
 	maia?: boolean;
-	/**
-	 * Use Maia as a prior over the engine's candidates, retaining native strength with
-	 * enough candidate breadth for a meaningful tie-break.
-	 */
-	maiaPrior?: boolean;
 }
 
 /** What decides whether an own-move search is Maia's referee search. */
@@ -151,14 +181,6 @@ export interface MaiaSearchInput {
  */
 export function maiaSearchMode(input: MaiaSearchInput): boolean {
 	return input.policy && !input.clockRace && usesMaia(input.targetElo);
-}
-
-/**
- * Above Maia's selection range, use its policy as a tie-breaking prior for the engine.
- * Predicted-position searches must use the same mode and candidate breadth.
- */
-export function maiaPriorMode(input: MaiaSearchInput): boolean {
-	return input.policy && !input.clockRace && usesMaiaPrior(input.targetElo);
 }
 
 /**
@@ -377,9 +399,7 @@ export function searchBudget(input: SearchBudgetInput, settings: Settings): Sear
 		!usesNativeSelection(settings.strength.selectionMode, effectiveElo(targetElo, input.form ?? 0));
 	const breadth = sampling
 		? (SEARCH_BUDGET.selectionCandidates.find((band) => targetElo <= band.maxElo)?.count ?? 0)
-		: input.maiaPrior === true
-			? SEARCH_BUDGET.priorCandidates
-			: 0;
+		: 0;
 	const wanted = Math.max(adaptive, settings.engine.multiPv, breadth);
 	const multiPv = legalMoves > 0 ? Math.min(wanted, legalMoves) : wanted;
 	return { movetimeMs, depthCap, multiPv };
@@ -399,8 +419,6 @@ export interface OwnMoveBudgetInput {
 	form?: number;
 	/** `maiaSearchMode(...)` for this search; the pre-analysis must pass the same answer. */
 	maia?: boolean;
-	/** maiaPriorMode for this search; predicted-position analysis must use the same value. */
-	maiaPrior?: boolean;
 }
 
 /** What `ownMoveBudget` derives from the clock and the position before sizing the search. */
@@ -439,7 +457,7 @@ export interface MaiaContextInput {
 	baseMs: number;
 	/** `estimatedThinkMs` for this move — the plan-independent allocation the search is sized by. */
 	plannedThinkMs: number;
-	/** Sustainable allocation for this position on a full clock, before user speed scaling. */
+	/** Sustainable allocation for this position on a full clock. */
 	referenceThinkMs?: number;
 	tc: TcClass;
 }
@@ -502,10 +520,11 @@ export function ownMoveMaiaElo(input: OwnMoveBudgetInput, settings: Settings): M
 		myClockMs: input.myClockMs,
 		baseMs,
 		plannedThinkMs: plan.plannedThinkMs,
-		referenceThinkMs: ownMovePlan(
-			{ ...input, myClockMs: baseMs, budgetUsedRatio: 0 },
-			{ ...settings, timing: { ...settings.timing, speedScale: 1 } }
-		).plannedThinkMs,
+		// The same allocation at a full clock: what an unhurried move of this class gets. Since
+		// 2026-09-15 `estimatedThinkMs` reads no speed setting at all, so this no longer needs the
+		// `speedScale: 1` override that used to keep the ratio free of the user's knob.
+		referenceThinkMs: ownMovePlan({ ...input, myClockMs: baseMs, budgetUsedRatio: 0 }, settings)
+			.plannedThinkMs,
 		tc: plan.tc,
 	});
 	const selfElo = maiaSelfElo({
@@ -559,7 +578,6 @@ export function ownMoveBudget(input: OwnMoveBudgetInput, settings: Settings): Se
 			targetElo: input.targetElo ?? settings.strength.targetElo,
 			form: input.form ?? 0,
 			...(input.maia === undefined ? {} : { maia: input.maia }),
-			...(input.maiaPrior === undefined ? {} : { maiaPrior: input.maiaPrior }),
 		},
 		settings
 	);
@@ -740,11 +758,10 @@ export class RecommendationPipeline {
 			clockRace: ownMoveClockRace(position) !== null,
 		};
 		const maia = maiaSearchMode(mode);
-		const prior = maiaPriorMode(mode);
-		const shape = { ...position, maia, maiaPrior: prior };
+		const shape = { ...position, maia };
 		const budget = ownMoveBudget(shape, settings);
 		// The query, selector and human-depth frame share the same rating inputs.
-		const maiaElo = maia || prior ? ownMoveMaiaElo(shape, settings) : null;
+		const maiaElo = maia ? ownMoveMaiaElo(shape, settings) : null;
 
 		const timingCtx: TimingContext = {
 			fen: snapshot.fen,
@@ -785,11 +802,10 @@ export class RecommendationPipeline {
 		});
 		// Reuse only an answer with identical model inputs and game history.
 		const held = input.policyAnswer;
-		const policyInputs = maiaElo ? this.policyInputs(input, maiaElo, prior) : null;
+		const policyInputs = maiaElo ? this.policyInputs(input, maiaElo) : null;
 		const identity = policyInputs
 			? policyQueryIdentity({
 					inputs: policyInputs,
-					mode: prior ? "prior" : "maia",
 					selectionMode: settings.strength.selectionMode,
 					history: input.history,
 				})
@@ -994,7 +1010,7 @@ export class RecommendationPipeline {
 					snapshot.ply <= BOOK.maxPly &&
 					(chosen.maiaProb ?? 0) >= BOOK.maiaOpeningMinProb);
 			if (inBook) timingCtx.inBook = true;
-			const plan = this.timing.planMove(timingCtx);
+			const plan = accountPreparation(this.timing.planMove(timingCtx), this.now());
 			// Use position complexity from timing features; MultiPV count depends on the search budget
 			// and would create a spurious relationship between measured complexity and move time.
 			const nReasonable = Math.max(1, plan.features.n_reasonable ?? 1);
@@ -1068,14 +1084,10 @@ export class RecommendationPipeline {
 		return { pending, issuedAt, abort, selfElo, historyPlies: historyFens.length };
 	}
 
-	private policyInputs(
-		input: RecommendationInput,
-		elo: MaiaEloContext,
-		prior: boolean
-	): PolicyInferenceInputs {
+	private policyInputs(input: RecommendationInput, elo: MaiaEloContext): PolicyInferenceInputs {
 		const selfElo = maiaConditioningElo(elo.selfElo);
 		return {
-			size: prior ? MAIA.prior.size : (input.maiaSize ?? maiaSizeFor(input.targetElo)),
+			size: input.maiaSize ?? maiaSizeFor(input.targetElo),
 			fen: input.snapshot.fen,
 			historyFens: maiaHistoryFens(input.history, input.snapshot.fen),
 			selfElo,
@@ -1125,10 +1137,20 @@ export class RecommendationPipeline {
 		return { result, selfElo: query.selfElo, historyPlies: query.historyPlies };
 	}
 
-	/** Opening-book answer, or null when disabled, unavailable or failed. */
+	/**
+	 * Opening-book answer, or null when disabled, unavailable or failed. The book is off above the
+	 * Maia cutoff (`MAIA.eloMax`, the one strength division since 2026-09-15). Max-strength mode
+	 * never consults the book on its own account (owner, 2026-09-15: "the absolute best possible
+	 * move"), whatever that cutoff is later set to.
+	 */
 	private async bookMove(input: RecommendationInput): Promise<ChosenMove | null> {
 		const policy = this.book;
-		if (!policy || !input.settings.strength.useOpeningBook || input.targetElo > MAIA.prior.eloMax)
+		if (
+			!policy ||
+			!input.settings.strength.useOpeningBook ||
+			input.targetElo > MAIA.eloMax ||
+			isMaxStrength(input.targetElo)
+		)
 			return null;
 		const ctx: BookContext = {
 			fen: input.snapshot.fen,

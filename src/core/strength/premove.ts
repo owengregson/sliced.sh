@@ -33,6 +33,7 @@ import type { EvalLine } from "@typedefs/engine";
 import type { Square, TimeControl } from "@typedefs/game";
 import { conversionPool } from "./conversion";
 import { cpEffective, winProb } from "./elo-map";
+import { isMaxStrength } from "./max-strength";
 import { avoidRepetition } from "./repetition";
 
 export interface PremoveContext {
@@ -411,6 +412,11 @@ export async function premoveCandidate(
 		};
 		if (parts.promotion !== undefined) candidate.promotion = parts.promotion;
 		const safeTrade = reason === "recapture" && isQueueableCandidate(afterMove, candidate);
+		// Max-strength mode (owner, 2026-09-15: "the absolute best possible move in every situation"):
+		// a premove skips the deep own-move search, so it is armed only when the board itself proves
+		// the move — the only legal move, or a recapture every legal reply leaves a safe exchange —
+		// never a clear-best quiet move read off a 120 ms search (`loss2nd`).
+		if (isMaxStrength(ctx.targetElo) && !safeTrade && reason !== "only-move") continue;
 		if (
 			!safeTrade &&
 			(!ordinaryAllowed ||

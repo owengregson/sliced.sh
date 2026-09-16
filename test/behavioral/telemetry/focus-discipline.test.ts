@@ -34,6 +34,16 @@ afterEach(async () => {
 
 describe("focus discipline: rows the simulator can record (Step 1)", () => {
 	it("row: a chrome.commands shortcut while the page is focused plays a long normal move now, with no blur/focus on the page", async () => {
+		const control = await runSimulatedGame({ seed: "commands-row", moves: SHORTCUT.searchMoves });
+		const controlMoves = control.moves;
+		await control.dispose();
+		// Stillness is a valid repertoire choice. Select an actual exploring control move so
+		// the shortcut test proves it suppresses activity instead of assuming every long think moves.
+		const target = controlMoves.findIndex(
+			(m) =>
+				m.plan.mode === "normal" && m.plan.thinkMs >= SHORTCUT.minThinkMs && exploration(m).length > 0
+		);
+		expect(target).toBeGreaterThanOrEqual(0);
 		let playedNowAt = -1;
 		let played: ExecutionResult | null | undefined;
 		// The shortcut has to land on a move that would otherwise take a *long* think, or "it
@@ -49,6 +59,7 @@ describe("focus discipline: rows the simulator can record (Step 1)", () => {
 			// runs `duringMove` under `sw.context.run`, which installs the simulator's `chrome`).
 			duringMove: async ({ index, retryOf, plan, sim, sw, site }) => {
 				if (retryOf !== undefined || shortcutAt >= 0) return;
+				if (index !== target) return;
 				if (plan.mode !== "normal" || plan.thinkMs < SHORTCUT.minThinkMs) return;
 				shortcutAt = index;
 				// the lifecycle's `commands.onCommand` → session → executor path, reduced to the executor
@@ -84,19 +95,14 @@ describe("focus discipline: rows the simulator can record (Step 1)", () => {
 		expect(approachStart(move)).toBeLessThanOrEqual(SIM_TELEMETRY.collapsedPreTouchMs);
 		// … which the same seeded game without the shortcut does not do: same plan, but it explores
 		// and holds the piece for the whole window
-		const control = await runSimulatedGame({ seed: "commands-row", moves: SHORTCUT.searchMoves });
-		try {
-			const same = control.moves[shortcutAt]!;
-			expect(same.plan.thinkMs).toBe(move.plan.thinkMs);
-			expect(exploration(same).length).toBeGreaterThan(0);
-			// `approachStart` returns +Infinity when there is no approach phase at all, which
-			// would satisfy a bare `toBeGreaterThan`; the control must have a real one.
-			expect(Number.isFinite(approachStart(same))).toBe(true);
-			expect(approachStart(same)).toBeGreaterThan(SIM_TELEMETRY.collapsedPreTouchMs);
-			expect(same.observation?.ac.MoveHoldTime ?? 0).toBeGreaterThan(hold);
-		} finally {
-			await control.dispose();
-		}
+		const same = controlMoves[shortcutAt]!;
+		expect(same.plan.thinkMs).toBe(move.plan.thinkMs);
+		expect(exploration(same).length).toBeGreaterThan(0);
+		// `approachStart` returns +Infinity when there is no approach phase at all, which
+		// would satisfy a bare `toBeGreaterThan`; the control must have a real one.
+		expect(Number.isFinite(approachStart(same))).toBe(true);
+		expect(approachStart(same)).toBeGreaterThan(SIM_TELEMETRY.collapsedPreTouchMs);
+		expect(same.observation?.ac.MoveHoldTime ?? 0).toBeGreaterThan(hold);
 		// and the shortcut itself never touched the page: no blur, no focus, no focus-moving API
 		expect(game.site.pageFocusEvents()).toEqual({ blur: 0, focus: 0 });
 		expect(game.focusApiCalls).toEqual({ tabsUpdate: 0, windowsUpdate: 0, bringToFront: 0 });

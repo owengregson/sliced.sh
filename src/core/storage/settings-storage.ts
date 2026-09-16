@@ -9,10 +9,10 @@
 
 import { chromeLocalGet, chromeLocalSet, onStorageChanged } from "@core/chrome/storage";
 import { DEFAULT_SETTINGS, FORCED_SETTING_VALUES } from "@core/constants/defaults";
-import { LIMITS } from "@core/constants/limits";
+import { LIMITS, SETTINGS_RANGES } from "@core/constants/limits";
 import { LOCAL_KEYS } from "@core/constants/storage-keys";
 import { clamp, clampInt } from "@core/util/clamp";
-import type { Keybind, LogLevel, Settings } from "@typedefs/settings";
+import type { Keybind, LogLevel, MoveQualityChipSide, Settings } from "@typedefs/settings";
 
 export type DeepPartial<T> = {
 	[K in keyof T]?: T[K] extends readonly unknown[]
@@ -27,13 +27,6 @@ type Obj = Record<string, unknown>;
 /** `Record<Enum, true>` forces the list to stay exhaustive against the union in `@typedefs/settings`. */
 type EnumSet<E extends string> = Readonly<Record<E, true>>;
 
-const TIMING_PROFILES: EnumSet<Settings["timing"]["profile"]> = {
-	manual: true,
-	fast: true,
-	natural: true,
-	slow: true,
-	custom: true,
-};
 const INPUT_MODES: EnumSet<Settings["execution"]["inputMode"]> = {
 	auto: true,
 	drag: true,
@@ -44,6 +37,7 @@ const HIGHLIGHT_STYLES: EnumSet<Settings["automation"]["highlightStyle"]> = {
 	arrows: true,
 	both: true,
 };
+const CHIP_SIDES: EnumSet<MoveQualityChipSide> = { mine: true, theirs: true, both: true };
 const THEMES: EnumSet<Settings["display"]["theme"]> = { dark: true, light: true, system: true };
 const REDUCED_MOTION: EnumSet<Settings["display"]["reducedMotion"]> = {
 	system: true,
@@ -125,13 +119,35 @@ function previewSelectScale(execution: Obj, d: number): number {
 }
 
 /**
+ * Base speed, 2026-09-15: `timing.speedScale` (higher = *slower*, it multiplied a duration)
+ * became `timing.baseSpeed` (higher = faster) when the owner pointed out the knob was backwards.
+ * There is no schema version field, so the migration is inferred from the stored object itself: a
+ * finite `baseSpeed` wins; failing that a finite, positive `speedScale` becomes its reciprocal,
+ * clamped to the new range and **rounded to 2 decimals** — so the old 1.3 imports as 0.77 and the
+ * old 0.5 as 2. Pace is preserved to within the rounding (at most 0.5 %); 2 decimals rather than
+ * the slider's 0.05 step because a reciprocal is rarely on that grid and halving the error costs
+ * nothing — the panel snaps the value to a tick on the next drag. Neither key present (or a
+ * garbage one) reads the default.
+ */
+function baseSpeed(timing: Obj, d: number): number {
+	const { min, max } = SETTINGS_RANGES.baseSpeed;
+	if (typeof timing.baseSpeed === "number" && Number.isFinite(timing.baseSpeed))
+		return clamp(timing.baseSpeed, min, max);
+	const legacy = timing.speedScale;
+	if (typeof legacy === "number" && Number.isFinite(legacy) && legacy > 0)
+		return Math.round(clamp(1 / legacy, min, max) * 100) / 100;
+	return d;
+}
+
+/**
  * Validate an arbitrary value into a complete, fresh (unfrozen) `Settings`.
  *
  * Shapes from earlier builds still load: `automation.autoQueueDelay*` (per-game delays, dropped
  * 2026-09-11), `execution.style` (dropped 2026-09-10), `execution.previewSelects` (folded into
  * the rate, above), `display.pvCount` (merged into `engine.multiPv`, 2026-09-13 — the stored
- * engine breadth wins, the display count is dropped), `timing.respectBudget` and
- * `keybinds.global` (forced since 2026-09-13). Unknown keys never survive a read.
+ * engine breadth wins, the display count is dropped), `timing.speedScale` (inverted into
+ * `timing.baseSpeed`, above), `timing.respectBudget` and `keybinds.global` (forced since
+ * 2026-09-13). Unknown keys never survive a read.
  */
 export function normalizeSettings(raw: unknown): Settings {
 	const D = DEFAULT_SETTINGS;
@@ -167,16 +183,14 @@ export function normalizeSettings(raw: unknown): Settings {
 			persona: F.strength.persona,
 			selectionMode: F.strength.selectionMode,
 			useOpeningBook: bool(strength.useOpeningBook, D.strength.useOpeningBook),
-			blunderScale: numIn(
-				strength.blunderScale,
-				D.strength.blunderScale,
-				LIMITS.blunderScaleMin,
-				LIMITS.blunderScaleMax
-			),
+			// Retire the hidden second rating offset, including values from older installs.
+			blunderScale: D.strength.blunderScale,
 		},
 		timing: {
-			profile: oneOf(timing.profile, D.timing.profile, TIMING_PROFILES),
-			speedScale: num(timing.speedScale, D.timing.speedScale),
+			// 2026-09-15: `timing.profile` (the timing presets) was removed. The normaliser rebuilds
+			// this object leaf by leaf, so a `profile` left in storage by an older build is simply
+			// never read and never written back.
+			baseSpeed: baseSpeed(timing, D.timing.baseSpeed),
 			varianceScale: num(timing.varianceScale, D.timing.varianceScale),
 			premoveTendency: num(timing.premoveTendency, D.timing.premoveTendency),
 			longThinkFrequency: num(timing.longThinkFrequency, D.timing.longThinkFrequency),
@@ -204,7 +218,14 @@ export function normalizeSettings(raw: unknown): Settings {
 			highlightStyle: oneOf(automation.highlightStyle, D.automation.highlightStyle, HIGHLIGHT_STYLES),
 			boardEffects: bool(automation.boardEffects, D.automation.boardEffects),
 			moveQualityChips: bool(automation.moveQualityChips, D.automation.moveQualityChips),
+			// Settings stored before the picker have no such key and read as the default, `both`.
+			moveQualityChipsFor: oneOf(
+				automation.moveQualityChipsFor,
+				D.automation.moveQualityChipsFor,
+				CHIP_SIDES
+			),
 			moveRatingSounds: bool(automation.moveRatingSounds, D.automation.moveRatingSounds),
+			forcedMateSounds: bool(automation.forcedMateSounds, D.automation.forcedMateSounds),
 		},
 		keybinds: {
 			playMove: keybind(keybinds.playMove, D.keybinds.playMove),

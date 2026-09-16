@@ -70,6 +70,8 @@ export type OpponentView = NonNullable<PanelSnapshot["opponent"]>;
 
 /** What the broadcaster reads from one tab's `GameSession`. */
 export interface SessionSource {
+	/** One explicit user switch controls this hand and the saved next-game preference. */
+	setAutoMove?(armed: boolean): Promise<void>;
 	/** Sidebar shortcuts use the same action path as the game page. */
 	onKeybind?(action: string): Promise<void>;
 	view(): SessionGameView;

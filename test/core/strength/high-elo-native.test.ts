@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { applyMoves } from "@core/chess/san";
+import { MAIA } from "@core/constants/maia";
 import { createRng } from "@core/rng";
 import { SELECTION_CONSTANTS } from "@core/strength/constants";
 import { selectMove } from "@core/strength/move-selector";
@@ -83,16 +84,19 @@ describe("high-rating Hybrid native selection", () => {
 		expect(chosen.rationale.join(" ")).toContain("opponent clock pressure: accuracy −");
 	});
 
-	it("reports native requests independently of form and uses guarded engine scores above3200", () => {
+	// Owner, 2026-09-15: guarded engine scores start above the Maia cutoff (they started above 3200);
+	// 3100 pins the moved boundary.
+	it("reports native requests independently of form and uses guarded engine scores above the Maia cutoff", () => {
 		const pool = [line(START, "e2e4", { cp: 20 }, 1), line(START, "d2d4", { cp: 0 }, 2)];
 		for (const [targetElo, form, request] of [
 			[2499, 1, "2499"],
+			[3100, 0, "3100"],
 			[3300, 0, "unlimited"],
 		] as const) {
 			const chosen = selectMove(pool, ctx({ ...high, targetElo, form, engineBestmove: "d2d4" }));
-			expect(chosen.uci).toBe(targetElo > 3200 ? "e2e4" : "d2d4");
+			expect(chosen.uci).toBe(targetElo > MAIA.eloMax ? "e2e4" : "d2d4");
 			expect(chosen.rationale.join(" ")).toContain(
-				targetElo > 3200 ? "full-strength engine" : `UCI_Elo ${request}`
+				targetElo > MAIA.eloMax ? "full-strength engine" : `UCI_Elo ${request}`
 			);
 		}
 	});

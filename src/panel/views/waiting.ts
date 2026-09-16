@@ -30,6 +30,7 @@ import { COPY } from "../copy";
 import { formatCountdown, formatSeconds } from "../format";
 import { instantiate, part } from "../template";
 import type { View } from "../view";
+import { autoPlayState } from "./auto-play-state";
 import html from "./templates/waiting.html?raw";
 
 export interface WaitingViewOptions {
@@ -126,7 +127,8 @@ export function createWaitingView(options: WaitingViewOptions = {}): View {
 				label: COPY.toggle.autoplay,
 				icon: "toggle.autoplay",
 				armed: true,
-				checked: ctx.snapshot?.autoMove.armed ?? false,
+				checked: ctx.snapshot ? autoPlayState(ctx.snapshot).checked : false,
+				waiting: ctx.snapshot ? autoPlayState(ctx.snapshot).waiting : false,
 				locked: false,
 				hint: ctx.snapshot?.autoMove.armed ? COPY.waiting.preArmed : COPY.waiting.autoplayTooltip,
 				onChange: setArmed,
@@ -226,15 +228,19 @@ export function createWaitingView(options: WaitingViewOptions = {}): View {
 
 				// Patch only what differs from the toggle's own state: a snapshot that agrees with it
 				// must not touch the component (an update would cancel a hold in progress).
+				const auto = autoPlayState(snapshot);
 				const armed = snapshot.autoMove.armed;
-				const locked = assistantOff && !armed;
+				const locked = assistantOff && !auto.checked;
 				const hint = assistantOff
 					? COPY.waiting.autoplayOff
-					: armed
-						? COPY.waiting.preArmed
-						: COPY.waiting.autoplayTooltip;
+					: auto.waiting
+						? COPY.toggle.waitingHint
+						: armed
+							? COPY.waiting.preArmed
+							: COPY.waiting.autoplayTooltip;
 				const patch: ToggleUpdate = {};
-				if (toggle.checked !== armed) patch.checked = armed;
+				if (toggle.checked !== auto.checked) patch.checked = auto.checked;
+				if ((toggle.state === "waiting") !== auto.waiting) patch.waiting = auto.waiting;
 				if (renderedLocked !== locked) patch.locked = locked;
 				if (renderedHint !== hint) patch.hint = hint;
 				if (Object.keys(patch).length > 0) toggle.update(patch);

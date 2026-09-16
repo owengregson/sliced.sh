@@ -1,0 +1,2033 @@
+{
+	"date": "2026-09-16",
+	"mainMetric": {
+		"originalEvidenceBrilliantGates": 94,
+		"of": 100,
+		"baselineSameEvidence": 89,
+		"conditionalSelectedShallowRepeat": 96,
+		"note": "96 requires replacing three selected search frames; it is not the same-evidence headline or a holdout."
+	},
+	"localPgnAudit": {
+		"scope": "Local .pgn files indexed under Documents, Downloads and /private/tmp, including ignored scratch paths; exact game move sequences deduplicated. No unannotated move is a negative.",
+		"files": [
+			{
+				"file": "/private/tmp/claude-501/-Users-owengregson-Documents-sliced-sh/54bf6526-5bd4-4f54-9d62-4c5129b95223/scratchpad/chesscom-review-2026-09-15.pgn",
+				"sha256": "d8645ab92935db168e86aa3c474bded48399ad632df6aeb0516e59986ad65860",
+				"gameCount": 10,
+				"types": {
+					"Brilliant": 14,
+					"Winner": 10,
+					"CheckmateWhite": 4,
+					"Blunder": 2,
+					"GreatFind": 1,
+					"CheckmateBlack": 4,
+					"Mistake": 3,
+					"ResignWhite": 1,
+					"ResignBlack": 1
+				},
+				"nags": {
+					"1": 1,
+					"2": 3,
+					"3": 14,
+					"4": 2
+				},
+				"commentTags": ["clk", "timestamp", "c_effect"]
+			},
+			{
+				"file": "/private/tmp/claude-501/-Users-owengregson-Documents-sliced-sh/54bf6526-5bd4-4f54-9d62-4c5129b95223/scratchpad/games-2026-09-11.pgn",
+				"sha256": "0e3c2cafb77c7abea179ba7962421a025964fdcfec6090f94d7ba2a49ce50fe9",
+				"gameCount": 2,
+				"types": {
+					"Brilliant": 3,
+					"Mistake": 2,
+					"Winner": 2,
+					"CheckmateBlack": 2,
+					"Blunder": 1
+				},
+				"nags": {
+					"2": 2,
+					"3": 3,
+					"4": 1
+				},
+				"commentTags": ["clk", "timestamp", "c_effect"]
+			},
+			{
+				"file": "/private/tmp/claude-501/-Users-owengregson-Documents-sliced-sh/54bf6526-5bd4-4f54-9d62-4c5129b95223/scratchpad/game-nestoker.pgn",
+				"sha256": "2c18fefbbfddc4feb51b35e14b1de133e37873984b2cc6268d13dcaa5b5d3a6b",
+				"gameCount": 1,
+				"types": {
+					"Brilliant": 2,
+					"Winner": 1,
+					"CheckmateBlack": 1
+				},
+				"nags": {
+					"3": 2
+				},
+				"commentTags": ["clk", "timestamp", "c_effect"]
+			},
+			{
+				"file": "/Users/owengregson/Documents/sliced.sh/.scratch/rdxh5/game.pgn",
+				"sha256": "36b57cbbca528de64553f0454bc5186af18ba9eff4be92f3c37549b2b48793c8",
+				"gameCount": 1,
+				"types": {
+					"Mistake": 1,
+					"Brilliant": 1,
+					"GreatFind": 3
+				},
+				"nags": {
+					"1": 3,
+					"2": 1,
+					"3": 1
+				},
+				"commentTags": ["c_effect"]
+			},
+			{
+				"file": "/Users/owengregson/Documents/sliced.sh/.scratch/bot-strength/humans-2500.pgn",
+				"sha256": "4b74575af4856e9324acace11d706e873ceae474e4b44f5356568e154d43ef76",
+				"gameCount": 6,
+				"types": {},
+				"nags": {},
+				"commentTags": ["clk"]
+			},
+			{
+				"file": "/Users/owengregson/Documents/sliced.sh/.scratch/bot-strength/humans-2500-3.pgn",
+				"sha256": "b6470b9d90877e818fa921a4686a09a3b6eb64e3bf339b0cf80f3d11766ab6ee",
+				"gameCount": 3,
+				"types": {},
+				"nags": {},
+				"commentTags": ["clk"]
+			},
+			{
+				"file": "/Users/owengregson/Documents/sliced.sh/.scratch/move-review/chesscom-review-2026-09-15.pgn",
+				"sha256": "d8645ab92935db168e86aa3c474bded48399ad632df6aeb0516e59986ad65860",
+				"gameCount": 10,
+				"types": {
+					"Brilliant": 14,
+					"Winner": 10,
+					"CheckmateWhite": 4,
+					"Blunder": 2,
+					"GreatFind": 1,
+					"CheckmateBlack": 4,
+					"Mistake": 3,
+					"ResignWhite": 1,
+					"ResignBlack": 1
+				},
+				"nags": {
+					"1": 1,
+					"2": 3,
+					"3": 14,
+					"4": 2
+				},
+				"commentTags": ["clk", "timestamp", "c_effect"]
+			},
+			{
+				"file": "/Users/owengregson/Documents/sliced.sh/chess_com_games_2026-09-14.pgn",
+				"sha256": "048b338472d425f952c62dde18fe5619eb86fe363cb188fb1da507bec91f5c2b",
+				"gameCount": 100,
+				"types": {},
+				"nags": {},
+				"commentTags": ["clk"]
+			},
+			{
+				"file": "/Users/owengregson/Documents/sliced.sh/chess_com_games_2026-09-13 (1).pgn",
+				"sha256": "9491e59a322e3935ce83756f1c036b502fc0f06dfb6f6d2d368f08ce864b93db",
+				"gameCount": 100,
+				"types": {},
+				"nags": {},
+				"commentTags": ["clk"]
+			},
+			{
+				"file": "/Users/owengregson/Documents/sliced.sh/tools/data/upstream/1e4_ai/Training/cpp_src/tests/data_files/sample_1000.pgn",
+				"sha256": "a6e034ba27a4b712594551e35c39c3716c9795dfd52b193ac0e1b4f8dce90429",
+				"gameCount": 1000,
+				"types": {},
+				"nags": {},
+				"commentTags": ["clk", "eval"]
+			},
+			{
+				"file": "/Users/owengregson/Documents/sliced.sh/tools/data/upstream/1e4_ai/Training/cpp_src/tests/data_files/sample_100.pgn",
+				"sha256": "9303255ed632c4e8434fa874e192bccfaa5c04f6852f44fca1549fff51b89b26",
+				"gameCount": 100,
+				"types": {},
+				"nags": {},
+				"commentTags": ["clk", "eval"]
+			}
+		],
+		"counts": {
+			"Brilliant": 15,
+			"Blunder": 2,
+			"GreatFind": 4,
+			"Mistake": 4
+		},
+		"games": [
+			{
+				"labels": {
+					"46": "Brilliant"
+				},
+				"brilliants": [46],
+				"ply": 0,
+				"headers": {
+					"Event": "Live Chess",
+					"Site": "Chess.com",
+					"Date": "2026.09.15",
+					"Round": "-",
+					"White": "liesofther",
+					"Black": "gc_elif",
+					"Result": "0-1",
+					"WhiteTitle": "",
+					"BlackTitle": "",
+					"WhiteElo": "2738",
+					"BlackElo": "2646",
+					"ECO": "D30",
+					"UTCTime": "05:03:41",
+					"UTCDate": "2026.09.15",
+					"TimeControl": "180",
+					"Termination": "gc_elif won by checkmate",
+					"CurrentPosition": "r5k1/6pp/2p2p1r/p1B3K1/P2Pp3/2N1Pq2/2Q2P2/R4R2 w - - 0 29",
+					"Timezone": "UTC",
+					"ECOUrl": "https://www.chess.com/openings/Queens-Gambit-Declined-3.Nf3-Nf6",
+					"StartTime": "05:03:41",
+					"EndDate": "2026.09.15",
+					"EndTime": "05:07:29",
+					"Link": "https://www.chess.com/analysis/game/live/174496520536/review?move=45",
+					"WhiteUrl": "https://images.chesscomfiles.com/uploads/v1/user/592155542.5d30515b.50x50o.26f458b1a026.jpg",
+					"WhiteCountry": "75",
+					"BlackUrl": "https://images.chesscomfiles.com/uploads/v1/user/346371369.eb90fa43.50x50o.9376ab5afcdf.png",
+					"BlackCountry": "138"
+				},
+				"files": [
+					"/private/tmp/claude-501/-Users-owengregson-Documents-sliced-sh/54bf6526-5bd4-4f54-9d62-4c5129b95223/scratchpad/chesscom-review-2026-09-15.pgn",
+					"/Users/owengregson/Documents/sliced.sh/.scratch/move-review/chesscom-review-2026-09-15.pgn"
+				],
+				"inOriginal": true,
+				"plies": 56,
+				"details": [
+					{
+						"ply": 46,
+						"san": "Bxg2",
+						"uci": "h3g2",
+						"type": "Brilliant"
+					}
+				]
+			},
+			{
+				"labels": {
+					"15": "Blunder",
+					"17": "GreatFind",
+					"40": "Brilliant"
+				},
+				"brilliants": [40],
+				"ply": 0,
+				"headers": {
+					"Event": "Live Chess",
+					"Site": "Chess.com",
+					"Date": "2026.09.15",
+					"Round": "-",
+					"White": "FILIP2017",
+					"Black": "gc_elif",
+					"Result": "0-1",
+					"WhiteTitle": "",
+					"BlackTitle": "",
+					"WhiteElo": "2604",
+					"BlackElo": "2632",
+					"ECO": "C11",
+					"UTCTime": "04:55:54",
+					"UTCDate": "2026.09.15",
+					"TimeControl": "180",
+					"Termination": "gc_elif won by checkmate",
+					"CurrentPosition": "2k4r/1R4pp/p1n1p3/2b1n3/8/1RN5/P1P1B1PP/2Qr2K1 w - - 1 22",
+					"Timezone": "UTC",
+					"ECOUrl": "https://www.chess.com/openings/French-Defense-Classical-Steinitz-Variation...6.Nf3-a6-7.Be3-Qb6",
+					"StartTime": "04:55:54",
+					"EndDate": "2026.09.15",
+					"EndTime": "04:59:48",
+					"Link": "https://www.chess.com/analysis/game/live/174496325592/review?move=39",
+					"WhiteUrl": "https://www.chess.com/bundles/web/images/noavatar_l.84a92436.gif",
+					"WhiteCountry": "112",
+					"BlackUrl": "https://images.chesscomfiles.com/uploads/v1/user/346371369.eb90fa43.50x50o.9376ab5afcdf.png",
+					"BlackCountry": "138"
+				},
+				"files": [
+					"/private/tmp/claude-501/-Users-owengregson-Documents-sliced-sh/54bf6526-5bd4-4f54-9d62-4c5129b95223/scratchpad/chesscom-review-2026-09-15.pgn",
+					"/Users/owengregson/Documents/sliced.sh/.scratch/move-review/chesscom-review-2026-09-15.pgn"
+				],
+				"inOriginal": true,
+				"plies": 42,
+				"details": [
+					{
+						"ply": 15,
+						"san": "Qd2",
+						"uci": "d1d2",
+						"type": "Blunder"
+					},
+					{
+						"ply": 17,
+						"san": "Rb1",
+						"uci": "a1b1",
+						"type": "GreatFind"
+					},
+					{
+						"ply": 40,
+						"san": "Qc1+",
+						"uci": "a3c1",
+						"type": "Brilliant"
+					}
+				]
+			},
+			{
+				"labels": {
+					"12": "Brilliant"
+				},
+				"brilliants": [12],
+				"ply": 0,
+				"headers": {
+					"Event": "Live Chess",
+					"Site": "Chess.com",
+					"Date": "2026.09.14",
+					"Round": "-",
+					"White": "Amirali_chess_youtube1260",
+					"Black": "gc_elif",
+					"Result": "0-1",
+					"WhiteTitle": "",
+					"BlackTitle": "",
+					"WhiteElo": "2459",
+					"BlackElo": "2450",
+					"ECO": "B20",
+					"UTCTime": "18:44:19",
+					"UTCDate": "2026.09.14",
+					"TimeControl": "180",
+					"Termination": "gc_elif won by checkmate",
+					"CurrentPosition": "8/R7/4p3/2p1k3/4pp2/4K3/PPP3r1/8 w - - 0 33",
+					"Timezone": "UTC",
+					"ECOUrl": "https://www.chess.com/openings/Sicilian-Defense-Bowdler-Attack-2...e6",
+					"StartTime": "18:44:19",
+					"EndDate": "2026.09.14",
+					"EndTime": "18:48:48",
+					"Link": "https://www.chess.com/analysis/game/live/174478840066/review?move=11&flip=true",
+					"WhiteUrl": "https://www.chess.com/bundles/web/images/noavatar_l.84a92436.gif",
+					"WhiteCountry": "71",
+					"BlackUrl": "https://images.chesscomfiles.com/uploads/v1/user/346371369.eb90fa43.50x50o.9376ab5afcdf.png",
+					"BlackCountry": "138"
+				},
+				"files": [
+					"/private/tmp/claude-501/-Users-owengregson-Documents-sliced-sh/54bf6526-5bd4-4f54-9d62-4c5129b95223/scratchpad/chesscom-review-2026-09-15.pgn",
+					"/Users/owengregson/Documents/sliced.sh/.scratch/move-review/chesscom-review-2026-09-15.pgn"
+				],
+				"inOriginal": true,
+				"plies": 64,
+				"details": [
+					{
+						"ply": 12,
+						"san": "Nxe4",
+						"uci": "f6e4",
+						"type": "Brilliant"
+					}
+				]
+			},
+			{
+				"labels": {
+					"41": "Brilliant"
+				},
+				"brilliants": [41],
+				"ply": 0,
+				"headers": {
+					"Event": "Live Chess",
+					"Site": "Chess.com",
+					"Date": "2026.09.14",
+					"Round": "-",
+					"White": "gc_elif",
+					"Black": "TTCV_MINDCHESS",
+					"Result": "1-0",
+					"WhiteTitle": "",
+					"BlackTitle": "",
+					"WhiteElo": "2424",
+					"BlackElo": "2320",
+					"ECO": "B50",
+					"UTCTime": "08:46:19",
+					"UTCDate": "2026.09.14",
+					"TimeControl": "180",
+					"Termination": "gc_elif won by checkmate",
+					"CurrentPosition": "6Q1/5Bbk/p5p1/qp2p2p/4P3/4B3/PP4PP/2R4K b - - 2 27",
+					"Timezone": "UTC",
+					"ECOUrl": "https://www.chess.com/openings/Sicilian-Defense-2.Nf3-d6-3.d4",
+					"StartTime": "08:46:19",
+					"EndDate": "2026.09.14",
+					"EndTime": "08:49:23",
+					"Link": "https://www.chess.com/analysis/game/live/174453722424/review?move=40",
+					"WhiteUrl": "https://images.chesscomfiles.com/uploads/v1/user/346371369.eb90fa43.50x50o.9376ab5afcdf.png",
+					"WhiteCountry": "138",
+					"BlackUrl": "https://images.chesscomfiles.com/uploads/v1/user/590273520.08c763d3.50x50o.433eba0fafbc.jpg",
+					"BlackCountry": "149"
+				},
+				"files": [
+					"/private/tmp/claude-501/-Users-owengregson-Documents-sliced-sh/54bf6526-5bd4-4f54-9d62-4c5129b95223/scratchpad/chesscom-review-2026-09-15.pgn",
+					"/Users/owengregson/Documents/sliced.sh/.scratch/move-review/chesscom-review-2026-09-15.pgn"
+				],
+				"inOriginal": true,
+				"plies": 53,
+				"details": [
+					{
+						"ply": 41,
+						"san": "Rxf7",
+						"uci": "f1f7",
+						"type": "Brilliant"
+					}
+				]
+			},
+			{
+				"labels": {
+					"28": "Brilliant",
+					"29": "Mistake",
+					"30": "Brilliant"
+				},
+				"brilliants": [28, 30],
+				"ply": 0,
+				"headers": {
+					"Event": "Live Chess",
+					"Site": "Chess.com",
+					"Date": "2026.09.13",
+					"Round": "-",
+					"White": "Allo_Sho_Tam",
+					"Black": "gc_elif",
+					"Result": "0-1",
+					"WhiteTitle": "",
+					"BlackTitle": "",
+					"WhiteElo": "2392",
+					"BlackElo": "2390",
+					"ECO": "A43",
+					"UTCTime": "20:03:20",
+					"UTCDate": "2026.09.13",
+					"TimeControl": "180",
+					"Termination": "gc_elif won by resignation",
+					"CurrentPosition": "r1bk1b2/pp2pB2/3p2p1/4P1p1/4P1n1/2NQ3r/PP3qP1/R1B2R1K w - - 0 16",
+					"Timezone": "UTC",
+					"ECOUrl": "https://www.chess.com/openings/Old-Benoni-Defense-2.c3-cxd4",
+					"StartTime": "20:03:20",
+					"EndDate": "2026.09.13",
+					"EndTime": "20:05:22",
+					"Link": "https://www.chess.com/analysis/game/live/174433549842/review?move=27&flip=true",
+					"WhiteUrl": "https://images.chesscomfiles.com/uploads/v1/user/44167546.f995ea0b.50x50o.9c4efeb3feeb.jpg",
+					"WhiteCountry": "141",
+					"BlackUrl": "https://images.chesscomfiles.com/uploads/v1/user/346371369.eb90fa43.50x50o.9376ab5afcdf.png",
+					"BlackCountry": "138"
+				},
+				"files": [
+					"/private/tmp/claude-501/-Users-owengregson-Documents-sliced-sh/54bf6526-5bd4-4f54-9d62-4c5129b95223/scratchpad/chesscom-review-2026-09-15.pgn",
+					"/Users/owengregson/Documents/sliced.sh/.scratch/move-review/chesscom-review-2026-09-15.pgn"
+				],
+				"inOriginal": true,
+				"plies": 30,
+				"details": [
+					{
+						"ply": 28,
+						"san": "Qf2",
+						"uci": "b6f2",
+						"type": "Brilliant"
+					},
+					{
+						"ply": 29,
+						"san": "Qd3",
+						"uci": "d1d3",
+						"type": "Mistake"
+					},
+					{
+						"ply": 30,
+						"san": "Rxh3+",
+						"uci": "h8h3",
+						"type": "Brilliant"
+					}
+				]
+			},
+			{
+				"labels": {
+					"35": "Brilliant"
+				},
+				"brilliants": [35],
+				"ply": 0,
+				"headers": {
+					"Event": "Live Chess",
+					"Site": "Chess.com",
+					"Date": "2026.09.12",
+					"Round": "-",
+					"White": "gc_elif",
+					"Black": "BennoKing",
+					"Result": "1-0",
+					"WhiteTitle": "",
+					"BlackTitle": "",
+					"WhiteElo": "2391",
+					"BlackElo": "2391",
+					"ECO": "D35",
+					"UTCTime": "17:19:56",
+					"UTCDate": "2026.09.12",
+					"TimeControl": "180",
+					"Termination": "gc_elif won by resignation",
+					"CurrentPosition": "5k2/6R1/1p5p/p7/5P2/4n3/PBB3PP/2K5 b - - 0 38",
+					"Timezone": "UTC",
+					"ECOUrl": "https://www.chess.com/openings/Queens-Gambit-Declined-Queens-Knight-Variation-3...Nf6",
+					"StartTime": "17:19:56",
+					"EndDate": "2026.09.12",
+					"EndTime": "17:25:40",
+					"Link": "https://www.chess.com/analysis/game/live/174379587420/review?move=34",
+					"WhiteUrl": "https://images.chesscomfiles.com/uploads/v1/user/346371369.eb90fa43.50x50o.9376ab5afcdf.png",
+					"WhiteCountry": "138",
+					"BlackUrl": "https://www.chess.com/bundles/web/images/noavatar_l.84a92436.gif",
+					"BlackCountry": "54"
+				},
+				"files": [
+					"/private/tmp/claude-501/-Users-owengregson-Documents-sliced-sh/54bf6526-5bd4-4f54-9d62-4c5129b95223/scratchpad/chesscom-review-2026-09-15.pgn",
+					"/Users/owengregson/Documents/sliced.sh/.scratch/move-review/chesscom-review-2026-09-15.pgn"
+				],
+				"inOriginal": true,
+				"plies": 75,
+				"details": [
+					{
+						"ply": 35,
+						"san": "Nxf7",
+						"uci": "e5f7",
+						"type": "Brilliant"
+					}
+				]
+			},
+			{
+				"labels": {
+					"24": "Brilliant",
+					"36": "Brilliant"
+				},
+				"brilliants": [24, 36],
+				"ply": 0,
+				"headers": {
+					"Event": "Live Chess",
+					"Site": "Chess.com",
+					"Date": "2026.09.12",
+					"Round": "-",
+					"White": "soppan78",
+					"Black": "gc_elif",
+					"Result": "0-1",
+					"WhiteTitle": "",
+					"BlackTitle": "",
+					"WhiteElo": "2070",
+					"BlackElo": "2132",
+					"ECO": "B02",
+					"UTCTime": "11:07:29",
+					"UTCDate": "2026.09.12",
+					"TimeControl": "180",
+					"Termination": "gc_elif won by checkmate",
+					"CurrentPosition": "7k/ppp1p1b1/2np1r1p/3n2pP/3P2b1/1PP3P1/P1QNqP2/R1B1KR2 w Q - 7 22",
+					"Timezone": "UTC",
+					"ECOUrl": "https://www.chess.com/openings/Alekhines-Defense-Normal-Variation-3.Nf3-d6",
+					"StartTime": "11:07:29",
+					"EndDate": "2026.09.12",
+					"EndTime": "11:10:57",
+					"Link": "https://www.chess.com/analysis/game/live/174364040130/review?move=23&flip=true",
+					"WhiteUrl": "https://images.chesscomfiles.com/uploads/v1/user/182049257.470b5dad.50x50o.86aa02768180.jpg",
+					"WhiteCountry": "70",
+					"BlackUrl": "https://images.chesscomfiles.com/uploads/v1/user/346371369.eb90fa43.50x50o.9376ab5afcdf.png",
+					"BlackCountry": "138"
+				},
+				"files": [
+					"/private/tmp/claude-501/-Users-owengregson-Documents-sliced-sh/54bf6526-5bd4-4f54-9d62-4c5129b95223/scratchpad/chesscom-review-2026-09-15.pgn",
+					"/Users/owengregson/Documents/sliced.sh/.scratch/move-review/chesscom-review-2026-09-15.pgn"
+				],
+				"inOriginal": true,
+				"plies": 42,
+				"details": [
+					{
+						"ply": 24,
+						"san": "Bxe6",
+						"uci": "c8e6",
+						"type": "Brilliant"
+					},
+					{
+						"ply": 36,
+						"san": "Bg4",
+						"uci": "e6g4",
+						"type": "Brilliant"
+					}
+				]
+			},
+			{
+				"labels": {
+					"63": "Brilliant",
+					"65": "Brilliant"
+				},
+				"brilliants": [63, 65],
+				"ply": 0,
+				"headers": {
+					"Event": "Live Chess",
+					"Site": "Chess.com",
+					"Date": "2026.09.11",
+					"Round": "-",
+					"White": "gc_elif",
+					"Black": "Nestoker",
+					"Result": "1-0",
+					"WhiteTitle": "",
+					"BlackTitle": "",
+					"WhiteElo": "1744",
+					"BlackElo": "1725",
+					"ECO": "B10",
+					"UTCTime": "23:25:21",
+					"UTCDate": "2026.09.11",
+					"TimeControl": "180",
+					"Termination": "gc_elif won by checkmate",
+					"CurrentPosition": "r4r1k/8/2pqp2Q/7p/pp1P3P/P3n3/1PP5/1K4R1 b - - 2 35",
+					"Timezone": "UTC",
+					"ECOUrl": "https://www.chess.com/openings/Caro-Kann-Defense-Two-Knights-Attack",
+					"StartTime": "23:25:21",
+					"EndDate": "2026.09.11",
+					"EndTime": "23:30:50",
+					"Link": "https://www.chess.com/analysis/game/live/174344800128/review?move=62",
+					"WhiteUrl": "https://images.chesscomfiles.com/uploads/v1/user/346371369.eb90fa43.50x50o.9376ab5afcdf.png",
+					"WhiteCountry": "138",
+					"BlackUrl": "https://images.chesscomfiles.com/uploads/v1/user/310905199.892d75aa.50x50o.a6dbb722c7fb.jpg",
+					"BlackCountry": "34"
+				},
+				"files": [
+					"/private/tmp/claude-501/-Users-owengregson-Documents-sliced-sh/54bf6526-5bd4-4f54-9d62-4c5129b95223/scratchpad/chesscom-review-2026-09-15.pgn",
+					"/private/tmp/claude-501/-Users-owengregson-Documents-sliced-sh/54bf6526-5bd4-4f54-9d62-4c5129b95223/scratchpad/game-nestoker.pgn",
+					"/Users/owengregson/Documents/sliced.sh/.scratch/move-review/chesscom-review-2026-09-15.pgn"
+				],
+				"inOriginal": true,
+				"plies": 69,
+				"details": [
+					{
+						"ply": 63,
+						"san": "Rxf7+",
+						"uci": "f1f7",
+						"type": "Brilliant"
+					},
+					{
+						"ply": 65,
+						"san": "Rh7+",
+						"uci": "f7h7",
+						"type": "Brilliant"
+					}
+				]
+			},
+			{
+				"labels": {
+					"39": "Brilliant",
+					"42": "Mistake",
+					"46": "Mistake",
+					"47": "Brilliant"
+				},
+				"brilliants": [39, 47],
+				"ply": 0,
+				"headers": {
+					"Event": "Live Chess",
+					"Site": "Chess.com",
+					"Date": "2026.09.11",
+					"Round": "-",
+					"White": "gc_elif",
+					"Black": "agung99990",
+					"Result": "1-0",
+					"WhiteTitle": "",
+					"BlackTitle": "",
+					"WhiteElo": "1298",
+					"BlackElo": "1263",
+					"ECO": "C41",
+					"UTCTime": "04:56:01",
+					"UTCDate": "2026.09.11",
+					"TimeControl": "180",
+					"Termination": "gc_elif won by checkmate",
+					"CurrentPosition": "r4rk1/1q3p2/2p2p2/p1p1P3/6QR/P1P4P/1P4P1/3R2K1 b - - 0 26",
+					"Timezone": "UTC",
+					"ECOUrl": "https://www.chess.com/openings/Philidor-Defense-Exchange-Variation-4.Nxd4",
+					"StartTime": "04:56:01",
+					"EndDate": "2026.09.11",
+					"EndTime": "04:59:22",
+					"Link": "https://www.chess.com/analysis/game/live/174303840014/review?move=46",
+					"WhiteUrl": "https://images.chesscomfiles.com/uploads/v1/user/346371369.eb90fa43.50x50o.9376ab5afcdf.png",
+					"WhiteCountry": "138",
+					"BlackUrl": "https://www.chess.com/bundles/web/images/noavatar_l.84a92436.gif",
+					"BlackCountry": "70"
+				},
+				"files": [
+					"/private/tmp/claude-501/-Users-owengregson-Documents-sliced-sh/54bf6526-5bd4-4f54-9d62-4c5129b95223/scratchpad/chesscom-review-2026-09-15.pgn",
+					"/private/tmp/claude-501/-Users-owengregson-Documents-sliced-sh/54bf6526-5bd4-4f54-9d62-4c5129b95223/scratchpad/games-2026-09-11.pgn",
+					"/Users/owengregson/Documents/sliced.sh/.scratch/move-review/chesscom-review-2026-09-15.pgn"
+				],
+				"inOriginal": true,
+				"plies": 51,
+				"details": [
+					{
+						"ply": 39,
+						"san": "Bxh7+",
+						"uci": "d3h7",
+						"type": "Brilliant"
+					},
+					{
+						"ply": 42,
+						"san": "Kxh7",
+						"uci": "h8h7",
+						"type": "Mistake"
+					},
+					{
+						"ply": 46,
+						"san": "Qb7",
+						"uci": "c8b7",
+						"type": "Mistake"
+					},
+					{
+						"ply": 47,
+						"san": "Nf6+",
+						"uci": "e4f6",
+						"type": "Brilliant"
+					}
+				]
+			},
+			{
+				"labels": {
+					"33": "Brilliant",
+					"34": "Blunder"
+				},
+				"brilliants": [33],
+				"ply": 0,
+				"headers": {
+					"Event": "Live Chess",
+					"Site": "Chess.com",
+					"Date": "2026.09.11",
+					"Round": "-",
+					"White": "gc_elif",
+					"Black": "ChampionsOfCHESS77",
+					"Result": "1-0",
+					"WhiteTitle": "",
+					"BlackTitle": "",
+					"WhiteElo": "1396",
+					"BlackElo": "1360",
+					"ECO": "A40",
+					"UTCTime": "07:17:24",
+					"UTCDate": "2026.09.11",
+					"TimeControl": "180",
+					"Termination": "gc_elif won by checkmate",
+					"CurrentPosition": "Q1kr1br1/2pq3p/3p4/PN1P4/3p1p2/5b1P/1PP2PPK/4R3 b - - 3 24",
+					"Timezone": "UTC",
+					"ECOUrl": "https://www.chess.com/openings/Englund-Gambit-Declined",
+					"StartTime": "07:17:24",
+					"EndDate": "2026.09.11",
+					"EndTime": "07:19:44",
+					"Link": "https://www.chess.com/analysis/game/live/174307645926/review?move=36",
+					"WhiteUrl": "https://images.chesscomfiles.com/uploads/v1/user/346371369.eb90fa43.50x50o.9376ab5afcdf.png",
+					"WhiteCountry": "138",
+					"BlackUrl": "https://images.chesscomfiles.com/uploads/v1/user/379609473.b75363b4.50x50o.f0352ed486c1.jpg",
+					"BlackCountry": "129"
+				},
+				"files": [
+					"/private/tmp/claude-501/-Users-owengregson-Documents-sliced-sh/54bf6526-5bd4-4f54-9d62-4c5129b95223/scratchpad/chesscom-review-2026-09-15.pgn",
+					"/private/tmp/claude-501/-Users-owengregson-Documents-sliced-sh/54bf6526-5bd4-4f54-9d62-4c5129b95223/scratchpad/games-2026-09-11.pgn",
+					"/Users/owengregson/Documents/sliced.sh/.scratch/move-review/chesscom-review-2026-09-15.pgn"
+				],
+				"inOriginal": true,
+				"plies": 47,
+				"details": [
+					{
+						"ply": 33,
+						"san": "Bxa6",
+						"uci": "d3a6",
+						"type": "Brilliant"
+					},
+					{
+						"ply": 34,
+						"san": "bxa6",
+						"uci": "b7a6",
+						"type": "Blunder"
+					}
+				]
+			},
+			{
+				"labels": {
+					"58": "Mistake",
+					"59": "Brilliant",
+					"63": "GreatFind",
+					"65": "GreatFind",
+					"67": "GreatFind"
+				},
+				"brilliants": [59],
+				"ply": 0,
+				"headers": {
+					"Event": "Live Chess",
+					"Site": "Chess.com",
+					"Date": "2026.09.16",
+					"Round": "-",
+					"White": "zurdo1969",
+					"Black": "MINDFREAKfrmINDIA",
+					"Result": "1-0",
+					"WhiteElo": "2144",
+					"BlackElo": "2054",
+					"ECO": "A41",
+					"TimeControl": "180",
+					"ECOUrl": "https://www.chess.com/openings/Queens-Pawn-Opening-Tartakower-Variation"
+				},
+				"files": ["/Users/owengregson/Documents/sliced.sh/.scratch/rdxh5/game.pgn"],
+				"inOriginal": false,
+				"plies": 67,
+				"details": [
+					{
+						"ply": 58,
+						"san": "Qxb5",
+						"uci": "b8b5",
+						"type": "Mistake"
+					},
+					{
+						"ply": 59,
+						"san": "Rdxh5+",
+						"uci": "d5h5",
+						"type": "Brilliant"
+					},
+					{
+						"ply": 63,
+						"san": "f5+",
+						"uci": "f4f5",
+						"type": "GreatFind"
+					},
+					{
+						"ply": 65,
+						"san": "Qd5+",
+						"uci": "d1d5",
+						"type": "GreatFind"
+					},
+					{
+						"ply": 67,
+						"san": "Qe6+",
+						"uci": "d5e6",
+						"type": "GreatFind"
+					}
+				]
+			}
+		]
+	},
+	"additionalReviewedDataset": [
+		{
+			"pgn": "[Event \"Live Chess\"]\n[Site \"Chess.com\"]\n[Date \"2026.09.16\"]\n[Round \"-\"]\n[White \"zurdo1969\"]\n[Black \"MINDFREAKfrmINDIA\"]\n[Result \"1-0\"]\n[ECO \"A41\"]\n[ECOUrl \"https://www.chess.com/openings/Queens-Pawn-Opening-Tartakower-Variation\"]\n[WhiteElo \"2144\"]\n[BlackElo \"2054\"]\n[TimeControl \"180\"]\n\n1. Nf3 d6 2. d4 Bg4 3. e3 Nd7 4. Be2 Ngf6 5. h3 Bh5 6. c4 c6 7. Nc3 d5 8. O-O e6\n9. b3 Bb4 10. Bd2 Bxc3 11. Bxc3 Ne4 12. Bb4 c5 13. dxc5 Ndxc5 14. cxd5 exd5\n15. Bb5+ Kf8 16. Rc1 b6 17. Be2 Bg6 18. Ne5 f6 19. Nxg6+ hxg6 20. f3 Ng3 21. Rf2 Kg8\n22. Bb5 Kh7 23. Rd2 Qe7 24. Rxd5 Qxe3+ 25. Kh2 Qf4 26. Rc4 Qb8 27. Bxc5 bxc5\n28. Rh4+ Nh5+ 29. f4 Qxb5 $2 {[%c_effect b5;square;b5;type;Mistake;size;100%25;animated;false;persistent;true]} 30. Rdxh5+ $3 {[%c_effect h5;square;h5;type;Brilliant;size;100%25;animated;true;persistent;true]} gxh5 31. Rxh5+ Kg6 32. f5+ $1 {[%c_effect f5;square;f5;type;GreatFind;size;100%25;animated;true;persistent;true]} Kf7 33. Qd5+ $1 {[%c_effect d5;square;d5;type;GreatFind;size;100%25;animated;true;persistent;true]} Ke7 34. Qe6+ $1 {[%c_effect e6;square;e6;type;GreatFind;size;100%25;animated;true;persistent;true]} 1-0",
+			"labels": {
+				"58": "Mistake",
+				"59": "Brilliant",
+				"63": "GreatFind",
+				"65": "GreatFind",
+				"67": "GreatFind"
+			},
+			"brilliants": [59],
+			"ply": 59
+		}
+	],
+	"additionalReviewedResult": {
+		"summary": {
+			"provenance": [
+				{
+					"version": "Stockfish 19",
+					"module": "sf_19_relaxed-simd.js",
+					"networks": {
+						"nn-1a298aa575a0.nnue": "1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2"
+					},
+					"variant": "full",
+					"limitedStrength": false,
+					"wasmSha256": "11ebe6bdbae23c4e2b8d665f55c4d13500dc110ce83755663ce6533e6bb36b1b",
+					"runtime": "v25.6.1",
+					"threads": 2,
+					"hashMb": 64,
+					"datasetSha256": "28cff6039dbbaae57756d460b15138baede59a58071fce9a83323d3a91c7a7eb",
+					"requestedDepth": 18,
+					"movetimeMs": 5000,
+					"multiPv": 3
+				}
+			],
+			"legacyEvidenceAllowed": false,
+			"frames": 11,
+			"labelled": {
+				"classified": 1,
+				"brilliant": 1,
+				"of": 1
+			},
+			"labelledQualities": {
+				"brilliant": 1
+			},
+			"labelledReasons": {
+				"sound-sacrifice": 1
+			},
+			"others": {
+				"meaning": "Unpinned moves, NOT verified negatives; extra calls here do not measure precision.",
+				"classified": 9,
+				"brilliant": 0,
+				"per1000": 0
+			},
+			"unclassified": 0,
+			"missingFrames": 57,
+			"verifiedNegatives": {
+				"classified": 4,
+				"falsePositives": 0,
+				"trueNegatives": 4
+			},
+			"distribution": {
+				"great": 4,
+				"excellent": 1,
+				"brilliant": 1,
+				"best": 3,
+				"forced": 1
+			},
+			"marks": [
+				{
+					"game": 0,
+					"ply": 58,
+					"san": "Qxb5",
+					"chesscom": "Mistake",
+					"ours": "excellent"
+				},
+				{
+					"game": 0,
+					"ply": 63,
+					"san": "f5+",
+					"chesscom": "GreatFind",
+					"ours": "great"
+				},
+				{
+					"game": 0,
+					"ply": 65,
+					"san": "Qd5+",
+					"chesscom": "GreatFind",
+					"ours": "great"
+				},
+				{
+					"game": 0,
+					"ply": 67,
+					"san": "Qe6+",
+					"chesscom": "GreatFind",
+					"ours": "great"
+				}
+			]
+		},
+		"recalled": [
+			{
+				"game": 0,
+				"ply": 59,
+				"san": "Rdxh5+",
+				"rating": 2144,
+				"loss": 0,
+				"played": 0.998,
+				"reason": "sound-sacrifice",
+				"offers": ["capture-sacrifice:1"]
+			}
+		],
+		"missed": [],
+		"overCalls": [],
+		"negativeCalls": [],
+		"tuning": {
+			"classification": {
+				"goodLoss": 0.02,
+				"inaccuracyLoss": 0.05,
+				"mistakeLoss": 0.1,
+				"blunderLoss": 0.2,
+				"zeroLossTolerance": 1e-9,
+				"minDepth": 10,
+				"winningPoints": 0.8,
+				"greatGapNovice": 0.1,
+				"greatGapExpert": 0.15,
+				"greatMinAfter": 0.4,
+				"greatMaxAlternative": 0.7,
+				"missMinOpportunity": 0.1,
+				"missMinLoss": 0.1,
+				"missMaxWorsening": 0.2,
+				"bookMaxLoss": 0.1
+			},
+			"brilliant": {
+				"minOfferedPiece": 3,
+				"minConcession": 1,
+				"maxExchangeNodes": 256,
+				"maxExchangePlies": 16,
+				"maxLossNovice": 0.12,
+				"maxLossExpert": 0.07,
+				"minAfter": 0.45,
+				"trivialAlternative": 0.97,
+				"illusionRegainTolerance": 1,
+				"sequencePlies": 4,
+				"sequenceDecisiveGap": 0.3,
+				"fastestMateNotTrivial": 1,
+				"fasterMateDecisive": 1,
+				"gratuitousWinning": 0.95,
+				"gratuitousGain": 0.02,
+				"gratuitousMaxConcession": 2,
+				"nearBestRatedLoss": 1,
+				"decisiveNeedsMovedPiece": 1,
+				"movedPieceOffersOnly": 0,
+				"tradeRegainAnyShape": 0,
+				"sacrificialAlternativeNotTrivial": 1
+			}
+		}
+	},
+	"additionalReviewedFrames": [
+		{
+			"provenance": {
+				"version": "Stockfish 19",
+				"module": "sf_19_relaxed-simd.js",
+				"networks": {
+					"nn-1a298aa575a0.nnue": "1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2"
+				},
+				"variant": "full",
+				"limitedStrength": false,
+				"wasmSha256": "11ebe6bdbae23c4e2b8d665f55c4d13500dc110ce83755663ce6533e6bb36b1b",
+				"runtime": "v25.6.1",
+				"threads": 2,
+				"hashMb": 64,
+				"datasetSha256": "28cff6039dbbaae57756d460b15138baede59a58071fce9a83323d3a91c7a7eb",
+				"requestedDepth": 18,
+				"movetimeMs": 5000,
+				"multiPv": 3
+			},
+			"game": 0,
+			"index": 56,
+			"fen": "rq5r/p5pk/5pp1/1BpR3n/7R/1P3P1P/P5PK/3Q4 w - - 2 29",
+			"depth": 18,
+			"complete": true,
+			"elapsedMs": 1821,
+			"lines": [
+				{
+					"multipv": 1,
+					"depth": 18,
+					"score": {
+						"cp": 820
+					},
+					"pvUci": [
+						"f3f4",
+						"b8f4",
+						"h4f4",
+						"h5f4",
+						"d5d7",
+						"c5c4",
+						"b5c4",
+						"f4h5",
+						"d7d4",
+						"h8e8",
+						"c4f7",
+						"h5f4",
+						"f7g6",
+						"f4g6"
+					],
+					"wdl": [1000, 0, 0],
+					"pvSan": []
+				},
+				{
+					"multipv": 2,
+					"depth": 18,
+					"score": {
+						"cp": 9
+					},
+					"pvUci": [
+						"h2g1",
+						"b8b5",
+						"g2g4",
+						"h8e8",
+						"g4h5",
+						"g6g5",
+						"h4c4",
+						"b5a5",
+						"d1c2",
+						"h7h8",
+						"c4e4",
+						"a5c7",
+						"g1g2",
+						"e8e4",
+						"c2e4",
+						"c7f7",
+						"e4c4",
+						"f7h5",
+						"d5c5",
+						"h5e8",
+						"c4d3"
+					],
+					"wdl": [9, 987, 4],
+					"pvSan": []
+				},
+				{
+					"multipv": 3,
+					"depth": 18,
+					"score": {
+						"cp": 0
+					},
+					"pvUci": [
+						"h2h1",
+						"b8b5",
+						"f3f4",
+						"h8e8",
+						"f4f5",
+						"g6g5",
+						"d1h5",
+						"h7g8",
+						"h5h7",
+						"g8f8",
+						"h7h8",
+						"f8f7",
+						"h8h5"
+					],
+					"wdl": [6, 988, 6],
+					"pvSan": []
+				}
+			]
+		},
+		{
+			"provenance": {
+				"version": "Stockfish 19",
+				"module": "sf_19_relaxed-simd.js",
+				"networks": {
+					"nn-1a298aa575a0.nnue": "1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2"
+				},
+				"variant": "full",
+				"limitedStrength": false,
+				"wasmSha256": "11ebe6bdbae23c4e2b8d665f55c4d13500dc110ce83755663ce6533e6bb36b1b",
+				"runtime": "v25.6.1",
+				"threads": 2,
+				"hashMb": 64,
+				"datasetSha256": "28cff6039dbbaae57756d460b15138baede59a58071fce9a83323d3a91c7a7eb",
+				"requestedDepth": 18,
+				"movetimeMs": 5000,
+				"multiPv": 3
+			},
+			"game": 0,
+			"index": 57,
+			"fen": "rq5r/p5pk/5pp1/1BpR3n/5P1R/1P5P/P5PK/3Q4 b - - 0 29",
+			"depth": 18,
+			"complete": true,
+			"elapsedMs": 1992,
+			"lines": [
+				{
+					"multipv": 1,
+					"depth": 18,
+					"score": {
+						"cp": -810
+					},
+					"pvUci": [
+						"b8f4",
+						"h4f4",
+						"h5f4",
+						"d5d7",
+						"h7h6",
+						"d1f3",
+						"g6g5",
+						"g2g3",
+						"f4h5",
+						"b5d3",
+						"h8e8",
+						"f3f5",
+						"e8e5"
+					],
+					"wdl": [0, 0, 1000],
+					"pvSan": []
+				},
+				{
+					"multipv": 2,
+					"depth": 18,
+					"score": {
+						"cp": -1036
+					},
+					"pvUci": [
+						"h7g8",
+						"b5c4",
+						"h8h6",
+						"d5d8",
+						"g8h7",
+						"d8b8",
+						"a8b8",
+						"f4f5",
+						"h5f4",
+						"h4f4",
+						"g6g5",
+						"f4g4",
+						"b8b4",
+						"d1d5",
+						"b4c4",
+						"b3c4",
+						"h6h4",
+						"g4h4",
+						"g5h4"
+					],
+					"wdl": [0, 0, 1000],
+					"pvSan": []
+				},
+				{
+					"multipv": 3,
+					"depth": 18,
+					"score": {
+						"cp": -1397
+					},
+					"pvUci": [
+						"h8d8",
+						"d5h5",
+						"h7g8",
+						"b5c4",
+						"g8f8",
+						"h5d5",
+						"b8c7",
+						"h4h8",
+						"f8e7",
+						"d1e1",
+						"c7e5",
+						"d5e5",
+						"f6e5",
+						"e1e5",
+						"e7d7",
+						"e5g7",
+						"d7c6",
+						"g7g6",
+						"d8d6"
+					],
+					"wdl": [0, 0, 1000],
+					"pvSan": []
+				}
+			]
+		},
+		{
+			"provenance": {
+				"version": "Stockfish 19",
+				"module": "sf_19_relaxed-simd.js",
+				"networks": {
+					"nn-1a298aa575a0.nnue": "1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2"
+				},
+				"variant": "full",
+				"limitedStrength": false,
+				"wasmSha256": "11ebe6bdbae23c4e2b8d665f55c4d13500dc110ce83755663ce6533e6bb36b1b",
+				"runtime": "v25.6.1",
+				"threads": 2,
+				"hashMb": 64,
+				"datasetSha256": "28cff6039dbbaae57756d460b15138baede59a58071fce9a83323d3a91c7a7eb",
+				"requestedDepth": 18,
+				"movetimeMs": 5000,
+				"multiPv": 3
+			},
+			"game": 0,
+			"index": 58,
+			"fen": "r6r/p5pk/5pp1/1qpR3n/5P1R/1P5P/P5PK/3Q4 w - - 0 30",
+			"depth": 18,
+			"complete": true,
+			"elapsedMs": 931,
+			"lines": [
+				{
+					"multipv": 1,
+					"depth": 18,
+					"score": {
+						"cp": 1262
+					},
+					"pvUci": [
+						"d5h5",
+						"g6h5",
+						"d1h5",
+						"h7g8",
+						"h5d5",
+						"g8f8",
+						"h4h8",
+						"f8e7",
+						"h8a8",
+						"b5d7",
+						"d5c5",
+						"e7f7",
+						"f4f5",
+						"d7e8",
+						"c5d5",
+						"f7f8",
+						"a8e8",
+						"f8e8"
+					],
+					"wdl": [1000, 0, 0],
+					"pvSan": []
+				},
+				{
+					"multipv": 2,
+					"depth": 18,
+					"score": {
+						"cp": 1134
+					},
+					"pvUci": [
+						"h4h5",
+						"h7g8",
+						"d5d8",
+						"a8d8",
+						"d1d8",
+						"g8f7",
+						"h5h8",
+						"b5c6",
+						"h8f8",
+						"f7e6",
+						"f8e8",
+						"c6e8",
+						"d8e8",
+						"e6f5",
+						"g2g4",
+						"f5f4",
+						"e8g6",
+						"a7a6"
+					],
+					"wdl": [1000, 0, 0],
+					"pvSan": []
+				},
+				{
+					"multipv": 3,
+					"depth": 18,
+					"score": {
+						"cp": 207
+					},
+					"pvUci": [
+						"f4f5",
+						"b5b8",
+						"h2g1",
+						"b8e8",
+						"f5g6",
+						"h7g6",
+						"d1g4",
+						"g6f7",
+						"d5d7",
+						"f7g8",
+						"h4h5",
+						"h8h7",
+						"h5d5",
+						"g7g5",
+						"d7d6",
+						"e8e3",
+						"g1h2",
+						"h7h4",
+						"g4f5",
+						"e3f4",
+						"f5f4",
+						"h4f4"
+					],
+					"wdl": [996, 4, 0],
+					"pvSan": []
+				}
+			]
+		},
+		{
+			"provenance": {
+				"version": "Stockfish 19",
+				"module": "sf_19_relaxed-simd.js",
+				"networks": {
+					"nn-1a298aa575a0.nnue": "1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2"
+				},
+				"variant": "full",
+				"limitedStrength": false,
+				"wasmSha256": "11ebe6bdbae23c4e2b8d665f55c4d13500dc110ce83755663ce6533e6bb36b1b",
+				"runtime": "v25.6.1",
+				"threads": 2,
+				"hashMb": 64,
+				"datasetSha256": "28cff6039dbbaae57756d460b15138baede59a58071fce9a83323d3a91c7a7eb",
+				"requestedDepth": 18,
+				"movetimeMs": 5000,
+				"multiPv": 3
+			},
+			"game": 0,
+			"index": 59,
+			"fen": "r6r/p5pk/5pp1/1qp4R/5P1R/1P5P/P5PK/3Q4 b - - 0 30",
+			"depth": 18,
+			"complete": true,
+			"elapsedMs": 358,
+			"lines": [
+				{
+					"multipv": 1,
+					"depth": 18,
+					"score": {
+						"cp": -2518
+					},
+					"pvUci": [
+						"g6h5",
+						"d1h5",
+						"h7g8",
+						"h5d5",
+						"g8f8",
+						"h4h8",
+						"f8e7",
+						"h8a8",
+						"b5d7",
+						"d5c5",
+						"e7f7",
+						"f4f5",
+						"d7e8",
+						"c5d5",
+						"f7f8",
+						"a8e8",
+						"f8e8",
+						"d5g8",
+						"e8d7"
+					],
+					"wdl": [0, 0, 1000],
+					"pvSan": []
+				},
+				{
+					"multipv": 2,
+					"depth": 18,
+					"score": {
+						"mate": -6
+					},
+					"pvUci": [
+						"h7g8",
+						"h5h8",
+						"g8f7",
+						"d1d5",
+						"f7e7",
+						"h4h7",
+						"a8h8",
+						"h7g7",
+						"e7e8",
+						"d5a8",
+						"b5b8",
+						"a8b8"
+					],
+					"wdl": [0, 0, 1000],
+					"pvSan": []
+				}
+			]
+		},
+		{
+			"provenance": {
+				"version": "Stockfish 19",
+				"module": "sf_19_relaxed-simd.js",
+				"networks": {
+					"nn-1a298aa575a0.nnue": "1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2"
+				},
+				"variant": "full",
+				"limitedStrength": false,
+				"wasmSha256": "11ebe6bdbae23c4e2b8d665f55c4d13500dc110ce83755663ce6533e6bb36b1b",
+				"runtime": "v25.6.1",
+				"threads": 2,
+				"hashMb": 64,
+				"datasetSha256": "28cff6039dbbaae57756d460b15138baede59a58071fce9a83323d3a91c7a7eb",
+				"requestedDepth": 18,
+				"movetimeMs": 5000,
+				"multiPv": 3
+			},
+			"game": 0,
+			"index": 61,
+			"fen": "r6r/p5pk/5p2/1qp4R/5P2/1P5P/P5PK/3Q4 b - - 0 31",
+			"depth": 18,
+			"complete": true,
+			"elapsedMs": 1758,
+			"lines": [
+				{
+					"multipv": 1,
+					"depth": 18,
+					"score": {
+						"cp": -1372
+					},
+					"pvUci": [
+						"h7g6",
+						"f4f5",
+						"g6f7",
+						"d1d5",
+						"f7e7",
+						"d5e6",
+						"e7d8",
+						"h5h8",
+						"d8c7",
+						"h8a8",
+						"b5b8",
+						"a8b8",
+						"c7b8",
+						"e6g8",
+						"b8c7",
+						"g8g7",
+						"c7d6",
+						"g7f8",
+						"d6e5",
+						"f8c5",
+						"e5f4"
+					],
+					"wdl": [0, 0, 1000],
+					"pvSan": []
+				},
+				{
+					"multipv": 2,
+					"depth": 18,
+					"score": {
+						"cp": -1448
+					},
+					"pvUci": [
+						"h7g8",
+						"d1d5",
+						"g8f8",
+						"h5h8",
+						"f8e7",
+						"h8a8",
+						"b5d7",
+						"d5c5",
+						"e7f7",
+						"f4f5",
+						"d7e8",
+						"c5d5",
+						"f7f8",
+						"a8e8",
+						"f8e8",
+						"d5g8",
+						"e8d7",
+						"g8g7",
+						"d7c6",
+						"g7f6",
+						"c6d5"
+					],
+					"wdl": [0, 0, 1000],
+					"pvSan": []
+				}
+			]
+		},
+		{
+			"provenance": {
+				"version": "Stockfish 19",
+				"module": "sf_19_relaxed-simd.js",
+				"networks": {
+					"nn-1a298aa575a0.nnue": "1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2"
+				},
+				"variant": "full",
+				"limitedStrength": false,
+				"wasmSha256": "11ebe6bdbae23c4e2b8d665f55c4d13500dc110ce83755663ce6533e6bb36b1b",
+				"runtime": "v25.6.1",
+				"threads": 2,
+				"hashMb": 64,
+				"datasetSha256": "28cff6039dbbaae57756d460b15138baede59a58071fce9a83323d3a91c7a7eb",
+				"requestedDepth": 18,
+				"movetimeMs": 5000,
+				"multiPv": 3
+			},
+			"game": 0,
+			"index": 62,
+			"fen": "r6r/p5p1/5pk1/1qp4R/5P2/1P5P/P5PK/3Q4 w - - 1 32",
+			"depth": 18,
+			"complete": true,
+			"elapsedMs": 3390,
+			"lines": [
+				{
+					"multipv": 1,
+					"depth": 18,
+					"score": {
+						"cp": 2244
+					},
+					"pvUci": [
+						"f4f5",
+						"g6f7",
+						"d1d5",
+						"f7e7",
+						"d5e6",
+						"e7d8",
+						"h5h8",
+						"d8c7",
+						"h8a8",
+						"g7g5",
+						"e6e7",
+						"c7c6",
+						"a8c8",
+						"c6b6",
+						"e7d6",
+						"b6a5",
+						"c8c5",
+						"b5c5",
+						"d6c5",
+						"a5a6",
+						"c5c6",
+						"a6a5"
+					],
+					"wdl": [1000, 0, 0],
+					"pvSan": []
+				},
+				{
+					"multipv": 2,
+					"depth": 18,
+					"score": {
+						"cp": -444
+					},
+					"pvUci": [
+						"h5d5",
+						"h8h6",
+						"d1c2",
+						"g6f7",
+						"d5c5",
+						"b5e8",
+						"c2c4",
+						"f7f8",
+						"c5c7",
+						"a8d8",
+						"c7b7",
+						"d8d7",
+						"b7b5",
+						"h6h5",
+						"c4b4",
+						"f8g8",
+						"b4c4",
+						"g8h7"
+					],
+					"wdl": [0, 0, 1000],
+					"pvSan": []
+				},
+				{
+					"multipv": 3,
+					"depth": 18,
+					"score": {
+						"cp": -496
+					},
+					"pvUci": [
+						"a2a4",
+						"b5c6",
+						"h5d5",
+						"g6f7",
+						"d5d7",
+						"f7g8",
+						"a4a5",
+						"h8h6",
+						"d1g4",
+						"h6h7",
+						"g4f5"
+					],
+					"wdl": [0, 0, 1000],
+					"pvSan": []
+				}
+			]
+		},
+		{
+			"provenance": {
+				"version": "Stockfish 19",
+				"module": "sf_19_relaxed-simd.js",
+				"networks": {
+					"nn-1a298aa575a0.nnue": "1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2"
+				},
+				"variant": "full",
+				"limitedStrength": false,
+				"wasmSha256": "11ebe6bdbae23c4e2b8d665f55c4d13500dc110ce83755663ce6533e6bb36b1b",
+				"runtime": "v25.6.1",
+				"threads": 2,
+				"hashMb": 64,
+				"datasetSha256": "28cff6039dbbaae57756d460b15138baede59a58071fce9a83323d3a91c7a7eb",
+				"requestedDepth": 18,
+				"movetimeMs": 5000,
+				"multiPv": 3
+			},
+			"game": 0,
+			"index": 63,
+			"fen": "r6r/p5p1/5pk1/1qp2P1R/8/1P5P/P5PK/3Q4 b - - 0 32",
+			"depth": 18,
+			"complete": true,
+			"elapsedMs": 16,
+			"lines": [
+				{
+					"multipv": 1,
+					"depth": 18,
+					"score": {
+						"cp": -1357
+					},
+					"pvUci": [
+						"g6f7",
+						"d1d5",
+						"f7e7",
+						"d5e6",
+						"e7d8",
+						"h5h8",
+						"d8c7",
+						"h8a8",
+						"c5c4",
+						"e6e7",
+						"c7c6",
+						"a8c8",
+						"c6b6",
+						"c8b8",
+						"b6a6",
+						"e7e6",
+						"a6a5",
+						"b8b5",
+						"a5b5"
+					],
+					"wdl": [0, 0, 1000],
+					"pvSan": []
+				}
+			]
+		},
+		{
+			"provenance": {
+				"version": "Stockfish 19",
+				"module": "sf_19_relaxed-simd.js",
+				"networks": {
+					"nn-1a298aa575a0.nnue": "1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2"
+				},
+				"variant": "full",
+				"limitedStrength": false,
+				"wasmSha256": "11ebe6bdbae23c4e2b8d665f55c4d13500dc110ce83755663ce6533e6bb36b1b",
+				"runtime": "v25.6.1",
+				"threads": 2,
+				"hashMb": 64,
+				"datasetSha256": "28cff6039dbbaae57756d460b15138baede59a58071fce9a83323d3a91c7a7eb",
+				"requestedDepth": 18,
+				"movetimeMs": 5000,
+				"multiPv": 3
+			},
+			"game": 0,
+			"index": 64,
+			"fen": "r6r/p4kp1/5p2/1qp2P1R/8/1P5P/P5PK/3Q4 w - - 1 33",
+			"depth": 18,
+			"complete": true,
+			"elapsedMs": 3343,
+			"lines": [
+				{
+					"multipv": 1,
+					"depth": 18,
+					"score": {
+						"cp": 1479
+					},
+					"pvUci": [
+						"d1d5",
+						"f7e7",
+						"d5e6",
+						"e7d8",
+						"h5h8",
+						"d8c7",
+						"h8a8",
+						"g7g5",
+						"e6e7",
+						"c7c6",
+						"a8c8",
+						"c6b6",
+						"e7d6",
+						"b6a5",
+						"c8c5",
+						"b5c5",
+						"d6c5",
+						"a5a6"
+					],
+					"wdl": [1000, 0, 0],
+					"pvSan": []
+				},
+				{
+					"multipv": 2,
+					"depth": 18,
+					"score": {
+						"cp": -732
+					},
+					"pvUci": [
+						"h5h8",
+						"a8h8",
+						"d1d5",
+						"f7e7",
+						"d5e6",
+						"e7d8",
+						"e6d6",
+						"d8c8",
+						"d6e6",
+						"b5d7",
+						"e6d7",
+						"c8d7",
+						"h2g3",
+						"d7d8",
+						"g3f3"
+					],
+					"wdl": [0, 0, 1000],
+					"pvSan": []
+				},
+				{
+					"multipv": 3,
+					"depth": 18,
+					"score": {
+						"cp": -759
+					},
+					"pvUci": ["d1d6", "b5b8", "d6b8", "a8b8", "h5h8", "b8h8", "h2g3", "h8d8", "g3f3", "d8d2"],
+					"wdl": [0, 0, 1000],
+					"pvSan": []
+				}
+			]
+		},
+		{
+			"provenance": {
+				"version": "Stockfish 19",
+				"module": "sf_19_relaxed-simd.js",
+				"networks": {
+					"nn-1a298aa575a0.nnue": "1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2"
+				},
+				"variant": "full",
+				"limitedStrength": false,
+				"wasmSha256": "11ebe6bdbae23c4e2b8d665f55c4d13500dc110ce83755663ce6533e6bb36b1b",
+				"runtime": "v25.6.1",
+				"threads": 2,
+				"hashMb": 64,
+				"datasetSha256": "28cff6039dbbaae57756d460b15138baede59a58071fce9a83323d3a91c7a7eb",
+				"requestedDepth": 18,
+				"movetimeMs": 5000,
+				"multiPv": 3
+			},
+			"game": 0,
+			"index": 65,
+			"fen": "r6r/p4kp1/5p2/1qpQ1P1R/8/1P5P/P5PK/8 b - - 2 33",
+			"depth": 18,
+			"complete": true,
+			"elapsedMs": 9,
+			"lines": [
+				{
+					"multipv": 1,
+					"depth": 18,
+					"score": {
+						"cp": -2241
+					},
+					"pvUci": [
+						"f7e7",
+						"d5e6",
+						"e7d8",
+						"h5h8",
+						"d8c7",
+						"h8a8",
+						"g7g5",
+						"e6e7",
+						"c7c6",
+						"a8c8",
+						"c6b6",
+						"e7d6",
+						"b6a5",
+						"c8c5",
+						"b5c5",
+						"d6c5",
+						"a5a6",
+						"c5c6",
+						"a6a5"
+					],
+					"wdl": [0, 0, 1000],
+					"pvSan": []
+				},
+				{
+					"multipv": 2,
+					"depth": 18,
+					"score": {
+						"mate": -2
+					},
+					"pvUci": ["f7e8", "h5h8", "e8e7", "d5e6"],
+					"wdl": [0, 0, 1000],
+					"pvSan": []
+				},
+				{
+					"multipv": 3,
+					"depth": 18,
+					"score": {
+						"mate": -2
+					},
+					"pvUci": ["f7f8", "h5h8", "f8e7", "d5e6"],
+					"wdl": [0, 0, 1000],
+					"pvSan": []
+				}
+			]
+		},
+		{
+			"provenance": {
+				"version": "Stockfish 19",
+				"module": "sf_19_relaxed-simd.js",
+				"networks": {
+					"nn-1a298aa575a0.nnue": "1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2"
+				},
+				"variant": "full",
+				"limitedStrength": false,
+				"wasmSha256": "11ebe6bdbae23c4e2b8d665f55c4d13500dc110ce83755663ce6533e6bb36b1b",
+				"runtime": "v25.6.1",
+				"threads": 2,
+				"hashMb": 64,
+				"datasetSha256": "28cff6039dbbaae57756d460b15138baede59a58071fce9a83323d3a91c7a7eb",
+				"requestedDepth": 18,
+				"movetimeMs": 5000,
+				"multiPv": 3
+			},
+			"game": 0,
+			"index": 66,
+			"fen": "r6r/p3k1p1/5p2/1qpQ1P1R/8/1P5P/P5PK/8 w - - 3 34",
+			"depth": 18,
+			"complete": true,
+			"elapsedMs": 3961,
+			"lines": [
+				{
+					"multipv": 1,
+					"depth": 18,
+					"score": {
+						"cp": 1227
+					},
+					"pvUci": [
+						"d5e6",
+						"e7d8",
+						"h5h8",
+						"d8c7",
+						"h8a8",
+						"g7g5",
+						"f5g6",
+						"b5b7",
+						"e6e7",
+						"c7b6",
+						"e7f6",
+						"b6a5",
+						"f6d8",
+						"a5a6"
+					],
+					"wdl": [1000, 0, 0],
+					"pvSan": []
+				},
+				{
+					"multipv": 2,
+					"depth": 18,
+					"score": {
+						"cp": -619
+					},
+					"pvUci": [
+						"d5e4",
+						"e7d6",
+						"e4e6",
+						"d6c7",
+						"e6e7",
+						"c7b6",
+						"h5h8",
+						"a8h8",
+						"e7g7",
+						"h8e8",
+						"g7f6",
+						"b5c6",
+						"f6c6",
+						"b6c6",
+						"h2g3",
+						"e8g8",
+						"g3f2",
+						"c6d7"
+					],
+					"wdl": [0, 0, 1000],
+					"pvSan": []
+				},
+				{
+					"multipv": 3,
+					"depth": 18,
+					"score": {
+						"cp": -742
+					},
+					"pvUci": [
+						"h5h8",
+						"a8h8",
+						"d5e4",
+						"e7d7",
+						"e4e6",
+						"d7d8",
+						"e6e4",
+						"h8e8",
+						"e4a8",
+						"d8e7",
+						"a8a7",
+						"e7f8"
+					],
+					"wdl": [0, 0, 1000],
+					"pvSan": []
+				}
+			]
+		},
+		{
+			"provenance": {
+				"version": "Stockfish 19",
+				"module": "sf_19_relaxed-simd.js",
+				"networks": {
+					"nn-1a298aa575a0.nnue": "1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2"
+				},
+				"variant": "full",
+				"limitedStrength": false,
+				"wasmSha256": "11ebe6bdbae23c4e2b8d665f55c4d13500dc110ce83755663ce6533e6bb36b1b",
+				"runtime": "v25.6.1",
+				"threads": 2,
+				"hashMb": 64,
+				"datasetSha256": "28cff6039dbbaae57756d460b15138baede59a58071fce9a83323d3a91c7a7eb",
+				"requestedDepth": 18,
+				"movetimeMs": 5000,
+				"multiPv": 3
+			},
+			"game": 0,
+			"index": 67,
+			"fen": "r6r/p3k1p1/4Qp2/1qp2P1R/8/1P5P/P5PK/8 b - - 4 34",
+			"depth": 18,
+			"complete": true,
+			"elapsedMs": 10,
+			"lines": [
+				{
+					"multipv": 1,
+					"depth": 18,
+					"score": {
+						"cp": -1910
+					},
+					"pvUci": [
+						"e7d8",
+						"h5h8",
+						"d8c7",
+						"h8a8",
+						"g7g5",
+						"e6e7",
+						"c7c6",
+						"a8c8",
+						"c6b6",
+						"e7d6",
+						"b6a5",
+						"c8c5",
+						"a7a6",
+						"a2a4",
+						"g5g4",
+						"a4b5",
+						"a6b5",
+						"h3g4"
+					],
+					"wdl": [0, 0, 1000],
+					"pvSan": []
+				},
+				{
+					"multipv": 2,
+					"depth": 18,
+					"score": {
+						"mate": -1
+					},
+					"pvUci": ["e7f8", "h5h8"],
+					"wdl": [0, 0, 1000],
+					"pvSan": []
+				}
+			]
+		}
+	],
+	"negativeAggregate": {
+		"explicitNonBrilliant": 10,
+		"falseBrilliantCalls": 0,
+		"games": 5,
+		"labelCounts": {
+			"Blunder": 2,
+			"Mistake": 4,
+			"GreatFind": 4
+		},
+		"missingReviewedOrdinaryCategories": ["Best", "Excellent", "Good", "Inaccuracy"],
+		"constructedControlsSeparate": {
+			"count": 12,
+			"falseBrilliantCalls": 0
+		},
+		"note": "Not random or representative, not population precision. Unlabelled neighbors are excluded."
+	},
+	"synchronousClassifierProfile": {
+		"runtime": "1.3.11",
+		"description": "Offline synchronous classifier elapsed wall time under Bun: 100 pinned-positive inputs x5 after one warmup pass. Book=false/recentSacrifice=false; excludes engine collection and input preparation. Not Chrome, not CPU process-time, not a recall rescore; concurrent machine load was uncontrolled.",
+		"calls": 500,
+		"p50Ms": 21.211750000000393,
+		"p95Ms": 124.7302499999987,
+		"maxMs": 363.28491699999995,
+		"slowest": [
+			{
+				"index": 48,
+				"ms": 363.28491699999995
+			},
+			{
+				"index": 48,
+				"ms": 352.4158329999991
+			},
+			{
+				"index": 48,
+				"ms": 325.94574999999895
+			},
+			{
+				"index": 48,
+				"ms": 314.8028750000012
+			},
+			{
+				"index": 48,
+				"ms": 296.34270800000013
+			}
+		],
+		"runtimeDiagnostic": "Process returned exit code 0 after saving results, then printed a Bun tsconfig directory mismatch diagnostic. No classification error was reported."
+	},
+	"reviewedSourceHashes": {
+		"src/core/engine/brilliant.ts": "9ddf567d27a15101e6c4d080777bd4d1747208b59cfe546a77c77ac4bc81abaf",
+		"src/core/engine/move-quality.ts": "d0aaec06bde7201a94e5f6d18356900ed2f23a2cebd10f8e9db581b18d111f72",
+		"src/core/constants/review.ts": "dfa049a01e661bdac8e5839593f85ef73a781e233fb994d0c0158d7847aea070",
+		"src/service/review-engine.ts": "e425a1a233f24c74887a40250d7adfc3f202ef99a0efb6b10ee962f585817e32",
+		"src/service/game-session/board-effects.ts": "f58eecb6f9cc60a7de4b5a9d5db45ce4c1d77a24f70d4badb61e8d47d1b0dacf",
+		"src/service/game-session/recommendation.ts": "3e7751ecfee6cb219545e7c8e2996560403660b2efb0e508ab97de6ab850e066",
+		"src/service/move-executor/index.ts": "c43f16ea24f1b71cfadf4096b190c379b839abed06f9a6edb3d2e033d06881ca"
+	},
+	"artifactHashes": {
+		"/tmp/sliced-additional-reviewed.json": "28cff6039dbbaae57756d460b15138baede59a58071fce9a83323d3a91c7a7eb",
+		"/tmp/sliced-sf19-additional-reviewed.jsonl": "88b5e644e46b6a87db390974a9eeea4112f439d2dbb970c70ce07c43009ec65f"
+	},
+	"constraints": "No Morph calls, native Chrome, existing browser tabs, or live extension testing. Follow-up changes only QA and this evidence report; integration advice is not implemented."
+}

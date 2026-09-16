@@ -1,5 +1,4 @@
 import { afterEach, expect, it, spyOn } from "bun:test";
-import { MSG } from "@core/constants/messages";
 import { SETTING_GAIN } from "@core/constants/setting-gain";
 import type { ExecutionPlan } from "@core/motor/types";
 import { HandController } from "@service/move-executor/hand-controller";
@@ -29,7 +28,7 @@ it("live timing and mouse controls update the next move while the current gestur
 	h = await createGameHarness({
 		settings: {
 			automation: { autoMove: true },
-			timing: { profile: "custom", speedScale: 1 },
+			timing: { baseSpeed: 1 },
 			execution: { motorSpeed: 1, previewSelectScale: 0, verifyMoves: false },
 		},
 		head: {
@@ -52,7 +51,9 @@ it("live timing and mouse controls update the next move while the current gestur
 
 	await h.patch({
 		strength: { persona: "blitz" },
-		timing: { profile: "manual", speedScale: 0.3, premoveTendency: 0.9 },
+		// 2026-09-15: the same "much faster from here" edit, written the way the setting now reads —
+		// `speedScale: 0.3` (0.3× the duration) became `baseSpeed: 3.5` (3.5× the speed).
+		timing: { baseSpeed: 3.5, premoveTendency: 0.9 },
 		execution: { motorSpeed: 2, previewSelectScale: 2, verifyMoves: true },
 	});
 	expect(h.executor()).toBe(executor);
@@ -77,19 +78,21 @@ it("live timing and mouse controls update the next move while the current gestur
 	).toBe(true);
 	const next = h.session().recommendation()!;
 	expect(next.plan.thinkMs).toBeLessThan(currentPlan.thinkMs * 0.6);
-	// Manual mode is also live: the newly computed plan waits for the explicit shortcut.
+	// 2026-09-15: the live patch above used to switch the timing preset to `manual`, so this move
+	// sat on display until an explicit Space (`MSG.PANEL_KEYBIND` → `playMove`) released it, and
+	// that shortcut is what drove the assertions below. The presets were removed at the owner's
+	// request, so the armed hand plays the move on its own plan instead — the point of this test is
+	// unchanged: the *next* move's hand carries the settings edited mid-game. (The play-now
+	// shortcut itself is covered by `fast-forward.test.ts`.)
 	await h.advance(next.plan.thinkMs + 1000);
-	expect(plans).toHaveLength(1);
-	const request = h.drive(() =>
-		h.router._dispatch({ type: MSG.PANEL_KEYBIND, tabId: h.tabId, action: "playMove" }, {})
-	);
 	expect(await h.until(() => plans.length === 2, 2000)).toBe(true);
 	expect(plans[1]).toMatchObject({
-		motorSpeed: 2 * SETTING_GAIN.motorSpeed,
+		// Since 2026-09-15 base speed reaches the hand too, so the live edit above (3.5×) is in
+		// this number as well as in the plan's think: the multiplier is on the whole move.
+		motorSpeed: 2 * SETTING_GAIN.motorSpeed * 3.5,
 		// The persona is forced to balanced on every read (2026-09-12); the write is ignored.
 		exploration: { persona: "balanced", previewScale: 2 * SETTING_GAIN.previewSelectScale },
 	});
 	expect(await h.until(() => h.site.board.chess.history().length === 3, 3000)).toBe(true);
 	await h.advance(1000);
-	expect(await request).toMatchObject({ success: true });
 });

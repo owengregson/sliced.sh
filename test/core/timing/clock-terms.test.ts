@@ -1,10 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import { DEFAULT_SETTINGS } from "@core/constants/defaults";
 import { createRng } from "@core/rng";
 import { TimingModel } from "@core/timing/timing-model";
 import type { GameMeta, TimingContext } from "@core/timing/types";
 import { V1ParametricHead } from "@core/timing/v1-head";
-import { ctx, line } from "./helpers";
+import { ctx, line, MODEL_TIMING } from "./helpers";
 
 const PAWN_ON_KNIGHT = "r1bqkbnr/ppp2ppp/2np4/3Pp3/4P3/5N2/PPP2PPP/RNBQKB1R b KQkq - 0 4";
 
@@ -20,7 +19,7 @@ const meta: GameMeta = {
 function plans(over: Partial<TimingContext>, n = 50): number[] {
 	const out: number[] = [];
 	for (let i = 0; i < n; i++) {
-		const m = new TimingModel(new V1ParametricHead(), DEFAULT_SETTINGS.timing, createRng(`t-${i}`));
+		const m = new TimingModel(new V1ParametricHead(), MODEL_TIMING, createRng(`t-${i}`));
 		m.startGame({ ...meta, gameId: `t-${i}` });
 		out.push(m.planMove(ctx(over)).thinkMs);
 	}

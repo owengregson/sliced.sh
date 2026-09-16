@@ -1,14 +1,13 @@
 // test/core/timing/timing-model.test.ts — Step 4 + §8.4b V2.1 TimingModel properties.
 import { describe, expect, it } from "bun:test";
-import { DEFAULT_SETTINGS } from "@core/constants/defaults";
 import { createRng } from "@core/rng";
 import { TIMING_CONSTANTS } from "@core/timing/constants";
 import { computeFeatures } from "@core/timing/features";
 import { windowTotalMs } from "@core/timing/move-window";
-import { freshState, isBotPace, TimingModel } from "@core/timing/timing-model";
+import { freshState, isBotPace, knobsFromSettings, TimingModel } from "@core/timing/timing-model";
 import type { GameMeta, TimingLogEntry } from "@core/timing/types";
 import { mirrorTerm, V1ParametricHead } from "@core/timing/v1-head";
-import { AFTER_EXD5, ctx, line, pearson } from "./helpers";
+import { AFTER_EXD5, ctx, line, MODEL_TIMING, pearson } from "./helpers";
 
 const meta: GameMeta = {
 	targetElo: 1650,
@@ -19,14 +18,11 @@ const meta: GameMeta = {
 	gameId: "game-A",
 };
 
-function model(over: Partial<typeof DEFAULT_SETTINGS.timing> = {}, seed: string | number = "rng") {
+function model(over: Partial<typeof MODEL_TIMING> = {}, seed: string | number = "rng") {
 	const entries: TimingLogEntry[] = [];
-	const m = new TimingModel(
-		new V1ParametricHead(),
-		{ ...DEFAULT_SETTINGS.timing, ...over },
-		createRng(seed),
-		{ onEntry: (e) => entries.push(e) }
-	);
+	const m = new TimingModel(new V1ParametricHead(), { ...MODEL_TIMING, ...over }, createRng(seed), {
+		onEntry: (e) => entries.push(e),
+	});
 	return { m, entries };
 }
 
@@ -110,9 +106,12 @@ describe("TimingModel.planMove", () => {
 		expect(entries[0]?.persona).toBe("balanced");
 		expect(entries[0]?.gameId).toBe("game-A");
 	});
-	it("speedScale multiplies the sampled think time when no clock cap binds", () => {
-		const a = model({ speedScale: 1 }, 7);
-		const b = model({ speedScale: 2 }, 7);
+	it("moveTimeScale multiplies the sampled think time when no clock cap binds", () => {
+		// Renamed 2026-09-15: the model's knob is a duration factor and is now named for that. The
+		// user-facing knob it comes from (`timing.baseSpeed`) is its reciprocal — `presets.test.ts`
+		// pins the inversion, this pins what the model does with the result.
+		const a = model({ moveTimeScale: 1 }, 7);
+		const b = model({ moveTimeScale: 2 }, 7);
 		a.m.startGame(meta);
 		b.m.startGame(meta);
 		let compared = 0;
@@ -347,7 +346,7 @@ describe("TimingModel.planMove", () => {
 					return { tSec: 2, mode: "normal", why: [] };
 				},
 			},
-			DEFAULT_SETTINGS.timing,
+			MODEL_TIMING,
 			createRng("single-draw")
 		);
 		model.startGame(meta);
@@ -528,7 +527,11 @@ describe("game independence (§8.4b item 4)", () => {
 		const fresh = model({}, 4);
 		fresh.m.startGame({ ...meta, gameId: "game-B" });
 		expect(played.m.state).toEqual(fresh.m.state);
-		expect(played.m.state).toEqual(freshState("game-B"));
+		// The knobs survive `startGame` (they are settings, not per-game state), so the fresh state
+		// this is compared against carries them. They stopped being the bare defaults on 2026-09-15,
+		// when these fixtures started going through `timingSettingsFor` — the gains on long-think
+		// frequency and premove tendency are now in them, as they are in a real session.
+		expect(played.m.state).toEqual(freshState("game-B", knobsFromSettings(MODEL_TIMING)));
 		expect(played.m.persona).toEqual(fresh.m.persona);
 	});
 	it("residual sequences of games with different seeds are uncorrelated (|r| < 0.05 over 1 000 pairs)", () => {

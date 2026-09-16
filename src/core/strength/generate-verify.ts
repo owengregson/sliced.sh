@@ -1,31 +1,15 @@
 /**
- * Generate-and-verify move selection through `MAIA.eloMax` (H3 + H4 of
- * `docs/research/human-move-selection-ideas-2026-09-13.md`, 2026-09-13).
+ * Recognition-preserving Maia verification (2026-09-16).
  *
- * The plain Maia draw picks one move from a smooth distribution. A human (HvS §2.3, §5.2, §5.3,
- * §10.1 steps 3–7) does something else: recognition proposes a *few* candidates, calculation
- * checks them at the depth the rating can manage, and the best-looking one is played. Three
- * stages, each reusing a number the selector already has:
+ * Through the ordinary range (effective Elo <= 2800), recognition proposes twice independently
+ * from Maia; a logistic comparison uses only available shallow evidence. Equal or missing
+ * evidence leaves the population distribution unchanged. The exact distribution is available
+ * for fidelity accounting without Monte Carlo in the service worker.
  *
- * 1. **Generate** — draw `k(E)` distinct candidates *without replacement* from Maia's
- *    distribution over the survivors of the rails (no re-weighting, `T = 1`: the models run as
- *    advertised). With probability `pIntuition(E)` the move is played on recognition alone
- *    (`k = 1`, no verification).
- * 2. **Verify** — score each candidate at the *human* depth: the same search's complete MultiPV
- *    frame at `humanDepth(E)` (`SelectionContext.shallowLines`). A candidate the shallow frame did
- *    not rank falls back to its deep referee score and is marked unverified.
- * 3. **Compare** — play the argmax of shallow cp + `N(0, σ_verify(E))`: the §7.2 step 3 perception
- *    noise (`sigmaFor`) floored by `GENERATE_VERIFY.verifySigmaFloorCp`, because a score read at
- *    the human depth carries the shallow frame's own error on top of the misperception `sigmaFor`
- *    was calibrated for (HvS §5.4).
- *
- * What falls out is the report's error taxonomy rather than a softmax: candidate omission (the
- * best move was never among the k — Maia's own rate), truncation (the pick looks best at the
- * human depth and loses to what the deep referee sees) and evaluation error (σ on the shallow
- * scores). The rails, the mate guard and the timing model are untouched (C7).
- *
- * Pure apart from the seeded `rng`. `docs/qa/generate-verify-2026-09-13.md` records the design,
- * the tables and the fidelity budget.
+ * The existing distinct-candidate / Gaussian comparison is retained in the upper verification
+ * band and as an explicit offline baseline. It must not be described as running Maia unchanged:
+ * choosing a noisy argmax from distinct proposals can amplify unlikely moves even at equal cp.
+ * See docs/research/maia-recognition-verification-2026-09-16.md for evidence and limitations.
  */
 
 import { GENERATE_VERIFY as GV } from "@core/constants/generate-verify";
@@ -61,11 +45,11 @@ export interface GvInput {
 export interface GvConsidered {
 	uci: string;
 	p: number;
-	/** The score compared before noise: shallow cp when verified, the deep cp otherwise. */
+	/** Shallow score; 0 when unavailable in recognition mode. Upper mode may use deep cp. */
 	cp: number;
-	/** `cp` plus the perception noise (equal to `cp` on the intuition path). */
+	/** Compared score. Recognition mode keeps cp; upper mode adds Gaussian perception noise. */
 	score: number;
-	/** True when the shallow frame ranked the move; false when the deep score stood in. */
+	/** True when finite shallow evidence exists; false is unverified, never synthetic evidence. */
 	verified: boolean;
 }
 
@@ -156,7 +140,7 @@ function drawDistinct(pool: readonly GvCandidate[], k: number, rng: Rng): GvCand
  * intuition coin, then (unless intuition) the `k` jitter, the `k` weighted draws, and one normal
  * per candidate.
  */
-export function generateAndVerify(input: GvInput): GvResult | null {
+export function distinctCandidateVerification(input: GvInput): GvResult | null {
 	if (!(input.enabled ?? GV.enabled)) return null;
 	const pool = input.survivors.filter((c) => c.p > 0);
 	if (pool.length < GV.candidates.min) return null;
@@ -197,8 +181,103 @@ export function generateAndVerify(input: GvInput): GvResult | null {
 	return { uci: best.uci, k, intuition, verifyDepth, considered, rationale };
 }
 
+/** Positive finite policy mass; duplicate roots do not get extra recognition tickets. */
+function recognitionPool(survivors: readonly GvCandidate[]): GvCandidate[] {
+	const byUci = new Map<string, GvCandidate>();
+	for (const c of survivors) {
+		if (!Number.isFinite(c.p) || c.p <= 0) continue;
+		const previous = byUci.get(c.uci);
+		if (previous === undefined || c.p > previous.p) byUci.set(c.uci, c);
+	}
+	return [...byUci.values()];
+}
+
+/** Missing shallow scores supply no comparison evidence, regardless of the deep scores. */
+function comparisonProbability(a: GvCandidate, b: GvCandidate, E: number): number {
+	if (
+		a.shallowCp === undefined ||
+		b.shallowCp === undefined ||
+		!Number.isFinite(a.shallowCp) ||
+		!Number.isFinite(b.shallowCp)
+	)
+		return 0.5;
+	return 1 / (1 + Math.exp((b.shallowCp - a.shallowCp) / verifySigmaFor(E)));
+}
+
 /**
- * The empirical draw distribution `q(m)` over `samples` runs — the number the fidelity meters
+ * Exact law of two independent recognition proposals and a noisy shallow comparison, mixed
+ * with the existing intuition share. Equal or missing evidence preserves Maia exactly.
+ * Familiarity may propose the same move twice; unlike a distinct-candidate tournament this
+ * does not force rare moves into consideration. q/p stays in [pIntuition, 2 - pIntuition].
+ */
+export function recognitionDistribution(
+	input: Pick<GvInput, "survivors" | "E">
+): Map<string, number> {
+	const pool = recognitionPool(input.survivors);
+	const total = pool.reduce((sum, c) => sum + c.p, 0);
+	const q = new Map(pool.map((c) => [c.uci, c.p / total]));
+	const compareShare = 1 - intuitionProb(input.E);
+	for (let i = 0; i < pool.length; i++) {
+		const a = pool[i];
+		if (a === undefined) continue;
+		for (let j = i + 1; j < pool.length; j++) {
+			const b = pool[j];
+			if (b === undefined) continue;
+			const transfer =
+				compareShare * 2 * (a.p / total) * (b.p / total) * (comparisonProbability(a, b, input.E) - 0.5);
+			q.set(a.uci, (q.get(a.uci) ?? 0) + transfer);
+			q.set(b.uci, (q.get(b.uci) ?? 0) - transfer);
+		}
+	}
+	return q;
+}
+
+/** Two proposals, sampled with replacement; repeated recognition costs no extra comparison. */
+function recognitionVerification(input: GvInput): GvResult | null {
+	const pool = recognitionPool(input.survivors);
+	if (pool.length < GV.candidates.min) return null;
+	const { E, rng } = input;
+	const intuition = rng.chance(intuitionProb(E));
+	const first = rng.weighted(
+		pool,
+		pool.map((c) => c.p)
+	);
+	const second = intuition
+		? first
+		: rng.weighted(
+				pool,
+				pool.map((c) => c.p)
+			);
+	const compared = !intuition && first.uci !== second.uci;
+	const bothScored = Number.isFinite(first.shallowCp) && Number.isFinite(second.shallowCp);
+	const pick =
+		compared && bothScored && rng.chance(comparisonProbability(second, first, E)) ? second : first;
+	const considered = (compared ? [first, second] : [first]).map((c) => ({
+		uci: c.uci,
+		p: c.p,
+		cp: Number.isFinite(c.shallowCp) ? (c.shallowCp ?? 0) : 0,
+		score: Number.isFinite(c.shallowCp) ? (c.shallowCp ?? 0) : 0,
+		verified: Number.isFinite(c.shallowCp),
+	}));
+	const verifyDepth = input.shallowDepth ?? 0;
+	const rationale = [
+		intuition
+			? `generate-verify: intuition — played on recognition alone (p=${fmt(intuitionProb(E), 2)} at E, ${pool.length} survivors)`
+			: `generate-verify: recognition proposals ${considered.length} of ${pool.length}, ${compared && bothScored ? `compared at depth ${verifyDepth}` : "recognition retained; no comparable new evidence"}, σ=${fmt(verifySigmaFor(E), 1)}`,
+	];
+	return { uci: pick.uci, k: considered.length, intuition, verifyDepth, considered, rationale };
+}
+
+/** The upper-band path is preserved; ordinary verification keeps recognition mass. */
+export function generateAndVerify(input: GvInput): GvResult | null {
+	if (!(input.enabled ?? GV.enabled)) return null;
+	return upperVerificationProgress(input.E) > 0
+		? distinctCandidateVerification(input)
+		: recognitionVerification(input);
+}
+
+/**
+ * The exact ordinary-range distribution, or upper-range empirical law over `samples` runs, that the meters
  * and the harness (§8.2) read. When the path would return `null` the plain draw's distribution
  * (Maia's mass renormalised over the survivors) is returned instead, since that is what would
  * be played. Sums to 1.
@@ -208,6 +287,8 @@ export function drawDistribution(
 	samples: number,
 	rng: Rng
 ): Map<string, number> {
+	if ((input.enabled ?? GV.enabled) && upperVerificationProgress(input.E) === 0)
+		return recognitionDistribution(input);
 	const q = new Map<string, number>();
 	const add = (uci: string, mass: number) => q.set(uci, (q.get(uci) ?? 0) + mass);
 	let landed = 0;

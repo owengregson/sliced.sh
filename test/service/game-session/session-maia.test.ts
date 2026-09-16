@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { applyMoves, legalMoves } from "@core/chess/san";
 import { PREMOVE } from "@core/constants/books";
 import { CHESS_START_FEN } from "@core/constants/chess";
+import { MAIA } from "@core/constants/maia";
 import { automaticDepthForElo } from "@core/engine/depth-policy";
 import type { AnalysisRequest, AnalysisUpdate } from "@core/engine/types";
 import type { PolicyInferenceInputs, PolicyPort, PolicyResult } from "@core/policy/types";
@@ -307,19 +308,23 @@ describe("H8 — the premove gate when the answer lands after the arm", () => {
 });
 
 describe("active policy eligibility and stale work", () => {
-	it("pre-infers and warms prior mode, then stops Maia after a matched target crosses 3200", async () => {
+	// Owner, 2026-09-15: one division at the Maia cutoff. This started at 3100 in the removed prior
+	// band and crossed its 3200 ceiling; it now starts at the cutoff itself and crosses that.
+	it("pre-infers and warms Maia at the cutoff, then stops Maia after a matched target crosses it", async () => {
 		const policy = fakePolicy({ hold: true });
 		const warmTargets: number[] = [];
 		h = await createGameHarness({
 			myColor: "b",
 			policy: policy.port,
 			warmPolicy: (target) => warmTargets.push(target),
-			settings: { strength: { targetElo: 3100, matchOpponentRating: true, personaEloOffset: 0 } },
+			settings: {
+				strength: { targetElo: MAIA.eloMax, matchOpponentRating: true, personaEloOffset: 0 },
+			},
 			script: { prefer: new Map([[positionKey(CHESS_START_FEN), ["e2e4"]]]) },
 		});
 		await h.arrive();
 		expect(await h.until(() => policy.calls.length > 0, 5000)).toBe(true);
-		expect(warmTargets).toEqual([3100]);
+		expect(warmTargets).toEqual([MAIA.eloMax]);
 		expect(policy.calls[0]?.selfElo).toBeLessThanOrEqual(3000);
 		await h.drive(() => h.site.opponent({ isBot: false, name: "higher", ratingEstimate: 3300 }));
 		expect(policy.signals[0]?.aborted).toBe(true);
@@ -327,7 +332,7 @@ describe("active policy eligibility and stale work", () => {
 		policy.release();
 		await h.advance(1000);
 		expect(policy.calls).toHaveLength(count);
-		expect(warmTargets).toEqual([3100, 3300]);
+		expect(warmTargets).toEqual([MAIA.eloMax, 3300]);
 		const state = h.session() as unknown as {
 			predictedPolicy: unknown;
 			gameMaia: { size: string | null };
@@ -428,12 +433,11 @@ describe("prepared holds preserve routing boundaries", () => {
 			);
 			expect(chosen).not.toBeNull();
 			const rationale = chosen?.rationale.join(" ") ?? "";
-			if (targetElo === 3000) {
+			// One division since 2026-09-15: 3001 was the removed prior band ("maia prior:"); it now
+			// holds the plain engine move like every target above the cutoff.
+			if (targetElo <= MAIA.eloMax) {
 				expect(chosen?.source).toBe("maia");
 				expect(rationale).not.toContain("maia prior:");
-			} else if (targetElo === 3001) {
-				expect(chosen?.source).toBe("maia");
-				expect(rationale).toContain("maia prior:");
 			} else {
 				expect(chosen?.source).toBe("engine-elo");
 				expect(rationale).not.toContain("maia prior:");

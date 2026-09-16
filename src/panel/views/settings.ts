@@ -1,13 +1,6 @@
-/**
- * Settings view (Appendix F §4.6, §7.2; Part I §4.4). Sections Strength · Automation · Timing ·
- * Hand · Board · Panel · Keybinds · Engine · Account · Advanced (settings layout, 2026-09-13),
- * each row built from the declarative table in
- * `settings/rows.ts` and laid out by `settings/sections.ts`. Every change writes through
- * `setSettings` (which normalises and clamps); the view clamps what it shows and re-renders from
- * the stored result and from every snapshot. Settings remain interactive during play;
- * derived depth is read-only and opponent matching disables the fixed rating control.
- * Category chips filter rows alongside the text search. The view never calls `focus()`,
- * `alert()` or opens tabs itself.
+/** Settings are grouped by outcome; named choices retain expandable, exact fine-tuning.
+ * Writes are serialized through normalized storage and every snapshot refreshes the controls.
+ * Strength stays rating-led. The Game switch owns auto-play, including saved lobby intent.
  */
 
 import { ttsGetVoices as chromeTtsGetVoices } from "@core/chrome/tts";
@@ -33,26 +26,25 @@ import { mountIcons } from "../icons-mount";
 import { isHandsOff } from "../router";
 import { instantiate, part } from "../template";
 import type { Cleanup, View, ViewContext } from "../view";
+import { createChoices } from "./settings/choices";
 import { createSelect, createStepper, type SelectOption } from "./settings/controls";
 import {
 	clampRowValue,
-	formatTimeControl,
 	fromDisplayValue,
 	getAtPath,
 	type KeybindAction,
-	PROFILE_FOR_TC_CLASS,
 	patchAtPath,
 	type RowSpec,
 	rowFor,
 	type SettingsLeafPath,
-	type TcClass,
-	tcClass,
 	toDisplayValue,
 } from "./settings/rows";
 import { isSectionId, SECTIONS, type SectionSpec } from "./settings/sections";
 import sectionHeaderHtml from "./templates/components/section.html?raw";
+import autoplayHtml from "./templates/settings/autoplay.html?raw";
 import confirmHtml from "./templates/settings/confirm.html?raw";
 import licenseHtml from "./templates/settings/license.html?raw";
+import presetsHtml from "./templates/settings/presets.html?raw";
 import rowHtml from "./templates/settings/row.html?raw";
 import sectionHtml from "./templates/settings/section.html?raw";
 import valueHtml from "./templates/settings/value.html?raw";
@@ -75,10 +67,6 @@ const KEYBIND_ACTIONS: readonly KeybindAction[] = [
 
 const LICENSE_VISIBLE_GROUPS = 2;
 const LICENSE_MASK_CHAR = "•";
-const PROFILES_NOT_PRESELECTED: ReadonlySet<Settings["timing"]["profile"]> = new Set([
-	"manual",
-	"custom",
-]);
 
 interface RowControl {
 	el: HTMLElement;
@@ -91,8 +79,6 @@ interface RowHost {
 	settings(): Settings;
 	activeElo(): number;
 	write(patch: SettingsPatch): void;
-	detectedTc(): TcClass | null;
-	detectedLabel(): string | null;
 	voices(): readonly SelectOption[];
 }
 
@@ -145,7 +131,6 @@ function newRow(spec: { path?: SettingsLeafPath; label: string; help?: string })
 	el: HTMLElement;
 	control: HTMLElement;
 	help: HTMLElement;
-	note: HTMLElement;
 } {
 	const el = instantiate(rowHtml);
 	if (spec.path) el.dataset.path = spec.path;
@@ -155,12 +140,7 @@ function newRow(spec: { path?: SettingsLeafPath; label: string; help?: string })
 		help.textContent = spec.help;
 		help.hidden = false;
 	}
-	return {
-		el,
-		control: part(el, ".sl-settings-row__control"),
-		help,
-		note: part(el, ".sl-settings-row__note"),
-	};
+	return { el, control: part(el, ".sl-settings-row__control"), help };
 }
 
 function buildRow(spec: RowSpec, host: RowHost): RowControl {
@@ -197,34 +177,96 @@ function buildRow(spec: RowSpec, host: RowHost): RowControl {
 		}
 		case "slider": {
 			row.el.classList.add("sl-settings-row--stack");
+			const presets = spec.presets ? instantiate(presetsHtml) : null;
+			if (presets) row.control.append(presets);
+			const choices =
+				spec.presets && presets
+					? createChoices(part(presets, ".sl-settings-presets__choices"), {
+							label: spec.label,
+							items: spec.presets,
+							value: String(value()),
+							onChange: (id) => host.write(patchAtPath(spec.path, Number(id))),
+						})
+					: null;
+			const summary = presets ? part(presets, ".sl-settings-presets__summary") : null;
 			/** The stored leaf in the slider's own (display) unit, snapped to the row's range. */
 			const shown = (s: Settings): number =>
 				clampRowValue(spec.path, toDisplayValue(spec.path, Number(getAtPath(s, spec.path))));
-			const slider = createSlider(row.control, {
-				min: spec.min,
-				max: spec.max,
-				step: spec.step,
-				value: shown(host.settings()),
-				label: spec.valueLabel,
-				format: spec.format,
-				ariaLabel: spec.label,
-				strength: spec.path === "strength.targetElo",
-				...(spec.readout ? { readout: spec.readout } : {}),
-				...(spec.scale ? { scale: spec.scale } : {}),
-				...(spec.threshold ? { threshold: spec.threshold } : {}),
-				...(spec.markers ? { markers: spec.markers } : {}),
-				...(spec.danger ? { danger: spec.danger } : {}),
-				...(spec.dangerHint ? { dangerHint: spec.dangerHint } : {}),
-				onChange: (v, commit) => {
-					if (commit)
-						host.write(patchAtPath(spec.path, fromDisplayValue(spec.path, clampRowValue(spec.path, v))));
+			/**
+			 * While opponent matching is on, the target rating shows the Elo actually being played
+			 * (owner, 2026-09-15: "make the slider automatically adjust to whatever the current played
+			 * elo is"): the session's derived target — opponent rating plus persona offset — or, before
+			 * a rating is known, the stored target the session plays at meanwhile (`host.activeElo`).
+			 * It is a reading, shown unsnapped: the row stays disabled and nothing is written from it.
+			 */
+			const reading = (s: Settings): { value: number; exact: boolean } =>
+				spec.path === "strength.targetElo" && s.strength.matchOpponentRating
+					? { value: host.activeElo(), exact: true }
+					: spec.presets
+						? { value: Number(getAtPath(s, spec.path)), exact: true }
+						: { value: shown(s), exact: false };
+			const initial = reading(host.settings());
+			const slider = createSlider(
+				presets ? part(presets, ".sl-settings-presets__slider") : row.control,
+				{
+					min: spec.min,
+					max: spec.max,
+					step: spec.step,
+					value: initial.value,
+					exact: initial.exact,
+					label: spec.valueLabel,
+					format: spec.format,
+					ariaLabel: spec.label,
+					strength: spec.path === "strength.targetElo",
+					...(spec.readout ? { readout: spec.readout } : {}),
+					...(spec.caption ? { caption: spec.caption } : {}),
+					...(spec.threshold ? { threshold: spec.threshold } : {}),
+					...(spec.markers ? { markers: spec.markers } : {}),
+					...(spec.danger ? { danger: spec.danger } : {}),
+					...(spec.dangerHint ? { dangerHint: spec.dangerHint } : {}),
+					onChange: (v, commit) => {
+						if (commit)
+							host.write(patchAtPath(spec.path, fromDisplayValue(spec.path, clampRowValue(spec.path, v))));
+					},
+				}
+			);
+			const render = (s: Settings): void => {
+				const current = reading(s);
+				slider.update(current);
+				choices?.update({ value: String(getAtPath(s, spec.path)) });
+				if (summary)
+					summary.textContent = SETTINGS_COPY.fineTune(
+						(spec.readout ?? spec.format)(current.value),
+						!spec.presets?.some((p) => Number(p.id) === Number(getAtPath(s, spec.path)))
+					);
+			};
+			render(host.settings());
+			return {
+				el: row.el,
+				setValue: render,
+				setDisabled: (d) => {
+					slider.update({ disabled: d });
+					choices?.update({ disabled: d });
 				},
+				dispose: () => {
+					slider.dispose();
+					choices?.dispose();
+				},
+			};
+		}
+		case "choices": {
+			row.el.classList.add("sl-settings-row--stack");
+			const choices = createChoices(row.control, {
+				label: spec.label,
+				items: spec.items,
+				value: String(value()),
+				onChange: (id) => host.write(patchAtPath(spec.path, id)),
 			});
 			return {
 				el: row.el,
-				setValue: (s) => slider.update({ value: shown(s) }),
-				setDisabled: (d) => slider.update({ disabled: d }),
-				dispose: () => slider.dispose(),
+				setValue: (s) => choices.update({ value: String(getAtPath(s, spec.path)) }),
+				setDisabled: (disabled) => choices.update({ disabled }),
+				dispose: () => choices.dispose(),
 			};
 		}
 		case "chips":
@@ -308,65 +350,20 @@ function buildChips(
 	host: RowHost
 ): RowControl {
 	row.el.classList.add("sl-settings-row--stack");
-	const isPreset = spec.path === "timing.profile";
-	/** Preset chips: the user's pick this session overrides the detected pre-selection. */
-	let overridden = false;
-
-	function selectedFor(settings: Settings): string {
-		const stored = String(getAtPath(settings, spec.path));
-		if (!isPreset || overridden) return stored;
-		const detected = host.detectedTc();
-		if (!detected || PROFILES_NOT_PRESELECTED.has(stored as Settings["timing"]["profile"]))
-			return stored;
-		return PROFILE_FOR_TC_CLASS[detected];
-	}
-
-	function renderHelp(selected: string | null): void {
-		const text = (selected && spec.descriptions?.[selected]) || spec.help || "";
-		row.help.textContent = text;
-		row.help.hidden = !text;
-	}
-
-	function renderNote(selected: string | null): void {
-		if (!isPreset) return;
-		const detected = host.detectedTc();
-		const label = host.detectedLabel();
-		for (const chip of row.el.querySelectorAll<HTMLElement>(".sl-chip")) {
-			if (detected && chip.dataset.value === PROFILE_FOR_TC_CLASS[detected])
-				chip.dataset.detected = "true";
-			else delete chip.dataset.detected;
-		}
-		const text =
-			!detected || !label
-				? ""
-				: selected === PROFILE_FOR_TC_CLASS[detected]
-					? COPY.timing.detected(label)
-					: COPY.timing.overrides;
-		row.note.textContent = text;
-		row.note.hidden = !text;
-	}
-
+	// 2026-09-15: the timing presets were the only chips row that pre-selected a value from the
+	// detected time control and explained itself per option. Chips are a plain stored-value
+	// control again; `newRow` renders the row's own help.
 	const chips: ChipGroupHandle<string> = createChipGroup<string>(row.control, {
 		items: spec.items.map((i) => ({ id: i.id, label: i.label })),
-		value: selectedFor(host.settings()),
+		value: String(getAtPath(host.settings(), spec.path)),
 		onChange: (id) => {
 			if (id === null) return;
-			overridden = true;
-			renderHelp(id);
-			renderNote(id);
 			host.write(patchAtPath(spec.path, id));
 		},
 	});
-	renderHelp(chips.value);
-	renderNote(chips.value);
 	return {
 		el: row.el,
-		setValue: (s) => {
-			const selected = selectedFor(s);
-			chips.update({ value: selected });
-			renderHelp(selected);
-			renderNote(selected);
-		},
+		setValue: (s) => chips.update({ value: String(getAtPath(s, spec.path)) }),
 		setDisabled: (d) => chips.update({ disabled: d }),
 		dispose: () => chips.dispose(),
 	};
@@ -454,8 +451,6 @@ export function createSettingsView(overrides: Partial<SettingsViewDeps> = {}): V
 			let settings: Settings = ctx.snapshot?.settings ?? { ...DEFAULT_SETTINGS };
 			let license: LicenseState = ctx.snapshot?.license ?? { status: "unknown", checkedAt: 0 };
 			let locked = ctx.snapshot ? isHandsOff(ctx.snapshot) : false;
-			let detected: TcClass | null = null;
-			let detectedLabel: string | null = null;
 			let derivedTargetElo: number | undefined;
 			let voiceOptions: readonly SelectOption[] = [{ value: "", label: SETTINGS_COPY.voice.default }];
 			const controls = new Map<SettingsLeafPath, RowControl>();
@@ -509,10 +504,9 @@ export function createSettingsView(overrides: Partial<SettingsViewDeps> = {}): V
 					});
 			}
 
+			/** The opponent's detected rating (2026-09-15: the time-control detection the timing
+			 * presets needed went with them). */
 			function readDetection(snapshot: PanelSnapshot | null): void {
-				const tc = snapshot?.session.timeControl;
-				detected = tc ? tcClass(tc) : null;
-				detectedLabel = tc ? formatTimeControl(tc) : null;
 				derivedTargetElo = snapshot?.opponent?.derivedTargetElo;
 			}
 			readDetection(ctx.snapshot);
@@ -524,8 +518,6 @@ export function createSettingsView(overrides: Partial<SettingsViewDeps> = {}): V
 						? (derivedTargetElo ?? settings.strength.targetElo)
 						: settings.strength.targetElo,
 				write,
-				detectedTc: () => detected,
-				detectedLabel: () => detectedLabel,
 				voices: () => voiceOptions,
 			};
 
@@ -545,10 +537,13 @@ export function createSettingsView(overrides: Partial<SettingsViewDeps> = {}): V
 						return !automation.autoQueue;
 					case "automation.highlightStyle":
 						return !automation.highlightMoves;
-					case "automation.moveQualityChips":
-						return !automation.boardEffects;
+					// Move ratings and board effects are independent (owner, 2026-09-15): nothing in the
+					// ratings chain waits on board effects.
+					case "automation.moveQualityChipsFor":
 					case "automation.moveRatingSounds":
-						return !automation.boardEffects || !automation.moveQualityChips;
+						return !automation.moveQualityChips;
+					case "automation.forcedMateSounds":
+						return !automation.moveQualityChips || !automation.moveRatingSounds;
 					case "display.cursorEffects":
 						return !display.virtualCursor;
 					default:
@@ -588,6 +583,23 @@ export function createSettingsView(overrides: Partial<SettingsViewDeps> = {}): V
 				part(header, ".sl-section__title").textContent = section.title;
 				el.prepend(header);
 				const rows = part(el, ".sl-settings__rows");
+				const description = part(el, ".sl-settings__section-help");
+				description.textContent = section.help;
+				description.hidden = !section.help;
+				if (section.id === "automation") {
+					const notice = instantiate(autoplayHtml);
+					part(notice, ".sl-settings-autoplay__title").textContent = SETTINGS_COPY.autoplay.title;
+					part(notice, ".sl-settings-autoplay__help").textContent = SETTINGS_COPY.autoplay.help;
+					const go = createButton(part(notice, ".sl-settings-autoplay__action"), {
+						label: SETTINGS_COPY.autoplay.action,
+						variant: "ghost",
+						size: "sm",
+					});
+					go.el.dataset.action = "view-switch";
+					go.el.dataset.tab = "game";
+					buttons.push(go);
+					rows.append(notice);
+				}
 				for (const path of section.rows) {
 					const control = buildRow(rowFor(path), host);
 					controls.set(path, control);

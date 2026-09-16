@@ -2,6 +2,7 @@
 import { describe, expect, it } from "bun:test";
 import { applyMoves, legalMoves, pvToSan } from "@core/chess/san";
 import { LIMITS } from "@core/constants/limits";
+import { MAIA } from "@core/constants/maia";
 import { TIMINGS } from "@core/constants/timings";
 import { AnalysisCache } from "@core/engine/analysis-cache";
 import { automaticDepthForElo } from "@core/engine/depth-policy";
@@ -137,7 +138,8 @@ describe("EngineController active target routing", () => {
 		const old = ctrl.analyse(req({ id: "previous-game", fen: START, targetElo: 3201 }));
 		await flush();
 		const reset = ctrl.newGame("new-small-game");
-		const next = ctrl.analyse(req({ id: "next-game", fen: AFTER_E4, targetElo: 3200 }));
+		// A Small target: the Maia cutoff (3200 was Small until 2026-09-15).
+		const next = ctrl.analyse(req({ id: "next-game", fen: AFTER_E4, targetElo: MAIA.eloMax }));
 		expect((await old.result).status).toBe("superseded");
 		await reset;
 		await flush();
@@ -219,7 +221,8 @@ describe("EngineController active target routing", () => {
 		ctrl.dispose();
 	});
 
-	it("routes 3190 and 3200 to Small and 3201 to Full without limiting referee searches", async () => {
+	// Owner, 2026-09-15: the network switch is the Maia cutoff (it was 3190/3200 → Small, 3201 → Full).
+	it("routes the Maia cutoff and just below it to Small and one above it to Full without limiting referee searches", async () => {
 		const variants: string[] = [];
 		const { ctrl, t, cache } = await setup({
 			deps: {
@@ -229,14 +232,17 @@ describe("EngineController active target routing", () => {
 			},
 		});
 		await ctrl.init();
-		for (const targetElo of [3190, 3200, 3201, 3200]) {
+		const below = MAIA.eloMax - 10;
+		const cutoff = MAIA.eloMax;
+		const above = MAIA.eloMax + 1;
+		for (const targetElo of [below, cutoff, above, cutoff]) {
 			const before = t.sent.filter((line) => line.startsWith("go ")).length;
 			const handle = ctrl.analyse(
 				req({ id: `target-${targetElo}-${before}`, fen: START, targetElo, limit: { movetimeMs: 500 } })
 			);
 			await flush();
 			// The first two share a compatible full-strength Small evaluation.
-			if (targetElo === 3200 && variants.length === 1) {
+			if (targetElo === cutoff && variants.length === 1) {
 				expect(t.sent.filter((line) => line.startsWith("go ")).length).toBe(before);
 			} else {
 				expect(t.sent.filter((line) => line.startsWith("go ")).length).toBe(before + 1);
@@ -246,7 +252,7 @@ describe("EngineController active target routing", () => {
 			expect(t.sent.filter((line) => line.startsWith("setoption name UCI_LimitStrength")).at(-1)).toBe(
 				"setoption name UCI_LimitStrength value false"
 			);
-			expect(variants.at(-1)).toBe(targetElo > 3200 ? "full" : "smallnet");
+			expect(variants.at(-1)).toBe(targetElo > MAIA.eloMax ? "full" : "smallnet");
 			expect(cache.size).toBe(1);
 		}
 		expect(variants).toEqual(["smallnet", "full", "smallnet"]);
@@ -264,7 +270,8 @@ describe("EngineController active target routing", () => {
 			},
 		});
 		await ctrl.init();
-		for (const targetElo of [3200, undefined]) {
+		// The Maia cutoff is the last Small target (2026-09-15; this was 3200, which is Full now).
+		for (const targetElo of [MAIA.eloMax, undefined]) {
 			const handle = ctrl.analyse(
 				req({ id: `route-${targetElo}`, fen: START, ...(targetElo === undefined ? {} : { targetElo }) })
 			);
@@ -276,7 +283,8 @@ describe("EngineController active target routing", () => {
 		src.emit(settings({ targetElo: 1500, engine: { nnue: "big" } }));
 		await flush();
 		const explicit = ctrl.analyse(
-			req({ id: "explicit-big", fen: START, targetElo: 3190, elo: 1700 })
+			// A target Auto would keep on Small (3190 was one before 2026-09-15), so Big is what decides.
+			req({ id: "explicit-big", fen: START, targetElo: MAIA.eloMax, elo: 1700 })
 		);
 		await flush();
 		finish(t, 2, 2);
@@ -343,7 +351,8 @@ describe("EngineController active target routing", () => {
 			req({ id: "panel-load", fen: START, targetElo: 3201, priority: "panel" })
 		);
 		await flush();
-		const move = ctrl.analyse(req({ id: "small-move", fen: AFTER_E4, targetElo: 3200 }));
+		// A Small target: the Maia cutoff (3200 was Small until 2026-09-15).
+		const move = ctrl.analyse(req({ id: "small-move", fen: AFTER_E4, targetElo: MAIA.eloMax }));
 		expect((await panel.result).status).toBe("superseded");
 		await flush();
 		expect(fullSignal?.aborted).toBe(true);
@@ -375,7 +384,8 @@ describe("EngineController active target routing", () => {
 			req({ id: "stale-full", fen: START, targetElo: 3201, priority: "panel" })
 		);
 		await flush();
-		const move = ctrl.analyse(req({ id: "fresh-small", fen: AFTER_E4, targetElo: 3200 }));
+		// A Small target: the Maia cutoff (3200 was Small until 2026-09-15).
+		const move = ctrl.analyse(req({ id: "fresh-small", fen: AFTER_E4, targetElo: MAIA.eloMax }));
 		expect((await panel.result).status).toBe("superseded");
 		// A transport may finish a load just as cancellation arrives.
 		release();
@@ -399,13 +409,14 @@ describe("EngineController active target routing", () => {
 			},
 		});
 		await ctrl.init();
-		const first = ctrl.analyse(req({ id: "first-move", fen: START, targetElo: 3200 }));
+		// Small through the Maia cutoff, Full above it (2026-09-15; these were 3200 / 3201 / 3190).
+		const first = ctrl.analyse(req({ id: "first-move", fen: START, targetElo: MAIA.eloMax }));
 		const panel = ctrl.analyse(
-			req({ id: "full-panel", fen: AFTER_D4, targetElo: 3201, priority: "panel" })
+			req({ id: "full-panel", fen: AFTER_D4, targetElo: MAIA.eloMax + 1, priority: "panel" })
 		);
 		expect(t.sent).not.toContain("stop");
 		expect(variants).toEqual(["smallnet"]);
-		const next = ctrl.analyse(req({ id: "next-move", fen: AFTER_E4, targetElo: 3190 }));
+		const next = ctrl.analyse(req({ id: "next-move", fen: AFTER_E4, targetElo: MAIA.eloMax - 10 }));
 		expect(t.sent).toContain("stop");
 		t.feed("bestmove e2e4");
 		expect((await first.result).status).toBe("superseded");
@@ -436,7 +447,8 @@ describe("EngineController active target routing", () => {
 			},
 		});
 		await ctrl.init();
-		const active = ctrl.analyse(req({ id: "matched", fen: START, targetElo: 3200 }));
+		// A Small target: the Maia cutoff (3200 was Small until 2026-09-15).
+		const active = ctrl.analyse(req({ id: "matched", fen: START, targetElo: MAIA.eloMax }));
 		src.emit(settings({ targetElo: 3800, engine: { hashMb: 64 } }));
 		expect(t.sent).not.toContain("stop");
 		expect(ctrl.status().pendingOptions).toBe(true);

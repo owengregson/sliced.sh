@@ -132,3 +132,35 @@ function compressPhysical(
 export function windowTotalMs(w: MoveWindowBudget): number {
 	return w.orientationMs + w.scanMs + w.previewMs + w.decisionMs + w.approachMs;
 }
+
+export interface RemainingMoveWindow {
+	elapsedMs: number;
+	remainingMs: number;
+	executionReserveMs: number;
+	/** Last absolute time mandatory execution can start and still meet the sampled release time. */
+	executeByMs: number;
+	/** Room for optional actions, including their cancellation/cleanup. */
+	optionalMs: number;
+	/** Earliest feasible release minus the target, never silently added to the sampled window. */
+	overrunMs: number;
+}
+
+/** Charge elapsed preparation and mandatory execution to ONE opponent-arrival-to-release window. */
+export function remainingMoveWindow(
+	plan: { thinkMs: number; deadlineMs: number; window: MoveWindowBudget },
+	nowMs: number,
+	executionReserveMs = plan.window.approachMs
+): RemainingMoveWindow {
+	const startMs = plan.deadlineMs - plan.thinkMs;
+	const elapsedMs = Math.max(0, nowMs - startMs);
+	const remainingMs = Math.max(0, plan.deadlineMs - Math.max(nowMs, startMs));
+	const reserve = Math.max(0, executionReserveMs);
+	return {
+		elapsedMs,
+		remainingMs,
+		executionReserveMs: reserve,
+		executeByMs: plan.deadlineMs - reserve,
+		optionalMs: Math.max(0, remainingMs - reserve),
+		overrunMs: Math.max(0, Math.max(nowMs, startMs) + reserve - plan.deadlineMs),
+	};
+}

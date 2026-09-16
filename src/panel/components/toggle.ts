@@ -12,7 +12,7 @@ import { playUiSound } from "../sounds";
 import { instantiate, part } from "../template";
 import html from "../views/templates/components/toggle.html?raw";
 
-export type ToggleState = "off" | "on" | "arming" | "armed";
+export type ToggleState = "off" | "on" | "arming" | "armed" | "waiting";
 
 export interface ToggleOptions {
 	label: string;
@@ -21,6 +21,8 @@ export interface ToggleOptions {
 	hint?: string | null;
 	/** Auto-play variant: hold to arm, click to disarm. */
 	armed?: boolean;
+	/** Saved intent is waiting for an active game; the hand is not armed yet. */
+	waiting?: boolean;
 	/** Hold duration for the armed variant (default `UI_TIMINGS.armHoldMs`). */
 	holdMs?: number;
 	locked?: boolean;
@@ -34,6 +36,7 @@ export interface ToggleOptions {
 
 export interface ToggleUpdate {
 	checked?: boolean;
+	waiting?: boolean;
 	label?: string;
 	hint?: string | null;
 	locked?: boolean;
@@ -63,6 +66,7 @@ export function createToggle(host: HTMLElement | null, options: ToggleOptions): 
 	let locked = options.locked ?? false;
 	let disabled = options.disabled ?? false;
 	let baseLabel = options.label;
+	let waiting = options.waiting ?? false;
 	let holdTimer: ReturnType<typeof setTimeout> | null = null;
 	let holding: "pointer" | "key" | null = null;
 	/** The click that ends an arming gesture (or a completed arm) must not toggle. */
@@ -87,7 +91,7 @@ export function createToggle(host: HTMLElement | null, options: ToggleOptions): 
 
 	function state(): ToggleState {
 		if (holding) return "arming";
-		if (checked) return armedVariant ? "armed" : "on";
+		if (checked) return armedVariant ? (waiting ? "waiting" : "armed") : "on";
 		return "off";
 	}
 
@@ -97,6 +101,7 @@ export function createToggle(host: HTMLElement | null, options: ToggleOptions): 
 		el.setAttribute("aria-checked", checked ? "true" : "false");
 		el.classList.toggle("sl-toggle--on", checked && !armedVariant);
 		el.classList.toggle("sl-toggle--armed", s === "armed");
+		el.classList.toggle("sl-toggle--waiting", s === "waiting");
 		el.classList.toggle("sl-toggle--arming", s === "arming");
 		el.classList.toggle("sl-toggle--locked", locked);
 		if (disabled || locked) el.setAttribute("aria-disabled", "true");
@@ -107,14 +112,17 @@ export function createToggle(host: HTMLElement | null, options: ToggleOptions): 
 				? COPY.toggle.arming
 				: s === "armed"
 					? COPY.toggle.armed
-					: armedVariant && disarmed
-						? COPY.toggle.off
-						: baseLabel;
+					: s === "waiting"
+						? COPY.toggle.waiting
+						: armedVariant && disarmed
+							? COPY.toggle.off
+							: baseLabel;
 	}
 
 	function setChecked(next: boolean, emit: boolean): void {
 		if (checked === next) return;
 		checked = next;
+		if (emit) waiting = false;
 		disarmed = armedVariant && emit && !next;
 		render();
 		if (emit) {
@@ -227,6 +235,7 @@ export function createToggle(host: HTMLElement | null, options: ToggleOptions): 
 		},
 		update(patch) {
 			if (patch.label !== undefined) baseLabel = patch.label;
+			if (patch.waiting !== undefined) waiting = patch.waiting;
 			if (patch.hint !== undefined) {
 				hintEl.textContent = patch.hint ?? "";
 				hintEl.hidden = !patch.hint;

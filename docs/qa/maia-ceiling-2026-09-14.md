@@ -1,5 +1,12 @@
 # Maia selection ceiling and routing
 
+> **Superseded in part on 2026-09-15** (owner: "lets just use stockfish big net at wherever the
+> maia cutoff is … we just go straight from that to big net at 3000"). The 3000–3200 band below —
+> Maia ranking a 12 → 4 cp engine pool on the small network — is removed, and so is the separate
+> 3200 network cutoff. There is one division, `MAIA.eloMax` (3000, inclusive for Maia): above it
+> the full network plays the strongest guarded continuation, the book is off and the automatic
+> depth ceiling is the maximum. The rest of this note describes the 2026-09-14 state.
+
 The active target now controls both selection and automatic network choice. Maia-led selection
 continues through 3000 inclusive, with progressively stronger verification above 2800. Above
 3000 through 3200, the engine limits the acceptable alternatives and Maia ranks that pool.
@@ -48,8 +55,12 @@ remaining preparation budget. Main searches, retries, and any extra candidate sc
 only the remainder. Tests cover model failure, cancellation, completed-result fallback, and
 opponent-matched boundary transitions. Increasing verification does not increase that budget.
 
-Above effective selection Elo 2800, candidate breadth rises from five to seven, intuition probability decreases from
-10% to 3%, and evaluation noise decreases from 20 to 12 cp. The requested comparison depth
+Above effective selection Elo 2800, candidate breadth rises from two to seven, intuition probability decreases from
+60% to 3%, and evaluation noise decreases from 80 to 12 cp. (Through 2800 these were five, 10% and
+20 cp when this note was written; the 2026-09-15 recalibration in
+`docs/qa/generate-verify-2026-09-13.md` lowered the 2800 end after measuring the extension far
+above its target against chess.com humans. The 3000 end is unchanged, so the 2800–3000 ramp is
+now steeper and has not been re-measured against humans of that rating.) The requested comparison depth
 rises from 10 to 14 while verification increasingly uses the final coherent frame. Missing
 comparison frames use the available bounded evidence and report that fallback. Search depth
 is a ceiling and is not guaranteed to be reached. The upper loss rail reaches 80 cp at 3000;
@@ -76,6 +87,15 @@ intermediate frames. These scores do not measure the live pipeline's achieved st
 | 3050 | 1.08 cp | 0.64 cp |
 | 3100 | 0.82 cp | 0.39 cp |
 | 3200 | 0.28 cp | 0.18 cp |
+
+These rows describe the generate-and-verify values of 2026-09-14. The 2026-09-15 recalibration
+(`docs/qa/generate-verify-2026-09-13.md`, "Recalibration") lowered the path's strength through
+2800 after it measured the extension far above its target against chess.com humans. Replaying
+the same retained frames with the new values (`.scratch/maia-ceiling-implementation-2026-09-14/replay-recal.ts`,
+parity check against the old draw removed because the lower range changes by design) gives
+21.63 / 13.82 / 8.86 / 2.87 cp at 2800 / 2900 / 2950 / 3000 on the 217 saved frames and
+32.30 / 16.83 / 9.30 / 2.49 cp on the 60 refreshed frames; 3000 and above are unchanged and the
+curve is still non-increasing.
 
 The original proposed 60-to-12 cp prior allowance caused a regression immediately above 3000;
 the 12-to-4 allowance removed that reversal in these cohorts. This is a conservative quality

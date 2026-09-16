@@ -23,9 +23,12 @@ export function registerDebuggerHandlers(
 		const hand = deps.sources.hand;
 		try {
 			if (executor) {
-				await executor.arm();
-				// Reattach releases the same held recommendation as the auto-play toggle.
-				await deps.sources.session(msg.tabId)?.handArmed();
+				const session = deps.sources.session(msg.tabId);
+				if (session?.setAutoMove) await session.setAutoMove(true);
+				else {
+					await executor.arm();
+					await session?.handArmed();
+				}
 			} else if (hand) await hand.debugger.ensureAttached(msg.tabId);
 			else throw new Error(PANEL_COMMAND_ERRORS.noExecutor);
 		} finally {
@@ -39,7 +42,9 @@ export function registerDebuggerHandlers(
 		const hand = deps.sources.hand;
 		if (!executor && !hand) throw new Error(PANEL_COMMAND_ERRORS.noExecutor);
 		try {
-			executor?.disarm();
+			const session = deps.sources.session(msg.tabId);
+			if (session?.setAutoMove) await session.setAutoMove(false);
+			else executor?.disarm();
 			// The abort has to reach the hand's release before the transport goes away, or the page
 			// keeps a held mouse button with a piece stuck to the cursor (`MoveExecutor.whenIdle`).
 			await executor?.whenIdle();

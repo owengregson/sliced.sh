@@ -15,6 +15,7 @@ import { TimingModel } from "@core/timing/timing-model";
 import { V1ParametricHead } from "@core/timing/v1-head";
 import { bootEngine, type StockfishFactory } from "@offscreen/stockfish-loader";
 import { EngineController } from "@service/engine-controller";
+import { timingSettingsFor } from "@service/game-session/presets";
 import { RecommendationPipeline } from "@service/game-session/recommendation";
 import { createTimingInferPort, type TimingInferPort } from "@service/handlers/engine/timing-infer";
 import corpus from "../fixtures/strength/stockfish18-blitz.json";
@@ -132,7 +133,11 @@ describe("native Stockfish through the strength pipeline", () => {
 				native = await nativeTimingPort();
 				inferPort = createTimingInferPort(native);
 				const head = new ChessMimicHead({ infer: inferPort.infer, fallback: new V1ParametricHead() });
-				const timing = new TimingModel(head, settings.timing, createRng("native-timing"));
+				const timing = new TimingModel(
+					head,
+					timingSettingsFor(settings.timing, undefined),
+					createRng("native-timing")
+				);
 				const pipeline = new RecommendationPipeline({ engine: controller, timing, book: null });
 				for (const position of corpus.positions.filter((p) => p.K === 20).slice(0, 2)) {
 					await controller.newGame(position.name);
@@ -167,14 +172,16 @@ describe("native Stockfish through the strength pipeline", () => {
 					});
 					expect(result?.analysis?.request.elo).toBe(1650);
 					expect(result?.budget.movetimeMs).toBe(600);
-					expect(result?.budget.depthCap).toBe(16);
+					// 17, not 16: the automatic depth curve ends at the Maia cutoff since 2026-09-15 (it
+					// ended at the removed 3200 network switch).
+					expect(result?.budget.depthCap).toBe(17);
 					// Preparation has already spent part of the class's 600 ms ceiling.
-					expect(result?.analysis?.request.limit.depth).toBe(16);
+					expect(result?.analysis?.request.limit.depth).toBe(17);
 					expect(result?.analysis?.request.limit.movetimeMs).toBeGreaterThan(0);
 					expect(result?.analysis?.request.limit.movetimeMs).toBeLessThanOrEqual(
 						result?.budget.movetimeMs ?? 0
 					);
-					expect(result?.analysis?.final.depth).toBeLessThanOrEqual(16);
+					expect(result?.analysis?.final.depth).toBeLessThanOrEqual(17);
 					expect(result?.analysis?.request.multiPv).toBe(20);
 					expect(result?.analysis?.final.complete).toBe(true);
 					expect(result?.rec.lines).toHaveLength(20);

@@ -79,7 +79,7 @@ function setup(recommended: readonly string[] = NETS): Harness {
 			const name = recommended[i] as string;
 			sf.setNnueBuffer(await nnueStore.get(name), i);
 		}
-		return { sf, module: "sf_18_smallnet.js", nnue: [...recommended] };
+		return { sf, module: "sf_19_smallnet.js", nnue: [...recommended] };
 	};
 	const host = new EngineHost({
 		boot,
@@ -129,7 +129,7 @@ describe("EngineHost boot and status", () => {
 			variant: "smallnet",
 			threads: 2,
 			nnue: NETS,
-			version: "sf_18_smallnet.js",
+			version: "sf_19_smallnet.js",
 		});
 		expect(status.error).toBeUndefined();
 	});
@@ -139,9 +139,9 @@ describe("EngineHost boot and status", () => {
 		const sf = await booted(h);
 		h.host.handle({ kind: "uci", line: "uci" });
 		expect(sf.commands).toEqual(["uci"]);
-		sf.emit("id name Stockfish 18", "uciok");
-		expect(h.lines()).toEqual(["id name Stockfish 18", "uciok"]);
-		expect(h.host.status().version).toBe("Stockfish 18");
+		sf.emit("id name Stockfish 19", "uciok");
+		expect(h.lines()).toEqual(["id name Stockfish 19", "uciok"]);
+		expect(h.host.status().version).toBe("Stockfish 19");
 	});
 
 	it("queues uci lines that arrive before the engine is ready (booting on demand)", async () => {

@@ -23,7 +23,7 @@ import { MAIA_INPUT } from "@core/constants/maia";
 import { type LogStreamMessage, MSG, type PanelSnapshot } from "@core/constants/messages";
 import { UI_TIMINGS } from "@core/constants/ui";
 import { LOG_LEVELS, type LogEntry, levelAllows, log } from "@core/logger";
-import { maiaSizeFor, usesMaia, usesMaiaPrior } from "@core/policy/maia-size";
+import { maiaSizeFor, usesMaia } from "@core/policy/maia-size";
 import { normalizeTimingStats } from "@core/timing/session-stats";
 import { TOKENS } from "@design/tokens.generated";
 import type { ExecutionResult } from "@typedefs/game";
@@ -147,9 +147,7 @@ export function selectionModel(snapshot: PanelSnapshot): string {
 	const target = snapshot.opponent?.derivedTargetElo ?? strength.targetElo;
 	const { selection } = COPY.engineView;
 	if (usesMaia(target)) return selection.maia(selection.maiaSizes[maiaSizeFor(target)]);
-	const full = snapshot.engine.variant === "full";
-	if (usesMaiaPrior(target)) return full ? selection.maiaPriorFull : selection.maiaPriorSmall;
-	return full ? selection.stockfishFull : selection.stockfishSmall;
+	return snapshot.engine.variant === "full" ? selection.stockfishFull : selection.stockfishSmall;
 }
 
 /** What the Human-model block shows for a snapshot (exported for the view's tests). */
@@ -224,7 +222,7 @@ export function policyBlock(snapshot: PanelSnapshot): PolicyBlock {
 	const { strength } = snapshot.settings;
 	const target = snapshot.opponent?.derivedTargetElo ?? strength.targetElo;
 	const { policy: copy, selection, none } = COPY.engineView;
-	const active = usesMaia(target) || usesMaiaPrior(target);
+	const active = usesMaia(target);
 	const rec = snapshot.recommendation;
 	const maia = active ? rec?.maia : undefined;
 	if (!active)
@@ -626,10 +624,8 @@ export function createEngineView(deps: EngineViewDeps = {}): View {
 							? COPY.engineView.site
 							: COPY.engineView.none;
 				const execution = snapshot.session.lastExecution;
-				valueCell("input").textContent = COPY.engineView.inputMode(
-					SETTINGS_COPY.options.inputMode[settings.execution.inputMode],
-					COPY.engineView.profiles[settings.timing.profile]
-				);
+				// 2026-09-15: the timing presets went, so the row is the input style alone.
+				valueCell("input").textContent = SETTINGS_COPY.options.inputMode[settings.execution.inputMode];
 				valueCell("last").textContent = execution
 					? COPY.engineView.lastAction(
 							// Every committed move is a drag, and the word the user reads comes from

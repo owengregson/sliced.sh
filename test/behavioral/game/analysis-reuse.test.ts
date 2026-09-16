@@ -131,7 +131,7 @@ describe("game session: an analysed position is not searched twice", () => {
 		expect(h.session().recommendation()?.plan.features.tc_untimed).toBe(1);
 
 		// The bridge answers: the same ply, chess.com's own spelling, and now with the clock. The
-		// session must re-run the pipeline (the class and the preset changed) — and must not search.
+		// session must re-run the pipeline (the class changed) — and must not search.
 		await h.drive(() => h.site.post({ kind: "position", snapshot: snapshotOf(h, BRIDGE_FEN, true) }));
 		expect(
 			await h.until(() => h.session().recommendation()?.plan.features.tc_bullet === 1, 10_000)

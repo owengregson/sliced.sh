@@ -1,0 +1,106 @@
+[
+	{
+		"pgn": "[Event \"quiet-opening\"]\n[Site \"?\"]\n[Date \"????.??.??\"]\n[Round \"?\"]\n[White \"?\"]\n[Black \"?\"]\n[Result \"*\"]\n\n1. e4 *",
+		"ply": 0,
+		"brilliants": [],
+		"labels": {
+			"1": "NegativeControl"
+		}
+	},
+	{
+		"pgn": "[Event \"quiet-development\"]\n[Site \"?\"]\n[Date \"????.??.??\"]\n[Round \"?\"]\n[White \"?\"]\n[Black \"?\"]\n[Result \"*\"]\n\n1. Nf3 *",
+		"ply": 0,
+		"brilliants": [],
+		"labels": {
+			"1": "NegativeControl"
+		}
+	},
+	{
+		"pgn": "[Event \"unsupported-knight\"]\n[Site \"?\"]\n[Date \"????.??.??\"]\n[Round \"?\"]\n[White \"?\"]\n[Black \"?\"]\n[Result \"*\"]\n[SetUp \"1\"]\n[FEN \"4k3/5p2/8/6N1/8/8/8/4K3 w - - 0 1\"]\n\n1. Ne6 *",
+		"ply": 0,
+		"brilliants": [],
+		"labels": {},
+		"notes": "Not a negative: SF19 finds the knight sacrifice preserves a drawable king-and-pawn ending. Kept unlabelled rather than pretending its negative label is ground truth."
+	},
+	{
+		"pgn": "[Event \"pinned-capturer\"]\n[Site \"?\"]\n[Date \"????.??.??\"]\n[Round \"?\"]\n[White \"?\"]\n[Black \"?\"]\n[Result \"*\"]\n[SetUp \"1\"]\n[FEN \"4k3/4p3/8/7N/8/8/8/4R1K1 w - - 0 1\"]\n\n1. Nf6+ *",
+		"ply": 0,
+		"brilliants": [],
+		"labels": {
+			"1": "NegativeControl"
+		}
+	},
+	{
+		"pgn": "[Event \"even-trade\"]\n[Site \"?\"]\n[Date \"????.??.??\"]\n[Round \"?\"]\n[White \"?\"]\n[Black \"?\"]\n[Result \"*\"]\n[SetUp \"1\"]\n[FEN \"4k3/8/5n2/8/8/2NP4/8/4K3 w - - 0 1\"]\n\n1. Ne4 *",
+		"ply": 0,
+		"brilliants": [],
+		"labels": {
+			"1": "NegativeControl"
+		}
+	},
+	{
+		"pgn": "[Event \"pawn-offer\"]\n[Site \"?\"]\n[Date \"????.??.??\"]\n[Round \"?\"]\n[White \"?\"]\n[Black \"?\"]\n[Result \"*\"]\n[SetUp \"1\"]\n[FEN \"4k3/8/8/b7/8/8/1P6/4K3 w - - 0 1\"]\n\n1. b4 *",
+		"ply": 0,
+		"brilliants": [],
+		"labels": {
+			"1": "NegativeControl"
+		}
+	},
+	{
+		"pgn": "[Event \"queen-blunder\"]\n[Site \"?\"]\n[Date \"????.??.??\"]\n[Round \"?\"]\n[White \"?\"]\n[Black \"?\"]\n[Result \"*\"]\n[SetUp \"1\"]\n[FEN \"4k3/2p5/3p4/8/8/8/8/3QK3 w - - 0 1\"]\n\n1. Qxd6 *",
+		"ply": 0,
+		"brilliants": [],
+		"labels": {
+			"1": "NegativeControl"
+		}
+	},
+	{
+		"pgn": "[Event \"free-pawn\"]\n[Site \"?\"]\n[Date \"????.??.??\"]\n[Round \"?\"]\n[White \"?\"]\n[Black \"?\"]\n[Result \"*\"]\n[SetUp \"1\"]\n[FEN \"4k3/8/8/4p3/8/5N2/8/4K3 w - - 0 1\"]\n\n1. Nxe5 *",
+		"ply": 0,
+		"brilliants": [],
+		"labels": {
+			"1": "NegativeControl"
+		}
+	},
+	{
+		"pgn": "[Event \"forced-evasion\"]\n[Site \"?\"]\n[Date \"????.??.??\"]\n[Round \"?\"]\n[White \"?\"]\n[Black \"?\"]\n[Result \"*\"]\n[SetUp \"1\"]\n[FEN \"k7/2R5/1K6/8/8/8/8/8 b - - 0 1\"]\n\n1. ... Kb8 *",
+		"ply": 0,
+		"brilliants": [],
+		"labels": {
+			"1": "NegativeControl"
+		}
+	},
+	{
+		"pgn": "[Event \"unavoidable-loss\"]\n[Site \"?\"]\n[Date \"????.??.??\"]\n[Round \"?\"]\n[White \"?\"]\n[Black \"?\"]\n[Result \"*\"]\n[SetUp \"1\"]\n[FEN \"4r2k/8/8/8/8/3p4/4B3/4K3 w - - 0 1\"]\n\n1. Kd1 *",
+		"ply": 0,
+		"brilliants": [],
+		"labels": {
+			"1": "NegativeControl"
+		}
+	},
+	{
+		"pgn": "[Event \"gratuitous-offer\"]\n[Site \"?\"]\n[Date \"????.??.??\"]\n[Round \"?\"]\n[White \"?\"]\n[Black \"?\"]\n[Result \"*\"]\n[SetUp \"1\"]\n[FEN \"4k3/5p2/8/6N1/8/8/8/3QK3 w - - 0 1\"]\n\n1. Ne6 *",
+		"ply": 0,
+		"brilliants": [],
+		"labels": {
+			"1": "NegativeControl"
+		}
+	},
+	{
+		"pgn": "[Event \"checkmate\"]\n[Site \"?\"]\n[Date \"????.??.??\"]\n[Round \"?\"]\n[White \"?\"]\n[Black \"?\"]\n[Result \"*\"]\n[SetUp \"1\"]\n[FEN \"rnbqkbnr/pppp1ppp/8/4p3/6P1/5P2/PPPPP2P/RNBQKBNR b KQkq - 0 2\"]\n\n2. ... Qh4# *",
+		"ply": 0,
+		"brilliants": [],
+		"labels": {
+			"1": "NegativeControl"
+		}
+	},
+	{
+		"pgn": "[Event \"unsupported-knight-losing-pawn-ending\"]\n[Site \"?\"]\n[Date \"????.??.??\"]\n[Round \"?\"]\n[White \"?\"]\n[Black \"?\"]\n[Result \"*\"]\n[SetUp \"1\"]\n[FEN \"4k3/5pp1/8/6N1/8/8/8/4K3 w - - 0 1\"]\n\n1. Ne6 *",
+		"ply": 0,
+		"brilliants": [],
+		"labels": {
+			"1": "NegativeControl"
+		},
+		"notes": "Two connected enemy pawns make the uncompensated knight offer losing."
+	}
+]

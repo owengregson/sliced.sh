@@ -1,10 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import { DEFAULT_SETTINGS } from "@core/constants/defaults";
 import { createRng } from "@core/rng";
 import { TimingModel } from "@core/timing/timing-model";
 import type { GameMeta } from "@core/timing/types";
 import { V1ParametricHead } from "@core/timing/v1-head";
-import { AFTER_EXD5, ctx, line } from "./helpers";
+import { AFTER_EXD5, ctx, line, MODEL_TIMING } from "./helpers";
 
 const meta: GameMeta = {
 	targetElo: 1650,
@@ -32,7 +31,7 @@ const recapture = (second: number) =>
 function plans(second: number, n = 60): number[] {
 	const out: number[] = [];
 	for (let i = 0; i < n; i++) {
-		const m = new TimingModel(new V1ParametricHead(), DEFAULT_SETTINGS.timing, createRng(`q-${i}`));
+		const m = new TimingModel(new V1ParametricHead(), MODEL_TIMING, createRng(`q-${i}`));
 		m.startGame({ ...meta, gameId: `q-${i}` });
 		out.push(m.planMove(recapture(second)).thinkMs);
 	}

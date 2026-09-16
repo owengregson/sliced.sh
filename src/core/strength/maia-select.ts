@@ -140,8 +140,8 @@ export function tieBandOf(weights: ReadonlyMap<string, number>): string[] {
 }
 
 /**
- * Multiply the weights of `band` by `factorOf(uci)`, normalised to mean 1 over the band, so the
- * band's total mass is (to first order) unchanged and nothing outside it moves. Returns the band
+ * Multiply the weights of `band` by `factorOf(uci)`, normalised by their probability-weighted
+ * mean, so the band's total mass is unchanged and nothing outside it moves. Returns the band
  * size when it reordered anything.
  */
 function scaleBand(
@@ -150,9 +150,14 @@ function scaleBand(
 	factorOf: (uci: string) => number
 ): number {
 	if (band.length < 2) return 0;
-	let mean = 0;
-	for (const u of band) mean += Math.max(0, factorOf(u));
-	mean /= band.length;
+	let mass = 0;
+	let scaledMass = 0;
+	for (const u of band) {
+		const weight = weights.get(u) ?? 0;
+		mass += weight;
+		scaledMass += weight * Math.max(0, factorOf(u));
+	}
+	const mean = mass > 0 ? scaledMass / mass : 0;
 	if (!(mean > 0)) return 0;
 	let moved = false;
 	for (const u of band) {
@@ -176,7 +181,7 @@ function applyTieBreak(
 
 /**
  * H13: `1 + trickiness` over the band (a move the map does not name counts as 0), normalised to
- * mean 1 — the same shape as the tie-break, so the two compose and neither moves mass outside the
+ * probability-weighted mean 1 — the same shape as the tie-break, so neither moves mass outside the
  * band. Returns the band size and the trickiness rows for the rationale.
  */
 function applyPractical(

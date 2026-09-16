@@ -7,6 +7,7 @@ import { createRng } from "@core/rng";
 import { createSelectionState } from "@core/strength/move-selector";
 import { TimingModel } from "@core/timing/timing-model";
 import { V1ParametricHead } from "@core/timing/v1-head";
+import { timingSettingsFor } from "@service/game-session/presets";
 import {
 	type RecommendationInput,
 	RecommendationPipeline,
@@ -55,7 +56,7 @@ function input(signal?: AbortSignal): RecommendationInput {
 function timing(): TimingModel {
 	const model = new TimingModel(
 		new V1ParametricHead(),
-		DEFAULT_SETTINGS.timing,
+		timingSettingsFor(DEFAULT_SETTINGS.timing, undefined),
 		createRng("timing")
 	);
 	model.startGame({

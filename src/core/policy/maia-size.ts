@@ -5,14 +5,12 @@
 import { MAIA, MAIA_INPUT, type MaiaSize } from "@core/constants/maia";
 import { clamp } from "@core/util/clamp";
 
-/** The product's Maia-led interval, independent of form or temporary penalties. */
+/**
+ * The product's Maia-led interval, independent of form or temporary penalties. Above it Maia is
+ * not queried at all: there is no in-between prior band since 2026-09-15 (`MAIA.eloMax`).
+ */
 export function usesMaia(targetElo: number): boolean {
 	return Number.isFinite(targetElo) && targetElo <= MAIA.eloMax;
-}
-
-/** Above direct Maia selection, retain its prior only through the hybrid ceiling. */
-export function usesMaiaPrior(targetElo: number): boolean {
-	return targetElo > MAIA.eloMax && targetElo <= MAIA.prior.eloMax;
 }
 
 /**
@@ -39,11 +37,6 @@ export function upperVerificationProgress(elo: number): number {
 export function maiaMaxCpLoss(elo: number): number {
 	const progress = upperVerificationProgress(elo);
 	return progress > 0 ? MAIA.upperVerification.maxCpLoss / progress : Number.POSITIVE_INFINITY;
-}
-
-export function maiaPriorGapCp(elo: number): number {
-	const progress = clamp((elo - MAIA.eloMax) / (MAIA.prior.eloMax - MAIA.eloMax), 0, 1);
-	return MAIA.prior.gapCp.start + progress * (MAIA.prior.gapCp.end - MAIA.prior.gapCp.start);
 }
 
 /** One packaged size serves every supported rating. */

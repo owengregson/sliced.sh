@@ -43,7 +43,7 @@ not run is `not run`, never a tick.
 | A5 | Navigate to a non-supported site (e.g. example.com) with the panel open | "Not on a supported site" view with a working chess.com link | |
 | A6 | `bun run build` (release), load *that* `dist/` unpacked in a second profile | Card reads **sliced.sh** (no `(dev)`, no `version_name`); everything above still holds | |
 | A7 | On a chess.com tab's page console, run `fetch("chrome-extension://" + "<the extension id from chrome://extensions>" + "/assets/sounds/make_move.wav")` | **Rejects.** v2 declares no `web_accessible_resources`, so a page cannot confirm the extension is installed (§13.3). A success here is a critical finding | |
-| A8 | Same, with the engine: `.../assets/engine/sf_18_smallnet_relaxed-simd.wasm` | Rejects, same reason | |
+| A8 | Same, with the engine: `.../assets/engine/sf_19_smallnet_relaxed-simd.wasm` | Rejects, same reason | |
 
 ---
 
@@ -110,18 +110,36 @@ exercised down here. Play 1+0 against a bot.
 
 The simulator cannot produce chess.com's own `board.game.timeControl.get()`, and everything the
 clock drives hangs off it: the timing class, the compression factor, the hard caps, the §8.5
-emergency regime, the §4.6 preset, the §7.4 premove gate and the hand's motor class. It is `null`
+emergency regime, the per-class move-time gain, the §7.4 premove gate and the hand's motor class. It is `null`
 until the game actually starts, so the reading arrives *after* the session exists and
 `GameSession.reprofile()` is what consumes it. These rows prove the whole chain on a real game.
 
 | # | Do | Expect | Observed |
 |---|---|---|---|
 | B2a.1 | Open a live 3+0 game and watch the service-worker console from before the first move | One `game-session: time control learned from a position` line with `baseMs: 180000`, `incMs: 0`, `tc: "blitz"`. **No line at all is a finding**: the game is running untimed, with a classical hand and no premoves | |
-| B2a.2 | Settings view, during that game | The detected preset chip matches the class (bullet → fast, blitz/rapid → natural, classical → slow). A game showing the stored preset instead means the time control never arrived | |
+| B2a.2 | Settings view, during that game | **Timing** shows the four sliders and nothing above them — the preset chips were removed on 2026-09-15 and the user's sliders always apply. The time control's own effect is the per-class move-time gain, which B2b.2's timing log is what proves | |
 | B2a.3 | A game **with an increment** (3+2) | The log line shows `incMs: 2000`. If it shows `incMs: 2` — or a warning `adapter: implausible time-control field, reading it as seconds` — chess.com reports the increment in **seconds**, which is the one unit this lane could not confirm (the capture's increment was 0). Record which | |
 | B2a.4 | 1+0 vs a bot, play down to under a second on your own clock | `emergency regime: no floors, minimal motor` appears in the plan's rationale (panel plan line / timing log). The move still lands; note how long it actually takes — the hand's motor floor is ~400–900 ms whatever the plan says, which is the real lower bound on a flag scramble | |
 | B2a.5 | A game that is **not yet started** (waiting for an opponent), then let it start | The first positions carry no time control (expected), and the line in B2a.1 appears within a second or so of the clocks starting. A gap of many seconds means the 1 Hz re-ask is the only thing delivering it and the page's own event never fires | |
 | B2a.6 | Under a minute on your own clock, read the panel's clock | It keeps counting (tenths shown). A clock that freezes or jumps to 0:00 means chess.com renders bare seconds in a shape `parseClockText` still rejects — record the exact string from the DOM | |
+
+### B2b. Base speed (owner, 2026-09-15) — **answerable only in a browser**
+
+`timing.baseSpeed` replaced `timing.speedScale` and **higher now means faster**. It is a wall-clock
+multiplier on the *whole* move — the wait the timing model plans and the hand's own movement — and
+it deliberately does not reach the engine: the search keeps the allocation the target rating
+implies at every setting. The simulator pins the arithmetic and the ordering
+(`test/behavioral/game/base-speed.test.ts`, `test/service/game-session/search-room.test.ts`); these
+rows are the parts only a real board answers.
+
+| # | Do | Expect | Observed |
+|---|---|---|---|
+| B2b.1 | A blitz game vs a bot at Base speed 0.5×, then the same at 2× (Settings › Timing) | Moves at 2× visibly take less wall-clock time from the opponent's move landing to ours landing — the wait *and* the drag are quicker. Slower at a higher number is the bug this replaced | |
+| B2b.2 | Same two games, Engine view's timing log | `plannedMs` is roughly four times larger at 0.5× than at 2×, while the **search** rows are unchanged: the same movetime and the same depth at both settings. A search that shrinks with the slider is a finding | |
+| B2b.3 | Base speed 4× (top of the slider) in a rapid game | The hand still looks like a hand: the approach and drag are fast but not instant, and the timing log never shows a move completing under `TIMING_CONSTANTS.minNormalMs`. Export the log and run `tools/telemetry-conformance/report.py` over it — the hold-time band must still pass | |
+| B2b.4 | Base speed 4× with a deliberately slow search (a high target rating, or a cold engine on the first move of a game) | The sampled release target remains fixed. Late preparation is reported in the rationale and measured as an overrun; optional actions are dropped, physical movement remains continuous, and the move still follows completed selection. Preparation overruns must not train the timing pace | |
+| B2b.5 | Base speed 0.35× (bottom of the slider) in a 3+0, played down to under 15 s | The clock caps still bind: moves shorten as the clock drops exactly as they do at 1×, and the game does not flag. A slow setting must not be able to lose on time | |
+| B2b.6 | Upgrade path: a profile stored by a build before 2026-09-15 (or hand-write `{"timing":{"speedScale":1.3}}` into `chrome.storage.local`), then open Settings | Base speed reads **0.77×** and the game's pace is what it was before the upgrade. A reset to 1.00× means the migration did not fire | |
 
 ### B3. Executor and content-script edge cases (deferred from Tasks 18/20/21)
 
@@ -186,21 +204,29 @@ reaches a usable depth in a real game.
 
 | # | Do | Expect | Observed |
 |---|---|---|---|
-| B6.1 | Settings › Display: confirm **Board effects** sits directly beneath **Highlight moves** and ships on. Turn it off, play a move, turn it on | Nothing is drawn while it is off; whatever was drawn disappears on the flip. Turning it on draws from the *next* move, not retroactively | |
+| B6.1 | Settings › Display: confirm **Board effects** sits directly beneath **Highlight moves** and ships on. Turn it off, play a move, turn it on | No *rays or capture mark* while it is off (the rating chip is a separate switch — B6.26); whatever was drawn disappears on the flip. Turning it on draws from the *next* move, not retroactively | |
 | B6.2 | Live game (`/play/online`, WebGL board). Let the opponent capture, check or fork | The rays appear on the board over the canvas, red-toned. If nothing appears, check `document.querySelector("wc-chess-board > svg")` — a hit with nothing visible means the canvas paints over it (a finding) | |
 | B6.3 | Same on `/play/computer` (DOM renderer) | Identical rays. A difference between the two renderers is a finding | |
-| B6.4 | Make a move yourself; compare its rays with the opponent's | Ours are blue (`effect.mine`, #3B82F6 family), theirs red (`effect.theirs`, #EF4444 family). Both are drawn; the chip's disc keeps its own category colour | |
+| B6.4 | Make a move yourself; compare its rays with the opponent's | Ours are blue (`effect.mine`, `azure.500` #5A94F2 at the a48 step), theirs red (`effect.theirs`, `crimson.500` #F25A5A at a48) — clearly saturated, not pastel (2026-09-15). Both are drawn; the chip's disc keeps its own category colour, and neither line colour reads as a Blunder-red or Great-blue chip | |
 | B6.5 | Play through a castle, a promotion, an en-passant capture and a discovered check | Each draws its own shape: two slide traces, a ray onto the captured pawn's real square, a dashed ray from the *checker* rather than from the piece that moved. The promotion itself draws nothing (its pulses were the rings the owner removed); any other effect the promoting move produced still draws | |
 | B6.6 | Watch a fork (a knight hitting two pieces) | The rays fan out one after another, not all at once | |
 | B6.7 | Record the ray endpoints against the squares they name (screenshot, or read the `<path d>` and compare with the board rect) | Each ray starts and ends inside the squares it names. A constant offset means the overlay's 8×8 viewBox and the host element disagree — the same assumption the recommendation mark makes | |
 | B6.8 | Watch the bottom-left of the destination square after each move, on a large board and then with the side panel widened so the board is small | The chip (0.345 board units, 0.8 opacity) scales in, holds ~1.2 s and fades. Record whether the glyph is still readable on the small board and whether it collides with chess.com's rank/file labels on `a`-file and rank-1 squares | |
-| B6.9 | Play a full blitz game with Engine view › Log at `debug` and count: moves played vs chips shown, **per side** | Both sides should chip on nearly every move: ours from the referee lines during the think time, theirs from the ponder lines plus our own-move search, neither needing a search of its own. Every move without a chip has a `board effects: no chip for the landed move` line with a `reason`; record the reasons per side. A run of `superseded` or `shallow` is a finding; `unscored` on the opponent's moves after a fast reply or a hold is the known gap | |
+| B6.9 | Play a full blitz game with Engine view › Log at `debug` and count: moves played vs chips shown, **per side** | Both sides chip on nearly every move, from the move-review engine alone (2026-09-14). Every move without a chip has a `board effects: no rating for the landed move` line with a `reason` (`no-frame`, `shallow`, `unscored`, `stale`, `failed`, `no-reviewer`); record the reasons per side. A run of `failed` or `no-reviewer` means the full review build did not start (look for `review engine: the full build did not start`) and is a finding | |
+| B6.19 | Same game: note when each chip appears relative to its rays | Our moves: the chip lands with the rays (the result of the planned move was reviewed during the think time). The opponent's: with the rays when they played one of the review's top lines, otherwise within ≈ 0.7 s (`REVIEW.landedWaitMs`) plus one search. A chip routinely later than ~1.5 s after the move is a finding; record the machine's core count | |
+| B6.20 | Compare a finished game's chips with chess.com's own Game Review of it | Record per category how many chips agree. Expect near-agreement on Best/Excellent/Good/Inaccuracy/Mistake/Blunder and Book; Brilliant, Great and Miss use unpublished chess.com rules and will differ more (the benchmark numbers are in `tools/move-review/score.ts`) | |
+| B6.21 | Reach a forced mate (a bot, or a won endgame) with Move rating sound effects and Forced mate sounds on | Every move of the mating side, the checkmate included, gets the gold star chip and plays `forced.mp3` — the only forced-mate clip since 2026-09-15 (`forced_1` … `forced_6` are no longer played) — a little quieter (0.8) than the rating sounds. Its pitch rises one semitone per move towards the checkmate, which always sounds and is always the highest, +3 semitones over the file; a long mate starts no lower than −12. A move that leaves mate as far away as before sounds a little higher than the previous one but never as high as the next step. Higher steps are also shorter (the pitch is resampled, as the panel's slider ticks are). A checkmate with no gold star or no sound is a finding. Turning Move rating sound effects off greys Forced mate sounds out and silences both | |
+| B6.22 | With the side panel's Engine view open, watch CPU and memory through a rapid game | Two Stockfish instances run in the offscreen document; the review one uses at most half the cores (`REVIEW.threadsMax` = 4). A move search visibly slower than before this change, or the offscreen process killed for memory, is a finding | |
+| B6.23 | Reach a position where one side has a single legal move (a king in check with one flight square) and play it | The move gets the sage-green arrow chip (`forced`) in the same instant as its rays — no wait for the review engine — whichever side played it. A forced move inside a mating attack shows the arrow, not the gold star — unless the only move is itself checkmate, which is always the gold star with its top-step sound (2026-09-15) | |
+| B6.24 | Settings › Board: confirm **Show ratings for** sits directly beneath **Move ratings**, offers You / Enemy / Both with Both selected on a fresh install, and greys out while Move ratings is off — and **only** that (2026-09-15: Board effects no longer greys it, nor the two sound rows). With Move rating sound effects and Forced mate sounds on, play a few moves under each option | You: only your moves get a chip and a rating sound; Enemy: only the opponent's; Both: every move. Rays and the capture mark still draw for both sides under every option. A chip, rating sound or forced-mate tone on a hidden side's move is a finding, as is a shown side's chip arriving later than under Both | |
+| B6.25 | Play three openings and compare the Book chips with chess.com's Game Review of each: a deep main line (e.g. the Najdorf English Attack to move 10), an offbeat named line (e.g. the Englund Gambit 1.d4 e5 2.dxe5 Nc6), and the Scotch Gambit Haxo trap 1.e4 e5 2.Nf3 Nc6 3.d4 exd4 4.Bc4 Bc5 5.c3 dxc3 6.Bxf7+ | Book chips run through each named line for both sides, stopping within a move or two of where chess.com's review stops; a transposition into the same position still chips Book. 6.Bxf7+ is **not** Book (chess.com badges it brilliant). A named main-line move without a Book chip, or a Book chip well past chess.com's last Book move, is a finding (2026-09-15: `THEORY_BOOKS`) | |
 | B6.15 | Play a fast exchange (bullet or premoves): three or four moves inside ~2 s | Every move's rays and chip run their full life; a new move never cuts the previous one short. Several chips may be on the board at once (at most `maxLiveChips` = 4; a recapture on the same square replaces that square's chip). Record whether the stacking reads as a burst or as clutter | |
 | B6.16 | Watch a capture, a check and a threat side by side | The capture is a diagonal pill sweeping across the *taken* piece's square (no line from the origin), entering from the mover's side. The check and threat are thicker pill-shaped rays whose base fades in and whose arrowhead fades to its point; no hard end on either. **No rings or pulses anywhere** — a circle expanding from a square is a finding (they were removed on 2026-09-13) | |
 | B6.17 | Let a move produce rays (a capture, a check, a fork) and wait for its chip | The chip appears beside the rays on the destination square — for our own moves in the same instant as the rays, for the opponent's a moment later — and neither disturbs the other. A move with rays and no chip, where a quiet move chips, is a finding | |
 | B6.18 | Play a move whose recommendation you then override by hand (arm nothing, move a different piece than the arrow shows) | The chip is for the move you played and sits on its destination; nothing is drawn for the planned move. A chip on the arrow's square is a finding | |
 | B6.19 | Bullet or blitz with autoplay armed and chess.com premoves on: wait for the log's `entering a premove on the site`, then let the opponent play the predicted reply | Two batches in the same instant — their move's rays (red), then our premove's (blue) — and a chip for each. For a recapture both chips land on the same square and ours replaces theirs. A fired premove with rays and no chip is a finding; look for `no chip for the landed move` and its reason | |
 | B6.20 | Autoplay **off** (panel-only mode), play a few moves by hand | Our chips still appear — at landing, from the panel ponder's lines, since the referee search at a limited Elo cannot be classified before landing and the panel ponder supersedes the fallback. A move by hand with no chip and no logged reason is a finding | |
+| B6.26 | Owner, 2026-09-15 — the two switches are independent. Play a few moves under each of the four combinations of **Board effects** and **Move ratings**, with Move rating sound effects on throughout. Then flip each switch off *mid-game* and play another move | Effects only: rays and the capture mark, no chip, no rating sound, and the Engine view's log shows no review search. Ratings only: the chip on every landed move's square with its sound, and no rays at all. Both: as before. Neither: nothing drawn, and whatever was on the board disappears. Turning either off mid-game erases the whole layer (one clear) and the other kind resumes from the *next* move — a chip that never returns with Board effects off, or a ray drawn with it off, is a finding | |
 | B6.10 | Watch the categories over a whole game | Record which fire. Blunder / Mistake / Inaccuracy / Good / Excellent / Best should all appear; Book early; Great and Brilliant rarely. A category that never fires, or Brilliant firing on ordinary moves, is a calibration finding | |
 | B6.11 | Arm and let the hand play with effects on. Compare move timing against a game with effects off (the Engine view's log has the think times) | No visible delay to our own moves. In the common case the lane adds no search at all; the dedicated fallback runs only from `prepare()` during the think time, and the landing-time cache probe is free on a hit. The claim it cannot delay a move rests on the engine queue's supersede rule | |
 | B6.12 | Turn the OS reduced-motion setting on and play a few moves | The rays are drawn statically and stay until the next move replaces them; the chip appears without the scale-in. Judge whether a static ray set through a whole opponent turn is wanted | |
@@ -264,6 +290,26 @@ players" **on** (Settings › Execution), Engine view › Log at `info`.
 | B9.6 | Have an **untitled** opponent send a rematch | Nothing is pressed on the panel; the status shows `Retrying…` while the panel hides the new-game button, then the ordinary new-game click once the panel goes | |
 | B9.7 | With a 1-minute session and a 1-minute break configured, end a game against a titled opponent after the session expired | The rematch step runs first (status `Next game in …` then `Rematch offered …`, the mouse **not** released); if the rematch starts, the break follows *that* game (`Session break · …` on its end, a freshly sampled length); if the offer lapses, the break starts at 15 s and the mouse is released then (`session break — the mouse is released`) | |
 | B9.8 | Turn "Rematch titled players" off and repeat B9.1 | No offer, no `rematch` read; the ordinary queue as before | |
+
+### B10. Max-strength mode (owner, 2026-09-15: the strength slider at 100 %) — **answerable only in a browser**
+
+At an active target of 3800 (`isMaxStrength`) the move search runs as usual, the timing model plans
+the move, and then one full-strength single-line search (`go depth 245 movetime <window>`) decides
+it, ending when the hand must start its approach. The simulator proves the wire and the deadline; it
+cannot see real engine depth, CPU contention with the move-review engine, the offscreen document's
+memory, or whether the pointer resting through the think reads as human. Slider at 100 %, "Match
+opponent rating" off, auto-move armed, Engine view › Log at `debug`, Chrome Task Manager open.
+
+| # | Do | Expect | Observed |
+|---|---|---|---|
+| B10.1 | Play a 10+0 game vs a bot | Per move, the log shows `max strength — deep move search { windowMs }` then `… settled { depth, changed }`. **Record** the settled depths (the move search's `depth` beside them) for 10 middlegame moves and how often `changed` is true | |
+| B10.2 | In B10.1, compare each move with an offline Stockfish 19 analysis at depth ≥ 30 | The played move is the engine's first choice (or within a few centipawns of it) on every move; no book move, no sampled or blunder source in the rationale (`max strength:` rows only) | |
+| B10.3 | In B10.1, watch the move times, the panel and the pointer | Think times look like the other targets' at the same clock (no instant middlegame moves, no metronome); the move lands at the plan's deadline, not earlier (the panel's countdown appears only once the deep search hands the move over, near the end of the think). **Record** whether the pointer stays still for most of the think and only moves for the approach — a finding if it looks mechanical next to a 3799 game | |
+| B10.4 | Play a 1+0 game into a scramble (under 10 s) | No flag caused by the search: moves in the scramble come from the clock-race limits (short windows or no deep search in the log), holds and safe recaptures still fire | |
+| B10.5 | During B10.1, read Task Manager's CPU and memory for the extension's offscreen document | CPU ≈ all cores while our move is searched, with the review engine also running; memory stays under ~2 GiB and no `table index is out of bounds` / engine crash appears. **Record** the peak memory with two full engines and the 128 MB hash | |
+| B10.6 | Press Space (play now) in the middle of a long think | The deep search stops (`settled` in the log at once) and its move is played within about a second | |
+| B10.7 | Get to a lost position with a forced mate against you (vs a strong bot) with "Resign lost games" on | Resigns as at other targets (after the "evaluating" delay); a mate only the deep search sees is resigned after that move's think | |
+| B10.8 | Set the slider to 3799 and repeat B10.1 for a few moves | No `deep move search` rows; Hash stays at the stored setting (`setoption name Hash` in the log shows it) | |
 
 ---
 
@@ -344,11 +390,11 @@ Open the offscreen document's console (`chrome://extensions` → Inspect views: 
 |---|---|---|---|
 | D1 | In the offscreen console: `crossOriginIsolated` | `true`. If `false`, the COOP/COEP manifest keys are not taking effect and pthreads will not work | |
 | D2 | `typeof SharedArrayBuffer` | `"function"` | |
-| D3 | Watch the boot log for the shared memory allocation | The first attempt is `LIMITS.engineMemoryInitialPages[0]` = 2560 pages = **160 MiB**. Record which of `[2560, 1536, 1024]` actually succeeded, and on how much RAM | |
+| D3 | Watch the boot log for the shared memory allocation | The first attempt is `LIMITS.engineMemoryInitialPages[0]` = 2560 pages = **160 MiB**. Record which of `[2560, 1536, 1024]` actually succeeded, and on how much RAM. Every boot uses `LIMITS.engineMemoryMaxPages` = 32768 pages (2 GiB) as its maximum; with both hosts on the full build, confirm neither logs the 2026-09-15 worker trap ("table index is out of bounds") and record the tab's peak memory | |
 | D4 | Force the fallback (open several heavy tabs first, or run on a low-RAM machine) | A failed 2560-page allocation degrades to 1536 then 1024 and the engine still boots, rather than throwing | |
 | D5 | Confirm the extension-URL `import()` of the Emscripten factory works under the extension CSP | Engine reaches `uciok`; no CSP violation in the offscreen console | |
 | D6 | Confirm pthreads actually spawn (`mainScriptUrlOrBlob`) | Worker threads appear; `Threads` option takes effect (nps rises with more threads in the Engine view) | |
-| D7 | Select Network = `big`, or set target Elo above 3200; repeat after returning to Small | The full engine loads both installed raw networks, reaches ready, and searches without remote NNUE requests or a download-progress bar | |
+| D7 | Select Network = `big`, or set target Elo above the Maia cutoff (3000, `MAIA.eloMax`; it was 3200 before 2026-09-15); repeat after returning to Small | The full engine loads its installed raw network, reaches ready, and searches without remote NNUE requests or a download-progress bar | |
 | D8 | Disable cache storage and network access, then select the full engine | Packaged networks still load. On an older installation missing those assets, separately verify the OPFS/IndexedDB and checksum-verified relay fallback | |
 | D9 | Open two windows on supported sites | Exactly **one** offscreen document exists (`chrome.runtime.getContexts`), shared by both | |
 | D10 | Engine view → Restart | Engine restarts, reaches `ready`, and analysis resumes without a reload | |
@@ -477,6 +523,16 @@ here. Fix only what is genuinely wrong; do not restyle against Appendix F.
 List every place the rendering differs from the wireframe, with the screenshot name. Fixes are
 **CSS only** — a layout deviation is not licence to change behaviour.
 
+### I5. The target-rating slider (owner, 2026-09-15) — **answerable only in a browser**
+
+| # | Do | Expect | Observed |
+|---|---|---|---|
+| I5.1 | Settings › Strength, opponent matching off. Drag the target slider to 3800, wait for a warm sweep to be half-way across, then drag down to about 3200 and let go | The sweep in flight carries on at the same speed from where it was — no jump, no restart, no reversal on release. The next sweep simply comes later (the cadence slows towards the cutoff). A skip at the moment the knob is released is the bug this fixes | |
+| I5.2 | Same slider, repeat I5.1 with Settings › Reduced motion = On | No sweeps at all, before or after the release; the glow rests | |
+| I5.3 | Look at the track | Exactly one divider, at 3000 (the Maia cutoff, where the large network takes over); no second hairline marker. Hovering the divider titles the network split | |
+| I5.4 | Move the slider across 400, 800, 1400, 1800, 2200, 2600, 3000, 3400 | A single caption under the slider names the current category — Casual, Club, Advanced, Expert, Master, Elite, Champion I, Champion II — and changes as each floor is crossed; there is no row listing every category. VoiceOver reads the thumb's value ("Advanced 1500") once, not the caption again | |
+| I5.5 | Turn on Match opponent rating (persona offset e.g. +40) and start a rated game | Before the opponent's rating is read the slider shows the stored target; once it is read it moves to rating + offset (an unrounded value such as 1537 is shown as is), greyed and not draggable. Changing the offset moves it with the next snapshot. The Live view's strength popover shows the same value. Turning matching off returns the slider to the stored target | |
+
 ---
 
 ## J. Multi-window and multi-tab
@@ -599,7 +655,8 @@ separately; the gate belongs in the SW session (`src/service/game-session/**`).
 
 **L2 — resolved: Network selection and full networks.** `EngineController` switches variants
 before searching: Big requests full at any Elo; Auto or Small upgrades above the product's
-3200 cutoff. Both variants now use packaged networks. Missing assets on older installations
+one strength division, the Maia cutoff (`MAIA.eloMax`, 3000; the separate 3200 cutoff was removed
+on 2026-09-15). Both variants now use packaged networks. Missing assets on older installations
 retain the verified cache/download fallback. See D7–D8 and
 [`bundled-nnue-2026-09-11.md`](qa/bundled-nnue-2026-09-11.md).
 

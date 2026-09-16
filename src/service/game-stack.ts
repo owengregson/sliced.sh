@@ -40,6 +40,7 @@ import { createPolicyInferPort } from "@service/handlers/engine/policy-infer";
 import { createTimingInferPort } from "@service/handlers/engine/timing-infer";
 import { ensureOffscreen } from "@service/offscreen-manager";
 import type { PanelBroadcaster } from "@service/panel-broadcaster";
+import { ReviewEngine, reviewThreads } from "@service/review-engine";
 import { speak } from "@service/tts";
 import type { Settings } from "@typedefs/settings";
 
@@ -48,6 +49,7 @@ export interface GameStack {
 	engine: UciEngine;
 	transport: RemoteEngine;
 	controller: EngineController;
+	reviewEngine: ReviewEngine;
 	registry: SessionRegistry;
 	timingLog: TimingLogWriter;
 	/** The worker's one fresh `Settings` snapshot (what every consumer here reads). */
@@ -100,6 +102,11 @@ export function createGameStack(options: GameStackOptions): GameStack {
 		warmTiming: true,
 	});
 	const engine = new UciEngine(transport);
+	// 2026-09-14: board ratings run on their own full-network engine, never on `engine`.
+	const reviewEngine = new ReviewEngine({
+		ensureHost: ensureOffscreen,
+		threads: reviewThreads(globalThis.navigator?.hardwareConcurrency),
+	});
 	const cache = new AnalysisCache();
 	const controller = new EngineController(engine, {
 		getSettings,
@@ -129,6 +136,7 @@ export function createGameStack(options: GameStackOptions): GameStack {
 	const registry = new SessionRegistry({
 		link,
 		engine: controller,
+		review: reviewEngine,
 		book,
 		createHead: () =>
 			new ChessMimicHead({ infer: inferPort.infer, fallback: new V1ParametricHead() }),
@@ -204,6 +212,9 @@ export function createGameStack(options: GameStackOptions): GameStack {
 		// the content script's replay is swallowed by the feed dedupe. Fanning out is what releases
 		// it — `resumeEnabled` picks the held position up with the settings that really apply.
 		registry.settingsChanged();
+		// Only ratings use the review engine; board effects are pure chess (owner, 2026-09-15: the
+		// two switches are independent), so the rays alone never keep it booted.
+		if (!next.enabled || !next.automation.moveQualityChips) reviewEngine.release();
 		const active = registry.all().find((session) => session.isLive());
 		synchronizePolicyWarmup(active?.targetElo() ?? settings.strength.targetElo);
 	};
@@ -223,6 +234,7 @@ export function createGameStack(options: GameStackOptions): GameStack {
 		engine,
 		transport,
 		controller,
+		reviewEngine,
 		registry,
 		timingLog,
 		getSettings: readSettings,
@@ -231,6 +243,7 @@ export function createGameStack(options: GameStackOptions): GameStack {
 			offSettings();
 			detachEngineHandlers();
 			registry.dispose();
+			reviewEngine.dispose();
 			board.dispose();
 			void timingLog
 				.flush()

@@ -1,4 +1,5 @@
 import { LIMITS } from "@core/constants/limits";
+import { MAIA } from "@core/constants/maia";
 import { HUMAN_DEPTH, SEARCH_BUDGET } from "@core/constants/search";
 import { clamp } from "@core/util/clamp";
 
@@ -26,15 +27,15 @@ export function humanDepth(selfElo: number): number {
 	return last[1];
 }
 
-/** A resource ceiling, not a playing-strength calibration. Time budgets may stop search earlier. */
+/**
+ * A resource ceiling, not a playing-strength calibration. Time budgets may stop search earlier.
+ * The small-network curve ends at the Maia cutoff (`MAIA.eloMax`, where the full network takes
+ * over — owner, 2026-09-15); above it the ceiling is the maximum.
+ */
 export function automaticDepthForElo(targetElo: number): number {
 	if (!Number.isFinite(targetElo)) return LIMITS.depthMin;
-	if (targetElo > LIMITS.nnueSmallEloMax) return LIMITS.depthMax;
-	const fraction = clamp(
-		(targetElo - LIMITS.eloMin) / (LIMITS.nnueSmallEloMax - LIMITS.eloMin),
-		0,
-		1
-	);
+	if (targetElo > MAIA.eloMax) return LIMITS.depthMax;
+	const fraction = clamp((targetElo - LIMITS.eloMin) / (MAIA.eloMax - LIMITS.eloMin), 0, 1);
 	return Math.round(
 		LIMITS.depthMin + fraction * (SEARCH_BUDGET.automaticDepth.maxSmallDepth - LIMITS.depthMin)
 	);

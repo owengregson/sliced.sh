@@ -10,7 +10,7 @@ import { fileOf, rankOf } from "@core/chess/squares";
 import { EXECUTOR } from "@core/constants/cdp";
 import type { Rng } from "@core/rng";
 import type { Square } from "@typedefs/game";
-import { EXPLORATION, OPPONENT_EXPLORATION as O, SAMPLING } from "./constants";
+import { EXPLORATION, OPPONENT_EXPLORATION as O, REPERTOIRE, SAMPLING } from "./constants";
 import { inRect, lastPoint, pathMs, sampleRange, smallRect } from "./geometry";
 import type {
 	ExplorationSide,
@@ -20,6 +20,7 @@ import type {
 	OpponentExplorationPolicy,
 } from "./opponent-candidates";
 import { generatePath, idleTremor } from "./path-generator";
+import { chooseRepertoire, type RepertoireState, repertoireRoute } from "./repertoire";
 import { pointInBand, samplePointInRect } from "./sampling";
 import type { BoardGeometry, MotorProfile, MoveCandidate, PathPoint, Pt, Rect } from "./types";
 
@@ -33,6 +34,10 @@ export type ExplorationActivity =
 	| "king"
 	| "offBoard"
 	| "glance"
+	| "compare"
+	| "verify"
+	| "relate"
+	| "prepare"
 	| "rest";
 
 export interface OpponentExplorationAction {
@@ -54,6 +59,10 @@ export interface OpponentExplorationAction {
 export type ExplorationSpell = "first" | "active" | "glance" | "still";
 
 export interface OpponentExplorationOptions extends OpponentExplorationCandidates {
+	/** Strict ceiling on the entire spell, including orientation and terminal stillness. */
+	maxMs?: number;
+	/** Retain the previous plan's state; clear between games. Never contains coordinates. */
+	repertoireState?: RepertoireState;
 	geometry: BoardGeometry;
 	profile: MotorProfile;
 	cursor: Pt;
@@ -66,6 +75,7 @@ export interface OpponentExplorationOptions extends OpponentExplorationCandidate
 }
 
 export interface OpponentExplorationPlan {
+	repertoireState?: RepertoireState;
 	actions: OpponentExplorationAction[];
 	durationMs: number;
 	lastTarget: Square | null;
@@ -101,7 +111,13 @@ export function planOpponentExploration(
 	const ownOnly = lowTime || opts.policy?.ownOnly === true;
 	const attention = lowTime ? undefined : opts.attention;
 	const spell = chooseSpell(opts, attention, rng);
-	const durationMs = spellMs(spell, opts, attention, rng);
+	const ceiling =
+		opts.maxMs === undefined
+			? Number.POSITIVE_INFINITY
+			: Number.isFinite(opts.maxMs)
+				? Math.max(0, opts.maxMs)
+				: 0;
+	const durationMs = Math.min(ceiling, spellMs(spell, opts, attention, rng));
 	const budget: Budget = { total: durationMs, spent: 0, activeUntil: durationMs };
 	if (!attention) {
 		const frac = sampleRange(lowTime ? O.lowTimeActiveFrac : O.activeFrac, rng);
@@ -112,8 +128,19 @@ export function planOpponentExploration(
 		plan.rest(durationMs);
 		return plan.finish();
 	}
-	if (spell === "still") plan.still();
+	if (
+		opts.attention?.repertoire &&
+		(opts.attention.repertoire.premovePending ||
+			opts.attention.armed ||
+			lowTime ||
+			durationMs < REPERTOIRE.minWindowMs ||
+			!Number.isFinite(opts.attention.myClockMs) ||
+			opts.attention.myClockMs < REPERTOIRE.lowClockMs)
+	)
+		plan.suppressRepertoire();
+	else if (spell === "still") plan.still();
 	else if (spell === "glance") plan.glance();
+	else if (opts.attention?.repertoire) plan.repertoireBout();
 	else if (!attention) plan.legacyBout(lowTime);
 	else plan.active(spell === "first");
 	return plan.finish();
@@ -178,7 +205,7 @@ function spellMs(
 	return sampleRange(A.activeMs, rng) * phase * armed;
 }
 
-type Activity = Exclude<ExplorationActivity, "glance" | "rest">;
+type Activity = "line" | "threat" | "candidates" | "king" | "offBoard";
 
 /** `skipped`: nothing to do (already there, wrong side); `refused`: no room left in the spell. */
 type VisitResult = "done" | "skipped" | "refused";
@@ -191,6 +218,7 @@ class SpellPlanner {
 	private readonly traceScale: number;
 	private readonly readings: LineReading[];
 	private lastLine: LineReading | null = null;
+	private repertoireState: RepertoireState | undefined;
 
 	constructor(
 		private readonly opts: OpponentExplorationOptions,
@@ -200,6 +228,7 @@ class SpellPlanner {
 		private readonly spell: ExplorationSpell
 	) {
 		this.cursor = { ...opts.cursor };
+		this.repertoireState = opts.repertoireState;
 		this.lastTarget = opts.previousTarget ?? null;
 		this.traceScale = sampleRange(O.traceSpeedScale, rng);
 		this.readings = (opts.readings ?? []).map((reading) => ({
@@ -216,7 +245,13 @@ class SpellPlanner {
 			durationMs: this.budget.total,
 			lastTarget: this.lastTarget,
 			spell: this.spell,
+			...(this.repertoireState ? { repertoireState: this.repertoireState } : {}),
 		};
+	}
+
+	suppressRepertoire(): void {
+		this.repertoireState = undefined;
+		this.rest(this.budget.total);
 	}
 
 	// ── spells ────────────────────────────────────────────────────────────
@@ -225,6 +260,71 @@ class SpellPlanner {
 	legacyBout(lowTime: boolean): void {
 		this.rest(sampleRange(O.orientationMs, this.rng));
 		this.candidates(lowTime ? O.lowTimeVisits : O.visits);
+	}
+
+	/** Purpose persists for a few active bouts; target squares are re-derived every time. */
+	repertoireBout(): void {
+		const attention = this.opts.attention;
+		const context = attention?.repertoire;
+		if (!attention || !context) return;
+		const candidates = [
+			...this.opts.ownCandidates,
+			...(this.ownOnly ? [] : this.opts.opponentCandidates),
+		];
+		const state = chooseRepertoire(
+			context,
+			this.repertoireState,
+			{
+				budgetMs: this.room(),
+				myClockMs: this.opts.policy?.lowTime ? 0 : attention.myClockMs,
+				candidates: candidates.length,
+			},
+			this.rng
+		);
+		this.repertoireState = state;
+		if (state.intent === "still") return;
+		this.rest(sampleRange(REPERTOIRE.orientationFrac, this.rng) * this.room());
+		if (state.intent === "inspect" && this.readings.length > 0) {
+			this.readLine();
+			return;
+		}
+		if (state.intent === "verify" && (this.opts.threats?.length ?? 0) > 0) {
+			this.threats();
+			return;
+		}
+		const pool = state.intent === "prepare" ? this.opts.ownCandidates : candidates;
+		const route = repertoireRoute(state.intent, pool, this.rng);
+		const activity = state.intent === "inspect" ? "candidates" : state.intent;
+		for (const target of route) {
+			const dwell = sampleRange(
+				state.intent === "verify" ? REPERTOIRE.verifyDwellMs : REPERTOIRE.dwellMs,
+				this.rng
+			);
+			if ("square" in target) {
+				const side = this.opts.ownCandidates.some(
+					(c) => c.from === target.square || c.to === target.square
+				)
+					? "own"
+					: "opponent";
+				if (this.visit(target.square, side, "hover", dwell, activity) === "refused") break;
+			} else {
+				const a = this.opts.geometry.squareRect(target.between[0]);
+				const b = this.opts.geometry.squareRect(target.between[1]);
+				if (!validRect(a) || !validRect(b)) break;
+				const point = {
+					x: (a.left + a.width / 2 + b.left + b.width / 2) / 2,
+					y: (a.top + a.height / 2 + b.top + b.height / 2) / 2,
+				};
+				if (
+					!this.travelTo(point, smallRect(point, EXPLORATION.tracePointRectPx), dwell, {
+						kind: "trace",
+						activity: "relate",
+						...(this.ownOnly ? { side: "own" as const } : {}),
+					})
+				)
+					break;
+			}
+		}
 	}
 
 	/**
@@ -497,9 +597,10 @@ class SpellPlanner {
 	}
 
 	rest(ms: number): void {
-		if (!(ms > 0)) return;
-		this.actions.push({ kind: "rest", dwellMs: ms, activity: "rest" });
-		this.budget.spent += ms;
+		const duration = Math.min(ms, Math.max(0, this.budget.total - this.budget.spent));
+		if (!(duration > 0)) return;
+		this.actions.push({ kind: "rest", dwellMs: duration, activity: "rest" });
+		this.budget.spent += duration;
 	}
 
 	/** A dwell with the idle tremor: the tremor's one point becomes a `drift` inside it. */

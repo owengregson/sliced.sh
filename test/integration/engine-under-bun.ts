@@ -2,8 +2,8 @@
 //
 // Only the relaxed-SIMD builds ship (`ENGINE_FILES`, 2026-09-13), and Bun's JavaScriptCore
 // rejects them: `WebAssembly.validate` is false for every `*_relaxed-simd.wasm` here, true for
-// the package's plain-SIMD `sf_18*.wasm`. The Bun-hosted smoke tests therefore run the same
-// Stockfish 18 from the plain-SIMD programs the npm package still publishes in `node_modules`
+// the package's plain-SIMD `sf_19*.wasm`. The Bun-hosted smoke tests therefore run the same
+// Stockfish 19 from the plain-SIMD programs the npm package still publishes in `node_modules`
 // (identical sources and nets, a different SIMD instruction set): the registry's module names
 // map onto them, the wasm the plain glue asks its `locateFile` for comes from the same place,
 // and the loader's relaxed-SIMD probe is bypassed. Nets resolve under `installedRoot` as usual.
@@ -24,8 +24,8 @@ export const STOCKFISH_PACKAGE_DIR = path.join(
 
 /** Registry module → the package's plain-SIMD glue of the same target. */
 export const PLAIN_SIMD_PROGRAMS: Readonly<Record<string, string>> = {
-	[ENGINE_FILES.smallnet.js]: "sf_18_smallnet.js",
-	[ENGINE_FILES.full.js]: "sf_18.js",
+	[ENGINE_FILES.smallnet.js]: "sf_19_smallnet.js",
+	[ENGINE_FILES.full.js]: "sf_19.js",
 };
 
 /** `getUrl` for the loader: programs and their wasm from the package, everything else from `installedRoot`. */

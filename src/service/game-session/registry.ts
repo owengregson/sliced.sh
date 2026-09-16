@@ -49,6 +49,7 @@ import { ResignInput } from "@service/resign-input";
 import type { EngineStatus } from "@typedefs/engine";
 import type { Site } from "@typedefs/game";
 import type { LicenseState, PersonaId, Settings } from "@typedefs/settings";
+import type { ReviewSearcher } from "./board-effects";
 import { executorSettingsFor } from "./executor-settings";
 import { GameSession } from "./session";
 
@@ -56,6 +57,8 @@ export interface SessionRegistryDeps {
 	link: ContentLink;
 	engine: EngineController | null;
 	book: BookPolicy | null;
+	/** 2026-09-14: the shared move-review engine every session's board ratings come from. */
+	review?: ReviewSearcher | null | undefined;
 	/** Each session owns its inference generation/cache; only the inference transport is shared. */
 	createHead(): DistributionHead;
 	debugger: DebuggerManager;
@@ -341,6 +344,7 @@ export class SessionRegistry implements GameSessionRegistry, SnapshotSources {
 			link: this.deps.link,
 			engine: this.deps.engine,
 			book: this.deps.book,
+			review: this.deps.review ?? null,
 			head: this.deps.createHead(),
 			debugger: this.deps.debugger,
 			focus: this.deps.focus,
@@ -385,7 +389,7 @@ export class SessionRegistry implements GameSessionRegistry, SnapshotSources {
 			now: this.now,
 			scheduler: this.scheduler,
 			persona: config.persona,
-			...executorSettingsFor(settings.execution),
+			...executorSettingsFor(settings.execution, settings.timing),
 			tcClass: config.tcClass,
 			gameSeed: config.gameSeed,
 			verifyMoves: settings.execution.verifyMoves,

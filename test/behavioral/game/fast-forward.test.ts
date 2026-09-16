@@ -21,7 +21,6 @@ async function boot(verifyMoves = true, holdAnalysis = false): Promise<void> {
 		sendKeybinds: true,
 		settings: {
 			automation: { autoMove: true },
-			timing: { profile: "custom" },
 			execution: { previewSelectScale: 0, verifyMoves },
 		},
 		head: {

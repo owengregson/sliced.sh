@@ -5,6 +5,9 @@
  */
 
 import { LIMITS } from "@core/constants/limits";
+import { MAIA } from "@core/constants/maia";
+import { MAX_STRENGTH } from "@core/constants/max-strength";
+import { isMaxStrength } from "@core/strength/max-strength";
 import { clampInt } from "@core/util/clamp";
 import type { EngineVariant } from "@typedefs/engine";
 import type { Settings } from "@typedefs/settings";
@@ -82,13 +85,16 @@ export interface OptionsEnv {
 	sab: boolean;
 }
 
-/** Higher active targets require the full network; an explicit Big preference always wins. */
+/**
+ * Active targets above the Maia cutoff (`MAIA.eloMax`, the product's one strength division) play
+ * on the full network; an explicit Big preference always wins.
+ */
 export function variantForSettings(
 	settings: Settings,
 	targetElo = settings.strength.targetElo
 ): EngineVariant {
 	const target = Number.isFinite(targetElo) ? targetElo : settings.strength.targetElo;
-	return target > LIMITS.nnueSmallEloMax || settings.engine.nnue === "big" ? "full" : "smallnet";
+	return target > MAIA.eloMax || settings.engine.nnue === "big" ? "full" : "smallnet";
 }
 
 /**
@@ -103,21 +109,45 @@ export function autoThreads(hardwareConcurrency: number): number {
 }
 
 /**
+ * Max-strength `auto` threads (owner, 2026-09-15: "maximal performance"): every core, up to the
+ * registry's thread ceiling `LIMITS.threadsMax` — not `LIMITS.threadsDefault`, so a lower default
+ * for ordinary play never limits the strongest mode. A missing core count counts as 1.
+ */
+export function maxStrengthThreads(hardwareConcurrency: number): number {
+	const cores = Number.isFinite(hardwareConcurrency) ? hardwareConcurrency : 1;
+	return clampInt(cores, 1, LIMITS.threadsMax);
+}
+
+/**
  * Settings → options: full-strength search with the engine's Elo limiter on
  * (§7.1 hybrid), WDL on for the panel, no UCI ponder mode (Appendix E §4.2).
  * Threads (§6.1): `auto` → `autoThreads(hardwareConcurrency)`; an explicit setting is kept
  * (clamped to `LIMITS.threadsMax`); without `SharedArrayBuffer` the single-threaded build runs,
  * so always 1.
+ *
+ * `activeTargetElo` is the session's **active** target, which only a request carries. It decides
+ * max-strength mode alone (`isMaxStrength`): `auto` threads take `maxStrengthThreads` and the hash
+ * is at least `MAX_STRENGTH.hashMb`. Absent — no request has said — or below the ceiling, the
+ * options map exactly as the stored settings always have: the stored slider never switches the
+ * mode on its own, because an opponent-matched target below it plays below it.
  */
-export function optionsForSettings(settings: Settings, env: OptionsEnv): EngineOptions {
+export function optionsForSettings(
+	settings: Settings,
+	env: OptionsEnv,
+	activeTargetElo?: number
+): EngineOptions {
 	const { engine, strength } = settings;
+	const maxStrength = activeTargetElo !== undefined && isMaxStrength(activeTargetElo);
 	let threads: number;
 	if (!env.sab) threads = 1;
-	else if (engine.threads === "auto") threads = autoThreads(env.hardwareConcurrency);
+	else if (engine.threads === "auto")
+		threads = maxStrength
+			? maxStrengthThreads(env.hardwareConcurrency)
+			: autoThreads(env.hardwareConcurrency);
 	else threads = engine.threads;
 	const clamped = clampEngineOptions({
 		Threads: threads,
-		Hash: engine.hashMb,
+		Hash: maxStrength ? Math.max(engine.hashMb, MAX_STRENGTH.hashMb) : engine.hashMb,
 		MultiPV: Math.max(engine.multiPv, MULTI_PV_FLOOR),
 		UCI_Elo: strength.targetElo,
 	});

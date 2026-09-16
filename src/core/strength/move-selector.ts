@@ -4,20 +4,12 @@ import { loadPosition } from "@core/chess/fen";
 import { classifyMove } from "@core/chess/move-classify";
 import type { Phase } from "@core/chess/phase";
 import { hangsOutright } from "@core/chess/safety";
-import { applyMoves, parseUci, uciToSan } from "@core/chess/san";
+import { applyMoves, legalMoves, parseUci, uciToSan } from "@core/chess/san";
 import { GENERATE_VERIFY } from "@core/constants/generate-verify";
-import { LIMITS } from "@core/constants/limits";
 import { MAIA } from "@core/constants/maia";
 import { requestEloForTarget } from "@core/engine/options";
-import { klDivergence, policyEntropy } from "@core/policy/maia-policy";
-import {
-	maiaConditioningElo,
-	maiaMaxCpLoss,
-	maiaPriorGapCp,
-	upperVerificationProgress,
-	usesMaia,
-	usesMaiaPrior,
-} from "@core/policy/maia-size";
+import { policyEntropy } from "@core/policy/maia-policy";
+import { maiaMaxCpLoss, upperVerificationProgress, usesMaia } from "@core/policy/maia-size";
 import { createRng, type Rng } from "@core/rng";
 import { clamp } from "@core/util/clamp";
 import type { EvalLine } from "@typedefs/engine";
@@ -44,6 +36,7 @@ import {
 	maiaSurvivors,
 	policyProbabilities,
 } from "./maia-select";
+import { isMaxStrength } from "./max-strength";
 import { heuristicPriorDetailed, type PriorTerm } from "./prior";
 import { compareLines, moveQuality, rankedLines } from "./quality";
 import { avoidRepetition } from "./repetition";
@@ -307,6 +300,12 @@ function finish(
 	return chosen;
 }
 
+/** The lines whose first move is legal in `fen`: max-strength mode's only check on the engine's lines. */
+function legalLines(lines: readonly EvalLine[], fen: string): EvalLine[] {
+	const legal = new Set(legalMoves(fen));
+	return lines.filter((line) => legal.has(line.pvUci[0] ?? ""));
+}
+
 /**
  * `selectMove(lines, ctx, prior?) → ChosenMove` — §7.2 steps 1–9. `lines` are
  * side-to-move POV; `prior` defaults to `heuristicPrior`.
@@ -327,7 +326,16 @@ export function selectMove(
 	// and deliberate-error rules retain their pre-rush rating inputs.
 	const baselineE = effectiveElo(ctx.targetElo - baselineReduction, ctx.form);
 	const E = effectiveElo(ctx.targetElo - pressureReduction, ctx.form);
-	const repetition = avoidRepetition(lines, ctx.fen, ctx.history);
+	// Max-strength mode (owner, 2026-09-15: "just play the absolute best possible move in every
+	// situation"): the strongest searched legal line is taken below. The repetition preference, which
+	// avoids even a first repeat and can drop the engine's best line, is off — the engine searches
+	// with the game's history. The conversion pool stays: it removes only a line whose PV reaches a
+	// drawn board (stalemate, dead position, an actual threefold) while its score claims a win, which
+	// only a stale score can put on top.
+	const maxStrength = isMaxStrength(ctx.targetElo);
+	const repetition = maxStrength
+		? { lines: legalLines(lines, ctx.fen), avoided: false }
+		: avoidRepetition(lines, ctx.fen, ctx.history);
 	const conversion = conversionPool(repetition.lines, ctx);
 	const bestConversionCp = Math.max(...conversion.lines.map(searchedCp));
 	const conversionLossCap = Math.max(
@@ -493,10 +501,16 @@ export function selectMove(
 		}
 		return chosen;
 	};
-	if (ctx.targetElo > MAIA.prior.eloMax) {
+	// Above the Maia cutoff — the product's one strength division (owner, 2026-09-15) — the full
+	// network's strongest guarded continuation is the move, whatever policy answer is on hand.
+	if (ctx.targetElo > MAIA.eloMax) {
 		const best = ranked[0];
 		if (!best) throw new RangeError("selectMove: no lines");
-		rationale.push("full-strength engine: strongest guarded continuation");
+		rationale.push(
+			maxStrength
+				? "full-strength engine: max strength: the engine's best move"
+				: "full-strength engine: strongest guarded continuation"
+		);
 		return finishPick(toCandidate(best), "engine-elo");
 	}
 	// Maia's mass on what the search scored, before the repetition/conversion guards (§7 D2).
@@ -667,7 +681,8 @@ export function selectMove(
 					rationale.push(
 						"generate-verify: tie-band terms (technique prior, practical difficulty) skipped — the verification decides among the candidates"
 					);
-					// The meter's Monte Carlo runs on its own seeded rng so it never advances the game's.
+					// Ordinary verification has an exact law; only the upper band needs Monte Carlo.
+					// Its separate seed never advances the game's rng.
 					const q = drawDistribution(
 						gvInput,
 						GENERATE_VERIFY.meterSamples,
@@ -712,60 +727,14 @@ export function selectMove(
 			return chosen;
 		}
 	}
-	if (
-		(ctx.engineResultKind === "unrestricted" && usesMaia(ctx.targetElo)) ||
-		(usesMaiaPrior(ctx.targetElo) && ctx.maia === undefined)
-	) {
-		const cap = usesMaiaPrior(ctx.targetElo)
-			? maiaPriorGapCp(ctx.targetElo)
-			: maiaMaxCpLoss(maiaE ?? E);
+	if (ctx.engineResultKind === "unrestricted" && usesMaia(ctx.targetElo)) {
+		const cap = maiaMaxCpLoss(maiaE ?? E);
 		const leading = ranked[0];
 		if (Number.isFinite(cap) && leading !== undefined) {
 			const best = searchedCp(leading.line);
 			ranked = ranked.filter((r) => searchedCp(r.line) === best || best - searchedCp(r.line) <= cap);
 			rationale.push(`upper referee fallback: retaining alternatives within ${fmt(cap, 0)} cp`);
 		}
-	}
-	// The upper prior may choose only increasingly close, guarded engine alternatives.
-	if (ctx.maia !== undefined && maiaProb !== undefined && usesMaiaPrior(ctx.targetElo)) {
-		const cands = ranked.map((r) => toCandidate(r));
-		const alternativeExists = cands.some((c) => !isMatedLine(c));
-		const eligible = cands.filter(
-			(c) => !(alternativeExists && isMatedLine(c)) && !hangsPiece(c.line, c.lossRaw, ctx.fen)
-		);
-		const gap = maiaPriorGapCp(ctx.targetElo);
-		const leading = eligible[0] ?? cands[0];
-		if (leading === undefined) throw new RangeError("selectMove: no prior candidates");
-		const bestCp = searchedCp(leading.line);
-		let pool = eligible.filter(
-			(c) => searchedCp(c.line) === bestCp || bestCp - searchedCp(c.line) <= gap
-		);
-		if (pool.length === 0) pool = eligible.length > 0 ? eligible : cands;
-		const weights = pool.map((c) => Math.max(MAIA.prior.floorWeight, maiaProb.get(c.uci) ?? 0));
-		const pick = rng.weighted(pool, weights);
-		const p = maiaProb.get(pick.uci) ?? 0;
-		const inPool = new Set(pool.map((c) => c.uci));
-		let railedMass = 0;
-		for (const c of cands) if (!inPool.has(c.uci)) railedMass += maiaProb.get(c.uci) ?? 0;
-		let total = 0;
-		for (const q of maiaProb.values()) total += q;
-		const finalWeights = new Map(pool.map((c, i) => [c.uci, weights[i] ?? 0]));
-		const klFromMaia = klDivergence(finalWeights, maiaProb);
-		const ordered = [...pool].sort((a, b) => (maiaProb.get(b.uci) ?? 0) - (maiaProb.get(a.uci) ?? 0));
-		const selfElo = maiaConditioningElo(E);
-		rationale.push(
-			`maia prior: ${ctx.maia.size} E=${fmt(selfElo, 0)} pool ${pool.length}/${cands.length} within ${fmt(gap, 0)} cp, p=${fmt(p)} rank ${ordered.findIndex((c) => c.uci === pick.uci) + 1}/${pool.length} (floor ${MAIA.prior.floorWeight})`
-		);
-		const chosen = finishPick(pick, "maia");
-		chosen.maiaProb = p;
-		chosen.maiaMeters = metersFor(selfElo, {
-			railedMass,
-			unscoredMass: Math.max(0, total - scoredMassBefore),
-			klFromMaia,
-			maiaRank: ordered.findIndex((c) => c.uci === pick.uci) + 1,
-			survivors: pool.length,
-		});
-		return chosen;
 	}
 	// Retain native rating variation when Hybrid's custom parameters have saturated;
 	// the ordinary gap and explicit-error thresholds can otherwise both reject its choice.
@@ -791,13 +760,7 @@ export function selectMove(
 		// Preserve that legal choice, but never resurrect an evaluated move that a
 		// guard removed. Its unknown score must not become a zero-loss observation —
 		// nor, with a forced mate on the board (H9), a throw of the win nobody can judge.
-		if (
-			idx < 0 &&
-			native &&
-			!usesMaiaPrior(ctx.targetElo) &&
-			!throwWinFilter &&
-			!lines.some((line) => line.pvUci[0] === native)
-		) {
+		if (idx < 0 && native && !throwWinFilter && !lines.some((line) => line.pvUci[0] === native)) {
 			const next = applyMoves(ctx.fen, [native]);
 			const board = next ? loadPosition(next) : null;
 			const probe: EvalLine = {
@@ -883,7 +846,7 @@ export function selectMove(
 	const terms = blunderTerms(baselineE, {
 		myClockMs: ctx.myClockMs,
 		cpStd,
-		blunderScale: ctx.targetElo >= LIMITS.eloMax ? 0 : ctx.blunderScale,
+		blunderScale: maxStrength ? 0 : ctx.blunderScale,
 		state,
 		...(ctx.baseMs === undefined ? {} : { baseMs: ctx.baseMs }),
 	});

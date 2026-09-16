@@ -114,4 +114,51 @@ describe("sidebar shortcuts", () => {
 		await dom.tick();
 		expect(calls).toHaveLength(1);
 	});
+
+	it("preserves Space and arrow input on the actual settings radios, then resumes panel shortcuts", async () => {
+		shell.setTab("settings");
+		await dom.tick();
+		const radio = document.querySelector<HTMLInputElement>('.sl-choice__input[type="radio"]')!;
+		expect(radio).not.toBeNull();
+		radio.focus();
+		expect(document.activeElement).toBe(radio);
+		const delivered: string[] = [];
+		const onKey = (event: KeyboardEvent) => delivered.push(event.key);
+		radio.addEventListener("keydown", onKey);
+		// The simulator does not synthesize native radio selection from a keyboard event.
+		// Assert the browser receives uncancelled press/release events and no game action.
+		expect(key(radio, "keydown", { key: " ", code: "Space" })).toBe(true);
+		expect(key(radio, "keydown", { key: " ", code: "Space", repeat: true })).toBe(true);
+		expect(key(radio, "keyup", { key: " ", code: "Space" })).toBe(true);
+		current.settings.keybinds = {
+			...current.settings.keybinds,
+			playMove: { ...current.settings.keybinds.playMove, key: "ArrowRight", code: "ArrowRight" },
+		};
+		expect(key(radio, "keydown", { key: "ArrowRight", code: "ArrowRight" })).toBe(true);
+		expect(key(radio, "keyup", { key: "ArrowRight", code: "ArrowRight" })).toBe(true);
+		await dom.tick();
+		expect(delivered).toEqual([" ", " ", "ArrowRight"]);
+		expect(calls).toEqual([]);
+		radio.removeEventListener("keydown", onKey);
+		radio.blur();
+		expect(key(document, "keydown", { key: "ArrowRight", code: "ArrowRight" })).toBe(false);
+		await dom.tick();
+		expect(calls).toEqual([{ type: MSG.PANEL_KEYBIND, tabId, action: "playMove" }]);
+	});
+
+	it("leaves a focused native checkbox's Space press and release uncancelled", async () => {
+		const checkbox = document.createElement("input");
+		checkbox.type = "checkbox";
+		document.body.append(checkbox);
+		checkbox.focus();
+		expect(document.activeElement).toBe(checkbox);
+		expect(key(checkbox, "keydown", { key: " ", code: "Space" })).toBe(true);
+		expect(key(checkbox, "keyup", { key: " ", code: "Space" })).toBe(true);
+		await dom.tick();
+		expect(calls).toEqual([]);
+		checkbox.remove();
+		expect(key(document, "keydown", { key: " ", code: "Space" })).toBe(false);
+		await dom.tick();
+		expect(calls).toEqual([{ type: MSG.PANEL_KEYBIND, tabId, action: "playMove" }]);
+	});
 });

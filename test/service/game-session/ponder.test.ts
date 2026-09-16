@@ -180,7 +180,8 @@ describe("PonderController", () => {
 		const p = new PonderController({ engine, scheduler, getTargetElo: () => targetElo });
 		await p.start("opponent", FEN, ["e2e4"]);
 		expect(engine.requests[0]?.elo).toBe(1650);
-		expect(engine.requests[0]?.limit).toEqual({ depth: 16, movetimeMs: TIMINGS.ponderMaxMs });
+		// depth 17 at 1650 since the automatic depth curve ends at the Maia cutoff (2026-09-15; it was 16).
+		expect(engine.requests[0]?.limit).toEqual({ depth: 17, movetimeMs: TIMINGS.ponderMaxMs });
 		targetElo = 1673;
 		await p.start("opponent", FEN, ["e2e4"]);
 		expect(engine.requests[1]?.elo).toBe(1673);

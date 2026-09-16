@@ -18,6 +18,7 @@ import type { PanelCommandType } from "../store";
 import { instantiate, part } from "../template";
 import { portToastText } from "../toast-text";
 import type { View, ViewContext } from "../view";
+import { autoPlayState } from "./auto-play-state";
 import {
 	type CollapseState,
 	collapseFor,
@@ -151,7 +152,7 @@ function mountLive(ctx: ViewContext): () => void {
 		if (!armed && snapshot.autoMove.scheduledAt !== undefined)
 			showToast("info", COPY.toast.disarmed(moveSection.san ?? ""));
 		const ok = await withTab((id) => ({ type: MSG.PANEL_SET_AUTO_MOVE, tabId: id, armed }));
-		if (!ok && !disposed && snapshot) toggles.autoplay.update({ checked: snapshot.autoMove.armed });
+		if (!ok && !disposed && snapshot) toggles.autoplay.update(autoPlayState(snapshot));
 	}
 
 	// ── detached banner (§4.4, §9.7) ────────────────────────────────────────
@@ -221,7 +222,7 @@ function mountLive(ctx: ViewContext): () => void {
 		);
 		configuration.hidden = true;
 		const automationStatus = part(root, ".sl-live__automation");
-		automationStatus.textContent = snap.autoMove.armed ? COPY.toggle.armed : COPY.toggle.off;
+		automationStatus.textContent = autoPlayState(snap).label;
 		automationStatus.dataset.armed = String(snap.autoMove.armed);
 		for (const action of ["playMove", "toggleAutoMove", "disable"] as const)
 			part(root, `[data-shortcut="${action}"] kbd`).textContent = formatKeybind(

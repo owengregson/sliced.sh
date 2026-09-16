@@ -544,21 +544,23 @@ describe("strength card (§4.4 item 7, §5.12)", () => {
 		const thumb = pop?.querySelector<HTMLElement>('[role="slider"]');
 		expect(thumb?.getAttribute("aria-valuemin")).toBe("400");
 		expect(thumb?.getAttribute("aria-valuemax")).toBe(String(LIMITS.eloMax));
+		// Owner, 2026-09-15: one division — the Maia cutoff, where the full network takes over — and no
+		// second marker (this used to pin the 3200 network divider plus an unlabelled Maia marker).
 		expect(pop?.querySelector<HTMLElement>(".sl-slider__divider")?.dataset.value).toBe(
-			String(LIMITS.nnueSmallEloMax)
+			String(MAIA.eloMax)
 		);
-		// The unlabelled Maia-3 → Stockfish marker at 2600, the same as the Settings slider.
-		const markers = [...(pop?.querySelectorAll<HTMLElement>(".sl-slider__marker") ?? [])];
-		expect(markers.map((m) => m.dataset.value)).toEqual([String(MAIA.eloMax)]);
-		expect(markers[0]?.textContent).toBe("");
-		expect(thumb?.getAttribute("aria-valuenow")).toBe("1500");
+		expect(pop?.querySelectorAll(".sl-slider__marker")).toHaveLength(0);
+		// While matching, the slider shows the Elo actually being played — the derived 1893, exactly —
+		// rather than the stored 1500 it pinned before (owner, 2026-09-15), and stays display-only.
+		expect(thumb?.getAttribute("aria-valuenow")).toBe("1893");
 		expect(thumb?.getAttribute("aria-disabled")).toBe("true");
 		if (thumb) key(thumb, "keydown", { key: "ArrowRight", code: "ArrowRight" });
-		expect(thumb?.getAttribute("aria-valuenow")).toBe("1500");
+		expect(thumb?.getAttribute("aria-valuenow")).toBe("1893");
 		const manual = idleSnapshot();
 		manual.settings.strength.matchOpponentRating = false;
 		h.store.emit(manual);
 		expect(thumb?.getAttribute("aria-disabled")).toBeNull();
+		expect(thumb?.getAttribute("aria-valuenow")).toBe("1500");
 		if (thumb) key(thumb, "keydown", { key: "ArrowRight", code: "ArrowRight" });
 		await dom.tick(0);
 		expect((await chromeLocalGet(LOCAL_KEYS.settings))?.strength.targetElo).toBe(1550);
@@ -573,12 +575,21 @@ describe("strength card (§4.4 item 7, §5.12)", () => {
 				opponent: { isBot: false, name: "Peer", ratingEstimate: 3300, derivedTargetElo: 3350 },
 				settings: {
 					...idleSnapshot().settings,
-					strength: { ...idleSnapshot().settings.strength, targetElo: 2650 },
+					// Matching explicitly: `manual` above flipped the shared default strength object.
+					strength: {
+						...idleSnapshot().settings.strength,
+						targetElo: 2650,
+						matchOpponentRating: true,
+					},
 				},
 			})
 		);
 		expect(h.q(".sl-live__strength-elo").textContent).toBe("3350");
-		expect(h.q(".sl-live__strength-label").textContent).toBe(COPY.strength.bands.elite);
+		// 3000–3399 is Champion I since the owner's 2026-09-15 re-cut (it was Elite from 2600 up, then
+		// one Champion band until Champion was split at 3400).
+		expect(h.q(".sl-live__strength-label").textContent).toBe(COPY.strength.bands.championI);
+		// The open popover follows the played Elo too.
+		expect(thumb?.getAttribute("aria-valuenow")).toBe("3350");
 		key(document, "keydown", { key: "Escape", code: "Escape" });
 		await dom.tick(0);
 		expect(document.querySelector('.sl-popover[data-state="open"]')).toBeNull();
@@ -586,6 +597,30 @@ describe("strength card (§4.4 item 7, §5.12)", () => {
 });
 
 describe("toggles row (§6.1)", () => {
+	it("distinguishes deferred auto-play intent from an armed or cancelled hand", async () => {
+		const snapshot = idleSnapshot();
+		snapshot.settings = {
+			...snapshot.settings,
+			automation: { ...snapshot.settings.automation, autoMove: true },
+		};
+		snapshot.session = { ...snapshot.session, lobbyHold: true };
+		h = await mountLive(dom.sim, snapshot);
+		const control = h.q('.sl-toggle[data-toggle="autoplay"]');
+		expect(control.getAttribute("aria-checked")).toBe("true");
+		expect(control.dataset.state).toBe("waiting");
+		expect(h.q(".sl-live__automation").textContent).toBe(COPY.toggle.waiting);
+		click(control);
+		expect(h.store.calls.at(-1)).toEqual({
+			type: MSG.PANEL_SET_AUTO_MOVE,
+			tabId: h.tabId,
+			armed: false,
+		});
+		h.store.emit({ ...snapshot, session: { ...snapshot.session, lobbyHold: false } });
+		expect(control.getAttribute("aria-checked")).toBe("false");
+		h.store.emit({ ...snapshot, autoMove: { armed: true } });
+		expect(control.dataset.state).toBe("armed");
+		expect(control.classList.contains("sl-toggle--waiting")).toBe(false);
+	});
 	const toggle = (name: string): HTMLElement => {
 		if (!h) throw new Error("no harness");
 		return h.q(`.sl-toggle[data-toggle="${name}"]`);

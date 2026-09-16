@@ -90,8 +90,10 @@ describe("game session: in-page keybinds (Step 2e)", () => {
 		};
 		await action("toggleAutoMove");
 		expect(h.executor()?.isArmed()).toBe(true);
+		expect(h.settings().automation.autoMove).toBe(true);
 		await action("toggleAutoMove");
 		expect(h.executor()?.isArmed()).toBe(false);
+		expect(h.settings().automation.autoMove).toBe(false);
 		await h.arrive();
 		expect(await h.until(() => h.session().recommendation() !== null, 10_000)).toBe(true);
 		await action("speakMove");

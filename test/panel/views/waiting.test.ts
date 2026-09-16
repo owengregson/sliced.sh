@@ -50,6 +50,25 @@ const toggle = (): HTMLButtonElement => {
 };
 
 describe("waitingView", () => {
+	it("shows deferred lobby intent as waiting and lets one click cancel it", async () => {
+		const snapshot = makeSnapshot({ armed: false });
+		snapshot.settings = {
+			...snapshot.settings,
+			automation: { ...snapshot.settings.automation, autoMove: true },
+		};
+		snapshot.session = { ...snapshot.session, lobbyHold: true };
+		await mountWaiting(snapshot);
+		expect(toggle().getAttribute("aria-checked")).toBe("true");
+		expect(text(".sl-toggle__label")).toBe(COPY.toggle.waiting);
+		expect(text(".sl-toggle__hint")).toBe(COPY.toggle.waitingHint);
+		expect(toggle().classList.contains("sl-toggle--armed")).toBe(false);
+		click(toggle());
+		await dom.tick(0);
+		expect(store.dispatched.at(-1)).toEqual({ type: MSG.PANEL_SET_AUTO_MOVE, tabId, armed: false });
+		// A saved preference must not mask a detached hand outside a deferred lobby.
+		store.emit({ ...snapshot, session: { ...snapshot.session, lobbyHold: false } });
+		expect(toggle().getAttribute("aria-checked")).toBe("false");
+	});
 	it("counts down the absolute next-game deadline without restarting on snapshots", async () => {
 		const snapshot = makeSnapshot({
 			state: "game-over",

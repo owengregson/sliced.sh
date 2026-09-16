@@ -284,7 +284,8 @@ export const BRIDGE_KINDS = {
 	/**
 	 * Content → page: the board-effect batch for the move that just landed, plus the optional
 	 * quality chip. Its own overlay element, drawn above the recommendation mark and cleared
-	 * independently of it (`Settings.automation.boardEffects`).
+	 * independently of it (rays: `Settings.automation.boardEffects`; chip:
+	 * `automation.moveQualityChips` — each on its own since 2026-09-15).
 	 */
 	effects: "effects",
 	effectsClear: "effectsClear",

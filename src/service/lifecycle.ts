@@ -44,7 +44,7 @@ export const LEGACY_KEYS = [
 /** Legacy `elo` was a Stockfish skill level 1–20. */
 const LEGACY_ELO_MIN = 1;
 const LEGACY_ELO_MAX = 20;
-/** Legacy `maxWaitTime` default (seconds) — maps to `speedScale = 1`. */
+/** Legacy `maxWaitTime` default (seconds) — maps to `baseSpeed = 1`. */
 const LEGACY_DEFAULT_MAX_WAIT_S = 4;
 /** Log-unit clamp of the speed offset (Task 16's `s_offset` range). */
 const SPEED_LOG_CLAMP = 0.5;
@@ -86,16 +86,18 @@ export function legacyEloToTargetElo(elo: unknown): number | null {
 }
 
 /**
- * `maxWaitTime` (s) → `timing.speedScale`: the ratio to the legacy default,
- * clamped to ±0.5 log units so users keep roughly their previous pace
- * (Task 16's migration rule), rounded to 2 decimals. `null` for a non-number.
+ * `maxWaitTime` (s) → `timing.baseSpeed`: the **reciprocal** of the ratio to the legacy default,
+ * clamped to ±0.5 log units so users keep roughly their previous pace (Task 16's migration rule),
+ * rounded to 2 decimals. The legacy value was a *wait*, so a longer one is a slower hand, and
+ * `baseSpeed` is a speed (higher = faster, 2026-09-15): an 8 s legacy wait — twice the default
+ * duration — imports as 0.61, and a 1 s wait as 1.65. `null` for a non-number.
  */
-export function legacyMaxWaitToSpeedScale(maxWaitTime: unknown): number | null {
+export function legacyMaxWaitToBaseSpeed(maxWaitTime: unknown): number | null {
 	const value = toNumber(maxWaitTime);
 	if (value === null) return null;
 	const ratio = Math.max(value, MIN_LEGACY_WAIT_S) / LEGACY_DEFAULT_MAX_WAIT_S;
 	const offset = clamp(Math.log(ratio), -SPEED_LOG_CLAMP, SPEED_LOG_CLAMP);
-	return Math.round(Math.exp(offset) * 100) / 100;
+	return Math.round(Math.exp(-offset) * 100) / 100;
 }
 
 /**
@@ -127,8 +129,8 @@ function buildLegacyPatch(legacy: Record<string, unknown>): SettingsPatch {
 	const depthCap = toNumber(legacy.depthValue);
 	if (depthCap !== null) patch.engine = { depthCap };
 
-	const speedScale = legacyMaxWaitToSpeedScale(legacy.maxWaitTime);
-	if (speedScale !== null) patch.timing = { speedScale };
+	const baseSpeed = legacyMaxWaitToBaseSpeed(legacy.maxWaitTime);
+	if (baseSpeed !== null) patch.timing = { baseSpeed };
 
 	const automation: SettingsPatch["automation"] = {};
 	const highlight = toBool(legacy.highlightMoves);

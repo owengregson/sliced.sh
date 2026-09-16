@@ -8,7 +8,7 @@
 import type { Rng } from "@core/rng";
 import type { EvalLine } from "@typedefs/engine";
 import type { Site, Square } from "@typedefs/game";
-import type { PersonaId } from "@typedefs/settings";
+import type { PersonaId, Settings } from "@typedefs/settings";
 import type {
 	MoveWindowBudget,
 	TimingLogEntry,
@@ -55,6 +55,7 @@ export interface TimingContext {
 	inBook?: boolean;
 	inputMethod: "drag" | "click";
 	autoQueen: boolean;
+	/** Original opponent-position arrival, even when planning runs after asynchronous preparation. */
 	nowMs: number;
 }
 
@@ -159,6 +160,23 @@ export interface Persona {
 	motor_k: number;
 }
 
+/**
+ * The timing knobs the model runs on. Every leaf of `Settings["timing"]` except the speed one:
+ * the user's `timing.baseSpeed` is a **speed** (higher = faster) and everything downstream —
+ * `createMoveBudget`, the head's compensation, the cap — multiplies a **duration**, so the
+ * reciprocal is taken once, at `timingSettingsFor` (`src/service/game-session/presets.ts`), and
+ * what the model sees is named for what it is. Nothing here reads a "speed" that means slowness
+ * (owner, 2026-09-15).
+ */
+export interface TimingSettings extends Omit<Settings["timing"], "baseSpeed"> {
+	/**
+	 * Duration multiplier on the human wait: `per-time-control gain / baseSpeed` (2026-09-15: the
+	 * preset knob that stood beside the gain went with the timing presets).
+	 * Above 1 the move takes longer, below 1 it takes less.
+	 */
+	moveTimeScale: number;
+}
+
 /** Settings-derived knobs the heads read (§8.3 `Settings["timing"]`). */
 export interface TimingKnobs {
 	/** Multiplies σ (`varianceScale`). */
@@ -194,6 +212,8 @@ export interface GameTimingState {
 
 export interface HeadSample {
 	tSec: number;
+	/** Learned clock labels already include perception and execution. Never add the hand again. */
+	includesExecution?: boolean;
 	mode: TimingMode;
 	why: string[];
 	/** Per-term contributions (`β_i f_i`) for the debug view / timing log. */

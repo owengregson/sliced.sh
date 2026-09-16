@@ -58,8 +58,9 @@ import { applyMoves, legalMoves, parseUci, uciToSan } from "@core/chess/san";
 import { sanToSpeech } from "@core/chess/san-speech";
 import { isSquare } from "@core/chess/squares";
 import { chromeLocalGet, chromeLocalSet } from "@core/chrome/storage";
+import { BOARD_EFFECT_GAME_END } from "@core/constants/board-effects";
 import { PREMOVE } from "@core/constants/books";
-import { EXECUTOR } from "@core/constants/cdp";
+import { DEBUGGER_DETACH_REASONS, EXECUTOR, PANEL_COMMAND_ERRORS } from "@core/constants/cdp";
 import { CHESS_START_FEN } from "@core/constants/chess";
 import { SCRAMBLE_HOLD } from "@core/constants/hold";
 import { LIMITS } from "@core/constants/limits";
@@ -71,10 +72,15 @@ import { RESIGN } from "@core/constants/resign";
 import { MAIA_SEARCH } from "@core/constants/search";
 import { LOCAL_KEYS } from "@core/constants/storage-keys";
 import { TELEMETRY_BANDS } from "@core/constants/telemetry";
-import { TIMINGS, type TimingProfile } from "@core/constants/timings";
+import { TIMINGS } from "@core/constants/timings";
 import { automaticDepthForElo } from "@core/engine/depth-policy";
 import { requestEloForTarget } from "@core/engine/options";
-import type { AnalysisHandle, AnalysisRequest, AnalysisUpdate } from "@core/engine/types";
+import type {
+	AnalysisHandle,
+	AnalysisRequest,
+	AnalysisResult,
+	AnalysisUpdate,
+} from "@core/engine/types";
 import { log } from "@core/logger";
 import { sampleRange } from "@core/motor/geometry";
 import {
@@ -86,6 +92,7 @@ import type { TimeControlClass } from "@core/motor/types";
 import type { PolicyPort, PolicyResult } from "@core/policy/types";
 import { createRng, type Rng } from "@core/rng";
 import type { BookPolicy } from "@core/strength/book/book-policy";
+import { isMaxStrength } from "@core/strength/max-strength";
 import { createSelectionState, selectMove } from "@core/strength/move-selector";
 import { createFormLatent, type FormLatent } from "@core/strength/persona";
 import type { PremoveReason } from "@core/strength/premove";
@@ -113,8 +120,10 @@ import type { DebuggerManager } from "@service/debugger-manager";
 import type { EngineController } from "@service/engine-controller";
 import type { FocusGate } from "@service/focus-gate";
 import type { HandOwnership } from "@service/hand-ownership";
+import { queueAutoMovePreference } from "@service/handlers/settings/write-queue";
 import type { ExecutionReport, MoveContext, MoveExecutor } from "@service/move-executor";
 import { candidatesFromLines } from "@service/move-executor";
+import type { InputCriticalUpdate } from "@service/move-executor/input-window";
 import type { OpponentView, SessionGameView, SessionSource } from "@service/panel-broadcaster";
 import type { ResignInput } from "@service/resign-input";
 import type { EvalLine } from "@typedefs/engine";
@@ -135,7 +144,7 @@ import type {
 import type { PersonaId, Settings } from "@typedefs/settings";
 import type { MoveTelemetryRecord } from "@typedefs/telemetry";
 import type { TimingPlan } from "@typedefs/timing";
-import { BoardEffectsReporter } from "./board-effects";
+import { BoardEffectsReporter, type ReviewSearcher } from "./board-effects";
 import { remainingClockMs } from "./clock";
 import { executorSettingsFor } from "./executor-settings";
 import { isLobbyHold, type LobbyInput, LobbyTracker, type LobbyVerdict } from "./lobby";
@@ -153,9 +162,17 @@ import {
 	samePosition,
 	settledWithin,
 } from "./maia-session";
+import {
+	type DeepenedMove,
+	type DeepSearch,
+	deepenRecommendation,
+	deepSearchRequest,
+	deepSearchWindowMs,
+	startDeepSearch,
+} from "./max-strength";
 import { PonderController } from "./ponder";
 import { PremoveAttemptLimit } from "./premove-attempts";
-import { autoPlayAllowed, effectiveTimingProfile, timingSettingsFor } from "./presets";
+import { timingSettingsFor } from "./presets";
 import type {
 	OwnMoveBudgetInput,
 	RecommendationInput,
@@ -163,7 +180,6 @@ import type {
 	ShapedSearchPlan,
 } from "./recommendation";
 import {
-	maiaPriorMode,
 	maiaSearchMode,
 	ownMoveBudget,
 	ownMoveClockRace,
@@ -172,6 +188,7 @@ import {
 	refereeElo,
 	shapedSearchPlan,
 } from "./recommendation";
+import { isResignableFrame } from "./resign-frame";
 import { EMPTY_STATS, foldGame, foldMove } from "./stats";
 import { MoveWindow, selectedMultiplePieces } from "./telemetry";
 import { type GameSessionEvent, isLiveState, isMyTurnState, nextState } from "./transitions";
@@ -183,6 +200,13 @@ const MS_PER_S = 1000;
  * move was not among the engine's lines at all — what the opening book and a premove report.
  */
 const TOP_LINE_RANK = 1;
+/** Pages where a game is played: the review engine is worth booting as soon as one says `hello`. */
+const PLAYED_PAGES: ReadonlySet<PageKind> = new Set<PageKind>([
+	"live-game",
+	"live-lobby",
+	"vs-computer",
+	"daily",
+]);
 
 /**
  * `LOCAL_KEYS.sessionStats` is one key for the whole worker, and every fold is a
@@ -281,6 +305,11 @@ export interface GameSessionDeps {
 	link: Pick<ContentLink, "post" | "request" | "onMessage" | "isConnected">;
 	engine: EngineController | null;
 	book: BookPolicy | null;
+	/**
+	 * The move-review engine (2026-09-14): the full-network Stockfish every board rating comes from,
+	 * independent of `engine`. Absent or `null`: the board effects still go out, without ratings.
+	 */
+	review?: ReviewSearcher | null | undefined;
 	/** Shared timing head (ChessMimic with the v1 fallback); one per service worker. */
 	head: DistributionHead;
 	/**
@@ -376,6 +405,13 @@ function motorTcClass(tc: TcClass): TimeControlClass {
 	return tc === "untimed" ? "classical" : tc;
 }
 
+/** Max-strength mode's deep move search for one standing recommendation (`GameSession.deepSearch`). */
+interface DeepSearchEntry {
+	rec: Recommendation;
+	ac: AbortController;
+	search: DeepSearch | null;
+}
+
 interface PremoveArm {
 	/** The opponent reply the premove is conditioned on. */
 	reply: string;
@@ -439,6 +475,14 @@ export class GameSession implements SessionSource {
 	private pageKind: PageKind = "other";
 	private game: GameMeta | null = null;
 	private snapshot: PositionSnapshot | null = null;
+	/** First arrival of this position; later clock snapshots must not restart the turn. */
+	private positionArrivedAt: number | null = null;
+	private reviewPlayBusy = false;
+	private readonly reviewPreparations = new Set<AbortSignal>();
+	private readonly reviewInputs = new Map<
+		object,
+		InputCriticalUpdate & { executor: MoveExecutor }
+	>();
 	private rec: Recommendation | null = null;
 	private readonly qualityContexts = new WeakMap<ChosenMove, QualityContext>();
 	private readonly movePositions = new WeakMap<ChosenMove, { gameId: string; ply: number }>();
@@ -505,9 +549,7 @@ export class GameSession implements SessionSource {
 	private blurredPositionKey: string | null = null;
 	/** The position before the current one — what the §7.4 premove policy replays our move from. */
 	private priorFen: string | null = null;
-	/** The timing profile in force this game (§4.6); `null` until a game starts. */
-	private profile: TimingProfile | null = null;
-	/** The time control that profile was derived from (`null` = none was known yet). */
+	/** The time control this game's timing model was built from (`null` = none was known yet). */
 	private profiledTimeControl: TimeControl | null = null;
 	private pipelineAc: AbortController | null = null;
 	private moves: string[] = [];
@@ -543,6 +585,12 @@ export class GameSession implements SessionSource {
 	private startClockMs = 0;
 	/** A `playNow` issued while the pipeline was still running. */
 	private playWhenReady = false;
+	/**
+	 * Max-strength mode's deep move search for the standing recommendation (owner, 2026-09-15), from
+	 * the moment it is issued until it settles. `cancelInFlight` and `dispose` abort it; `playNow`
+	 * harvests it — the search ends and what it found is played at once.
+	 */
+	private deepSearch: DeepSearchEntry | null = null;
 	/** The one pending re-delivery of a withheld position (`reconsider`), and its attempt count. */
 	private retryTimer: unknown = null;
 	private retryAttempts = 0;
@@ -602,25 +650,45 @@ export class GameSession implements SessionSource {
 	private armingExecutor: MoveExecutor | null = null;
 	/** `mayAct()` as of the last settings write this session saw (§4.4 flip detection). */
 	private acting: boolean;
+	private autoMovePreference: boolean;
+	private autoMoveRequestVersion = 0;
+	/** Local intent wins over older storage events until its serialized write settles. */
+	private pendingAutoMoveIntent: { armed: boolean } | null = null;
+	/** A failed preference command stays stopped until the user explicitly retries. */
+	private autoMovePersistenceFailed = false;
 	/**
 	 * Board effects (owner's brief, 2026-09-13): what the move that just landed did, and how good
-	 * it was. Both sides' moves; gated on `Settings.automation.boardEffects`.
+	 * it was. Both sides' moves; the rays gated on `Settings.automation.boardEffects`, the rating on
+	 * `automation.moveQualityChips`, each on its own (owner, 2026-09-15).
 	 */
 	private readonly boardEffects: BoardEffectsReporter;
+	/** The game-end erase of the effect layer, pending while the last move's chip and sound finish. */
+	private effectsClearTimer: unknown = null;
 
 	constructor(deps: GameSessionDeps) {
 		this.deps = deps;
 		this.acting = this.mayAct();
+		this.autoMovePreference = deps.getSettings().automation.autoMove;
+		this.now = deps.now ?? defaultNow;
+		this.scheduler = deps.scheduler ?? defaultScheduler;
+		const book = deps.book;
 		this.boardEffects = new BoardEffectsReporter({
-			getTargetElo: () => this.targetElo(),
-			searcher: () => this.deps.engine,
+			reviewer: () => this.deps.review ?? null,
 			post: (cmd) => {
 				this.deps.link.post(this.deps.tabId, cmd);
 			},
 			chips: () => this.deps.getSettings().automation.moveQualityChips,
+			rays: () => this.deps.getSettings().automation.boardEffects,
+			chipsFor: () => this.deps.getSettings().automation.moveQualityChipsFor,
+			...(book?.bookMoves
+				? { bookMoves: (fen: string) => book.bookMoves?.(fen) ?? Promise.resolve([]) }
+				: {}),
+			// Chess.com grades at the mover's rating. The page reports the opponent's; players are
+			// paired near their own rating, so it stands in for ours as well.
+			rating: () => this.opponentInfo?.ratingEstimate ?? undefined,
+			scheduler: this.scheduler,
+			now: this.now,
 		});
-		this.now = deps.now ?? defaultNow;
-		this.scheduler = deps.scheduler ?? defaultScheduler;
 		this.seed = deps.seed ?? `tab-${deps.tabId}`;
 		this.gameSeed = `${this.seed}:pregame`;
 		this.rng = createRng(`${this.seed}:session`);
@@ -628,6 +696,12 @@ export class GameSession implements SessionSource {
 			deps.link.onMessage(deps.tabId, (msg) => this.onPortMessage(msg)),
 			deps.focus.onEdge((tabId, hasFocus, at) => {
 				if (tabId === deps.tabId) this.onFocusEdge(hasFocus, at);
+			}),
+			deps.debugger.onDetached((tabId, reason) => {
+				if (tabId !== deps.tabId || reason !== DEBUGGER_DETACH_REASONS.canceledByUser) return;
+				void this.setAutoMove(false).catch((error: unknown) =>
+					log.warn("game-session: could not persist the stopped auto-play switch", error)
+				);
 			})
 			// Fix D once hid the mirror on `deps.debugger.onDetached` as well. It no longer does
 			// (2026-09-13): the attachment comes and goes between games, and the arrow is the report
@@ -765,7 +839,7 @@ export class GameSession implements SessionSource {
 			policy: this.deps.policy !== undefined,
 			clockRace: ownMoveClockRace(position) !== null,
 		};
-		return { ...position, maia: maiaSearchMode(mode), maiaPrior: maiaPriorMode(mode) };
+		return { ...position, maia: maiaSearchMode(mode) };
 	}
 
 	private policyQueryFor(
@@ -833,6 +907,7 @@ export class GameSession implements SessionSource {
 			engine,
 			timing,
 			book: this.deps.book,
+			now: this.now,
 			...(policy ? { policy } : {}),
 		});
 	}
@@ -866,14 +941,18 @@ export class GameSession implements SessionSource {
 				await this.playNow();
 				return;
 			case "armAutoMove":
-				await this.arm();
+				if (this.mayAct()) await this.setAutoMove(true);
 				return;
 			case "toggleAutoMove":
-				if (this.executorHandle?.isArmed()) this.disarm();
-				else await this.arm();
+				if (
+					this.pendingAutoMoveIntent?.armed ??
+					(this.executorHandle?.isArmed() || this.rearmAfterBreak)
+				)
+					await this.setAutoMove(false);
+				else if (this.mayAct()) await this.setAutoMove(true);
 				return;
 			case "disarm":
-				this.disarm();
+				await this.setAutoMove(false);
 				return;
 			case "disable":
 				this.disable();
@@ -892,9 +971,10 @@ export class GameSession implements SessionSource {
 	 */
 	onSettingsChanged(): void {
 		const settings = this.deps.getSettings();
-		const previouslyAutomatic = this.autoMoveAllowed(settings);
+		const stoppedAutoMove = this.autoMovePreference && !settings.automation.autoMove;
+		this.autoMovePreference = settings.automation.autoMove;
+		if (stoppedAutoMove && this.pendingAutoMoveIntent === null) this.disarm();
 		const timing = timingSettingsFor(settings.timing, this.currentTimeControl());
-		this.profile = timing.profile;
 		this.timing?.updateSettings(timing, {
 			profile: settings.strength.persona,
 			targetElo: this.targetElo(),
@@ -904,7 +984,7 @@ export class GameSession implements SessionSource {
 		const selectionChanged = this.gamePendingOrLive() ? this.warmPolicyFor(this.targetElo()) : false;
 		this.executorHandle?.updateSettings({
 			persona: settings.strength.persona,
-			...executorSettingsFor(settings.execution),
+			...executorSettingsFor(settings.execution, settings.timing),
 			verifyMoves: settings.execution.verifyMoves,
 			inputMode: settings.execution.inputMode,
 		});
@@ -914,16 +994,20 @@ export class GameSession implements SessionSource {
 		// Sent first either way: `highlightMoves` is reported as `enabled && highlightMoves`, so
 		// this is also what clears a mark the content script has already drawn.
 		this.pushContentSettings();
+		// Move ratings off: the review work stops now rather than at the next position, whatever
+		// board effects say (the review engine itself is released by `game-stack`).
+		if (!settings.automation.moveQualityChips) this.boardEffects.cancel();
 		// Fix D: the mirror is page DOM, so it goes the moment it is no longer allowed — which is
 		// either the switch or `display.virtualCursor`, and only the switch makes `flipped` true.
 		if (!this.virtualCursorAllowed()) this.hideVirtualCursor();
 		if (!on || !this.deps.getSettings().automation.autoQueue)
 			this.deps.autoQueue.cancel(this.deps.tabId);
 		else if (this.game) this.cancelQueueForNewGame(this.game.gameId);
+		// 2026-09-15: a held recommendation used to be retried here when the stored timing preset
+		// stopped being `manual` mid-game. With the presets gone no setting can flip "may I
+		// auto-play" — arming does, and `attachExecutor` / `autoArm` re-check the recommendation.
 		if (!flipped) {
 			if (on && selectionChanged) void this.resumeEnabled();
-			if (on && !previouslyAutomatic && this.autoMoveAllowed(settings) && this.rec)
-				this.retryHeldRecommendation(this.rec, "the live profile now allows automatic moves");
 			return;
 		}
 		if (on) void this.resumeEnabled();
@@ -1142,12 +1226,15 @@ export class GameSession implements SessionSource {
 		this.detachExecutor();
 		this.forgetPremove("the session was disposed");
 		this.pipelineAc?.abort();
+		this.abortDeepSearch();
 		// Consistent with `cancelInFlight()` / `stopSearch()`: a disposed session leaves no search running.
 		const inFlight = this.preAnalysis;
 		this.preAnalysis = null;
 		if (inFlight) void inFlight.stop();
 		this.ponderer?.dispose();
 		this.boardEffects.dispose();
+		this.updateReviewAdmission();
+		this.cancelEffectsClear();
 		if (!preserveAutoQueue) this.deps.autoQueue.cancel(this.deps.tabId);
 		this.hideVirtualCursor();
 		this.window.discard();
@@ -1223,8 +1310,69 @@ export class GameSession implements SessionSource {
 		// carries the armed state (and the attachment) across.
 		this.ensureExecutor(site);
 		this.pushContentSettings();
+		if (PLAYED_PAGES.has(pageKind)) this.warmReview();
 		this.reviewLobby("hello");
 		this.deps.notify();
+	}
+
+	/**
+	 * Board ratings are on: have the review engine booting before the first move lands. The full
+	 * network takes a moment to load, and on the queue screen nothing else is waiting for it.
+	 */
+	private warmReview(): void {
+		if (this.mayAct() && this.deps.getSettings().automation.moveQualityChips)
+			this.boardEffects.warm();
+	}
+
+	/** Only foreground move preparation pauses independent review search. */
+	private setReviewPlayBusy(busy: boolean): void {
+		if (this.reviewPlayBusy === busy) return;
+		this.reviewPlayBusy = busy;
+		if (busy) this.boardEffects.setPlayBusy(true);
+		this.deps.review?.setPlayBusy?.(`tab:${this.deps.tabId}`, busy);
+		if (!busy) this.boardEffects.setPlayBusy(false);
+	}
+
+	private updateReviewAdmission(): void {
+		let availableUntil: number | null = null;
+		let inputBusy = false;
+		for (const input of this.reviewInputs.values()) {
+			inputBusy ||= input.busy;
+			if (input.availableUntil !== null)
+				availableUntil = Math.min(availableUntil ?? Infinity, input.availableUntil);
+		}
+		// Budget first: reopening either gate must not admit a job across an imminent input.
+		this.boardEffects.setAvailableUntil(availableUntil);
+		this.boardEffects.setInputBusy(inputBusy);
+		this.setReviewPlayBusy(this.reviewPreparations.size > 0);
+	}
+
+	private beginReviewPreparation(signal: AbortSignal): () => void {
+		const release = (): void => {
+			signal.removeEventListener("abort", release);
+			if (this.reviewPreparations.delete(signal)) this.updateReviewAdmission();
+		};
+		if (!signal.aborted) {
+			this.reviewPreparations.add(signal);
+			signal.addEventListener("abort", release, { once: true });
+			this.updateReviewAdmission();
+		}
+		return release;
+	}
+
+	private onInputCritical(executor: MoveExecutor, update: InputCriticalUpdate): void {
+		if (update.done) this.reviewInputs.delete(update.token);
+		else this.reviewInputs.set(update.token, { ...update, executor });
+		this.updateReviewAdmission();
+	}
+
+	/** Detached listeners cannot release their old tokens; retain protection through recovery. */
+	private retireReviewInputs(executor: MoveExecutor): void {
+		void executor.whenIdle().finally(() => {
+			for (const [token, input] of this.reviewInputs)
+				if (input.executor === executor) this.reviewInputs.delete(token);
+			this.updateReviewAdmission();
+		});
 	}
 
 	/** A pre-game executor so `arm()` works before the first position (§13.4). */
@@ -1285,7 +1433,7 @@ export class GameSession implements SessionSource {
 		this.rec = null;
 		this.forgetPremove("the game ended");
 		this.clearBoardMarks();
-		this.clearBoardEffects();
+		this.clearBoardEffectsAfterGame();
 		this.finishingGame = replayed ? Promise.resolve() : this.finishGame(result, executionSettled);
 		this.deps.notify();
 		return this.finishingGame;
@@ -1404,6 +1552,14 @@ export class GameSession implements SessionSource {
 			boardKeyOf(previous.fen) === boardKeyOf(snapshot.fen);
 		this.priorFen = previous?.fen ?? null;
 		this.snapshot = snapshot;
+		if (
+			this.positionArrivedAt === null ||
+			!previous ||
+			previous.gameId !== snapshot.gameId ||
+			previous.ply !== snapshot.ply ||
+			boardKeyOf(previous.fen) !== boardKeyOf(snapshot.fen)
+		)
+			this.positionArrivedAt = Math.min(snapshot.capturedAt, this.now());
 		// Fix F: a premove we entered on the site is settled by *this* position — before the move
 		// history, the profile or anything that plans reads either of them.
 		this.reconcilePremove(snapshot);
@@ -1522,7 +1678,7 @@ export class GameSession implements SessionSource {
 	 * has already built the model, the pipeline and the hand for a clockless game. Everything the
 	 * clock drives hangs off this one call: the features' `tcClass` (and with it the compression
 	 * factor, the hard caps and the §8.5 emergency regime, all of which the `untimed` branch
-	 * bypasses), the §4.6 preset, the §7.4 premove gate (bullet/blitz only) and the hand's own
+	 * bypasses), the §7.4 premove gate (bullet/blitz only) and the hand's own
 	 * motor class — a bullet game otherwise keeps a classical hand for its whole length.
 	 *
 	 * Once per game (`profiledTimeControl`), at whatever ply it lands: a game whose clock arrives
@@ -1539,7 +1695,6 @@ export class GameSession implements SessionSource {
 		this.profiledTimeControl = tc;
 		const settings = this.deps.getSettings();
 		const next = timingSettingsFor(settings.timing, tc);
-		this.profile = next.profile;
 		const [baseSec, incSec] = this.timeControlSeconds(this.game);
 		const tcClassOf = tcClass(baseSec, incSec);
 		this.startClockMs = baseSec * MS_PER_S;
@@ -1573,7 +1728,9 @@ export class GameSession implements SessionSource {
 			baseMs: tc.baseMs,
 			incMs: tc.incMs,
 			tc: tcClassOf,
-			profile: next.profile,
+			// 2026-09-15: was the timing preset; the class's move-time gain (through the user's
+			// base speed) is what the re-derived model actually runs at.
+			moveTimeScale: next.moveTimeScale,
 			ply: snapshot.ply,
 		});
 	}
@@ -1622,6 +1779,14 @@ export class GameSession implements SessionSource {
 			// the ponder's own answer to its top line.
 			const intended = this.premove?.chosen.to ?? parseUci(lines?.[0]?.pvUci[1] ?? "")?.to;
 			const attention: OpponentAttentionContext = {
+				repertoire: {
+					targetElo: this.targetElo(),
+					phase,
+					persona: this.deps.getSettings().strength.persona,
+					sharp: isSharp(snapshot.fen, lines ?? []),
+					forced: forcedReply,
+					premovePending: this.premove !== null || this.premoveEntry !== null || this.holdEntry !== null,
+				},
 				tcClass: tcClassOf,
 				opponentThinkMs: Math.max(0, this.now() - snapshot.capturedAt),
 				myClockMs: myClock,
@@ -1664,12 +1829,10 @@ export class GameSession implements SessionSource {
 			return;
 		}
 		await this.armPremove(snapshot);
-		// In a scramble on *our* clock the hand holds the piece instead of queueing a premove: it
-		// lets go the moment the opponent's move lands (owner, 2026-09-11 — "spam out moves" at the
-		// end, at a human's pace rather than the executor's). Otherwise, Fix F: a premove is a
-		// *premove* — entered on the site now, while the opponent is still to move, so their move
-		// fires it. Scheduling only; the engine work below is not held up.
-		this.scheduleOpponentDecision(snapshot, 0, false);
+		// Selection has already made the premove probability draw. Queue a safe candidate now,
+		// with enterPremove's own reaction delay, before optional holds can occupy the hand.
+		this.enterPremove(snapshot);
+		if (this.premoveEntry === null) this.scheduleOpponentDecision(snapshot, 0, false);
 		await this.preAnalysePredicted(snapshot, ponderer);
 	}
 
@@ -1697,19 +1860,16 @@ export class GameSession implements SessionSource {
 	private decideOpponentTurn(snapshot: PositionSnapshot, tick: number, premoveTried: boolean): void {
 		if (this.disposed || this.snapshot !== snapshot || !this.mayAct()) return;
 		if (this.premoveEntry !== null || this.holdEntry !== null) return;
+		let tried = premoveTried;
+		if (!tried && this.premove !== null) {
+			tried = true;
+			this.enterPremove(snapshot);
+			if (this.premoveEntry !== null) return;
+		}
 		const weight = SCRAMBLE_HOLD.decisionWeights[tick] ?? 0;
 		if (this.holdAllowed(snapshot) && this.rng.chance(this.holdProbability(snapshot) * weight)) {
 			this.scheduleScrambleHold(snapshot, 0);
 			return;
-		}
-		let tried = premoveTried;
-		if (!tried && this.premove !== null && this.rng.chance(weight)) {
-			// Fix F: a premove is a *premove* — entered on the site now, while the opponent is still
-			// to move, so their move fires it. Its own gates may still decline it; then it is not
-			// offered again this turn.
-			tried = true;
-			this.enterPremove(snapshot);
-			if (this.premoveEntry !== null) return;
 		}
 		this.scheduleOpponentDecision(snapshot, tick + 1, tried);
 	}
@@ -1719,7 +1879,6 @@ export class GameSession implements SessionSource {
 		return (
 			this.mayAct() &&
 			snapshot.myColor !== null &&
-			this.autoMoveAllowed(this.deps.getSettings()) &&
 			this.executorHandle?.isArmed() === true &&
 			this.premoveEntry === null &&
 			this.holdEntry === null
@@ -2036,7 +2195,16 @@ export class GameSession implements SessionSource {
 			// (1000–1500 ms) already fits inside a 4–16 s planned think, so there is no latency to
 			// win. Measured on the wire before this gate: `go infinite → go depth 22 movetime 1000 →
 			// go infinite` on every rapid opponent turn.
-			if (!isPremoveSpeed(this.currentTimeControl()) && !this.racePolicyFor(snapshot)) return;
+			//
+			// Max-strength mode (owner, 2026-09-15: "the deepest thought we can") harvests at every
+			// speed: the own-move search then starts from a cache hit on the predicted position and a
+			// warm hash, and the deep move search gets the time that search would have taken.
+			if (
+				!isPremoveSpeed(this.currentTimeControl()) &&
+				!this.racePolicyFor(snapshot) &&
+				!isMaxStrength(this.targetElo())
+			)
+				return;
 			await ponderer.stop();
 			if (this.disposed || this.snapshot !== snapshot || generation !== this.workGeneration) return;
 			reply = ponderer.expectedReply(snapshot.fen);
@@ -2069,15 +2237,9 @@ export class GameSession implements SessionSource {
 			policy: this.deps.policy !== undefined,
 			clockRace: ownMoveClockRace(position) !== null,
 		});
-		// H15 / H4 (2026-09-13): the prior breadth above `MAIA.eloMax` and the human-depth side frame
-		// are both part of the cache identity, so the pre-analysis asks for exactly what
-		// `ownMoveBudget` will ask for on our move.
-		const maiaPrior = maiaPriorMode({
-			targetElo: position.targetElo,
-			policy: this.deps.policy !== undefined,
-			clockRace: ownMoveClockRace(position) !== null,
-		});
-		const budget = ownMoveBudget({ ...position, maia, maiaPrior }, this.deps.getSettings());
+		// H4 (2026-09-13): the human-depth side frame is part of the cache identity, so the
+		// pre-analysis asks for exactly what `ownMoveBudget` will ask for on our move.
+		const budget = ownMoveBudget({ ...position, maia }, this.deps.getSettings());
 		// H10: the engine's own best moves for the predicted position, known before it is searched —
 		// the ponder's continuation after `reply`, and the §7.4 premove's pick when it is for this
 		// very position. Forced into the shaped root set so the true best move is always scored.
@@ -2093,7 +2255,6 @@ export class GameSession implements SessionSource {
 		const inferred = this.preInferPredicted(snapshot, predicted, reply, {
 			...position,
 			maia,
-			maiaPrior,
 		});
 		// H10: on their clock, wait (bounded) for that answer and shape the pre-analysis exactly as
 		// the own-move search will be shaped — the same roots, breadth, movetime and flag, from the
@@ -2337,6 +2498,22 @@ export class GameSession implements SessionSource {
 	 * is a legal move for `myColor` — and pins each conjunct with its own failing case.
 	 */
 	private async runPipeline(snapshot: PositionSnapshot): Promise<void> {
+		if (!this.pipeline || !this.timing) return;
+		const ac = new AbortController();
+		this.pipelineAc = ac;
+		const prepared = this.beginReviewPreparation(ac.signal);
+		try {
+			await this.runPipelinePrepared(snapshot, ac, prepared);
+		} finally {
+			prepared();
+		}
+	}
+
+	private async runPipelinePrepared(
+		snapshot: PositionSnapshot,
+		ac: AbortController,
+		prepared: () => void
+	): Promise<void> {
 		const pipeline = this.pipeline;
 		const timing = this.timing;
 		// Fix G looked at this return first — "the engine is not ready yet" — and it is *not* the
@@ -2346,8 +2523,6 @@ export class GameSession implements SessionSource {
 		// `startGame` and `reprofile`. Nothing here becomes true a moment later, so there is nothing
 		// to re-deliver. The engine being slow reaches us further down, at `!outcome`.
 		if (!pipeline || !timing) return;
-		const ac = new AbortController();
-		this.pipelineAc = ac;
 		// The engine queue waits for ponder's bestmove before sending the next go.
 		// Keep that transition inside the pipeline's preparation deadline.
 		void this.ponderer?.stop();
@@ -2394,7 +2569,7 @@ export class GameSession implements SessionSource {
 				// draws are as random across positions as before; they are simply reproducible within one.
 				rng: createRng(`${this.gameSeed}:${snapshot.ply}:${boardKeyOf(snapshot.fen)}`),
 				signal: ac.signal,
-				nowMs: this.now(),
+				nowMs: Math.min(this.positionArrivedAt ?? snapshot.capturedAt, this.now()),
 				engineReady: this.deps.engine !== null,
 				autoQueen: true,
 				inputMethod: EXECUTOR.committedTier,
@@ -2417,43 +2592,36 @@ export class GameSession implements SessionSource {
 		this.qualityContexts.set(outcome.rec.chosen, qualityContext);
 		this.movePositions.set(outcome.rec.chosen, { gameId: snapshot.gameId, ply: snapshot.ply });
 		this.recNReasonable = outcome.nReasonable;
-		// Board effects (2026-09-13): classify our planned move while the engine is idle (`prepare`).
-		// The referee lines ride along: at full strength (no `elo` on the request) they answer the
-		// verdict without a search, and either way they are the "played" half of the opponent's
-		// move, which is what made that chip depend on a search the queue superseded.
-		if (this.mayAct() && settings.automation.boardEffects) {
-			const analysis = outcome.analysis;
+		// Board effects (2026-09-14): open our planned move's rating now, so the review engine
+		// searches the position it will produce while the hand waits out the think time. The
+		// playing engine's lines never feed a rating: they are strength-limited, shaped or shallow.
+		if (this.mayAct() && settings.automation.moveQualityChips) {
 			this.boardEffects.prepare({
 				beforeFen: snapshot.fen,
 				history: this.historyFor(snapshot.fen),
 				uci: outcome.rec.chosen.uci,
 				ply: snapshot.ply,
-				inBook: outcome.fromBook,
-				...(analysis
-					? {
-							analysis: {
-								lines: outcome.rec.lines,
-								fullStrength: analysis.request.elo === undefined,
-							},
-						}
-					: {}),
+				...(outcome.fromBook ? { inBook: true } : {}),
 			});
 		}
 		this.apply("recommended");
 		this.postHighlight(outcome.rec);
 		this.deps.notify();
-		await this.actOnRecommendation(outcome.rec, settings);
+		// Scheduling publishes the input budget synchronously before preparation reopens review.
+		const acting = this.actOnRecommendation(outcome.rec);
+		prepared();
+		await acting;
 	}
 
 	/** §3.2 step 5 / §8.5: schedule, play at once, or leave the plan on display. */
-	private async actOnRecommendation(rec: Recommendation, settings: Settings): Promise<void> {
+	private async actOnRecommendation(rec: Recommendation): Promise<void> {
 		const executor = this.executorHandle;
 		if (this.playWhenReady) {
 			this.playWhenReady = false;
 			await this.playNow();
 			return;
 		}
-		if (!executor?.isArmed() || !this.autoMoveAllowed(settings)) {
+		if (!executor?.isArmed()) {
 			// Panel-only mode (§7.5): keep deepening the eval on our own position.
 			const history = this.historyFor(rec.fen);
 			await this.ponderer?.start("panel", history.fen, history.moves);
@@ -2465,11 +2633,140 @@ export class GameSession implements SessionSource {
 		}
 		// 2026-09-12: a forced mate against us is resigned, not played out — unless the resign
 		// control cannot be found, in which case `runResign` falls back to this very schedule.
-		if (this.shouldResign(rec)) {
+		if (this.shouldResign(rec.lines)) {
 			this.scheduleResign(rec);
 			return;
 		}
+		if (isMaxStrength(this.targetElo())) {
+			await this.playAtMaxStrength(rec);
+			return;
+		}
 		executor.schedule(rec, rec.plan, this.moveContext(rec));
+	}
+
+	// ── max-strength mode (owner, 2026-09-15) ──────────────────────────────
+
+	/**
+	 * "just play the absolute best possible move in every situation with the deepest thought we
+	 * can": the move is decided by the deep search (`max-strength.ts`), which runs until the hand
+	 * must start its approach, and is then scheduled on the timing model's own plan — the deadline
+	 * does not move, so the move is never played faster than planned (C7). A position, switch or
+	 * hand change during the search drops its answer; a play-now harvests it. A forced mate the deep
+	 * frame proves is resigned exactly as the move search's would be.
+	 */
+	private async playAtMaxStrength(rec: Recommendation): Promise<void> {
+		const snapshot = this.snapshot;
+		const deep = await this.deepenForMaxStrength(rec);
+		const executor = this.executorHandle;
+		if (
+			this.disposed ||
+			!snapshot ||
+			this.snapshot !== snapshot ||
+			this.rec !== rec ||
+			!executor?.isArmed() ||
+			executor.pendingMove() !== null ||
+			executor.isRunning() ||
+			!this.mayActOn(snapshot)
+		)
+			return;
+		if (deep) this.adoptDeepened(rec, deep.rec, snapshot);
+		const act = deep?.rec ?? rec;
+		if (this.playWhenReady) {
+			this.playWhenReady = false;
+			await this.playNow();
+			return;
+		}
+		if (deep && this.shouldResign(deep.frame)) {
+			this.scheduleResign(act);
+			return;
+		}
+		executor.schedule(act, act.plan, this.moveContext(act));
+	}
+
+	/**
+	 * Run the deep search for `rec` and read its answer (`deepenRecommendation`), or `null` when there
+	 * is nothing to search with, the window is too short (`deepSearchWindowMs`), the search was
+	 * aborted or failed, or it found nothing deeper than the move search already had.
+	 */
+	private async deepenForMaxStrength(rec: Recommendation): Promise<DeepenedMove | null> {
+		const snapshot = this.snapshot;
+		const engine = this.deps.engine;
+		const myColor = snapshot?.myColor ?? null;
+		if (!snapshot || !engine || myColor === null || rec.fen !== snapshot.fen) return null;
+		const windowMs = deepSearchWindowMs({
+			nowMs: this.now(),
+			searchStartedAtMs: rec.computedAt,
+			plan: rec.plan,
+			myClockMs: remainingClockMs(snapshot, myColor, rec.computedAt),
+			raceMaxSearchMs: this.racePolicyFor(snapshot)?.maxSearchMs,
+		});
+		if (windowMs === 0) return null;
+		const request = deepSearchRequest({
+			fen: snapshot.fen,
+			history: this.historyFor(snapshot.fen),
+			targetElo: this.targetElo(),
+			windowMs,
+		});
+		const entry: DeepSearchEntry = { rec, ac: new AbortController(), search: null };
+		this.deepSearch = entry;
+		const prepared = this.beginReviewPreparation(entry.ac.signal);
+		log.debug("game-session: max strength — deep move search", {
+			tabId: this.deps.tabId,
+			ply: snapshot.ply,
+			windowMs,
+			searched: rec.chosen.uci,
+			depth: rec.depth,
+		});
+		try {
+			entry.search = startDeepSearch(engine, request, {
+				deadlineMs: this.now() + windowMs,
+				now: () => this.now(),
+				signal: entry.ac.signal,
+			});
+			const result: AnalysisResult | null = await entry.search.result;
+			if (entry.ac.signal.aborted) return null;
+			const deepened = deepenRecommendation(rec, result);
+			log.debug("game-session: max strength — deep move search settled", {
+				tabId: this.deps.tabId,
+				depth: result?.final.depth ?? 0,
+				uci: deepened?.rec.chosen.uci ?? rec.chosen.uci,
+				changed: deepened !== null && deepened.rec.chosen !== rec.chosen,
+			});
+			return deepened;
+		} catch (error) {
+			log.debug("game-session: max-strength search unavailable", { error: errorMessage(error) });
+			return null;
+		} finally {
+			if (this.deepSearch === entry) this.deepSearch = null;
+			prepared();
+		}
+	}
+
+	/**
+	 * The deep search's recommendation replaces the standing one. A changed move carries the move's
+	 * bookkeeping, gets its own review of the position it produces, and replaces the board mark.
+	 */
+	private adoptDeepened(
+		previous: Recommendation,
+		next: Recommendation,
+		snapshot: PositionSnapshot
+	): void {
+		this.rec = next;
+		if (next.chosen !== previous.chosen) {
+			const quality = this.qualityContexts.get(previous.chosen);
+			if (quality) this.qualityContexts.set(next.chosen, quality);
+			this.movePositions.set(next.chosen, { gameId: snapshot.gameId, ply: snapshot.ply });
+			if (this.mayAct() && this.deps.getSettings().automation.moveQualityChips) {
+				this.boardEffects.prepare({
+					beforeFen: snapshot.fen,
+					history: this.historyFor(snapshot.fen),
+					uci: next.chosen.uci,
+					ply: snapshot.ply,
+				});
+			}
+			this.postHighlight(next);
+		}
+		this.deps.notify();
 	}
 
 	// ── resigning a lost game (2026-09-12) ─────────────────────────────────
@@ -2480,16 +2777,13 @@ export class GameSession implements SessionSource {
 	 * line is mated too — nothing escapes. Once per game, and only when a `ResignInput` exists.
 	 * A clock race is not considered on purpose: the mate is forced, so the position is resigned.
 	 */
-	private shouldResign(rec: Recommendation): boolean {
+	private shouldResign(frame: readonly EvalLine[]): boolean {
 		if (this.resignAttempted || !this.deps.resignInput) return false;
 		// Settings layout, 2026-09-13: the owner can have every position played out instead.
 		if (!this.deps.getSettings().automation.resignLostGames) return false;
-		const best = rec.lines.find((line) => line.multipv === 1) ?? rec.lines[0];
-		if (!best) return false;
-		const mate = best.score.mate;
-		if (mate === undefined || mate >= 0 || -mate > RESIGN.maxMateIn) return false;
-		if (best.depth < RESIGN.minDepth) return false;
-		return rec.lines.every((line) => line.score.mate !== undefined && line.score.mate < 0);
+		// The line rule over one frame (`resign-frame.ts`): the move search's MultiPV frame, or in
+		// max-strength mode the deep search's single line, where the best move mated means every move is.
+		return isResignableFrame(frame);
 	}
 
 	/** The human moment spent "evaluating the forced mate" before the hand reaches for resign. */
@@ -2529,7 +2823,6 @@ export class GameSession implements SessionSource {
 			this.executorHandle === executor &&
 			isMyTurnState(this.state) &&
 			this.mayActOn(snapshot) &&
-			this.autoMoveAllowed(this.deps.getSettings()) &&
 			executor?.isArmed() === true &&
 			executor.pendingMove() === null;
 		if (!input || !executor || !stillCurrent()) return;
@@ -2570,16 +2863,19 @@ export class GameSession implements SessionSource {
 		this.resignAc = null;
 	}
 
-	/** `manual` never auto-plays ("Never auto-plays; shows recommendations only.", §4.6). */
-	private autoMoveAllowed(settings: Settings): boolean {
-		return autoPlayAllowed(
-			this.profile ?? effectiveTimingProfile(settings.timing.profile, this.currentTimeControl())
-		);
-	}
-
 	private moveContext(rec: Recommendation): MoveContext {
 		const snapshot = this.snapshot;
+		const position = loadPosition(rec.fen);
 		const ctx: MoveContext = {
+			repertoire: {
+				targetElo: this.targetElo(),
+				phase: phaseOf(rec.fen, snapshot?.ply ?? 0) ?? "middlegame",
+				persona: this.deps.getSettings().strength.persona,
+				sharp: isSharp(rec.fen, rec.lines),
+				inCheck: position?.isCheck() === true,
+				forced: position?.moves().length === 1,
+				premovePending: this.premoveEntry !== null || this.holdEntry !== null,
+			},
 			nReasonable: this.recNReasonable,
 			// The executor's own rank-weighted derivation (Task 18) — one definition, not two.
 			candidates: candidatesFromLines(rec),
@@ -2659,6 +2955,9 @@ export class GameSession implements SessionSource {
 		const executor = this.executorHandle;
 		if (executor && (executor.pendingMove() !== null || executor.isRunning())) return;
 		if (this.state !== "live:my-turn:analysing" && this.state !== "live:my-turn:recommended") return;
+		// Max-strength mode: a deep search already running for the standing recommendation is itself
+		// the second chance — it schedules the move when it settles.
+		if (this.deepSearch !== null) return;
 		const rec = this.rec;
 		if (rec) {
 			const paced = this.repaced(rec);
@@ -2670,7 +2969,7 @@ export class GameSession implements SessionSource {
 				reason,
 			});
 			this.rec = paced;
-			await this.actOnRecommendation(paced, this.deps.getSettings());
+			await this.actOnRecommendation(paced);
 			return;
 		}
 		// A search already running for this position is itself the second chance.
@@ -2826,7 +3125,6 @@ export class GameSession implements SessionSource {
 			this.rec === rec &&
 			isMyTurnState(this.state) &&
 			this.mayActOn(snapshot) &&
-			this.autoMoveAllowed(this.deps.getSettings()) &&
 			executor.isArmed() &&
 			executor.cancellationGeneration() === generation &&
 			executor.pendingMove() === null;
@@ -2863,12 +3161,11 @@ export class GameSession implements SessionSource {
 		this.premove = null;
 		const engine = this.deps.engine;
 		const timing = this.timing;
-		const settings = this.deps.getSettings();
 		const last = this.moves[this.moves.length - 1];
 		// §4.4: `premoveCandidate` issues its own `analyse` at `ponder` priority, so the switch is
 		// checked here too (unknown holds, like everywhere else).
 		if (!this.mayAct()) return;
-		if (!engine || !timing || last === undefined || !this.autoMoveAllowed(settings)) return;
+		if (!engine || !timing || last === undefined) return;
 		const previous = this.priorFen;
 		if (previous === null) return;
 		const targetElo = this.targetElo();
@@ -2989,14 +3286,13 @@ export class GameSession implements SessionSource {
 		const last = this.moves[this.moves.length - 1];
 		if (last !== armed.reply) return false;
 		const settings = this.deps.getSettings();
-		if (!this.autoMoveAllowed(settings)) return false;
 		const san = uciToSan(snapshot.fen, armed.chosen.uci);
 		if (san === null) return false;
 		const chosen: ChosenMove = { ...armed.chosen, san };
 		const race = this.racePolicyFor(snapshot);
 		const fireInMs =
 			this.rng.next() * Math.min(PREMOVE_WINDOW_MS, race?.maxMoveMs ?? PREMOVE_WINDOW_MS);
-		const now = this.now();
+		const now = Math.min(this.positionArrivedAt ?? snapshot.capturedAt, this.now());
 		const rec: Recommendation = {
 			chosen,
 			lines: [],
@@ -3095,7 +3391,6 @@ export class GameSession implements SessionSource {
 		)
 			return;
 		if (!this.mayAct() || !executor.isArmed()) return;
-		if (!this.autoMoveAllowed(this.deps.getSettings())) return;
 		const myColor = snapshot.myColor;
 		if (myColor === null || snapshot.sideToMove === myColor) return;
 		if (this.snapshot !== snapshot) return;
@@ -3494,7 +3789,45 @@ export class GameSession implements SessionSource {
 
 	// ── user commands ──────────────────────────────────────────────────────
 
-	private async arm(): Promise<void> {
+	/** The one user switch owns both the current hand and the next game's preference. */
+	async setAutoMove(armed: boolean): Promise<void> {
+		if (this.disposed) return;
+		if (armed) {
+			if (!this.mayAct()) throw new Error(PANEL_COMMAND_ERRORS.assistantOff);
+			if (!this.executorHandle) throw new Error(PANEL_COMMAND_ERRORS.noExecutor);
+		}
+		const intent = { armed };
+		this.pendingAutoMoveIntent = intent;
+		this.autoMovePersistenceFailed = false;
+		const version = ++this.autoMoveRequestVersion;
+		try {
+			if (armed) {
+				await this.arm(true);
+				if (this.disposed || version !== this.autoMoveRequestVersion) return;
+				if (!this.executorHandle?.isArmed() && !this.rearmAfterBreak) return;
+			} else this.disarm();
+			await queueAutoMovePreference(armed);
+		} catch (error) {
+			// An older failed request cannot undo a newer successful arm.
+			if (this.pendingAutoMoveIntent === intent) {
+				this.autoMovePersistenceFailed = true;
+				this.disarm();
+			}
+			throw error;
+		} finally {
+			if (this.pendingAutoMoveIntent === intent) this.pendingAutoMoveIntent = null;
+		}
+	}
+
+	private wantsAutoMove(remembered = false): boolean {
+		return (
+			!this.autoMovePersistenceFailed &&
+			(this.pendingAutoMoveIntent?.armed ??
+				(remembered || this.deps.getSettings().automation.autoMove))
+		);
+	}
+
+	private async arm(reportErrors = false): Promise<void> {
 		const executor = this.executorHandle;
 		if (!executor) {
 			log.info("game-session: nothing to arm (no game on this tab)", { tabId: this.deps.tabId });
@@ -3523,6 +3856,7 @@ export class GameSession implements SessionSource {
 		} catch (error) {
 			log.warn("game-session: arm failed", { error: errorMessage(error) });
 			this.deps.notify();
+			if (reportErrors) throw error;
 			return;
 		}
 		// The recommendation this arm may have raced is acted on through the one re-delivery path, not
@@ -3534,11 +3868,16 @@ export class GameSession implements SessionSource {
 	}
 
 	private disarm(): void {
+		this.autoMoveRequestVersion += 1;
 		// `disarm()` cancels whatever the hand had pending first, so a premove that has not been
 		// entered yet never is; `forgetPremove` then gives up the arm as well (an unarmed hand must
 		// not fire a premove on the next position either).
 		this.executorHandle?.disarm();
 		this.rearmAfterBreak = false;
+		const executor = this.executorHandle;
+		void executor?.whenIdle().then(() => {
+			if (!executor.isArmed() && this.pipelineAc === null) this.updateReviewAdmission();
+		});
 		this.cancelResign();
 		// The arrow stays where the hand left it (2026-09-13): the rest point is where the next arm
 		// starts from (`HandOwnership.startPoint`), and the mirror is that point made visible. Only
@@ -3605,6 +3944,16 @@ export class GameSession implements SessionSource {
 			this.apply("playNow");
 			return;
 		}
+		const deep = this.deepSearch;
+		if (deep && deep.rec === rec && !deep.ac.signal.aborted) {
+			// Max-strength mode: the deep search ends now and what it found is played at once — its
+			// settlement (`playAtMaxStrength`) takes this `playWhenReady` back into `playNow`.
+			this.playWhenReady = true;
+			this.apply("playNow");
+			this.deps.notify();
+			deep.search?.harvest();
+			return;
+		}
 		const timing = this.timing;
 		const ctx = timing ? this.timingContextFor(rec) : null;
 		const plan = timing && ctx ? timing.replan(rec.plan, ctx, "manual-now") : rec.plan;
@@ -3634,6 +3983,7 @@ export class GameSession implements SessionSource {
 		this.game = meta;
 		this.site = meta.site;
 		this.snapshot = null;
+		this.positionArrivedAt = null;
 		this.rec = null;
 		this.premove = null;
 		this.premoveEntry = null;
@@ -3665,7 +4015,6 @@ export class GameSession implements SessionSource {
 		this.startClockMs = baseSec * MS_PER_S;
 		const targetElo = this.targetElo();
 		const timing = timingSettingsFor(settings.timing, meta.timeControl);
-		this.profile = timing.profile;
 		this.profiledTimeControl = meta.timeControl ?? null;
 
 		this.timing = new TimingModel(this.deps.head, timing, createRng(`${gameSeed}:timing`), {
@@ -3705,11 +4054,6 @@ export class GameSession implements SessionSource {
 				engine,
 				scheduler: this.scheduler,
 				now: this.now,
-				onAnalysis: (fen, update, fullStrength) => {
-					const automation = this.deps.getSettings().automation;
-					if (!this.mayAct() || !automation.boardEffects || !automation.moveQualityChips) return;
-					this.boardEffects.supply(fen, update.lines, fullStrength);
-				},
 				onUpdate: () => this.deps.notify(),
 			});
 		}
@@ -3726,6 +4070,7 @@ export class GameSession implements SessionSource {
 			gameSeed,
 		});
 		this.pushContentSettings();
+		this.warmReview();
 		log.info("game-session: game started", {
 			tabId: this.deps.tabId,
 			gameId: meta.gameId,
@@ -3903,6 +4248,15 @@ export class GameSession implements SessionSource {
 	/** A game is on the board: arm as a fresh game start would, if anything asked for it. */
 	private endLobbyHold(reason: string, verdict: LobbyVerdict): void {
 		this.clearLobbyTimer();
+		// Waiting for a pairing is outside the first move's clock.
+		if (this.snapshot?.ply === 0) {
+			this.positionArrivedAt = this.now();
+			// A recommendation computed while waiting carries that old timing epoch. Reuse engine
+			// caches through the normal pipeline, but sample the first real turn afresh.
+			this.pipelineAc?.abort();
+			this.pipelineAc = null;
+			this.rec = null;
+		}
 		log.info("game-session: lobby over — a game is on the board", {
 			tabId: this.deps.tabId,
 			reason,
@@ -3910,7 +4264,10 @@ export class GameSession implements SessionSource {
 		});
 		const executor = this.executorHandle;
 		if (!executor || !this.mayAct()) return;
-		if (!(this.rearmAfterBreak || this.deps.getSettings().automation.autoMove)) return;
+		if (!this.wantsAutoMove(this.rearmAfterBreak)) {
+			void this.reconsiderGuarded("the lobby hold ended");
+			return;
+		}
 		this.autoArm(executor, "the lobby hold ended");
 	}
 
@@ -3935,9 +4292,13 @@ export class GameSession implements SessionSource {
 		for (const off of this.executorOffs.splice(0)) off();
 		// A factory may legitimately hand the same executor back (one hand for the whole tab);
 		// only a *replacement* retires the old one.
-		if (previous && previous !== executor) previous.dispose();
+		if (previous && previous !== executor) {
+			previous.dispose();
+			this.retireReviewInputs(previous);
+		}
 		this.executorHandle = executor;
 		this.executorOffs = [
+			executor.on("inputCritical", (update) => this.onInputCritical(executor, update)),
 			executor.on("executed", (report) => this.onExecuted(report)),
 			// Fix F: the premove gesture went out. Nothing has been played — and nothing can tell
 			// whether the site kept it — so it is not `executed` and none of `onExecuted`'s
@@ -3947,7 +4308,9 @@ export class GameSession implements SessionSource {
 			executor.on("aborted", (report) => this.onNotExecuted(report, "aborted")),
 			executor.on("skipped", (report) => this.onNotExecuted(report, "skipped")),
 			executor.on("hand", (hand) => {
-				if (hand === "rest") return;
+				if (hand === "rest") {
+					return;
+				}
 				// Fix F: the hand also leaves rest during the *opponent's* turn now, to send a premove,
 				// and §3.3 has no `handStarted` edge there on purpose — the move is not ours to make yet.
 				// The gate changes no state (the table already rejects that edge); what it removes is one
@@ -3974,7 +4337,7 @@ export class GameSession implements SessionSource {
 		// the debugger, which is slow enough to lose the race with the first position — and the
 		// manual arm (Shift+A) has always re-checked the recommendation it may have raced, while
 		// this path did not. At ply 0 as white that re-check is the only one there will ever be.
-		if (!this.mayAct() || !(wasArmed || this.deps.getSettings().automation.autoMove)) return;
+		if (!this.mayAct() || !this.wantsAutoMove(wasArmed)) return;
 		// The lobby (2026-09-13): a board with no game queued. The arm waits for the game
 		// (`endLobbyHold`); a carried arm is remembered the way a break's is.
 		if (this.lobbyHeld()) {
@@ -3993,12 +4356,26 @@ export class GameSession implements SessionSource {
 	 * on a `hello` and the `gameStarted` that follows it must not arm the same hand twice.
 	 */
 	private autoArm(executor: MoveExecutor, reason: string): void {
-		if (executor.isArmed() || this.armingExecutor === executor) return;
+		if (
+			this.autoMovePersistenceFailed ||
+			this.pendingAutoMoveIntent?.armed === false ||
+			executor.isArmed() ||
+			this.armingExecutor === executor
+		)
+			return;
 		this.armingExecutor = executor;
 		void executor
 			.arm()
 			.then(
 				async () => {
+					if (
+						this.disposed ||
+						this.executorHandle !== executor ||
+						this.autoMovePersistenceFailed ||
+						this.pendingAutoMoveIntent?.armed === false ||
+						!executor.isArmed()
+					)
+						return;
 					// A remembered arm is spent once it has taken effect — not before, so an executor
 					// replaced mid-arm (`gameStarted` right after the lobby ended) still inherits it.
 					if (this.executorHandle === executor) this.rearmAfterBreak = false;
@@ -4014,7 +4391,10 @@ export class GameSession implements SessionSource {
 
 	private detachExecutor(): void {
 		for (const off of this.executorOffs.splice(0)) off();
-		this.executorHandle?.dispose();
+		if (this.executorHandle) {
+			this.executorHandle.dispose();
+			this.retireReviewInputs(this.executorHandle);
+		}
 		this.executorHandle = null;
 	}
 
@@ -4027,6 +4407,7 @@ export class GameSession implements SessionSource {
 		if (this.settlePremoveDrag(report)) return;
 		if (report.rec.chosen.source === "premove") this.premoveAttempts.reset();
 		const current = report.rec === this.rec;
+		if (current) this.updateReviewAdmission();
 		// The position feed can reach us before the confirmation. It already opened
 		// the next window, which this older receipt must not transition or clear.
 		if (current) this.apply("executed");
@@ -4075,6 +4456,7 @@ export class GameSession implements SessionSource {
 	private onNotExecuted(report: ExecutionReport, outcome: "aborted" | "skipped" | "failed"): void {
 		if (this.settlePremoveDrag(report)) return;
 		if (report.rec === this.rec) {
+			this.updateReviewAdmission();
 			this.apply("failed");
 			this.window.discard();
 			this.clearBoardMarks();
@@ -4292,10 +4674,18 @@ export class GameSession implements SessionSource {
 		return true;
 	}
 
+	/** Drop max-strength mode's deep move search, if one is running (what it found is discarded). */
+	private abortDeepSearch(): void {
+		const deep = this.deepSearch;
+		this.deepSearch = null;
+		deep?.ac.abort();
+	}
+
 	private cancelInFlight(keepHand = false): void {
 		this.workGeneration += 1;
 		this.pipelineAc?.abort();
 		this.pipelineAc = null;
+		this.abortDeepSearch();
 		this.playWhenReady = false;
 		this.cancelResign();
 		// `keepHand`: the hand is releasing a scramble hold into this very position (`onPosition`),
@@ -4336,16 +4726,21 @@ export class GameSession implements SessionSource {
 			// §4.4: the master switch gates the board marks too — and because the content script
 			// clears what it has drawn the moment this turns off, this is also the clear. The same
 			// holds for the effect layer, which has its own element and its own clear: flipping
-			// `boardEffects` off mid-game erases whatever it had drawn on the next push.
+			// `boardEffects` or `moveQualityChips` off mid-game erases whatever it had drawn on the
+			// next push. The two are independent (owner, 2026-09-15): the rating sounds follow the
+			// ratings alone, never the rays.
 			{
 				kind: "settings",
 				highlightMoves: this.mayAct() && settings.automation.highlightMoves,
 				boardEffects: this.mayAct() && settings.automation.boardEffects,
+				moveRatings: this.mayAct() && settings.automation.moveQualityChips,
 				moveRatingSounds:
+					this.mayAct() && settings.automation.moveQualityChips && settings.automation.moveRatingSounds,
+				forcedMateSounds:
 					this.mayAct() &&
-					settings.automation.boardEffects &&
 					settings.automation.moveQualityChips &&
-					settings.automation.moveRatingSounds,
+					settings.automation.moveRatingSounds &&
+					settings.automation.forcedMateSounds,
 			},
 			{ kind: "keybinds", keybinds: settings.keybinds },
 		];
@@ -4361,10 +4756,8 @@ export class GameSession implements SessionSource {
 	 * session never saw, so `landedPlies` recovers their reply and both are reported, theirs first.
 	 *
 	 * `history` is the session's history root for `previous.fen`, read by the caller before
-	 * `trackMove` advanced it. The ponder's lines for `previous.fen` and the strength the session's
-	 * own searches run at go with the report: the first is the "before" half of the landed move,
-	 * the second lets the reporter read a position the session searched (a premove's) from the
-	 * cache instead of searching it again.
+	 * `trackMove` advanced it. After the report the position itself is handed to the reporter
+	 * (`observe`): the review engine starts on it at once, whichever side is to move.
 	 */
 	private reportBoardEffects(
 		previous: PositionSnapshot | null,
@@ -4372,16 +4765,36 @@ export class GameSession implements SessionSource {
 		history: PositionHistory | null
 	): void {
 		const settings = this.deps.getSettings();
-		if (!this.mayAct() || !settings.automation.boardEffects) {
+		// Either switch alone keeps the reporter going (owner, 2026-09-15); it strips what is off.
+		if (
+			!this.mayAct() ||
+			(!settings.automation.boardEffects && !settings.automation.moveQualityChips)
+		) {
 			this.boardEffects.cancel();
 			return;
 		}
-		const last = snapshot.lastMove;
 		if (previous !== null && previous.gameId !== snapshot.gameId) {
 			// A different game's board: nothing drawn for the old one belongs on this one.
 			this.clearBoardEffects();
+		} else {
+			this.reportLandedMoves(previous, snapshot, history);
+		}
+		if (this.state === "game-over") {
+			// The final position can reach the session just after the game over: its move is still
+			// rated and sounded, the erase waits for it again, and nothing more is reviewed.
+			if (this.effectsClearTimer !== null) this.scheduleEffectsClear();
 			return;
 		}
+		this.boardEffects.observe({ fen: snapshot.fen, history: this.historyFor(snapshot.fen) });
+	}
+
+	/** The `report` half of `reportBoardEffects`: the plies between `previous` and `snapshot`. */
+	private reportLandedMoves(
+		previous: PositionSnapshot | null,
+		snapshot: PositionSnapshot,
+		history: PositionHistory | null
+	): void {
+		const last = snapshot.lastMove;
 		if (!previous || !last || !history) return;
 		const plies = BoardEffectsReporter.landedPlies(previous.fen, last, snapshot.fen);
 		if (plies === null) return;
@@ -4411,12 +4824,7 @@ export class GameSession implements SessionSource {
 			fen = next;
 			trail.push(uci);
 		}
-		const strengthElo = requestEloForTarget(this.targetElo());
-		this.boardEffects.report({
-			moves,
-			lines: this.ponderer?.latestLines(previous.fen) ?? [],
-			...(strengthElo === undefined ? {} : { strengthElo }),
-		});
+		this.boardEffects.report({ moves });
 	}
 
 	/**
@@ -4426,8 +4834,35 @@ export class GameSession implements SessionSource {
 	 * off, `Shift+X`, a new game, the game ending, the tab going.
 	 */
 	private clearBoardEffects(): void {
+		this.cancelEffectsClear();
 		this.boardEffects.cancel();
+		this.updateReviewAdmission();
 		this.deps.link.post(this.deps.tabId, { kind: "clearEffects" });
+	}
+
+	/**
+	 * The game is over: stop reviewing now, but erase the layer only once the last move's chip and
+	 * sound have run (`BOARD_EFFECT_GAME_END`). The page reports the game over in the same instant as
+	 * the mating position, and an erase at once silenced the checkmate (owner, 2026-09-15).
+	 */
+	private clearBoardEffectsAfterGame(): void {
+		this.boardEffects.cancel();
+		this.updateReviewAdmission();
+		this.scheduleEffectsClear();
+	}
+
+	private scheduleEffectsClear(): void {
+		this.cancelEffectsClear();
+		this.effectsClearTimer = this.scheduler.setTimeout(() => {
+			this.effectsClearTimer = null;
+			if (!this.disposed) this.deps.link.post(this.deps.tabId, { kind: "clearEffects" });
+		}, BOARD_EFFECT_GAME_END.clearDelayMs);
+	}
+
+	private cancelEffectsClear(): void {
+		if (this.effectsClearTimer === null) return;
+		this.scheduler.clearTimeout(this.effectsClearTimer);
+		this.effectsClearTimer = null;
 	}
 
 	private postHighlight(rec: Recommendation, overlay = false): void {
@@ -4648,10 +5083,9 @@ export class GameSession implements SessionSource {
 	}
 
 	/**
-	 * The time control the presets are keyed on — the game's, else the one the first position
-	 * brought. `startGame` freezes the profile it derives from this into `profile`, and
-	 * `autoMoveAllowed` reads the frozen value, so the model's knobs and the "may I auto-play"
-	 * answer can never disagree mid-game.
+	 * The time control the per-class timing gain is keyed on — the game's, else the one the first
+	 * position brought. `startGame` and `reprofile` are the only places the model's knobs are
+	 * derived from it, so the pace a game is planned at cannot shift under it mid-move.
 	 */
 	private currentTimeControl(): TimeControl | undefined {
 		return this.game?.timeControl ?? this.snapshot?.timeControl;

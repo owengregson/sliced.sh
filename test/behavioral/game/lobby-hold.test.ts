@@ -12,8 +12,9 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { CDP } from "@core/constants/cdp";
 import { LOBBY } from "@core/constants/lobby";
-import type { GamePortCommand } from "@core/constants/messages";
+import { type GamePortCommand, MSG } from "@core/constants/messages";
 import { TIMINGS } from "@core/constants/timings";
+import type { ExecutionReport } from "@service/move-executor";
 import { createGameHarness, type GameHarness } from "./harness";
 
 let h: GameHarness;
@@ -37,6 +38,29 @@ const cursorTos = (): number => h.commands().filter((c) => c.kind === "cursorTo"
 const hides = (): number => h.commands().filter((c) => c.kind === "cursorHide").length;
 
 describe("game session: the lobby hold", () => {
+	it("the single panel switch remembers intent without taking the lobby mouse, and off cancels it", async () => {
+		h = await createGameHarness({ lobby: true });
+		await h.arrive(null, STATIC);
+		await h.advance(LOBBY.clockStillMs + 500);
+		const switchTo = async (armed: boolean) => {
+			const request = h.drive(() =>
+				h.router._dispatch({ type: MSG.PANEL_SET_AUTO_MOVE, tabId: h.tabId, armed }, {})
+			);
+			await h.advance(1000);
+			expect(await request).toMatchObject({ success: true });
+		};
+		await switchTo(true);
+		expect(h.settings().automation.autoMove).toBe(true);
+		expect(h.executor()?.isArmed()).toBe(false);
+		expect(ownership()).not.toContain(true);
+		await switchTo(false);
+		expect(h.settings().automation.autoMove).toBe(false);
+		await h.arrive(null, TICKED);
+		await h.advance(1000);
+		expect(h.executor()?.isArmed()).toBe(false);
+		expect(ownership()).not.toContain(true);
+	});
+
 	it("arriving on /play/online with auto-move on: no arm, no ownership, no mirror — until a clock ticks", async () => {
 		h = await createGameHarness({ settings: { automation: { autoMove: true } }, lobby: true });
 		await h.arrive(null, STATIC);
@@ -53,6 +77,50 @@ describe("game session: the lobby hold", () => {
 		expect(await h.until(() => h.executor()?.isArmed() === true, 10_000)).toBe(true);
 		expect(ownership().at(-1)).toBe(true);
 		expect(h.session().view().lobbyHold).toBeUndefined();
+	});
+
+	it("excludes pairing wait from the first move's deadline and actual release time", async () => {
+		h = await createGameHarness({
+			lobby: true,
+			timeControl: { baseMs: THREE, incMs: 0 },
+			settings: { automation: { autoMove: true }, execution: { previewSelectScale: 0 } },
+			head: {
+				id: "chessmimic",
+				median: () => 2,
+				mean: () => 2,
+				sample: () => ({
+					tSec: 2,
+					mode: "normal",
+					includesExecution: true,
+					why: ["first-move elapsed-time fixture"],
+				}),
+			},
+		});
+		const reports: ExecutionReport[] = [];
+		expect(h.executor()).not.toBeNull();
+		h.executor()!.on("executed", (report) => reports.push(report));
+		const lobbyArrivedAt = h.sim.now();
+		await h.arrive(null, STATIC);
+		await h.advance(LOBBY.clockStillMs + 30_000);
+		expect(h.session().view().lobbyHold).toBe(true);
+		expect(h.executor()?.isArmed()).toBe(false);
+		expect(reports).toHaveLength(0);
+
+		// The board and ply are unchanged. This clock tick releases the hold, so first-arrival
+		// preservation must make an exception for the time spent waiting for a pairing.
+		const playStartedAt = h.sim.now();
+		await h.arrive(null, TICKED);
+		expect(await h.until(() => reports.length === 1, 15_000)).toBe(true);
+		const { rec, result } = reports[0]!;
+		expect(result.outcome).toBe("executed");
+		expect(rec.computedAt).toBe(playStartedAt);
+		expect(rec.computedAt).toBeGreaterThan(lobbyArrivedAt);
+		expect(rec.plan.deadlineMs).toBeCloseTo(playStartedAt + rec.plan.thinkMs, 2);
+		expect(rec.plan.deadlineMs).toBeGreaterThan(playStartedAt);
+		expect(result.submittedAt).toBeGreaterThan(playStartedAt);
+		const row = h.timingLog.entries()[0]!;
+		expect(row.actualMs).toBeCloseTo(result.submittedAt! - playStartedAt, 2);
+		expect(row.actualMs).toBeLessThan(playStartedAt - lobbyArrivedAt);
 	});
 
 	it("a matched game arms on its first tick, not on the opponent card that precedes it", async () => {

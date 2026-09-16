@@ -44,6 +44,7 @@ let promotionTargets: Array<string | undefined>;
 const prevChrome = (globalThis as Record<string, unknown>).chrome;
 
 let promotionReadFails = false;
+let promotionReadDelayMs = 0;
 /** Occupancy the provider reports on the Nth board read (1-based); absent = no occupancy. */
 let occupancyByRead: Record<number, BoardGeometryReply["occupancy"]> = {};
 let boardReads = 0;
@@ -54,6 +55,8 @@ const provider: GeometryProvider = {
 		promotionTargets.push(promotion?.to);
 		signalsSeen.push(signal);
 		if (promotion !== undefined && promotionReadFails) throw new Error("timeout");
+		if (promotion !== undefined && promotionReadDelayMs > 0)
+			await new Promise<void>((resolve) => setTimeout(resolve, promotionReadDelayMs));
 		const reply: BoardGeometryReply = { boardRect: BOARD, flipped: false };
 		if (promotion !== undefined) reply.promotion = promotionRect;
 		else {
@@ -78,6 +81,7 @@ beforeEach(async () => {
 	windowsUpdateCalls = 0;
 	promotionRect = null;
 	promotionReadFails = false;
+	promotionReadDelayMs = 0;
 	occupancyByRead = {};
 	boardReads = 0;
 	signalsSeen = [];
@@ -137,7 +141,7 @@ function makeTiming(over: Partial<TimingPlan> = {}): TimingPlan {
 		mode: "normal" as const,
 		preMoveHoverMs: 2000,
 		dragDurationMs: 400,
-		deadlineMs: START + 3000,
+		deadlineMs: sim.now() + 3000,
 		rationale: [],
 		features: {},
 		orientationMs: 0,
@@ -158,6 +162,9 @@ interface Ctrl {
 	controller: HandController;
 	states: HandState[];
 	backend: CdpInputBackend;
+	critical: Array<{ busy: boolean; at: number }>;
+	deadlines: Array<{ deadline: number | null; at: number }>;
+	dispatches: Array<{ type: string; busy: boolean; at: number }>;
 }
 
 function makeController(
@@ -165,8 +172,18 @@ function makeController(
 	motor: MotorProfile = MOTOR_DEFAULTS,
 	board?: BoardRectSource
 ): Ctrl {
+	const critical: Ctrl["critical"] = [];
+	const deadlines: Ctrl["deadlines"] = [];
+	const dispatches: Ctrl["dispatches"] = [];
 	const backend = new CdpInputBackend(
-		(method, params) => debuggerSend(tabId, method, params),
+		(method, params) => {
+			dispatches.push({
+				type: (params as { type: string }).type,
+				busy: critical.at(-1)?.busy ?? false,
+				at: sim.now(),
+			});
+			return debuggerSend(tabId, method, params);
+		},
 		ownership.position(tabId) ?? START_POINT,
 		{ now: sim.now, scheduler: defaultScheduler }
 	);
@@ -180,10 +197,12 @@ function makeController(
 		now: sim.now,
 		scheduler: defaultScheduler,
 		onState: (s) => states.push(s),
+		onCriticalInput: (busy) => critical.push({ busy, at: sim.now() }),
+		onInputDeadline: (deadline) => deadlines.push({ deadline, at: sim.now() }),
 		...(board ? { board } : {}),
 	});
 	void motor;
-	return { controller, states, backend };
+	return { controller, states, backend, critical, deadlines, dispatches };
 }
 
 interface Cmd {
@@ -212,6 +231,32 @@ const commands = (): Cmd[] =>
 
 const maxStepPx = (m: MotorProfile) => (m.peakSpeedCapPxPerS * m.sampleIntervalMs) / 1000;
 
+/** Check the dispatched picker path, including its first step from the pawn's actual release. */
+function pickerPhysicalMinimumMs(cmds: Cmd[], speedCap: number): number {
+	const dropIndex = cmds.findIndex((command) => command.type === "mouseReleased");
+	const pickIndex = cmds.findIndex(
+		(command, index) => index > dropIndex && command.type === "mousePressed"
+	);
+	expect(dropIndex).toBeGreaterThanOrEqual(0);
+	expect(pickIndex).toBeGreaterThan(dropIndex);
+	const path = cmds
+		.slice(dropIndex + 1, pickIndex)
+		.filter((command) => command.type === "mouseMoved");
+	expect(path.length).toBeGreaterThan(1);
+	let previous = cmds[dropIndex]!;
+	let distance = 0;
+	for (const point of path) {
+		const step = Math.hypot(point.x - previous.x, point.y - previous.y);
+		const elapsed = point.at - previous.at;
+		expect(elapsed).toBeGreaterThan(0);
+		expect(step).toBeLessThanOrEqual((speedCap * elapsed) / 1000 + 0.000001);
+		expect(point.buttons).toBe(0);
+		distance += step;
+		previous = point;
+	}
+	return (distance / speedCap) * 1000;
+}
+
 async function run(
 	ctrl: Ctrl,
 	plan: ExecutionPlan,
@@ -222,6 +267,133 @@ async function run(
 	await sim.time.advanceUntilIdle({ maxAdvanceMs: 60_000 });
 	return done;
 }
+
+describe("HandController classification admission", () => {
+	it("protects unpressed opponent travel and opens classification during a stationary dwell", async () => {
+		const ctrl = makeController();
+		const done = ctrl.controller.explore(
+			tabId,
+			[
+				{
+					kind: "hover",
+					path: [
+						{ x: 690, y: 680, dtMs: 200 },
+						{ x: 680, y: 670, dtMs: 200 },
+					],
+					dwellMs: 3000,
+				},
+				{ kind: "hover", path: [{ x: 670, y: 660, dtMs: 200 }], dwellMs: 1000 },
+			],
+			new AbortController().signal,
+			BOARD
+		);
+		await sim.time.advance(100);
+		expect(ctrl.critical.at(-1)?.busy).toBe(true);
+		await sim.time.advance(900);
+		expect(ctrl.controller.state()).toBe("exploring");
+		expect(ctrl.critical.at(-1)?.busy).toBe(false);
+		expect(ctrl.backend.pressed()).toBe(false);
+		expect(ctrl.dispatches).toHaveLength(2);
+		await sim.time.advanceUntilIdle();
+		await done;
+		expect(ctrl.dispatches).toHaveLength(3);
+		for (const dispatch of ctrl.dispatches)
+			expect(dispatch).toMatchObject({ type: "mouseMoved", busy: true });
+		expect(ctrl.critical.map((event) => event.busy)).toEqual([true, false, true, false]);
+		expect(ctrl.deadlines.at(-1)?.deadline).toBeNull();
+	});
+
+	it("releases an aborted unpressed travel lease and leaves the controller reusable", async () => {
+		const ctrl = makeController();
+		const ac = new AbortController();
+		const outcome = ctrl.controller
+			.explore(
+				tabId,
+				[
+					{
+						kind: "hover",
+						path: [
+							{ x: 690, y: 680, dtMs: 200 },
+							{ x: 680, y: 670, dtMs: 200 },
+						],
+						dwellMs: 3000,
+					},
+				],
+				ac.signal,
+				BOARD
+			)
+			.then(
+				() => "completed",
+				() => "aborted"
+			);
+		await sim.time.advance(250);
+		expect(ctrl.dispatches).toHaveLength(1);
+		expect(ctrl.critical.at(-1)?.busy).toBe(true);
+		ac.abort();
+		await sim.time.advanceUntilIdle();
+		expect(await outcome).toBe("aborted");
+		expect(ctrl.critical.at(-1)?.busy).toBe(false);
+		expect(ctrl.deadlines.at(-1)?.deadline).toBeNull();
+		expect(ctrl.backend.pressed()).toBe(false);
+		expect(ctrl.dispatches).toHaveLength(1);
+		const next = ctrl.controller.explore(
+			tabId,
+			[{ kind: "rest", dwellMs: 500 }],
+			new AbortController().signal,
+			BOARD
+		);
+		await sim.time.advanceUntilIdle();
+		await next;
+		expect(ctrl.critical.at(-1)?.busy).toBe(false);
+		expect(ctrl.dispatches).toHaveLength(1);
+	});
+
+	it("protects a recovery release after cancellation through its dispatch acknowledgment", async () => {
+		const ctrl = makeController(4);
+		const ac = new AbortController();
+		let held = 0;
+		let releaseBusy: boolean | undefined;
+		sim.debugger.respond(CDP.inputDispatchMouseEvent, async (params, id) => {
+			if (params?.type === "mouseMoved" && params.buttons === 1 && ++held === 3) ac.abort();
+			if (params?.type === "mouseReleased") {
+				await new Promise<void>((resolve) => setTimeout(resolve, 75));
+				releaseBusy = ctrl.critical.at(-1)?.busy;
+			}
+			return sim.input.send(id, CDP.inputDispatchMouseEvent, params);
+		});
+		const result = await run(ctrl, makePlan(), makeTiming(), ac);
+		expect(result.outcome).toBe("aborted");
+		expect(held).toBe(3);
+		expect(releaseBusy).toBe(true);
+		expect(ctrl.critical.at(-1)?.busy).toBe(false);
+		expect(ctrl.deadlines.at(-1)?.deadline).toBeNull();
+		expect(ctrl.backend.pressed()).toBe(false);
+		for (const dispatch of ctrl.dispatches) expect(dispatch.busy).toBe(true);
+	});
+
+	it("protects own-turn exploration and committed travel while allowing the long decision wait", async () => {
+		const ctrl = makeController(5);
+		const plan = makePlan();
+		delete plan.exploration;
+		const timing = makeTiming({
+			thinkMs: 8000,
+			deadlineMs: START + 8000,
+			window: { orientationMs: 0, scanMs: 0, previewMs: 0, decisionMs: 7000, approachMs: 1000 },
+		});
+		const done = ctrl.controller.execute(plan, timing, new AbortController().signal);
+		await sim.time.advance(5000);
+		expect(ctrl.critical.at(-1)?.busy ?? false).toBe(false);
+		expect(ctrl.dispatches.some((event) => event.type === "mousePressed")).toBe(false);
+		await sim.time.advanceUntilIdle();
+		const result = await done;
+		expect(result.outcome).toBe("executed");
+		expect(result.submittedAt).toBeLessThanOrEqual(timing.deadlineMs + 0.000001);
+		expect(ctrl.dispatches.some((event) => event.type === "mouseMoved")).toBe(true);
+		for (const dispatch of ctrl.dispatches) expect(dispatch.busy).toBe(true);
+		expect(ctrl.critical.at(-1)?.busy).toBe(false);
+		expect(ctrl.deadlines.at(-1)?.deadline).toBeNull();
+	});
+});
 
 describe("HandController post-drop decision", () => {
 	it("either goes straight to pondering or rests over another piece near the centre, never the moved one", async () => {
@@ -302,12 +474,13 @@ describe("HandController click-click (Settings.execution.inputMode)", () => {
 });
 
 describe("HandController urgent gestures", () => {
-	it("waits for promotion geometry without adding a look delay or slow picker gesture", async () => {
+	it("waits for promotion geometry without adding look delay beyond physically feasible picker travel", async () => {
 		const ctrl = makeController(7);
 		promotionRect = { left: 400, top: 100, width: 80, height: 80 };
 		const plan = makePlan({ promotion: "q" });
 		const timing = makeTiming({
 			thinkMs: 90,
+			deadlineMs: START + 90,
 			dragDurationMs: 90,
 			preMoveHoverMs: 0,
 			features: { clockRace: 1 },
@@ -318,13 +491,49 @@ describe("HandController urgent gestures", () => {
 		const result = await run(ctrl, plan, timing);
 		expect(result.ok).toBe(true);
 		expect(promotionTargets).toContain(plan.to.square);
-		const presses = commands().filter((c) => c.type === "mousePressed");
+		const cmds = commands();
+		const presses = cmds.filter((c) => c.type === "mousePressed");
 		expect(presses).toHaveLength(2);
 		expect(inside(presses[1]!, promotionRect)).toBe(true);
-		// The gesture floor plus the fast promotion click, and nothing else.
+		const physicalMs = pickerPhysicalMinimumMs(cmds, plan.motor.peakSpeedCapPxPerS);
+		const releases = cmds.filter((command) => command.type === "mouseReleased");
+		expect(releases).toHaveLength(2);
+		expect(releases[1]!.at - releases[0]!.at).toBeGreaterThanOrEqual(physicalMs - 0.000001);
+		// Each segment can consume its nominal duration or its physical minimum. Their sum
+		// bounds both without permitting an added look/hold delay or exceeding the speed cap.
 		expect(sim.now() - start).toBeLessThanOrEqual(
-			FAST_TOUCH.gestureFloorMs + FAST_TOUCH.promotionTravelMs[1]
+			FAST_TOUCH.gestureFloorMs + FAST_TOUCH.promotionTravelMs[1] + physicalMs + 0.000001
 		);
+	});
+
+	it("reports an urgent promotion overrun instead of violating a slow profile's picker speed cap", async () => {
+		const ctrl = makeController(7);
+		promotionRect = { left: BOARD.left, top: BOARD.top, width: 80, height: 80 };
+		const plan = makePlan({ promotion: "q", motor: { ...MOTOR_DEFAULTS, peakSpeedCapPxPerS: 900 } });
+		const timing = makeTiming({
+			thinkMs: 90,
+			deadlineMs: START + 90,
+			dragDurationMs: 90,
+			preMoveHoverMs: 0,
+			features: { clockRace: 1 },
+			promotionDelayMs: 1000,
+			window: { orientationMs: 0, scanMs: 0, previewMs: 0, decisionMs: 0, approachMs: 90 },
+		});
+		const original = structuredClone(timing);
+		const result = await run(ctrl, plan, timing);
+		expect(result.outcome).toBe("executed");
+		const cmds = commands();
+		const physicalMs = pickerPhysicalMinimumMs(cmds, plan.motor.peakSpeedCapPxPerS);
+		const releases = cmds.filter((command) => command.type === "mouseReleased");
+		expect(releases).toHaveLength(2);
+		expect(physicalMs).toBeGreaterThan(FAST_TOUCH.promotionTravelMs[1]);
+		expect(releases[1]!.at - releases[0]!.at).toBeGreaterThanOrEqual(physicalMs - 0.000001);
+		expect(releases[1]!.at - releases[0]!.at).toBeLessThanOrEqual(
+			physicalMs + FAST_TOUCH.promotionTravelMs[1] + 0.000001
+		);
+		expect(result.submittedAt).toBeCloseTo(START + releases[1]!.at, 6);
+		expect(result.submittedAt).toBeGreaterThan(original.deadlineMs);
+		expect(timing).toEqual(original);
 	});
 	it.each([
 		{ budget: 20, mode: "normal" as const, features: { clockRace: 1 } },
@@ -372,6 +581,49 @@ describe("HandController urgent gestures", () => {
 });
 
 describe("HandController replies with transport latency", () => {
+	it("charges slow geometry to the same release window and drops optional browsing first", async () => {
+		const ctrl = makeController(7);
+		const read = provider.read;
+		let firstRead = true;
+		provider.read = async (...args) => {
+			if (firstRead) {
+				firstRead = false;
+				await new Promise((resolve) => setTimeout(resolve, 1900));
+			}
+			return read(...args);
+		};
+		try {
+			const plan = makePlan({}, 10);
+			const result = await run(
+				ctrl,
+				plan,
+				makeTiming({
+					thinkMs: 3000,
+					preMoveHoverMs: 2000,
+					window: {
+						orientationMs: 300,
+						scanMs: 1000,
+						previewMs: 400,
+						decisionMs: 300,
+						approachMs: 1000,
+					},
+				})
+			);
+			expect(result.outcome).toBe("executed");
+			const cmds = commands();
+			const presses = cmds.filter((c) => c.type === "mousePressed");
+			const releases = cmds.filter((c) => c.type === "mouseReleased");
+			expect(presses).toHaveLength(1);
+			expect(releases).toHaveLength(1);
+			expect(inside(presses[0]!, plan.from.rect)).toBe(true);
+			expect(inside(releases[0]!, plan.to.rect)).toBe(true);
+			expect(releases[0]!.at).toBeLessThanOrEqual(3100);
+			expect(result.submittedAt! - START).toBeLessThanOrEqual(3100);
+		} finally {
+			provider.read = read;
+		}
+	});
+
 	it.each([
 		{ thinkMs: 330, setupMs: 0 },
 		{ thinkMs: 470, setupMs: 0 },
@@ -829,7 +1081,7 @@ describe("HandController drag execution", () => {
 			const result = await run(
 				ctrl,
 				plan,
-				makeTiming({ thinkMs: 9000, preMoveHoverMs: 8000, deadlineMs: START + 9000 })
+				makeTiming({ thinkMs: 9000, preMoveHoverMs: 8000, deadlineMs: sim.now() + 9000 })
 			);
 			expect(result.outcome).toBe("executed");
 			const cmds = commands();
@@ -903,7 +1155,7 @@ describe("HandController preview selections and a reflow (§9.5 / §9.3a)", () =
 			const result = await run(
 				ctrl,
 				plan,
-				makeTiming({ thinkMs: 9000, preMoveHoverMs: 8000, deadlineMs: START + 9000 })
+				makeTiming({ thinkMs: 9000, preMoveHoverMs: 8000, deadlineMs: sim.now() + 9000 })
 			);
 			const cmds = commands();
 			const presses = cmds.filter((c) => c.type === "mousePressed");
@@ -964,7 +1216,7 @@ describe("HandController: the committed touch is always a drag", () => {
 				thinkMs: 8000,
 				preMoveHoverMs: 4000,
 				dragDurationMs,
-				deadlineMs: START + 8000,
+				deadlineMs: sim.now() + 8000,
 				window: {
 					orientationMs: 4000,
 					scanMs: 0,
@@ -1021,6 +1273,117 @@ describe("HandController: the committed touch is always a drag", () => {
 });
 
 describe("HandController promotion", () => {
+	function promotionPlan(): ExecutionPlan {
+		const from = squareRect("e7");
+		const to = squareRect("e8");
+		const plan = makePlan({
+			from: { x: from.left + from.width / 2, y: from.top + from.height / 2, rect: from, square: "e7" },
+			to: { x: to.left + to.width / 2, y: to.top + to.height / 2, rect: to, square: "e8" },
+			expected: { uci: "e7e8q", premove: false },
+			promotion: "q",
+		});
+		delete plan.exploration;
+		promotionRect = to;
+		ownership.setPosition(tabId, plan.from);
+		return plan;
+	}
+
+	function promotionTiming(): TimingPlan {
+		return makeTiming({
+			thinkMs: 7000,
+			deadlineMs: START + 7000,
+			promotionDelayMs: 700,
+			window: { orientationMs: 0, scanMs: 0, previewMs: 0, decisionMs: 5200, approachMs: 1800 },
+		});
+	}
+
+	it("auto-queen releases the pawn at the original deadline without reserving a nonexistent picker", async () => {
+		const plan = promotionPlan();
+		promotionRect = null;
+		const ctrl = makeController(5);
+		const timing = { ...promotionTiming(), promotionPickerExpected: false };
+		const original = structuredClone(timing);
+		const result = await run(ctrl, plan, timing);
+		expect(result.outcome).toBe("executed");
+		const releases = commands().filter((command) => command.type === "mouseReleased");
+		expect(releases).toHaveLength(1);
+		expect(result.submittedAt).toBeCloseTo(original.deadlineMs, 6);
+		expect(START + releases[0]!.at).toBeCloseTo(original.deadlineMs, 6);
+		expect(result.submittedAt).toBeCloseTo(result.startedAt! + result.elapsedMs, 6);
+		expect(geometryReads).toContain("q");
+		expect(timing).toEqual(original);
+	});
+
+	it("an unexpected picker after auto-queen keeps the original pawn deadline and reports the extra release honestly", async () => {
+		const plan = promotionPlan();
+		const ctrl = makeController(5);
+		const timing = { ...promotionTiming(), promotionPickerExpected: false };
+		const original = structuredClone(timing);
+		const result = await run(ctrl, plan, timing);
+		expect(result.outcome).toBe("executed");
+		const releases = commands().filter((command) => command.type === "mouseReleased");
+		expect(releases).toHaveLength(2);
+		expect(START + releases[0]!.at).toBeCloseTo(original.deadlineMs, 6);
+		expect(result.submittedAt).toBeCloseTo(START + releases[1]!.at, 6);
+		expect(result.submittedAt).toBeGreaterThan(original.deadlineMs);
+		// Auto-queen has no sampled look delay to spend; the unexpected picker only adds
+		// real movement and its mandatory click, never a fresh turn-length budget.
+		expect(releases[1]!.at - releases[0]!.at).toBeLessThan(timing.promotionDelayMs!);
+		expect(timing).toEqual(original);
+	});
+
+	it("underpromotion reserves a picker even if a stale auto-queen hint says it is not expected", async () => {
+		const plan = promotionPlan();
+		plan.promotion = "n";
+		plan.expected.uci = "e7e8n";
+		const ctrl = makeController(5);
+		const timing = { ...promotionTiming(), promotionPickerExpected: false };
+		const result = await run(ctrl, plan, timing);
+		expect(result.outcome).toBe("executed");
+		const releases = commands().filter((command) => command.type === "mouseReleased");
+		expect(releases).toHaveLength(2);
+		expect(START + releases[0]!.at).toBeLessThan(timing.deadlineMs - timing.promotionDelayMs!);
+		expect(result.submittedAt).toBeLessThanOrEqual(timing.deadlineMs + 0.000001);
+		expect(geometryReads).toContain("n");
+	});
+
+	it("reserves the picker interaction so its final release fits the original feasible deadline", async () => {
+		const plan = promotionPlan();
+		const ctrl = makeController(5);
+		const timing = promotionTiming();
+		const original = structuredClone(timing);
+		const result = await run(ctrl, plan, timing);
+		expect(result.outcome).toBe("executed");
+		const releases = commands().filter((command) => command.type === "mouseReleased");
+		expect(releases).toHaveLength(2);
+		expect(result.submittedAt).toBeCloseTo(START + releases[1]!.at, 6);
+		expect(result.submittedAt).toBeLessThanOrEqual(original.deadlineMs + 0.000001);
+		expect(releases[1]!.at - releases[0]!.at).toBeGreaterThanOrEqual(700);
+		expect(timing).toEqual(original);
+		for (const dispatch of ctrl.dispatches) expect(dispatch.busy).toBe(true);
+		expect(ctrl.critical.at(-1)?.busy).toBe(false);
+		expect(ctrl.deadlines.at(-1)?.deadline).toBeNull();
+	});
+
+	it("reports the actual final release when late picker geometry makes the original deadline infeasible", async () => {
+		const plan = promotionPlan();
+		const ctrl = makeController(5);
+		const timing = promotionTiming();
+		const original = structuredClone(timing);
+		promotionReadDelayMs = 2200;
+		const result = await run(ctrl, plan, timing);
+		expect(result.outcome).toBe("executed");
+		const releases = commands().filter((command) => command.type === "mouseReleased");
+		expect(releases).toHaveLength(2);
+		expect(result.submittedAt).toBeCloseTo(START + releases[1]!.at, 6);
+		expect(result.submittedAt).toBeGreaterThan(original.deadlineMs + 1000);
+		expect(result.submittedAt).toBeGreaterThan(result.startedAt! + result.elapsedMs);
+		expect(releases[1]!.at - releases[0]!.at).toBeGreaterThanOrEqual(700 + promotionReadDelayMs);
+		expect(timing).toEqual(original);
+		expect(ctrl.critical.at(-1)?.busy).toBe(false);
+		expect(ctrl.backend.pressed()).toBe(false);
+	});
+
 	it("timestamps a recovered promotion-picker release after an abort during its press", async () => {
 		promotionRect = { left: 420, top: 60, width: 80, height: 80 };
 		const ac = new AbortController();

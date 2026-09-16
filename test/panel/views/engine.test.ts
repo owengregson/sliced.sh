@@ -11,7 +11,7 @@ import {
 	UI_TIMINGS,
 } from "@core/constants";
 import { DEFAULT_SETTINGS } from "@core/constants/defaults";
-import { MAIA_INPUT } from "@core/constants/maia";
+import { MAIA, MAIA_INPUT } from "@core/constants/maia";
 import { TIMING_STATISTICS } from "@core/constants/telemetry";
 import type { LogEntry } from "@core/logger";
 import type { TypedMessage } from "@core/messaging/typed-messages";
@@ -180,7 +180,7 @@ function engineSnapshot(nps = 1_420_000, depth = 18): PanelSnapshot {
 		state: "searching",
 		variant: "full",
 		threads: 4,
-		nnue: ["nn-c288c895ea92.nnue", "nn-37f18f62d772.nnue"],
+		nnue: ["nn-1a298aa575a0.nnue"],
 		version: "17",
 		nps,
 	};
@@ -241,9 +241,7 @@ describe("engine view — engine rows", () => {
 	it("renders version/NNUE, threads/hash, the nps numeral and depth from the snapshot", async () => {
 		const root = await mountView(engineSnapshot());
 		expect(root.querySelector('[data-view="engine"]')).not.toBeNull();
-		expect(text(root, ".sl-engine__version")).toBe(
-			COPY.engine.rows.version("17", "nn-c288c895ea92 + nn-37f18f62d772")
-		);
+		expect(text(root, ".sl-engine__version")).toBe(COPY.engine.rows.version("17", "nn-1a298aa575a0"));
 		expect(text(root, ".sl-engine__resources")).toBe(COPY.engine.rows.resources(4, 256));
 		expect(text(root, ".sl-engine__nps")).toBe("1.42 Mn/s");
 		expect(root.querySelector(".sl-engine__nps")?.classList.contains("sl-type-numeral-sm")).toBe(
@@ -283,13 +281,16 @@ describe("engine view — engine rows", () => {
 		expect(text(root, ".sl-engine__selection")).toBe(COPY.engineView.selection.maia("79M"));
 	});
 
-	it("names the assisted range and the actual loaded engine network", async () => {
+	// Owner, 2026-09-15: one division at the Maia cutoff. This pinned the "Stockfish 18 + Maia-3"
+	// assisted range over (3000, 3200]; the range is removed, so above 3000 the label names the loaded
+	// network alone.
+	it("names Maia through the cutoff and the actual loaded engine network above it", async () => {
 		const root = await mountView(engineSnapshot());
 		for (const [targetElo, variant, label] of [
-			[3000, "smallnet", COPY.engineView.selection.maia("79M")],
-			[3001, "smallnet", COPY.engineView.selection.maiaPriorSmall],
-			[3200, "smallnet", COPY.engineView.selection.maiaPriorSmall],
-			[3100, "full", COPY.engineView.selection.maiaPriorFull],
+			[MAIA.eloMax, "smallnet", COPY.engineView.selection.maia("79M")],
+			[MAIA.eloMax + 1, "full", COPY.engineView.selection.stockfishFull],
+			[MAIA.eloMax + 1, "smallnet", COPY.engineView.selection.stockfishSmall],
+			[3200, "full", COPY.engineView.selection.stockfishFull],
 			[3201, "full", COPY.engineView.selection.stockfishFull],
 			[3201, "smallnet", COPY.engineView.selection.stockfishSmall],
 		] as const) {
@@ -340,7 +341,10 @@ describe("engine view — engine rows", () => {
 
 	it("the human-model block: Off outside Maia's range, waiting without an answer, the answer's pick/WDL/latency", async () => {
 		const off = engineSnapshot();
-		off.settings = { ...off.settings, strength: { ...off.settings.strength, targetElo: 3201 } };
+		off.settings = {
+			...off.settings,
+			strength: { ...off.settings.strength, targetElo: MAIA.eloMax + 1 },
+		};
 		const root = await mountView(off);
 		expect(text(root, ".sl-engine__policy-name")).toBe(COPY.engineView.policy.inactive);
 		expect(text(root, ".sl-engine__policy-status .sl-pill__text")).toBe(COPY.engineView.policy.off);
@@ -373,13 +377,17 @@ describe("engine view — engine rows", () => {
 		expect(text(root, ".sl-engine__policy-meta")).toBe(COPY.engineView.none);
 	});
 
-	it("shows the assisted policy but hides a stale Maia answer after crossing 3200", async () => {
-		const root = await mountView(policySnapshot(48, 1, { targetElo: 3200, source: "sampled" }));
-		expect(text(root, ".sl-engine__selection")).toBe(COPY.engineView.selection.maiaPriorFull);
+	// The crossing that hides a stale answer is the Maia cutoff since 2026-09-15 (it was 3200, the
+	// top of the removed assisted range).
+	it("shows the Maia answer at the cutoff but hides it as stale after crossing the cutoff", async () => {
+		const root = await mountView(
+			policySnapshot(48, 1, { targetElo: MAIA.eloMax, source: "sampled" })
+		);
+		expect(text(root, ".sl-engine__selection")).toBe(COPY.engineView.selection.maia("79M"));
 		expect(text(root, ".sl-engine__policy-status .sl-pill__text")).toBe(
 			COPY.engineView.policy.answered
 		);
-		store.emit(policySnapshot(48, 1, { targetElo: 3201, source: "sampled" }));
+		store.emit(policySnapshot(48, 1, { targetElo: MAIA.eloMax + 1, source: "sampled" }));
 		await dom.tick(0);
 		expect(text(root, ".sl-engine__selection")).toBe(COPY.engineView.selection.stockfishFull);
 		expect(text(root, ".sl-engine__policy-status .sl-pill__text")).toBe(COPY.engineView.policy.off);
@@ -425,12 +433,12 @@ describe("engine view — engine rows", () => {
 		s.engine = {
 			...s.engine,
 			variant: "smallnet",
-			nnue: ["nn-4ca89e4b3abf.nnue"],
+			nnue: ["nn-61e7af4bb97d.nnue"],
 			fallbackFrom: "full",
 		};
 		const root = await mountView(s);
 		expect(text(root, ".sl-engine__version")).toBe(
-			`${COPY.engine.rows.version("17", "nn-4ca89e4b3abf")} · ${COPY.engine.rows.fallback}`
+			`${COPY.engine.rows.version("17", "nn-61e7af4bb97d")} · ${COPY.engine.rows.fallback}`
 		);
 	});
 
@@ -495,11 +503,10 @@ describe("engine view — executor", () => {
 		const root = await mountView(s);
 		expect(value(root, "debugger")).toBe(COPY.executor.attached);
 		expect(value(root, "target")).toBe(COPY.engineView.target("abc123"));
+		// 2026-09-15: the row was "drag · Natural" until the timing presets went; the input style
+		// is all that is left of it.
 		expect(value(root, "input")).toBe(
-			COPY.engineView.inputMode(
-				SETTINGS_COPY.options.inputMode[DEFAULT_SETTINGS.execution.inputMode],
-				COPY.engineView.profiles.natural
-			)
+			SETTINGS_COPY.options.inputMode[DEFAULT_SETTINGS.execution.inputMode]
 		);
 		expect(value(root, "last")).toBe(COPY.engineView.lastAction("drag", "3.9", "executed"));
 		const phases = [...root.querySelectorAll(".sl-engine__phase")].map((p) => p.textContent?.trim());

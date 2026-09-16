@@ -2,15 +2,9 @@ import { describe, expect, it } from "bun:test";
 import { DEFAULT_SETTINGS } from "@core/constants/defaults";
 import { LIMITS } from "@core/constants/limits";
 import { MAIA } from "@core/constants/maia";
-import { SEARCH_BUDGET } from "@core/constants/search";
 import { automaticDepthForElo } from "@core/engine/depth-policy";
 import { clockRacePolicy } from "@core/timing/opponent-pressure";
-import {
-	maiaPriorMode,
-	maiaSearchMode,
-	ownMoveBudget,
-	searchBudget,
-} from "@service/game-session/recommendation";
+import { maiaSearchMode, ownMoveBudget, searchBudget } from "@service/game-session/recommendation";
 import type { Settings } from "@typedefs/settings";
 
 const START = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -134,41 +128,25 @@ describe("high-Elo search candidate allocation", () => {
 		expect(ownMoveBudget({ ...input, myClockMs: 1000 }, settings("hybrid")).multiPv).toBe(3);
 	});
 
-	it("maiaPriorMode: above 3000 through 3200, with a port and no clock race", () => {
+	// Owner, 2026-09-15: one division at the Maia cutoff. These cases pinned `maiaPriorMode` over
+	// (3000, 3200] and its 12-root referee (`SEARCH_BUDGET.priorCandidates`); both are removed, so
+	// they now pin that above the cutoff the referee is the plain native search.
+	it("above the Maia cutoff there is no Maia mode and the referee is the plain native shape", () => {
 		const base = { policy: true, clockRace: false };
-		expect(maiaPriorMode({ ...base, targetElo: MAIA.eloMax })).toBe(false);
-		expect(maiaPriorMode({ ...base, targetElo: 3001 })).toBe(true);
-		expect(maiaPriorMode({ ...base, targetElo: 3200 })).toBe(true);
-		expect(maiaPriorMode({ ...base, targetElo: 3201 })).toBe(false);
-		expect(maiaPriorMode({ ...base, targetElo: LIMITS.eloMax })).toBe(false);
-		expect(maiaPriorMode({ ...base, targetElo: 3100, policy: false })).toBe(false);
-		expect(maiaPriorMode({ ...base, targetElo: 3100, clockRace: true })).toBe(false);
-		for (const targetElo of [800, 2599, 2600, 2800, 3000, 3001, 3200, 3201, 3800])
-			expect(maiaSearchMode({ ...base, targetElo }) && maiaPriorMode({ ...base, targetElo })).toBe(
-				false
-			);
-		expect(maiaSearchMode({ ...base, targetElo: 3000 })).toBe(true);
-	});
-
-	it("the prior's referee keeps the native strength shape but asks for priorCandidates roots", () => {
+		expect(maiaSearchMode({ ...base, targetElo: MAIA.eloMax })).toBe(true);
+		for (const targetElo of [MAIA.eloMax + 1, 3100, 3200, 3201, LIMITS.eloMax])
+			expect(maiaSearchMode({ ...base, targetElo })).toBe(false);
 		for (const selectionMode of ["hybrid", "engine-elo"] as const) {
 			const s = settings(selectionMode);
-			const plain = searchBudget({ ...comfortable, targetElo: 3100 }, s);
-			const prior = searchBudget({ ...comfortable, targetElo: 3100, maiaPrior: true }, s);
-			expect(plain.multiPv).toBe(6);
-			expect(prior).toEqual({ ...plain, multiPv: SEARCH_BUDGET.priorCandidates });
-			expect(ownMoveBudget({ ...ownPosition, targetElo: 3100, maiaPrior: true }, s).multiPv).toBe(
-				SEARCH_BUDGET.priorCandidates
-			);
+			expect(searchBudget({ ...comfortable, targetElo: 3100 }, s).multiPv).toBe(6);
+			const own = ownMoveBudget({ ...ownPosition, targetElo: 3100 }, s);
+			expect(own.multiPv).toBe(6);
+			expect(own.depthCap).toBe(LIMITS.depthMax);
+			expect(own.featureDepth).toBeUndefined();
 		}
-		// the prior never widens a search that is already broad, and never adds a human frame
-		expect(
-			searchBudget({ ...comfortable, targetElo: 3100, maiaPrior: true }, settings("hybrid", 20))
-				.multiPv
-		).toBe(20);
-		expect(
-			ownMoveBudget({ ...ownPosition, targetElo: 3100, maiaPrior: true }, settings("hybrid"))
-				.featureDepth
-		).toBeUndefined();
+		// A configured MultiPV still widens it.
+		expect(searchBudget({ ...comfortable, targetElo: 3100 }, settings("hybrid", 20)).multiPv).toBe(
+			20
+		);
 	});
 });

@@ -14,7 +14,6 @@ import { createOrtRuntime } from "@offscreen/ort-loader";
 import { createTimingInference } from "@offscreen/timing-inference";
 import { timingSettingsFor } from "@service/game-session/presets";
 import { ownMoveBudget } from "@service/game-session/recommendation";
-import { fitTiming } from "@service/move-executor";
 import type { EvalLine } from "@typedefs/engine";
 import corpus from "../../fixtures/timing/pgn-replay.json";
 import { median, START_FEN } from "./helpers";
@@ -60,7 +59,11 @@ async function replay(baseSec: number, seed: number): Promise<GameResult[]> {
 			baseMs: baseSec * 1000,
 			incMs: 0,
 		});
-		const settings = { ...DEFAULT_SETTINGS, timing: timingSettings };
+		// 2026-09-15: the model's knobs and a `Settings` are different types now (`timingSettings`
+		// carries `moveTimeScale`, the stored profile carries `baseSpeed`). `ownMoveBudget` reads
+		// `timing.respectBudget` and the strength block, both of which the defaults already carry,
+		// and since the same date it reads no speed knob at all — so the replay is unchanged.
+		const settings = DEFAULT_SETTINGS;
 		const model = new TimingModel(head, timingSettings, createRng(`pgn-clock-${game.id}-${seed}`));
 		model.startGame({
 			targetElo: 2400,
@@ -126,8 +129,10 @@ async function replay(baseSec: number, seed: number): Promise<GameResult[]> {
 					},
 					settings
 				);
-				// Conservative uncached search; the real executor fits its hand to what remains.
-				const charged = search.movetimeMs + fitTiming(plan, plan.thinkMs - search.movetimeMs).thinkMs;
+				// Preparation and the reserved physical gesture share the sampled window. A late
+				// search can consume all optional time, but the gesture is still owed. This is a
+				// reservation estimate; actual CDP geometry/transport can overrun it.
+				const charged = Math.max(plan.thinkMs, search.movetimeMs + plan.window.approachMs);
 				rows.push({
 					move: rows.length + 1,
 					fraction: left / (baseSec * 1000),
@@ -135,7 +140,11 @@ async function replay(baseSec: number, seed: number): Promise<GameResult[]> {
 					chargedS: charged / 1000,
 					leftS: (left - charged) / 1000,
 				});
-				model.observe(charged, plan);
+				model.observe(charged, plan, {
+					gameId: model.state.gameId,
+					ply,
+					adaptPace: charged <= plan.thinkMs,
+				});
 				left -= charged;
 				ours.push(charged);
 				if (left <= 0) {

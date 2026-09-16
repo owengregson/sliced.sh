@@ -97,7 +97,15 @@ export const MAIA_INPUT = {
  * from.
  */
 export const MAIA = {
-	/** Inclusive Maia-led boundary; these product settings are not measured playing Elos. */
+	/**
+	 * Inclusive Maia-led boundary; these product settings are not measured playing Elos. It is also
+	 * the product's one strength division (owner, 2026-09-15: "lets just use stockfish big net at
+	 * wherever the maia cutoff is … we just go straight from that to big net"): above it the
+	 * playing engine is Stockfish's full network (`variantForSettings`), selection is the strongest
+	 * guarded engine continuation, the opening book is off, the automatic depth ceiling is the
+	 * maximum, and the strength sliders draw their single divider here. The former in-between band
+	 * (a Maia prior over the engine's lines through 3200 on the small network) is gone.
+	 */
 	eloMax: 3000,
 	/** Maximum self-rating supplied to the model; actual opponent rating stays unchanged. */
 	conditioningEloMax: 3000,
@@ -247,13 +255,5 @@ export const MAIA = {
 		maxPenalty: 350,
 		/** Elo rating floor of any Maia query or rail judgement. */
 		eloFloor: 400,
-	},
-	/** Above the Maia-led boundary, human preferences choose among progressively closer engine lines. */
-	prior: {
-		eloMax: 3200,
-		gapCp: { start: 12, end: 4 },
-		/** Weight floor lets an engine continuation survive when Maia assigns it negligible mass. */
-		floorWeight: 0.02,
-		size: "79m" as MaiaSize,
 	},
 } as const;

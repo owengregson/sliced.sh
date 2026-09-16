@@ -66,6 +66,8 @@ export interface BootHooks {
 }
 
 export interface EngineHostDeps {
+	/** Reviews must fail visibly rather than substitute a weaker network. */
+	allowSmallnetFallback?: boolean;
 	boot(variant: EngineVariant, hooks: BootHooks): Promise<BootedEngine>;
 	nnueStore: HostNnueStore;
 	post(msg: EnginePortMessage): void;
@@ -235,6 +237,7 @@ export class EngineHost {
 	 * the service worker's configuration wait accepts the substitute and the panel can say so.
 	 */
 	private fallBackIfRepeated(): boolean {
+		if (this.deps.allowSmallnetFallback === false) return false;
 		if (this.st.variant !== "full" || this.fallbackFrom !== undefined || this.attempt < 1)
 			return false;
 		log.warn("engine-host: the full build crashed again; running the small-net build instead", {
@@ -466,6 +469,9 @@ export interface ServeEngineDeps<
 	S extends NnueStoreLike,
 	M extends ModelStoreLike = ModelStoreLike,
 > {
+	portName?: typeof PORT_NAMES.engine | typeof PORT_NAMES.reviewEngine;
+	/** Release background engine memory when its service-worker owner disconnects. */
+	disposeOnDisconnect?: boolean;
 	createStore(post: (msg: EnginePortMessage) => void): S;
 	createHost(post: (msg: EnginePortMessage) => void, store: S): EngineHost;
 	/** Task 34: the band store the timing head reads; `model-chunk`s route here. */
@@ -496,7 +502,7 @@ export function serveEnginePort<S extends NnueStoreLike, M extends ModelStoreLik
 		else log.debug("engine-host: no service-worker port; message dropped", { kind: msg.kind });
 	};
 	const store = deps.createStore(post);
-	const host = deps.createHost(post, store);
+	let host = deps.createHost(post, store);
 	const modelStore = deps.createModelStore?.(post);
 	const timing = modelStore && deps.createTiming ? deps.createTiming(modelStore) : undefined;
 	const policy = deps.createPolicy?.();
@@ -566,8 +572,9 @@ export function serveEnginePort<S extends NnueStoreLike, M extends ModelStoreLik
 
 	let unsubscribeCurrent: () => void = () => {};
 	const stopAccepting = acceptPorts<EnginePortMessage, EnginePortCommand>(
-		PORT_NAMES.engine,
+		deps.portName ?? PORT_NAMES.engine,
 		(port) => {
+			unsubscribeCurrent();
 			current = port;
 			const offMessage = port.onMessage((cmd) => {
 				if (current === port) route(cmd);
@@ -578,6 +585,10 @@ export function serveEnginePort<S extends NnueStoreLike, M extends ModelStoreLik
 				current = null;
 				store.abortAll(NO_PORT_DROP_REASON);
 				modelStore?.abortAll(NO_PORT_DROP_REASON);
+				if (deps.disposeOnDisconnect) {
+					host.dispose();
+					host = deps.createHost(post, store);
+				}
 			});
 			unsubscribeCurrent = () => {
 				offMessage();
@@ -589,7 +600,9 @@ export function serveEnginePort<S extends NnueStoreLike, M extends ModelStoreLik
 	);
 
 	return {
-		host,
+		get host() {
+			return host;
+		},
 		stop() {
 			stopAccepting();
 			unsubscribeCurrent(); // an `AcceptedPort` cannot be closed from this side; stop routing it

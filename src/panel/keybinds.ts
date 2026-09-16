@@ -24,6 +24,9 @@ export function installPanelKeybinds(doc: Document, store: PanelStore): () => vo
 			window: win,
 			enabled: () =>
 				store.snapshot !== null &&
+				// Native selection controls own their keyboard input, including Space and arrows.
+				// This is panel-only: the page's exclusive virtual-hand shortcuts stay unchanged.
+				!doc.activeElement?.matches('input[type="radio"], input[type="checkbox"]') &&
 				doc.querySelector('.sl-keybind[data-state="capturing"], .sl-keybind[data-state="conflict"]') ===
 					null,
 		}

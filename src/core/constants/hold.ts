@@ -41,7 +41,7 @@ export const SCRAMBLE_HOLD = {
 	 * play, where a hand hovering for a quarter of a minute would be odd.
 	 */
 	scrambleHoldMs: [8_000, 15_000] as MsRange,
-	regularHoldMs: [2_500, 7_000] as MsRange,
+	regularHoldMs: [4_000, 9_500] as MsRange,
 	/** Before a predicted search is ready, occasionally use the ponder continuation. */
 	pvAnswerProb: 0.5,
 	/**

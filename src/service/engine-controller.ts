@@ -22,6 +22,7 @@ import type {
 } from "@core/engine/types";
 import { FEATURE_DEPTH, type UciEngine } from "@core/engine/uci-client";
 import { log } from "@core/logger";
+import { isMaxStrength } from "@core/strength/max-strength";
 import { newId } from "@core/util/ids";
 import type { EngineVariant } from "@typedefs/engine";
 import type { Settings } from "@typedefs/settings";
@@ -144,6 +145,12 @@ export class EngineController {
 	/** Keep warming the admitted target even if its bounded request expires. */
 	private routeRequest: AnalysisRequest | null = null;
 	private cacheGeneration = 0;
+	/**
+	 * The last active target a request carried (max-strength mode, owner 2026-09-15): the engine's own
+	 * options follow it (`optionsForSettings`), since the session's target — not the stored slider —
+	 * is what plays. Absent until a request carries one.
+	 */
+	private optionsTarget: number | undefined;
 
 	constructor(
 		private readonly engine: UciEngine,
@@ -184,6 +191,7 @@ export class EngineController {
 	analyse(req: AnalysisRequest): AnalysisHandle {
 		if (this.configureVariant) return this.enqueueRouted(req);
 		if (this.gameChange) return this.afterVariantChange(req, this.gameChange);
+		this.followTarget(req);
 		const hit = this.lookup(req);
 		if (hit) {
 			log.debug("engine-controller: cache hit", req.id, req.priority ?? "move");
@@ -286,7 +294,7 @@ export class EngineController {
 	private onSettings(settings: Settings): void {
 		if (this.disposed) return;
 		this.settings = settings;
-		this.wanted = optionsForSettings(settings, this.env);
+		this.wanted = optionsForSettings(settings, this.env, this.optionsTarget);
 		this.pending = true;
 		if (this.needsVariantChange() || this.variantChange) {
 			if (this.loadingVariant !== this.desiredVariant()) this.variantAbort?.abort();
@@ -365,6 +373,23 @@ export class EngineController {
 		);
 	}
 
+	/**
+	 * Max-strength mode (owner, 2026-09-15: "maximal performance"): record `req`'s active target, and
+	 * when it crosses the mode boundary re-derive the options (`optionsForSettings`) for the next idle
+	 * moment — on the routed path, before this request's own search. Below the ceiling the options do
+	 * not depend on the target, so no other request adds an option round trip or resizes the hash.
+	 */
+	private followTarget(req: AnalysisRequest): void {
+		const target = req.targetElo;
+		const settings = this.settings;
+		if (target === undefined || !Number.isFinite(target) || !settings || this.disposed) return;
+		const wasMax = this.optionsTarget !== undefined && isMaxStrength(this.optionsTarget);
+		this.optionsTarget = target;
+		if (isMaxStrength(target) === wasMax) return;
+		this.wanted = optionsForSettings(settings, this.env, target);
+		this.pending = true;
+	}
+
 	private enqueueRouted(req: AnalysisRequest): AnalysisHandle {
 		let start: (handle: AnalysisHandle | null) => void = () => {};
 		let settle: (result: AnalysisResult) => void = () => {};
@@ -438,6 +463,7 @@ export class EngineController {
 		if (!job) return;
 		this.routedActive = job;
 		this.routeRequest = job.req;
+		this.followTarget(job.req);
 		if (this.variantChange && this.loadingVariant !== this.desiredVariant())
 			this.variantAbort?.abort();
 		void this.runRouted(job);

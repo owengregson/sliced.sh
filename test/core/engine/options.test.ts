@@ -1,6 +1,7 @@
 // test/core/engine/options.test.ts
 import { describe, expect, it } from "bun:test";
 import { LIMITS } from "@core/constants/limits";
+import { MAIA } from "@core/constants/maia";
 import {
 	autoThreads,
 	clampEngineOptions,
@@ -20,21 +21,23 @@ function settings(patch: Partial<Settings["engine"]>, targetElo = 1500): Setting
 }
 
 describe("optionsForSettings", () => {
+	// Owner, 2026-09-15: the full network starts right above the Maia cutoff (`MAIA.eloMax`), not at
+	// the former separate 3200 (`LIMITS.nnueSmallEloMax`, removed) — so 3001–3200 is now "full".
 	it("routes active matched targets independently of the stored target and native limiter", () => {
 		for (const stored of [1500, 3800]) {
-			for (const target of [3190, 3200, 3201]) {
+			for (const target of [MAIA.eloMax - 10, MAIA.eloMax, MAIA.eloMax + 1, 3190, 3200]) {
 				expect(variantForSettings(settings({ nnue: "auto" }, stored), target)).toBe(
-					target > 3200 ? "full" : "smallnet"
+					target > MAIA.eloMax ? "full" : "smallnet"
 				);
 			}
 		}
-		expect(variantForSettings(settings({ nnue: "big" }, 1500), 3190)).toBe("full");
-		expect(variantForSettings(settings({ nnue: "small" }, 1500), 3201)).toBe("full");
+		expect(variantForSettings(settings({ nnue: "big" }, 1500), MAIA.eloMax)).toBe("full");
+		expect(variantForSettings(settings({ nnue: "small" }, 1500), MAIA.eloMax + 1)).toBe("full");
 		expect(variantForSettings(settings({ nnue: "auto" }, 3800), Number.NaN)).toBe("full");
 	});
 	it("automatically upgrades above the product cutoff, including an old Small preference", () => {
-		expect(variantForSettings(settings({ nnue: "auto" }, LIMITS.nnueSmallEloMax))).toBe("smallnet");
-		expect(variantForSettings(settings({ nnue: "auto" }, LIMITS.nnueSmallEloMax + 1))).toBe("full");
+		expect(variantForSettings(settings({ nnue: "auto" }, MAIA.eloMax))).toBe("smallnet");
+		expect(variantForSettings(settings({ nnue: "auto" }, MAIA.eloMax + 1))).toBe("full");
 		expect(variantForSettings(settings({ nnue: "small" }, 3800))).toBe("full");
 		expect(variantForSettings(settings({ nnue: "big" }, 1500))).toBe("full");
 	});

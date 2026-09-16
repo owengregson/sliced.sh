@@ -12,9 +12,9 @@
  * model supplies them, else `preMoveHoverMs`), the touch (approach + grab +
  * travel rescaled to `dragDurationMs` + settle) is planned right before the
  * decision pause from a fresh geometry read (§9.5), and the approach starts
- * at `t0 + thinkMs − approach − touch` so the drop lands on `thinkMs`.
- * `ExecutionResult.elapsedMs` is the time to the drop (the move-hold time);
- * the promotion click and the post-drop rest follow it in the timeline.
+ * at `t0 + thinkMs − approach − touch`, reserving a promotion picker first when needed.
+ * `ExecutionResult.elapsedMs` is the time to the pawn/piece drop; `submittedAt` records the
+ * final submitting release, including promotion. Post-drop rest follows outside that budget.
  *
  * Geometry is re-read and the touch re-planned right before the press, and the
  * board's rect is then watched for the whole of the held leg (`BoardRectSource`,
@@ -45,14 +45,25 @@ import {
 	FAST_TOUCH,
 	PATH,
 	PROMOTION_LOOK_DELAY_MS,
+	PROMOTION_PICKER_TRAVEL_SQUARES,
 	SAMPLING,
 } from "@core/motor/constants";
-import { type ExplorationOptions, ExplorationPlanner } from "@core/motor/exploration";
+import {
+	actionDurationMs,
+	type ExplorationOptions,
+	ExplorationPlanner,
+} from "@core/motor/exploration";
 import { inRect, lastPoint, pathMs, rectShiftPx, sampleRange } from "@core/motor/geometry";
 import type { InputBackend } from "@core/motor/input-backend";
 import { boundedMotorSpeed, withMotorSpeed } from "@core/motor/motor-profile";
 import type { OpponentExplorationAction } from "@core/motor/opponent-exploration";
-import { fastPath, generatePath, grabWobble, idleTremor } from "@core/motor/path-generator";
+import {
+	fastPath,
+	fittsMs,
+	generatePath,
+	grabWobble,
+	idleTremor,
+} from "@core/motor/path-generator";
 import { clickReleasePoint, samplePointInRect } from "@core/motor/sampling";
 import type {
 	BoardGeometry,
@@ -120,6 +131,8 @@ export interface OwnershipSink {
 
 export interface HandControllerDeps {
 	backend: InputBackend;
+	/** Shared for this game so attention can persist across moves. */
+	planner?: ExplorationPlanner;
 	focus: FocusSource;
 	ownership: OwnershipSink;
 	geometry?: GeometryProvider;
@@ -132,6 +145,10 @@ export interface HandControllerDeps {
 	now?: () => number;
 	scheduler?: Scheduler;
 	onState?: (state: HandState) => void;
+	/** Absolute approach start, refined from actual geometry; null once input has finished. */
+	onInputDeadline?: (atMs: number | null) => void;
+	/** Synchronous classification must yield, but independent review search may continue. */
+	onCriticalInput?: (busy: boolean) => void;
 	/** Runs after the final admission guard, immediately before the committed mouse-down. */
 	onCommittedPress?: () => void;
 }
@@ -275,6 +292,14 @@ interface DragTouch {
 /** The committed touch: a drag, always, plus the budgets it was fitted to. */
 type Touch = DragTouch & { approachMs: number; touchMs: number };
 
+interface PromotionBudget {
+	lookMs: number;
+	travelMs: number;
+	prePressMs: number;
+	holdMs: number;
+	totalMs: number;
+}
+
 /** The coordinate space a touch was planned in: what the board-reflow guard compares against. */
 interface PlannedGeometry {
 	board: Rect;
@@ -303,8 +328,15 @@ export class HandController {
 	private readonly now: () => number;
 	private readonly scheduler: Scheduler;
 	private readonly onState: ((state: HandState) => void) | null;
+	private readonly onInputDeadline: ((atMs: number | null) => void) | null;
+	private readonly onCriticalInput: ((busy: boolean) => void) | null;
+	private committedInput = false;
+	private pressedInput = false;
+	private travellingInput = false;
+	private criticalInput = false;
+	private inputDeadline: number | null = null;
 	private readonly onCommittedPress: (() => void) | null;
-	private readonly planner = new ExplorationPlanner();
+	private readonly planner: ExplorationPlanner;
 	private current: HandState = "rest";
 	private tabId = -1;
 	private signal: AbortSignal | null = null;
@@ -328,6 +360,7 @@ export class HandController {
 
 	constructor(deps: HandControllerDeps) {
 		this.backend = deps.backend;
+		this.planner = deps.planner ?? new ExplorationPlanner();
 		this.focus = deps.focus;
 		this.ownership = deps.ownership;
 		this.geometry = deps.geometry ?? null;
@@ -336,6 +369,8 @@ export class HandController {
 		this.now = deps.now ?? defaultNow;
 		this.scheduler = deps.scheduler ?? defaultScheduler;
 		this.onState = deps.onState ?? null;
+		this.onInputDeadline = deps.onInputDeadline ?? null;
+		this.onCriticalInput = deps.onCriticalInput ?? null;
 		this.onCommittedPress = deps.onCommittedPress ?? null;
 	}
 
@@ -370,6 +405,7 @@ export class HandController {
 			return this.backend.position();
 		} finally {
 			this.ownership.setPosition(tabId, this.backend.position());
+			this.finishInput();
 			this.signal = null;
 			this.setState("rest");
 		}
@@ -431,6 +467,8 @@ export class HandController {
 				tabId: plan.tabId,
 				reason: verdict.reason,
 			});
+			this.finishInput();
+			this.signal = null;
 			return { ok: false, outcome: "skipped", reason: verdict.reason, attempts: 0, ...base() };
 		}
 		try {
@@ -496,6 +534,7 @@ export class HandController {
 				...base(),
 			};
 		} finally {
+			this.finishInput();
 			this.signal = null;
 		}
 	}
@@ -512,6 +551,23 @@ export class HandController {
 		let reply = plan.geometry?.reply ?? (await this.readGeometry(plan.tabId));
 		let readAt = plan.geometry?.readAt ?? this.now();
 		const preTouchMs = preTouchMsOf(timing);
+		const promotion = plan.promotion
+			? this.planPromotion(timing, m, this.resolveRects(plan, reply).to, plan.expected.premove)
+			: null;
+		const autoQueen = plan.promotion === "q" && timing.promotionPickerExpected === false;
+		const promotionReserveMs = autoQueen ? 0 : (promotion?.totalMs ?? 0);
+		// The model's motor reserve includes promotion. Spend it once: the pawn must land
+		// early enough for the picker release to fit the same, immutable turn deadline.
+		const touchTiming =
+			promotionReserveMs > 0
+				? {
+						...timing,
+						window: {
+							...timing.window,
+							approachMs: Math.max(0, timing.window.approachMs - promotionReserveMs),
+						},
+					}
+				: timing;
 
 		// A line preview (`LINE_PREVIEW`) is drawn inside the decision phase, so its reserve comes
 		// off the exploration budget: a previewed move hovers less and annotates instead. Only on the
@@ -519,6 +575,11 @@ export class HandController {
 		const linePreview =
 			plan.linePreview && !fastTouch(timing) && timing.mode !== "instant" ? plan.linePreview : null;
 		const exploreMs = Math.max(0, preTouchMs - (linePreview?.reserveMs ?? 0));
+		const releaseAt = Math.min(timing.deadlineMs, t0 + timing.thinkMs);
+		const pawnReleaseAt = releaseAt - promotionReserveMs;
+		const reservedApproachAt = pawnReleaseAt - touchTiming.window.approachMs;
+		this.setInputDeadline(reservedApproachAt);
+		const exploreUntil = reservedApproachAt - (linePreview?.reserveMs ?? 0);
 
 		// Exploration inside the pre-touch window (§9.3 / §9.3a); the trailing decision
 		// pause is executed by the controller itself so it can absorb the touch budget.
@@ -532,6 +593,10 @@ export class HandController {
 		let first = true;
 		for (const a of actions) {
 			this.gate();
+			// Geometry reads and dispatched events consume this same move window. Optional
+			// browsing must yield before it steals the reserved approach/grab/drag/release time.
+			// Never start a preview we cannot finish; a held preview must always return safely.
+			if (this.now() + actionDurationMs(a) > exploreUntil) break;
 			if (!first) {
 				this.setState("exploring");
 				tl.begin(a.kind === "preview" ? "preview" : "scan");
@@ -558,16 +623,14 @@ export class HandController {
 				reply,
 				m,
 				tl,
-				t0 + timing.thinkMs - timing.window.approachMs - linePreview.restBeforeApproachMs
+				reservedApproachAt - linePreview.restBeforeApproachMs
 			);
 			// The planned rest was a path from the exploration's end point; the hand is elsewhere now.
 			if (moved) tail = undefined;
 		}
-		let touch = this.planTouch(plan, timing, rects, this.backend.position());
-		const approachStartAt = Math.max(
-			this.now(),
-			t0 + timing.thinkMs - touch.approachMs - touch.touchMs
-		);
+		let touch = this.planTouch(plan, touchTiming, rects, this.backend.position());
+		const approachStartAt = Math.max(this.now(), pawnReleaseAt - touch.approachMs - touch.touchMs);
+		this.setInputDeadline(approachStartAt);
 		await this.decisionPause(approachStartAt, tail, m);
 
 		// The pause may have been long, or the page may have moved the board while it ran (the
@@ -587,13 +650,15 @@ export class HandController {
 						movedInPause,
 					});
 					rects = next;
-					touch = this.planTouch(plan, timing, rects, this.backend.position());
+					touch = this.planTouch(plan, touchTiming, rects, this.backend.position());
 				}
 			}
 		}
 
 		this.gate();
 		tl.begin("approach");
+		this.committedInput = true;
+		this.updateCriticalInput();
 		this.setState("approaching");
 		// The coordinate space the rest of this touch is committed to.
 		const planned = reply !== null ? { board: reply.boardRect, flipped: reply.flipped } : null;
@@ -613,7 +678,17 @@ export class HandController {
 		if (plan.style === "click") await this.clickClick(touch, rects, reply, m, tl, plan, planned);
 		else await this.drag(touch, rects, m, tl, plan, planned);
 
-		if (plan.promotion) await this.promote(plan, timing, plan.promotion, m, tl);
+		if (plan.promotion && promotion)
+			await this.promote(
+				plan,
+				timing,
+				plan.promotion,
+				m,
+				tl,
+				autoQueen ? { ...promotion, lookMs: 0 } : promotion,
+				releaseAt
+			);
+		this.finishInput();
 		if (!fastTouch(timing)) await this.postDropRest(plan, reply, m, tl);
 	}
 
@@ -627,6 +702,7 @@ export class HandController {
 		if (!ex || !reply || preTouchMs <= 0) return [{ kind: "rest", dwellMs: 0 }];
 		const geo = boardGeometryOf(reply);
 		const opts: ExplorationOptions = {
+			...(ex.repertoire ? { repertoire: ex.repertoire } : {}),
 			thinkMs: timing.thinkMs,
 			mode: timing.mode,
 			nReasonable: ex.nReasonable,
@@ -1198,6 +1274,32 @@ export class HandController {
 		await this.release(lastPoint(path, target));
 	}
 
+	/** Reserve the picker before scheduling the pawn drop; sample its pauses only once. */
+	private planPromotion(
+		timing: TimingPlan,
+		m: MotorProfile,
+		to: Rect,
+		premove: boolean
+	): PromotionBudget {
+		const urgent = fastTouch(timing);
+		const lookMs = urgent
+			? 0
+			: (timing.promotionDelayMs ??
+				sampleRange(m.lookDelayMs[1] > 0 ? m.lookDelayMs : PROMOTION_LOOK_DELAY_MS, this.rng));
+		const travelMs =
+			urgent && timing.mode !== "premove" && !premove
+				? sampleRange(FAST_TOUCH.promotionTravelMs, this.rng)
+				: fittsMs(
+						Math.max(to.width, to.height) * PROMOTION_PICKER_TRAVEL_SQUARES,
+						Math.min(to.width, to.height),
+						m,
+						this.rng
+					);
+		const prePressMs = urgent ? 0 : sampleRange(CLICK.prePressPauseMs, this.rng);
+		const holdMs = urgent ? 0 : sampleRange(m.pressHoldMs, this.rng);
+		return { lookMs, travelMs, prePressMs, holdMs, totalMs: lookMs + travelMs + prePressMs + holdMs };
+	}
+
 	/**
 	 * Promotion (§9.5): look at the picker, then click the piece. The picker rect
 	 * is read through the same guarded geometry path as the board; when the read
@@ -1209,16 +1311,13 @@ export class HandController {
 		timing: TimingPlan,
 		piece: PromoPiece,
 		m: MotorProfile,
-		tl: Timeline
+		tl: Timeline,
+		budget: PromotionBudget,
+		releaseAt: number
 	): Promise<void> {
 		tl.begin("promote");
 		this.setState("promoting");
-		const lookMs = fastTouch(timing)
-			? 0
-			: timing.promotionDelayMs !== undefined
-				? timing.promotionDelayMs
-				: sampleRange(m.lookDelayMs[1] > 0 ? m.lookDelayMs : PROMOTION_LOOK_DELAY_MS, this.rng);
-		await this.pause(lookMs);
+		await this.pause(budget.lookMs);
 		const reply = await this.readGeometry(plan.tabId, { piece, to: plan.to.square });
 		if (reply === null) tl.note(EXECUTOR.timelineNotes.promotionGeometryUnavailable);
 		const rect = reply?.promotion ?? null;
@@ -1238,17 +1337,22 @@ export class HandController {
 			this.rng
 		);
 		const urgent = fastTouch(timing);
-		const path =
+		const from = this.backend.position();
+		const raw =
 			urgent && timing.mode !== "premove" && !plan.expected.premove
-				? fastPath(this.backend.position(), target, sampleRange(FAST_TOUCH.promotionTravelMs, this.rng))
-				: generatePath(this.backend.position(), target, rect, m, this.rng);
+				? fastPath(from, target, budget.travelMs)
+				: generatePath(from, target, rect, m, this.rng);
+		const available = Math.max(0, releaseAt - this.now() - budget.prePressMs - budget.holdMs);
+		const path = rescalePath(raw, Math.min(pathMs(raw), available), m, from);
 		const planned = reply ? { board: reply.boardRect, flipped: reply.flipped } : null;
 		const guard = guardOf(planned, (r) => this.guardBoard(r));
 		await this.travel(path, guard);
-		if (!urgent) await this.pause(sampleRange(CLICK.prePressPauseMs, this.rng), guard);
+		// Consume spare reserved time here. A late geometry read never moves the deadline;
+		// mandatory physical motion may overrun, and submittedAt records that actual release.
+		await this.pause(Math.max(budget.prePressMs, releaseAt - this.now() - budget.holdMs), guard);
 		const pressAt = lastPoint(path, target);
 		await this.press(pressAt, false, guard);
-		if (!urgent) await this.pause(sampleRange(m.pressHoldMs, this.rng), guard);
+		await this.pause(budget.holdMs, guard);
 		await this.release(clickReleasePoint(pressAt, this.rng));
 		this.submittedAt = this.now();
 	}
@@ -1339,11 +1443,18 @@ export class HandController {
 	/** The backend's absolute-time travel; the gate (and `guard`, if any) runs before every point (§9.6a). */
 	private async travel(path: readonly PathPoint[], guard?: () => void): Promise<void> {
 		if (path.length === 0) return;
-		await this.backend.travel(path, this.signal ?? undefined, () => {
-			this.gate();
-			guard?.();
-		});
-		this.ownership.setPosition(this.tabId, this.backend.position());
+		this.travellingInput = true;
+		this.updateCriticalInput();
+		try {
+			await this.backend.travel(path, this.signal ?? undefined, () => {
+				this.gate();
+				guard?.();
+			});
+		} finally {
+			this.ownership.setPosition(this.tabId, this.backend.position());
+			this.travellingInput = false;
+			this.updateCriticalInput();
+		}
 	}
 
 	/**
@@ -1352,13 +1463,22 @@ export class HandController {
 	 */
 	private async escapeTravel(path: readonly PathPoint[]): Promise<void> {
 		if (path.length === 0) return;
-		await this.backend.travel(path);
-		this.ownership.setPosition(this.tabId, this.backend.position());
+		this.travellingInput = true;
+		this.updateCriticalInput();
+		try {
+			await this.backend.travel(path);
+		} finally {
+			this.ownership.setPosition(this.tabId, this.backend.position());
+			this.travellingInput = false;
+			this.updateCriticalInput();
+		}
 	}
 
 	private async press(p: Pt, committed = false, guard?: () => void): Promise<void> {
 		throwIfAborted(this.signal ?? undefined);
 		this.gate();
+		this.pressedInput = true;
+		this.updateCriticalInput();
 		await this.backend.press(p, this.now(), this.signal ?? undefined, () => {
 			this.gate();
 			guard?.();
@@ -1371,11 +1491,22 @@ export class HandController {
 
 	private async release(p: Pt): Promise<void> {
 		await this.backend.release(p, this.now());
+		this.pressedInput = false;
+		this.updateCriticalInput();
 		this.ownership.setPosition(this.tabId, this.backend.position());
 	}
 
 	private async pause(ms: number, guard?: () => void): Promise<void> {
-		if (ms > 0) await sleep(ms, this.scheduler, this.signal ?? undefined);
+		if (ms > 0) {
+			// A stationary wait is usable only until the next action's input lead. Keep the
+			// original committed-approach boundary if it is earlier than this local pause.
+			this.onInputDeadline?.(Math.min(this.inputDeadline ?? Infinity, this.now() + ms));
+			try {
+				await sleep(ms, this.scheduler, this.signal ?? undefined);
+			} finally {
+				this.onInputDeadline?.(this.inputDeadline);
+			}
+		}
 		throwIfAborted(this.signal ?? undefined);
 		this.gate();
 		guard?.();
@@ -1478,6 +1609,8 @@ export class HandController {
 	private async pressRight(p: Pt, guard?: () => void): Promise<void> {
 		throwIfAborted(this.signal ?? undefined);
 		this.gate();
+		this.pressedInput = true;
+		this.updateCriticalInput();
 		await this.backend.press(
 			p,
 			this.now(),
@@ -1493,6 +1626,8 @@ export class HandController {
 
 	private async releaseRight(p: Pt): Promise<void> {
 		await this.backend.release(p, this.now(), "right");
+		this.pressedInput = false;
+		this.updateCriticalInput();
 		this.ownership.setPosition(this.tabId, this.backend.position());
 	}
 
@@ -1526,6 +1661,27 @@ export class HandController {
 		} catch (error) {
 			log.warn("hand: release after abort failed", { tabId: this.tabId, error: errorMessage(error) });
 		}
+	}
+
+	private updateCriticalInput(): void {
+		const busy = this.committedInput || this.pressedInput || this.travellingInput;
+		if (busy === this.criticalInput) return;
+		this.criticalInput = busy;
+		this.onCriticalInput?.(busy);
+	}
+
+	private finishInput(): void {
+		// Clear the future guard before reopening classification. Recovery has already settled.
+		this.setInputDeadline(null);
+		this.committedInput = false;
+		this.pressedInput = false;
+		this.travellingInput = false;
+		this.updateCriticalInput();
+	}
+
+	private setInputDeadline(atMs: number | null): void {
+		this.inputDeadline = atMs;
+		this.onInputDeadline?.(atMs);
 	}
 
 	private setState(s: HandState): void {

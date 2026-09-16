@@ -1,10 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import { DEFAULT_SETTINGS } from "@core/constants/defaults";
 import { createRng } from "@core/rng";
 import { clockRacePolicy, opponentClockPressure } from "@core/timing/opponent-pressure";
 import { TimingModel } from "@core/timing/timing-model";
 import type { TimingContext } from "@core/timing/types";
-import { ctx } from "./helpers";
+import { ctx, MODEL_TIMING } from "./helpers";
 
 const clocks = { ownClockMs: 120_000, opponentClockMs: 3000, baseMs: 180_000, incrementMs: 0 };
 
@@ -21,7 +20,7 @@ function plan(
 			median: () => headSeconds,
 			sample: () => ({ tSec: headSeconds, mode: "normal", why: [] }),
 		},
-		DEFAULT_SETTINGS.timing,
+		MODEL_TIMING,
 		createRng(seed)
 	);
 	model.startGame({
@@ -80,7 +79,7 @@ describe("clock-race execution policy", () => {
 					prepares++;
 				},
 			},
-			DEFAULT_SETTINGS.timing,
+			MODEL_TIMING,
 			createRng("prepare-race")
 		);
 		await model.prepare(ctx({ oppClockMs: 2000 }));

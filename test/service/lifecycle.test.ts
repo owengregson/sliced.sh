@@ -8,7 +8,7 @@ import {
 	LEGACY_KEYS,
 	legacyCodeToKeybind,
 	legacyEloToTargetElo,
-	legacyMaxWaitToSpeedScale,
+	legacyMaxWaitToBaseSpeed,
 	migrateLegacySettings,
 	wireServiceLifecycle,
 } from "@service/lifecycle";
@@ -53,9 +53,9 @@ describe("legacy value mapping", () => {
 		expect(legacyEloToTargetElo(" 20 ")).toBe(LIMITS.engineEloMax);
 		expect(legacyEloToTargetElo("high")).toBeNull();
 		expect(legacyEloToTargetElo("")).toBeNull();
-		expect(legacyMaxWaitToSpeedScale("4")).toBe(1);
-		expect(legacyMaxWaitToSpeedScale("6")).toBe(legacyMaxWaitToSpeedScale(6));
-		expect(legacyMaxWaitToSpeedScale("soon")).toBeNull();
+		expect(legacyMaxWaitToBaseSpeed("4")).toBe(1);
+		expect(legacyMaxWaitToBaseSpeed("6")).toBe(legacyMaxWaitToBaseSpeed(6));
+		expect(legacyMaxWaitToBaseSpeed("soon")).toBeNull();
 	});
 	it("normalises legacy keybinds: codes as captured, bare default letters/digits to codes", () => {
 		expect(legacyCodeToKeybind("Space")).toMatchObject({ key: " ", code: "Space" });
@@ -67,13 +67,19 @@ describe("legacy value mapping", () => {
 		expect(legacyCodeToKeybind("")).toBeNull();
 		expect(legacyCodeToKeybind(42)).toBeNull();
 	});
-	it("maps the legacy maxWaitTime (s) onto timing.speedScale around the legacy default", () => {
-		expect(legacyMaxWaitToSpeedScale(4)).toBe(1);
-		expect(legacyMaxWaitToSpeedScale(8)).toBeCloseTo(Math.exp(0.5), 2);
-		expect(legacyMaxWaitToSpeedScale(1)).toBeCloseTo(Math.exp(-0.5), 2);
-		expect(legacyMaxWaitToSpeedScale(6)).toBeCloseTo(1.5, 2);
-		expect(legacyMaxWaitToSpeedScale(-3)).toBeCloseTo(Math.exp(-0.5), 2);
-		expect(legacyMaxWaitToSpeedScale(Number.NaN)).toBeNull();
+	// Updated 2026-09-15: the v2 leaf this imports into is `timing.baseSpeed`, a **speed** (higher
+	// = faster), where `timing.speedScale` was a duration. Every expectation below is therefore the
+	// reciprocal of the one it replaces — a longer legacy wait now imports as a *lower* number —
+	// and the imported pace is unchanged.
+	it("maps the legacy maxWaitTime (s) onto timing.baseSpeed around the legacy default", () => {
+		expect(legacyMaxWaitToBaseSpeed(4)).toBe(1);
+		expect(legacyMaxWaitToBaseSpeed(8)).toBeCloseTo(Math.exp(-0.5), 2);
+		expect(legacyMaxWaitToBaseSpeed(1)).toBeCloseTo(Math.exp(0.5), 2);
+		expect(legacyMaxWaitToBaseSpeed(6)).toBeCloseTo(1 / 1.5, 2);
+		expect(legacyMaxWaitToBaseSpeed(-3)).toBeCloseTo(Math.exp(0.5), 2);
+		expect(legacyMaxWaitToBaseSpeed(Number.NaN)).toBeNull();
+		// A longer legacy wait is a slower hand, in the direction the new name promises.
+		expect(legacyMaxWaitToBaseSpeed(8)!).toBeLessThan(legacyMaxWaitToBaseSpeed(1)!);
 	});
 });
 
@@ -100,7 +106,7 @@ describe("migrateLegacySettings", () => {
 		expect(s.automation.highlightMoves).toBe(true);
 		expect(s.strength.targetElo).toBe(1810);
 		expect(s.engine.depthCap).toBe(12);
-		expect(s.timing.speedScale).toBeCloseTo(1.5, 2);
+		expect(s.timing.baseSpeed).toBeCloseTo(1 / 1.5, 2);
 		expect(s.automation.autoMove).toBe(true);
 		expect(s.automation.autoQueue).toBe(true);
 		expect(s.keybinds.playMove).toEqual({ ...DEFAULT_SETTINGS.keybinds.playMove });
@@ -145,7 +151,7 @@ describe("migrateLegacySettings", () => {
 		expect(s.automation.autoQueue).toBe(false);
 		expect(s.strength.targetElo).toBe(2600); // legacyEloToTargetElo(14)
 		expect(s.engine.depthCap).toBe(18);
-		expect(s.timing.speedScale).toBeCloseTo(Math.exp(-0.5), 2);
+		expect(s.timing.baseSpeed).toBeCloseTo(Math.exp(0.5), 2);
 		expect(s.keybinds.playMove).toMatchObject({ key: " ", code: "Space" });
 		expect(s.keybinds.disable).toMatchObject({ key: "a", code: "KeyA", shiftKey: false });
 		expect(s.keybinds.speakMove).toMatchObject({ key: "w", code: "KeyW" });
@@ -167,7 +173,7 @@ describe("migrateLegacySettings", () => {
 		expect(s.enabled).toBe(DEFAULT_SETTINGS.enabled);
 		expect(s.strength.targetElo).toBe(DEFAULT_SETTINGS.strength.targetElo);
 		expect(s.engine.depthCap).toBe(LIMITS.depthMax);
-		expect(s.timing.speedScale).toBe(DEFAULT_SETTINGS.timing.speedScale);
+		expect(s.timing.baseSpeed).toBe(DEFAULT_SETTINGS.timing.baseSpeed);
 		expect(s.keybinds.playMove).toEqual({ ...DEFAULT_SETTINGS.keybinds.playMove });
 		expect(sim.storage.data.local[LOCAL_KEYS.licenseKey]).toBeUndefined();
 		const second = await migrateLegacySettings();

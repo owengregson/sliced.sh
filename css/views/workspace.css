@@ -407,8 +407,7 @@
 	max-width: 100%;
 }
 
-.sl-settings-row__help,
-.sl-settings-row__note {
+.sl-settings-row__help {
 	max-height: none;
 	overflow: visible;
 	line-height: var(--sl-type-leading-sm);

@@ -1,5 +1,4 @@
 import { describe, expect, it } from "bun:test";
-import { DEFAULT_SETTINGS } from "@core/constants/defaults";
 import { createRng, type Rng } from "@core/rng";
 import { computeFeatures } from "@core/timing/features";
 import { createMoveBudget } from "@core/timing/move-budget";
@@ -12,7 +11,7 @@ import type {
 	HeadSample,
 	Persona,
 } from "@core/timing/types";
-import { ctx, median } from "./helpers";
+import { ctx, MODEL_TIMING, median } from "./helpers";
 
 class ClockBlindHead implements DistributionHead {
 	readonly id = "chessmimic" as const;
@@ -30,7 +29,7 @@ class ClockBlindHead implements DistributionHead {
 function plans(clockS: number, baseSec: number, incSec = 0) {
 	return Array.from({ length: 160 }, (_, i) => {
 		const gameId = `clock-${i}`;
-		const model = new TimingModel(new ClockBlindHead(), DEFAULT_SETTINGS.timing, createRng(gameId));
+		const model = new TimingModel(new ClockBlindHead(), MODEL_TIMING, createRng(gameId));
 		model.startGame({
 			gameId,
 			targetElo: 2400,

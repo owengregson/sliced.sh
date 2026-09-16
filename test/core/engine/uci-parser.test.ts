@@ -133,7 +133,7 @@ describe("parseOption", () => {
 
 describe("parseId", () => {
 	it("parses name and author", () => {
-		expect(parseId("id name Stockfish 18")).toEqual({ key: "name", value: "Stockfish 18" });
+		expect(parseId("id name Stockfish 19")).toEqual({ key: "name", value: "Stockfish 19" });
 		expect(parseId("id author the Stockfish developers (see AUTHORS file)")).toEqual({
 			key: "author",
 			value: "the Stockfish developers (see AUTHORS file)",

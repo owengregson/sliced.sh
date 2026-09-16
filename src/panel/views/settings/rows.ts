@@ -2,19 +2,25 @@
  * Settings rows as a typed declarative table (Task 25). Every leaf of `Settings` (Part I §4.4)
  * maps to exactly one row — a control kind, its copy (looked up by path in `SETTINGS_COPY`) and
  * the clamp range from `LIMITS` / `SETTINGS_RANGES` — except the leaves the extension decides
- * (`FORCED_SETTINGS` in `sections.ts`). `test/panel/views/settings.test.ts` walks
+ * (`FORCED_SETTINGS` and `MANAGED_SETTINGS` in `sections.ts`). `test/panel/views/settings.test.ts` walks
  * `DEFAULT_SETTINGS` and fails when any other leaf has no row here.
  */
 
 import { LIMITS, SETTINGS_RANGES } from "@core/constants/limits";
-import { MAIA } from "@core/constants/maia";
-import { STRENGTH_LABEL_BANDS, type StrengthBand, UI_TIMINGS } from "@core/constants/ui";
+import { UI_TIMINGS } from "@core/constants/ui";
 import { clamp, clampInt } from "@core/util/clamp";
-import type { TimeControl } from "@typedefs/game";
 import type { Keybind, Keybinds, Settings } from "@typedefs/settings";
 import type { SliderThreshold } from "../../components/slider";
-import { STRENGTH_NETWORK_THRESHOLD } from "../../components/strength-threshold";
+import {
+	STRENGTH_NETWORK_THRESHOLD,
+	strengthBandLabel,
+	strengthLabel,
+} from "../../components/strength-threshold";
 import { COPY, SETTINGS_COPY } from "../../copy";
+import type { ChoiceItem } from "./choices";
+
+/** The band lookup is shared with the Live strength card; re-exported for the Settings table's users. */
+export { strengthBand, strengthLabel } from "../../components/strength-threshold";
 
 // ── paths ───────────────────────────────────────────────────────────────────────────────────
 
@@ -44,8 +50,7 @@ export interface ToggleRow extends RowBase {
 }
 
 /**
- * A slider whose stored unit differs from the one shown (the accuracy offset: 0–2 in storage,
- * Elo on the slider). `min` / `max` / `step` and every formatter are in the display unit.
+ * Optional display conversion. Range and formatters use the display unit.
  */
 export interface SliderDisplayMap {
 	toDisplay: (stored: number) => number;
@@ -54,6 +59,7 @@ export interface SliderDisplayMap {
 
 export interface SliderRow extends RowBase {
 	kind: "slider";
+	presets?: readonly ChoiceItem[];
 	min: number;
 	max: number;
 	step: number;
@@ -67,9 +73,10 @@ export interface SliderRow extends RowBase {
 	 */
 	readout?: (value: number) => string;
 	display?: SliderDisplayMap;
-	scale?: readonly string[];
+	/** The current value's category under the track (`SliderOptions.caption`). */
+	caption?: (value: number) => string;
 	threshold?: SliderThreshold;
-	/** Unlabelled hairline markers on the track (the model switches the slider crosses). */
+	/** Unlabelled hairline markers on the track (the offset sliders' even point). */
 	markers?: readonly number[];
 	danger?: (value: number) => boolean;
 	dangerHint?: string;
@@ -80,11 +87,14 @@ export interface OptionItem {
 	label: string;
 }
 
+export interface ChoiceRow extends RowBase {
+	kind: "choices";
+	items: readonly ChoiceItem[];
+}
+
 export interface ChipsRow extends RowBase {
 	kind: "chips";
 	items: readonly OptionItem[];
-	/** Per-option description shown under the chips (the timing presets' manual note). */
-	descriptions?: Readonly<Record<string, string>>;
 }
 
 export interface SegmentRow extends RowBase {
@@ -120,6 +130,7 @@ export interface AutomaticDepthRow extends RowBase {
 export type RowSpec =
 	| ToggleRow
 	| SliderRow
+	| ChoiceRow
 	| ChipsRow
 	| SegmentRow
 	| StepperRow
@@ -136,18 +147,6 @@ const rowCopy = (path: CopiedPath): { label: string; help?: string } => SETTINGS
 
 function items<T extends string>(labels: Readonly<Record<T, string>>): OptionItem[] {
 	return (Object.keys(labels) as T[]).map((id) => ({ id, label: labels[id] }));
-}
-
-/** Strength band for a rating (Appendix F §7.2). */
-export function strengthBand(elo: number): StrengthBand {
-	let band: StrengthBand = STRENGTH_LABEL_BANDS[0].band;
-	for (const b of STRENGTH_LABEL_BANDS) if (elo >= b.min) band = b.band;
-	return band;
-}
-
-/** "Club 1200" — the slider bubble text. */
-export function strengthLabel(elo: number): string {
-	return `${COPY.strength.bands[strengthBand(elo)]} ${elo}`;
 }
 
 const VARIANCE_LOW_MAX = 0.67;
@@ -173,16 +172,6 @@ function previewLabel(scale: number): string {
 		: SETTINGS_COPY.format.times(scale);
 }
 
-/**
- * H2: `strength.blunderScale` (0–2) shown as an Elo offset with the intuitive sign — +150 plays
- * as a 150-higher rating would (`sliderEloOffset` counts *below* the target, hence the flip).
- */
-const ACCURACY_SCALE_DECIMALS = 4;
-export const ACCURACY_OFFSET_DISPLAY: SliderDisplayMap = {
-	toDisplay: (scale) => Math.round(MAIA.slider.eloSpan * (1 - scale)),
-	fromDisplay: (elo) => Number((1 - elo / MAIA.slider.eloSpan).toFixed(ACCURACY_SCALE_DECIMALS)),
-};
-
 /** Power-of-two hash sizes inside `LIMITS.hashMbMin..hashMbMax`. */
 function hashSizes(): OptionItem[] {
 	const out: OptionItem[] = [];
@@ -191,39 +180,10 @@ function hashSizes(): OptionItem[] {
 	return out;
 }
 
-// ── time control class (Task 16 lane owns the real one) ─────────────────────────────────────
-// Replace with `tcClass` from `@core/timing` at integration; the thresholds are lichess's
-// estimated-duration classes (base + 40 × increment, in seconds).
-
-export type TcClass = "bullet" | "blitz" | "rapid" | "classical";
-const TC_INCREMENT_WEIGHT = 40;
-const TC_BULLET_MAX_S = 179;
-const TC_BLITZ_MAX_S = 479;
-const TC_RAPID_MAX_S = 1499;
-const MS_PER_S = 1_000;
-const S_PER_MIN = 60;
-
-export function tcClass(tc: TimeControl): TcClass {
-	const estimate = (tc.baseMs + TC_INCREMENT_WEIGHT * tc.incMs) / MS_PER_S;
-	if (estimate <= TC_BULLET_MAX_S) return "bullet";
-	if (estimate <= TC_BLITZ_MAX_S) return "blitz";
-	if (estimate <= TC_RAPID_MAX_S) return "rapid";
-	return "classical";
-}
-
-/**
- * The timing preset a detected time control pre-selects (Appendix F §4.6), from the registry the
- * `GameSession` applies (Task 30) — the chips show exactly what the timing model runs. The
- * chips stay display-only: only a user pick writes `timing.profile`.
- */
-export { PROFILE_FOR_TC_CLASS } from "@core/constants/timings";
-
-/** "blitz 3+2" for the "Detected: …" note. */
-export function formatTimeControl(tc: TimeControl): string {
-	const minutes = Math.round(tc.baseMs / MS_PER_S / S_PER_MIN);
-	const inc = Math.round(tc.incMs / MS_PER_S);
-	return `${SETTINGS_COPY.tc[tcClass(tc)]} ${minutes}+${inc}`;
-}
+// 2026-09-15: the panel's own time-control class (`tcClass`, `formatTimeControl`, the
+// `PROFILE_FOR_TC_CLASS` re-export) existed only so the timing-preset chips could pre-select and
+// label the detected preset. The presets were removed at the owner's request and nothing else in
+// the panel reads the time control, so the block went with them.
 
 // ── the table ───────────────────────────────────────────────────────────────────────────────
 
@@ -247,10 +207,10 @@ export const ROWS: readonly RowSpec[] = [
 		step: 50,
 		valueLabel: strengthLabel,
 		format: String,
-		scale: STRENGTH_LABEL_BANDS.map((b) => COPY.strength.bands[b.band]),
+		// Owner, 2026-09-15: the current category under the slider instead of every category, and
+		// one divider — the Maia cutoff, where the full network takes over — with no second marker.
+		caption: strengthBandLabel,
 		threshold: STRENGTH_NETWORK_THRESHOLD,
-		// The Maia-3 → Stockfish selection switch: a second, unlabelled divider (2026-09-11).
-		markers: [MAIA.eloMax],
 		danger: (v) => v >= UI_TIMINGS.strengthDangerElo,
 		dangerHint: COPY.strength.warning,
 	},
@@ -265,22 +225,9 @@ export const ROWS: readonly RowSpec[] = [
 		// The even point (owner, 2026-09-12): an unlabelled hairline at ±0.
 		markers: [0],
 	},
-	{
-		kind: "slider",
-		path: "strength.blunderScale",
-		...rowCopy("strength.blunderScale"),
-		min: -MAIA.slider.eloSpan,
-		max: MAIA.slider.eloSpan,
-		step: SETTINGS_RANGES.accuracyOffsetStepElo,
-		valueLabel: SETTINGS_COPY.format.elo,
-		format: SETTINGS_COPY.format.elo,
-		display: ACCURACY_OFFSET_DISPLAY,
-		markers: [0],
-	},
 	toggle("strength.useOpeningBook"),
 	// automation
 	toggle("enabled"),
-	toggle("automation.autoMove"),
 	toggle("automation.resignLostGames"),
 	toggle("automation.autoQueue"),
 	{
@@ -318,23 +265,18 @@ export const ROWS: readonly RowSpec[] = [
 	toggle("automation.rematchTitled"),
 	// timing
 	{
-		kind: "chips",
-		path: "timing.profile",
-		...rowCopy("timing.profile"),
-		items: items(SETTINGS_COPY.options.profile),
-		descriptions: { manual: COPY.timing.manualOnly },
-	},
-	{
 		kind: "slider",
-		path: "timing.speedScale",
-		...rowCopy("timing.speedScale"),
-		...SETTINGS_RANGES.speedScale,
+		path: "timing.baseSpeed",
+		presets: SETTINGS_COPY.choices.pace,
+		...rowCopy("timing.baseSpeed"),
+		...SETTINGS_RANGES.baseSpeed,
 		valueLabel: SETTINGS_COPY.format.times,
 		format: SETTINGS_COPY.format.times,
 	},
 	{
 		kind: "slider",
 		path: "timing.varianceScale",
+		presets: SETTINGS_COPY.choices.variety,
 		...rowCopy("timing.varianceScale"),
 		...SETTINGS_RANGES.varianceScale,
 		valueLabel: varianceLabel,
@@ -344,6 +286,7 @@ export const ROWS: readonly RowSpec[] = [
 	{
 		kind: "slider",
 		path: "timing.longThinkFrequency",
+		presets: SETTINGS_COPY.choices.longThink,
 		...rowCopy("timing.longThinkFrequency"),
 		...SETTINGS_RANGES.longThinkFrequency,
 		valueLabel: SETTINGS_COPY.format.times,
@@ -352,6 +295,7 @@ export const ROWS: readonly RowSpec[] = [
 	{
 		kind: "slider",
 		path: "timing.premoveTendency",
+		presets: SETTINGS_COPY.choices.premove,
 		...rowCopy("timing.premoveTendency"),
 		...SETTINGS_RANGES.premoveTendency,
 		valueLabel: SETTINGS_COPY.format.percent,
@@ -359,14 +303,15 @@ export const ROWS: readonly RowSpec[] = [
 	},
 	// hand
 	{
-		kind: "segment",
+		kind: "choices",
 		path: "execution.inputMode",
 		...rowCopy("execution.inputMode"),
-		items: items(SETTINGS_COPY.options.inputMode),
+		items: SETTINGS_COPY.choices.input,
 	},
 	{
 		kind: "slider",
 		path: "execution.motorSpeed",
+		presets: SETTINGS_COPY.choices.motor,
 		...rowCopy("execution.motorSpeed"),
 		...SETTINGS_RANGES.motorSpeed,
 		valueLabel: motorLabel,
@@ -376,6 +321,7 @@ export const ROWS: readonly RowSpec[] = [
 	{
 		kind: "slider",
 		path: "execution.previewSelectScale",
+		presets: SETTINGS_COPY.choices.preview,
 		...rowCopy("execution.previewSelectScale"),
 		...SETTINGS_RANGES.previewSelectScale,
 		valueLabel: previewLabel,
@@ -397,7 +343,14 @@ export const ROWS: readonly RowSpec[] = [
 	},
 	toggle("automation.boardEffects"),
 	toggle("automation.moveQualityChips"),
+	{
+		kind: "segment",
+		path: "automation.moveQualityChipsFor",
+		...rowCopy("automation.moveQualityChipsFor"),
+		items: items(SETTINGS_COPY.options.moveQualityChipsFor),
+	},
 	toggle("automation.moveRatingSounds"),
+	toggle("automation.forcedMateSounds"),
 	toggle("display.virtualCursor"),
 	toggle("display.cursorEffects"),
 	// panel
@@ -410,13 +363,13 @@ export const ROWS: readonly RowSpec[] = [
 		max: LIMITS.multiPvMax,
 	},
 	{
-		kind: "chips",
+		kind: "choices",
 		path: "display.theme",
 		...rowCopy("display.theme"),
 		items: items(SETTINGS_COPY.options.theme),
 	},
 	{
-		kind: "chips",
+		kind: "choices",
 		path: "display.reducedMotion",
 		...rowCopy("display.reducedMotion"),
 		items: items(SETTINGS_COPY.options.reducedMotion),

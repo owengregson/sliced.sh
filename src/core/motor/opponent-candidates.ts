@@ -6,6 +6,7 @@ import type { EvalLine } from "@typedefs/engine";
 import type { Color, Square } from "@typedefs/game";
 import type { Chess } from "chess.js";
 import { OPPONENT_EXPLORATION as O } from "./constants";
+import type { MotorRepertoireContext } from "./repertoire";
 import type { MoveCandidate, TimeControlClass } from "./types";
 
 export type ExplorationSide = "own" | "opponent";
@@ -36,6 +37,7 @@ export interface LineReading {
  * `source()` it hands the executor, so a bout planned mid-turn sees the current think and clocks.
  */
 export interface OpponentAttentionContext {
+	repertoire?: MotorRepertoireContext;
 	tcClass: TimeControlClass;
 	/** How long the opponent has been thinking on this position. */
 	opponentThinkMs: number;

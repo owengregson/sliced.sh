@@ -7,6 +7,8 @@ import { LIMITS } from "@core/constants/limits";
 
 export type PersonaId = "cautious" | "balanced" | "aggressive" | "blitz";
 export type LogLevel = "silent" | "error" | "warn" | "info" | "debug";
+/** Whose moves carry a move-quality chip: the owner's (`mine`), the opponent's, or both. */
+export type MoveQualityChipSide = "mine" | "theirs" | "both";
 
 export interface Keybind {
 	key: string;
@@ -36,17 +38,25 @@ export interface Settings {
 		/** Forced: `hybrid`. */
 		selectionMode: "engine-elo" | "persona-sampling" | "hybrid";
 		useOpeningBook: boolean;
-		/**
-		 * 0..2, default 1. H2 (2026-09-13): an Elo offset on the rating the human model is asked
-		 * about, `MAIA.slider.eloSpan · (blunderScale − 1)` *below* the target. The Settings view
-		 * shows it as **Accuracy offset** in Elo with the intuitive sign (+150 = plays as a
-		 * 150-higher rating would); the leaf keeps the 0–2 unit the blunder channel reads.
-		 */
+		/** Legacy selection scalar. Normalized to 1; target Elo is the accuracy control. */
 		blunderScale: number;
 	};
 	timing: {
-		profile: "manual" | "fast" | "natural" | "slow" | "custom";
-		speedScale: number;
+		/**
+		 * **Higher is faster** (owner, 2026-09-15: "higher base speed should cause moves to happen
+		 * faster not slower"). A wall-clock multiplier on the *whole* move — the wait the timing
+		 * model plans *and* the hand's own movement — from the position arriving to the piece
+		 * landing. It is deliberately **not** an input to the engine: the search keeps the
+		 * allocation the target rating implies, so the setting never changes move quality
+		 * ("settings shouldnt really be modifying the model's ability to give good moves").
+		 *
+		 * The model and the hand both consume *durations*, so the reciprocal is taken exactly once,
+		 * at `timingSettingsFor` (`src/service/game-session/presets.ts`), which is also where the
+		 * per-time-control gain — the other duration factor — is applied. Stored values from before
+		 * the rename (`timing.speedScale`, higher = slower) migrate as `1 / speedScale` in
+		 * `normalizeSettings`.
+		 */
+		baseSpeed: number;
 		varianceScale: number;
 		premoveTendency: number;
 		longThinkFrequency: number;
@@ -110,20 +120,34 @@ export interface Settings {
 		/**
 		 * Board effects (owner's brief, 2026-09-13): after every move, either side's, draw what it
 		 * did — threats, checks, forks, discoveries, pins, captures, castles, promotions — as
-		 * directional rays from the destination square, plus a move-quality chip on it. Ships
-		 * **on**, following `highlightMoves`, and like it the content script draws nothing until
-		 * the service worker sends `settings` (§13.3 rule 4).
+		 * directional rays from the destination square. Ships **on**, following `highlightMoves`,
+		 * and like it the content script draws nothing until the service worker sends `settings`
+		 * (§13.3 rule 4). Controls the rays and the capture mark only: the rating chip is
+		 * `moveQualityChips`, independent of this (owner, 2026-09-15).
 		 */
 		boardEffects: boolean;
 		/**
 		 * The move-quality chip of the effect layer (settings layout, 2026-09-13): the one board
-		 * element that shows an evaluation, and the only part of board effects that costs engine
-		 * time. Off: the rays still draw; no verdict is searched or sent. Inert unless
-		 * `boardEffects` is on.
+		 * element that shows an evaluation, and the only part of the layer that costs engine time.
+		 * Off: the rays still draw; no verdict is searched or sent. Independent of `boardEffects`
+		 * (owner, 2026-09-15): with that off, every landed move still gets its chip, with no rays.
 		 */
 		moveQualityChips: boolean;
+		/**
+		 * "Show ratings for" (owner, 2026-09-15): the chip — and so its sound — only on moves by this
+		 * side. The rays and the capture mark still draw for both, and both sides' positions are
+		 * still reviewed (each frame is half of the other side's verdicts too). Ships `both`, the
+		 * behaviour before the picker. Inert unless `moveQualityChips` is on.
+		 */
+		moveQualityChipsFor: MoveQualityChipSide;
 		/** Play a matching sound when either side's move rating appears. */
 		moveRatingSounds: boolean;
+		/**
+		 * The forced-mate chip's own rising sound (owner, 2026-09-14): one step per move of a forced
+		 * mating sequence, the checkmate included. Off: those chips play nothing. Inert unless
+		 * `moveRatingSounds` is on (and therefore `moveQualityChips`; `boardEffects` does not matter).
+		 */
+		forcedMateSounds: boolean;
 	};
 	keybinds: {
 		playMove: Keybind;
@@ -213,8 +237,7 @@ export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze<Settings>({
 		blunderScale: 1,
 	},
 	timing: {
-		profile: "natural",
-		speedScale: 1,
+		baseSpeed: 1,
 		varianceScale: 1,
 		premoveTendency: 0.5,
 		longThinkFrequency: 1,
@@ -245,7 +268,9 @@ export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze<Settings>({
 		highlightStyle: "both",
 		boardEffects: true,
 		moveQualityChips: true,
+		moveQualityChipsFor: "both",
 		moveRatingSounds: false,
+		forcedMateSounds: true,
 	},
 	keybinds: { ...DEFAULT_KEYBINDS, global: false },
 	display: {

@@ -748,7 +748,7 @@ async function main(): Promise<void> {
 	if (args.engine) {
 		engine = await createRefereeEngine({ threads: 1, hashMb: 32 });
 		header.push(
-			`referee: vendored Stockfish 18 smallnet, movetime ${args.movetime} ms, depth cap automaticDepthForElo(selfElo), MultiPV by selectionCandidates, extra searchmoves ${MAIA.extraSearchMs} ms`
+			`referee: vendored Stockfish 19 smallnet, movetime ${args.movetime} ms, depth cap automaticDepthForElo(selfElo), MultiPV by selectionCandidates, extra searchmoves ${MAIA.extraSearchMs} ms`
 		);
 	}
 	header.push(`draws per position: ${args.draws}; seed \`${args.seed}\``);

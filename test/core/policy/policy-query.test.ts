@@ -17,7 +17,6 @@ const inputs: PolicyInferenceInputs = {
 };
 const query = {
 	inputs,
-	mode: "maia" as const,
 	selectionMode: "hybrid" as const,
 	history: { fen: CHESS_START_FEN, moves: ["e2e4"] },
 };
@@ -70,12 +69,12 @@ describe("policy query identity", () => {
 			policyQueryIdentity({ ...query, inputs: { ...inputs, selfElo: 2800.2 } })
 		);
 	});
-	it("distinguishes both ratings, mode, selection settings and every history frame", () => {
+	// The "prior" query mode went with the upper prior band (2026-09-15): one mode, nothing to key.
+	it("distinguishes both ratings, selection settings and every history frame", () => {
 		const key = policyQueryIdentity(query);
 		for (const changed of [
 			{ ...query, inputs: { ...inputs, selfElo: 2801 } },
 			{ ...query, inputs: { ...inputs, oppoElo: 2901 } },
-			{ ...query, mode: "prior" as const },
 			{ ...query, selectionMode: "persona-sampling" as const },
 			{ ...query, inputs: { ...inputs, historyFens: [fen] } },
 		])

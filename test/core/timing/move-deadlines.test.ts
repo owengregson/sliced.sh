@@ -1,10 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import { DEFAULT_SETTINGS } from "@core/constants/defaults";
 import { createRng } from "@core/rng";
 import { TIMING_CONSTANTS as C } from "@core/timing/constants";
 import { TimingModel } from "@core/timing/timing-model";
 import type { DistributionHead, TimingMode } from "@core/timing/types";
-import { ctx } from "./helpers";
+import { ctx, MODEL_TIMING } from "./helpers";
 
 describe("move-window budgets", () => {
 	for (const mode of ["normal", "long"] as const) {
@@ -14,11 +13,7 @@ describe("move-window budgets", () => {
 				median: () => 1,
 				sample: () => ({ tSec: 90, mode: mode as TimingMode, why: [] }),
 			};
-			const model = new TimingModel(
-				head,
-				{ ...DEFAULT_SETTINGS.timing, speedScale: 2 },
-				createRng(mode)
-			);
+			const model = new TimingModel(head, { ...MODEL_TIMING, moveTimeScale: 2 }, createRng(mode));
 			model.startGame({
 				gameId: mode,
 				site: "chesscom",

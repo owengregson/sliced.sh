@@ -156,8 +156,9 @@ it("shows instant-plan progress before commitment while manual and disarmed reco
 	expect(button.getAttribute("aria-disabled")).toBe("true");
 	expect(button.getAttribute("aria-busy")).toBe("true");
 	for (const armed of [false, true]) {
+		// 2026-09-15: the stored timing preset (`manual` when armed) varied here until the presets
+		// were removed; the armed flag alone is what the phase reads.
 		const held = liveSnapshot({ autoMove: { armed } });
-		held.settings.timing = { ...held.settings.timing, profile: armed ? "manual" : "natural" };
 		h.store.emit(held);
 		expect(h.root.dataset.phase).toBe("ready");
 		expect(h.q(".sl-move__progress-value").textContent).toBe(COPY.move.progress.ready.value);

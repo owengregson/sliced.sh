@@ -3,7 +3,11 @@
 import { describe, expect, it } from "bun:test";
 import { DEFAULT_SETTINGS } from "@core/constants/defaults";
 import { SETTINGS_RANGES } from "@core/constants/limits";
-import { effectivePremoveTendency, SETTING_GAIN } from "@core/constants/setting-gain";
+import {
+	effectiveBaseSpeed,
+	effectivePremoveTendency,
+	SETTING_GAIN,
+} from "@core/constants/setting-gain";
 import { SETTINGS_COPY } from "@panel/copy";
 import { rowFor } from "@panel/views/settings/rows";
 
@@ -18,7 +22,10 @@ describe("SETTING_GAIN (owner, 2026-09-13)", () => {
 		// Per time-control class since the 2026-09-13 clock work: the instructed 1.3 stands where
 		// there is room for it, and bullet/blitz run at 1.0 because 1.3 was measurably losing 3+0
 		// games on the clock (docs/research/chessmimic-bands-and-the-clock-2026-09-13.md).
-		expect(SETTING_GAIN.speedScale).toEqual({
+		// Renamed to `moveTimeScale` on 2026-09-15 (it multiplies a duration; the old name said
+		// "speed" and meant slowness). The values, and so the pace of every time-control class,
+		// are exactly what they were.
+		expect(SETTING_GAIN.moveTimeScale).toEqual({
 			bullet: 1,
 			blitz: 1,
 			rapid: 1.3,
@@ -31,9 +38,25 @@ describe("SETTING_GAIN (owner, 2026-09-13)", () => {
 	it("the user-visible defaults are the round numbers the gains are re-basing", () => {
 		expect(DEFAULT_SETTINGS.execution.previewSelectScale).toBe(1);
 		expect(DEFAULT_SETTINGS.execution.motorSpeed).toBe(1);
-		expect(DEFAULT_SETTINGS.timing.speedScale).toBe(1);
+		expect(DEFAULT_SETTINGS.timing.baseSpeed).toBe(1);
 		expect(DEFAULT_SETTINGS.timing.longThinkFrequency).toBe(1);
 		expect(DEFAULT_SETTINGS.timing.premoveTendency).toBe(0.5);
+	});
+
+	it("base speed: the slider's own range, clamped, with 1 for anything unreadable", () => {
+		const { min, max, step } = SETTINGS_RANGES.baseSpeed;
+		// The reciprocal span of the `speedScale` slider it replaces (0.25…3), on the same grid.
+		expect([min, max, step]).toEqual([0.35, 4, 0.05]);
+		expect(effectiveBaseSpeed(1)).toBe(1);
+		expect(effectiveBaseSpeed(min)).toBe(min);
+		expect(effectiveBaseSpeed(max)).toBe(max);
+		expect(effectiveBaseSpeed(0)).toBe(min);
+		expect(effectiveBaseSpeed(-4)).toBe(min);
+		expect(effectiveBaseSpeed(1000)).toBe(max);
+		expect(effectiveBaseSpeed(Number.NaN)).toBe(1);
+		expect(effectiveBaseSpeed(Number.POSITIVE_INFINITY)).toBe(1);
+		// The default sits inside it and is the identity, so a fresh install is unscaled.
+		expect(effectiveBaseSpeed(DEFAULT_SETTINGS.timing.baseSpeed)).toBe(1);
 	});
 
 	it("the persona offset is shifted visibly, not gained", () => {

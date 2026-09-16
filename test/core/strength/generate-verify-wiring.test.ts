@@ -91,12 +91,12 @@ describe("H3 — generate-and-verify runs only with the human-depth frame", () =
 			expect(meters.rank).toBe(["d2d4", "e2e4", "g1f3", "c2c4"].indexOf(m.uci) + 1);
 			expect(m.maiaProb).toBeCloseTo(P[m.uci] ?? -1, 12);
 			const text = m.rationale.join("\n");
-			if (meters.candidates === 1) {
+			if (text.includes("generate-verify: intuition")) {
 				intuition++;
 				expect(text).toContain("generate-verify: intuition");
 			} else {
-				expect(text).toMatch(/generate-verify: k=[2-4] of 4 survivors .* verified at depth 8/);
-				expect(text).toMatch(new RegExp(`^ {2}${m.uci} p=0\\.\\d+ shallow -?\\d+ → -?\\d+ ✓$`, "m"));
+				expect(text).toMatch(/generate-verify: recognition proposals [12] of 4/);
+				expect(meters.candidates).toBeLessThanOrEqual(2);
 			}
 			expect(text).toContain("tie-band terms (technique prior, practical difficulty) skipped");
 			expect(text).not.toContain("no human-depth frame");
@@ -104,9 +104,10 @@ describe("H3 — generate-and-verify runs only with the human-depth frame", () =
 			expect(Number.isFinite(meters.klFromMaia)).toBe(true);
 			expect(meters.klFromMaia).toBeGreaterThan(0);
 		}
-		// pIntuition(≈ 2200) ≈ 0.16: some picks were on recognition alone, most were verified
-		expect(intuition).toBeGreaterThan(5);
-		expect(intuition).toBeLessThan(80);
+		// pIntuition(≈ 2200) ≈ 0.62 since the 2026-09-15 recalibration (was ≈ 0.16): most picks are on
+		// recognition alone, a large minority are verified (binomial mean ≈ 124 of 200)
+		expect(intuition).toBeGreaterThan(95);
+		expect(intuition).toBeLessThan(150);
 		// The meter is drawDistribution over the same input on the fen-seeded rng, so every pick
 		// on this position reports the same number, and it is what the module says it is.
 		const first = picks[0]?.maiaMeters?.klFromMaia ?? -1;
@@ -129,7 +130,7 @@ describe("H3 — generate-and-verify runs only with the human-depth frame", () =
 		);
 		expect(first).toBeCloseTo(gvKl(q, new Map(Object.entries(P))), 12);
 	});
-	it("the verification decides: the shallow favourite is drawn far above its Maia mass at 2300, and less so at 1000", () => {
+	it("the verification lifts the shallow favourite above its Maia mass: lightly through 2800, more in the upper band", () => {
 		const strong = sample(
 			FOUR,
 			2000,
@@ -142,16 +143,38 @@ describe("H3 — generate-and-verify runs only with the human-depth frame", () =
 			{ targetElo: 1000, maia: MAIA_FOUR, shallowLines: SHALLOW, shallowDepth: 3 },
 			"weak"
 		);
+		const upper = sample(
+			FOUR,
+			2000,
+			{ targetElo: 2950, maia: MAIA_FOUR, shallowLines: SHALLOW, shallowDepth: 8 },
+			"upper"
+		);
 		const plain = sample(FOUR, 2000, { targetElo: 2300, maia: MAIA_FOUR }, "strong");
 		const share = (s: Sample, uci: string) => (s.counts.get(uci) ?? 0) / 2000;
-		// Maia gives c2c4 0.05. At ≈ 2200 (k 3–4 of 4, σ 26) it is among the candidates most of the
-		// time and wins the comparison; at 900 (k 2–3, half the moves on intuition) it is rarely
-		// generated — expected ≈ 0.62 and ≈ 0.10.
+		// Maia gives c2c4 0.05. Before the 2026-09-15 recalibration the path drew it ≈ 0.62 of the
+		// time at ≈ 2200 — the near-argmax that made the extension outplay its rating against
+		// chess.com humans (docs/qa/generate-verify-2026-09-13.md, "Recalibration"). Now at ≈ 2200
+		// (intuition ≈ 0.62, k 2–3, σ 80) it is generated only when drawn as one of two and measured
+		// ≈ 0.11; at ≈ 900 (intuition ≈ 0.69, σ 88) ≈ 0.09; at ≈ 2850 in the upper band (k ≈ 3,
+		// σ ≈ 63, intuition ≈ 0.47) ≈ 0.25. The plain draw stays at Maia's 0.05.
 		expect(share(plain, "c2c4")).toBeLessThan(0.09);
-		expect(share(strong, "c2c4")).toBeGreaterThan(0.45);
-		expect(share(weak, "c2c4")).toBeGreaterThan(0.06);
-		expect(share(weak, "c2c4")).toBeLessThan(0.3);
-		expect(share(weak, "c2c4")).toBeLessThan(share(strong, "c2c4"));
+		for (const result of [strong, weak]) {
+			const E = result.picks[0]?.maiaMeters?.selfElo ?? 0;
+			const survivors = FOUR.map((l) => ({
+				uci: l.pvUci[0]!,
+				p: P[l.pvUci[0]!]!,
+				deepCp: cpEffective(l.score),
+				shallowCp: cpEffective(SHALLOW.find((s) => s.pvUci[0] === l.pvUci[0])!.score),
+			}));
+			const expected = drawDistribution({ survivors, E }, 0, createRng("exact"));
+			let chi2 = 0;
+			for (const [uci, p] of expected)
+				chi2 += ((result.counts.get(uci) ?? 0) - 2000 * p) ** 2 / (2000 * p);
+			expect(chi2).toBeLessThan(16.27);
+			expect(expected.get("c2c4")).toBeGreaterThan(0.05);
+			expect(expected.get("c2c4")).toBeLessThan(0.075);
+		}
+		expect(share(upper, "c2c4")).toBeGreaterThan(share(strong, "c2c4") + 0.08);
 		// nothing outside the survivors, and the deep referee's ranking still sets rankInLines
 		for (const m of strong.picks)
 			expect(m.rankInLines).toBe(FOUR.findIndex((l) => l.pvUci[0] === m.uci) + 1);
@@ -179,7 +202,7 @@ describe("H3 — generate-and-verify runs only with the human-depth frame", () =
 		expect(m.maiaMeters?.verifyDepth).toBeUndefined();
 		expect(m.rationale.join(" ")).toContain("no human-depth frame");
 	});
-	it("a survivor the shallow frame did not rank is verified against its deep score and marked", () => {
+	it("a survivor missing from the shallow frame cannot borrow deep verification", () => {
 		const partial = SHALLOW.filter((l) => l.pvUci[0] !== "d2d4");
 		const { picks } = sample(
 			FOUR,
@@ -188,8 +211,8 @@ describe("H3 — generate-and-verify runs only with the human-depth frame", () =
 			"partial"
 		);
 		const text = picks.map((m) => m.rationale.join("\n")).join("\n");
-		expect(text).toMatch(/^ {2}d2d4 p=0\.5 deep 30 → -?\d+/m);
-		expect(text).toContain("unverified");
+		expect(text).toContain("recognition retained; no comparable new evidence");
+		expect(text).not.toContain("deep scores stood in");
 	});
 	it("the rails run before the candidates are generated: a railed line is never a candidate", () => {
 		const bad = line(START, "f2f3", { cp: -800 }, 5);

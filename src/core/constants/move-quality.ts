@@ -1,7 +1,7 @@
 /**
  * Move-quality chips (owner's brief, 2026-09-13) — the chess.com-style verdict badge drawn in the
  * bottom-left of the square a move landed on, for both sides' moves, while
- * `Settings.automation.boardEffects` is on.
+ * `Settings.automation.moveQualityChips` is on — with or without `boardEffects` (2026-09-15).
  *
  * Three exports, deliberately separate top-level constants rather than one object: a bundler
  * inlines an object literal whole (the §13.3 lesson behind `LICENSE_ENDPOINT`), and only
@@ -38,9 +38,11 @@
 import type { Square } from "@typedefs/game";
 
 /**
- * The ten categories, worst → best. The wire carries the **index** into this array, never the
+ * The twelve categories, worst → best. The wire carries the **index** into this array, never the
  * name (§13.3 rule 5: a payload that spells "blunder" is a traffic signature), and the overlay
- * indexes `MOVE_QUALITY_ICONS` with the same number.
+ * indexes `MOVE_QUALITY_ICONS` with the same number. `mate` (owner, 2026-09-14) is every move of
+ * a forced mating sequence, the checkmate included; `forced` (owner, 2026-09-15) is the only legal
+ * move, played. Both are appended so no earlier index moves.
  */
 export const MOVE_QUALITY_ORDER = [
 	"blunder",
@@ -53,6 +55,8 @@ export const MOVE_QUALITY_ORDER = [
 	"book",
 	"great",
 	"brilliant",
+	"mate",
+	"forced",
 ] as const;
 
 export type MoveQuality = (typeof MOVE_QUALITY_ORDER)[number];
@@ -66,87 +70,40 @@ export function moveQualityIndex(quality: MoveQuality): number {
 export interface MoveQualityMark {
 	square: Square;
 	quality: MoveQuality;
+	/**
+	 * `mate` only: the pitch the forced-mate sound plays at, in semitones from `forced.mp3` —
+	 * `MOVE_QUALITY.mateMinSemitones` … `mateTopSemitones`, the checkmate on the top. A tangential
+	 * move sits between two steps, so the value need not be whole.
+	 */
+	mateSemitones?: number;
 }
 
 export const MOVE_QUALITY = {
 	/**
-	 * Win-probability loss bands, worst first. A loss at or above a bound takes that band; the
-	 * numbers are a touch tighter than lichess's published ACPL bands because they are applied to
-	 * a *single* move rather than a game average, and a chip that cries "mistake" on every third
-	 * move stops meaning anything.
+	 * The last `landedWindow` landed moves a rating may still post for, so a queued premove firing
+	 * in the same instant as the reply (two plies in one position) or an instant reply does not
+	 * orphan the opponent's rating.
 	 */
-	blunderLoss: 0.3,
-	mistakeLoss: 0.18,
-	inaccuracyLoss: 0.09,
-	/** Below this a fine move is "excellent" rather than merely "good". */
-	excellentMaxLoss: 0.02,
-	/**
-	 * A played move whose score is within this many centipawns of the top line counts as the top
-	 * line even when the engine ordered another move first — MultiPV ties are an artefact of the
-	 * search order, not a judgement.
-	 */
-	bestTieCp: 10,
-
-	/**
-	 * `miss`: the position was winning (or mating) and the move gave that up without being an
-	 * outright blunder. All three must hold.
-	 */
-	missWinBefore: 0.9,
-	missKeptAfter: 0.8,
-	missMinLoss: 0.08,
-
-	/**
-	 * `great`: the played move is the top line and the runner-up is this much worse in win
-	 * probability — i.e. there was exactly one move that held the position. Needs at least two
-	 * scored lines; with one line there is no runner-up and no claim to make.
-	 */
-	greatGapWp: 0.18,
-
-	/**
-	 * `brilliant`: a sound sacrifice that is also great or best. "Sacrifice" is
-	 * `hangsOutright(beforeFen, uci)` — after the move the opponent can take the moved piece with
-	 * something cheaper, or take it for nothing, net of whatever the move itself captured — and
-	 * "sound" is that the position is still at least this good afterwards. The piece given must be
-	 * worth at least `brilliantMinPieceValue` (a pawn offer is a gambit, not a brilliancy).
-	 */
-	brilliantMinWinAfter: 0.5,
-	brilliantMinPieceValue: 3,
-
-	/**
-	 * `book`: the caller states it when it knows (our own move carries
-	 * `RecommendationOutcome.fromBook`). When it does not — every opponent move — the timing
-	 * model's own approximation is used (`@core/timing/features`: `ply < bookMaxPly && chosenIdx
-	 * === 0`), widened from "the top move" to "a move that lost nothing", because book lines
-	 * transpose and the engine's first choice is not the only theoretical one.
-	 */
-	bookMaxPly: 16,
-	bookMaxLoss: 0.02,
-
-	/**
-	 * The classifier's own search. Full strength (`elo` omitted) at `panel` priority, so it can
-	 * never delay a move search — the engine's queue supersedes it the moment one arrives, and a
-	 * superseded search still returns the deepest frame it completed. Both halves of a
-	 * classification use the *same* request shape, so the position after move N is a cache hit as
-	 * the position before move N+1 (`AnalysisCache` keys on fen+history+multiPv+elo+limit).
-	 */
-	multiPv: 3,
-	movetimeMs: 350,
-	depthCap: 18,
-	/**
-	 * A frame shallower than this says nothing worth putting a chip on. A superseded panel search
-	 * that never ran returns an empty frame at depth 0, which this is the guard against.
-	 */
-	minDepth: 8,
-	/**
-	 * The reporter's own memory (2026-09-13, "ratings occasionally never show up"): the lines of the
-	 * last `knownPositions` positions any search touched — the referee's, the ponder's, a cache
-	 * probe's — so a verdict is assembled from searches that already ran rather than from a fresh
-	 * low-priority one; and the last `landedWindow` landed moves a verdict may still post for, so
-	 * a queued premove firing in the same instant as the reply (two plies in one position) or an
-	 * instant reply does not orphan the opponent's verdict.
-	 */
-	knownPositions: 8,
 	landedWindow: 2,
+	/**
+	 * The forced-mate sound's pitch (owner, 2026-09-15): "lean more heavily on our own pitch system
+	 * (just use forced.mp3 without a number, don't swap between the sound files) as the base for the
+	 * sound effect and use our own pitch to basically pitch down from a certain point (calculated
+	 * based on the moves until mate) — if a move is made that is tangential to mate (so mate is still
+	 * in a certain amount of moves) then we just play it slightly higher (average between current
+	 * pitch semitones and the one that would have been played if you played the next in the mating
+	 * sequence) — so basically going higher and higher pitch with each subsequent move until we
+	 * reach mate (pitch = +3 semitones from base at the move that causes checkmate). Also make sure
+	 * we play the sound on the checkmating move (the final one)."
+	 *
+	 * A move `mateIn` moves from checkmate (1 = the checkmate) sounds at
+	 * `mateTopSemitones − (mateIn − 1) × mateSemitoneStep`, never below `mateMinSemitones`; a
+	 * tangential move at the average of the mover's last pitch and the next step's
+	 * (`mateSemitones`, `src/service/game-session/board-effects.ts`).
+	 */
+	mateTopSemitones: 3,
+	mateSemitoneStep: 1,
+	mateMinSemitones: -12,
 
 	/**
 	 * Chip geometry, in board units (1 = one square), anchored in the destination square. The size
@@ -273,6 +230,22 @@ export const MOVE_QUALITY_ICONS: ReadonlyArray<
 		glyph: [
 			"M12.57,14.1a.51.51,0,0,1,0,.13.44.44,0,0,1-.08.11l-.11.08-.13,0h-2l-.13,0L10,14.34A.41.41,0,0,1,10,14.1V12.2A.32.32,0,0,1,10,12a.39.39,0,0,1,.1-.08l.13,0h2a.31.31,0,0,1,.24.1.39.39,0,0,1,.08.1.51.51,0,0,1,0,.13Zm-.12-3.93a.17.17,0,0,1,0,.12.41.41,0,0,1-.07.11.4.4,0,0,1-.23.08H10.35a.31.31,0,0,1-.34-.31L9.86,3.4A.36.36,0,0,1,10,3.16a.23.23,0,0,1,.11-.08.27.27,0,0,1,.13,0H12.3a.32.32,0,0,1,.25.1.36.36,0,0,1,.09.24Z",
 			"M8.07,14.1a.51.51,0,0,1,0,.13.44.44,0,0,1-.08.11l-.11.08-.13,0h-2l-.13,0-.11-.08a.41.41,0,0,1-.08-.24V12.2a.27.27,0,0,1,0-.13.36.36,0,0,1,.07-.1.39.39,0,0,1,.1-.08l.13,0h2A.31.31,0,0,1,8,12a.39.39,0,0,1,.08.1.51.51,0,0,1,0,.13ZM8,10.17a.17.17,0,0,1,0,.12.41.41,0,0,1-.07.11.4.4,0,0,1-.23.08H5.85a.31.31,0,0,1-.34-.31L5.36,3.4a.36.36,0,0,1,.09-.24.23.23,0,0,1,.11-.08.27.27,0,0,1,.13,0H7.8a.35.35,0,0,1,.25.1.36.36,0,0,1,.09.24Z",
+		],
+	},
+	{
+		// mate — a star (owner's SVG, 2026-09-14). The source draws the glyph inside a
+		// `scale(1.125)` group; the coordinates here have that scale applied, so the overlay needs
+		// no per-icon transform.
+		background: "#E3AA24",
+		glyph: [
+			"M5.9096 14.0781C5.5301 14.3311 5.0783 14.0058 5.2048 13.5721L6.1445 10.0119L3.2891 7.6986C2.9096 7.3914 3.2168 6.8854 3.5602 6.8492L7.2469 6.6504L8.5662 3.2167C8.6385 3.036 8.8192 2.9095 9.018 2.9095C9.1987 2.9095 9.3795 3.0179 9.4518 3.2167L10.771 6.6504L14.4397 6.8492C14.9096 6.8673 15.0181 7.4456 14.7108 7.6805L11.8554 10.0119L12.7951 13.5721C12.9216 14.0239 12.3975 14.2769 12.0903 14.0781L8.9999 12.0902L5.9096 14.0781Z",
+		],
+	},
+	{
+		// forced — an arrow (owner's SVG, 2026-09-15): the only legal move was played.
+		background: "#96AF8B",
+		glyph: [
+			"M14.39,8.57,9,3.81a.31.31,0,0,0-.3,0,.32.32,0,0,0-.13.1A.29.29,0,0,0,8.5,4V6.92H3.9a.58.58,0,0,0-.19,0,.5.5,0,0,0-.17.11.91.91,0,0,0-.11.16.63.63,0,0,0,0,.19v3.41a.58.58,0,0,0,0,.19.64.64,0,0,0,.11.16.39.39,0,0,0,.17.11.41.41,0,0,0,.19,0H8.5v2.74a.26.26,0,0,0,.16.26.3.3,0,0,0,.16,0A.34.34,0,0,0,9,14.29l5.42-4.76a.69.69,0,0,0,.16-.22.7.7,0,0,0,0-.52A.69.69,0,0,0,14.39,8.57Z",
 		],
 	},
 ];

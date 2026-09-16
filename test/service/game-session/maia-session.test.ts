@@ -5,6 +5,7 @@ import { describe, expect, it } from "bun:test";
 import { DEFAULT_SETTINGS } from "@core/constants/defaults";
 import { LIMITS } from "@core/constants/limits";
 import { MAIA, MAIA_INPUT } from "@core/constants/maia";
+import { maiaSizeFor } from "@core/policy/maia-size";
 import type { PolicyResult } from "@core/policy/types";
 import { createRng } from "@core/rng";
 import { createSelectionState } from "@core/strength/move-selector";
@@ -39,13 +40,14 @@ const result: PolicyResult = {
 };
 
 describe("H6.3 — one Maia size per game", () => {
-	it("maps the target to the band's size (79M everywhere since 2026-09-13), the prior size above the ceiling, none above LIMITS.eloMax", () => {
+	// Owner, 2026-09-15: no prior band, so the size ends at the Maia cutoff (it used to reach 3200).
+	it("maps the target to the band's size (79M everywhere since 2026-09-13) through the Maia cutoff, none above it", () => {
 		expect(maiaSizeForGame(1200)).toBe("79m");
 		expect(maiaSizeForGame(1650)).toBe("79m");
 		expect(maiaSizeForGame(2300)).toBe("79m");
-		expect(maiaSizeForGame(MAIA.eloMax)).toBe(MAIA.prior.size);
-		expect(maiaSizeForGame(MAIA.prior.eloMax)).toBe(MAIA.prior.size);
-		expect(maiaSizeForGame(MAIA.prior.eloMax + 1)).toBeNull();
+		expect(maiaSizeForGame(MAIA.eloMax)).toBe(maiaSizeFor(MAIA.eloMax));
+		expect(maiaSizeForGame(MAIA.eloMax + 1)).toBeNull();
+		expect(maiaSizeForGame(3200)).toBeNull();
 		expect(maiaSizeForGame(LIMITS.eloMax)).toBeNull();
 	});
 
@@ -135,12 +137,18 @@ describe("H7.3 — the predicted position's query", () => {
 		expect(easier?.selfElo ?? 0).toBeLessThan(relaxed?.selfElo ?? 0);
 	});
 
-	it("above MAIA.eloMax the H15 prior's size and Elo clamp apply", () => {
-		const high = { ...position, targetElo: 3100 };
-		const q = predictedPolicyInputs({ ...base, position: high, size: MAIA.prior.size });
-		expect(q?.inputs.size).toBe(MAIA.prior.size);
+	// Owner, 2026-09-15: this case pinned the H15 prior's query above `MAIA.eloMax`; the prior band
+	// is removed, so no query is built above the cutoff even with a size on hand. At the cutoff the
+	// Elo clamp still applies.
+	it("above MAIA.eloMax no query is built; at the cutoff the Elo clamp applies", () => {
+		for (const targetElo of [MAIA.eloMax + 1, 3100, 3200])
+			expect(
+				predictedPolicyInputs({ ...base, position: { ...position, targetElo }, size: "79m" })
+			).toBeNull();
+		const cutoff = { ...position, targetElo: MAIA.eloMax };
+		const q = predictedPolicyInputs({ ...base, position: cutoff });
 		expect(q?.selfElo).toBe(
-			Math.min(ownMoveMaiaElo(high, settings).selfElo, MAIA.conditioningEloMax)
+			Math.min(ownMoveMaiaElo(cutoff, settings).selfElo, MAIA.conditioningEloMax)
 		);
 		expect(q?.selfElo ?? 0).toBeLessThanOrEqual(MAIA.conditioningEloMax);
 	});

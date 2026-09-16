@@ -5,9 +5,9 @@
  * literal shown to the user may live anywhere else under `src/panel/`.
  */
 
-import { MAIA } from "@core/constants/maia";
 import { REMATCH } from "@core/constants/rematch";
 import { RESIGN } from "@core/constants/resign";
+import type { StrengthBand } from "@core/constants/ui";
 import type { ChosenMove } from "@typedefs/game";
 import type { PersonaId } from "@typedefs/settings";
 
@@ -33,7 +33,7 @@ export const COPY = {
 		theirTurn: "Waiting…",
 		setup: "Session setup",
 		settingsTitle: "Settings",
-		settingsBody: "Changes save automatically.",
+		settingsBody: "Choose how sliced plays, moves and gives feedback. Changes save automatically.",
 		engineTitle: "Engine diagnostics",
 		engineBody: "Engine, input and timing status.",
 		shortcuts: "Page shortcuts",
@@ -150,13 +150,23 @@ export const COPY = {
 	strength: {
 		card: (elo: number, band: string): string => `${elo} ${band}`,
 		popoverFooter: "Applies from next move",
-		bands: { casual: "Casual", club: "Club", expert: "Expert", master: "Master", elite: "Elite" },
+		/** Owner, 2026-09-15: seven categories (`STRENGTH_LABEL_BANDS` holds their floors). */
+		bands: {
+			casual: "Casual",
+			club: "Club",
+			advanced: "Advanced",
+			expert: "Expert",
+			master: "Master",
+			elite: "Elite",
+			championI: "Champion I",
+			championII: "Champion II",
+		} satisfies Record<StrengthBand, string>,
 		warning: "High-strength range",
 		smallNetwork: "Small NNUE",
 		largeNetwork: "Large NNUE",
 		networkCutoff: (elo: number): string => String(elo),
 		networkDescription: (cutoff: number, max: number): string =>
-			`Above ${cutoff}: bundled large NNUE. ${max}: maximum engine strength; approximate rating.`,
+			`Through ${cutoff}: Maia-3 on the small NNUE. Above ${cutoff}: Stockfish on the large NNUE. ${max}: maximum engine strength; approximate rating.`,
 	},
 	/** The persona is forced to `balanced`; the names remain for the Engine view's timing log. */
 	personaName: {
@@ -171,6 +181,8 @@ export const COPY = {
 		autoqueue: "Auto-queue",
 		arming: "Hold to turn on",
 		armed: "Auto-play on",
+		waiting: "Auto-play waiting",
+		waitingHint: "Starts when a game is ready. Turn off to cancel.",
 		off: "Auto-play off",
 		armTooltip: "Hold to arm auto-play",
 		locked: "Locked",
@@ -269,11 +281,6 @@ export const COPY = {
 			more: "…",
 		},
 	},
-	timing: {
-		detected: (label: string): string => `Detected: ${label}`,
-		overrides: "Overrides detection for this game",
-		manualOnly: "Never auto-plays; shows recommendations only.",
-	},
 	execution: {
 		verify: "After each move, checks the board matches the expected position.",
 		drag: "drag",
@@ -316,7 +323,7 @@ export const COPY = {
 	footer: (version: string, build: string): string => `sliced v${version} · build ${build}`,
 	/** Third-party notices under the footer (Task 34; the full texts are in docs/third-party.md). */
 	notices: {
-		engine: "Stockfish 18 · GPL-3.0 / AGPL-3.0 · lichess-org/stockfish-web",
+		engine: "Stockfish 19 · GPL-3.0 / AGPL-3.0 · lichess-org/stockfish-web",
 		timing: "ChessMimic timing model © 2026 Thomas Johnson · PolyForm Noncommercial 1.0.0",
 	},
 	common: {
@@ -358,10 +365,8 @@ export const COPY = {
 		/** Which model picks the move at the current target rating (2026-09-11). */
 		selection: {
 			maia: (size: string): string => `Selection · Maia-3 · ${size}`,
-			stockfishSmall: "Selection · Stockfish 18 · small net",
-			stockfishFull: "Selection · Stockfish 18 · full net",
-			maiaPriorSmall: "Selection · Stockfish 18 + Maia-3 · small net",
-			maiaPriorFull: "Selection · Stockfish 18 + Maia-3 · full net",
+			stockfishSmall: "Selection · Stockfish 19 · small net",
+			stockfishFull: "Selection · Stockfish 19 · full net",
 			/** One shipped size since 2026-09-13; the map stays total over `MaiaSize`. */
 			maiaSizes: { "79m": "79M" },
 		},
@@ -408,14 +413,6 @@ export const COPY = {
 		},
 		site: SITE,
 		target: (gameId: string): string => `${SITE} · game ${gameId}`,
-		profiles: {
-			manual: "Manual",
-			fast: "Fast",
-			natural: "Natural",
-			slow: "Slow",
-			custom: "Custom",
-		},
-		inputMode: (style: string, profile: string): string => `${style} · ${profile}`,
 		outcomes: {
 			executed: "executed",
 			dispatched: "premove sent",
@@ -533,11 +530,6 @@ export function viewTitle(
 
 type SettingsRowCopy = Readonly<{ label: string; help?: string }>;
 
-/** H2: the accuracy-offset row's help, with the span read from `MAIA.slider.eloSpan`. */
-export function accuracyOffsetHelp(eloSpan: number): string {
-	return `Plays up to ${eloSpan} Elo above or below the target — the rating's own kinds of mistakes, fewer or more of them. The engine strength and timing stay at the target.`;
-}
-
 /** Settings layout, 2026-09-13: why `timing.respectBudget` has no row (`FORCED_SETTINGS`). */
 export const RESPECT_BUDGET_FORCED =
 	"The clock budget is always respected; the clock-free schedule stays as a code path.";
@@ -548,15 +540,70 @@ export const KEYBIND_SCOPE_FORCED =
 export const SETTINGS_COPY = {
 	sections: {
 		strength: "Strength",
-		automation: "Automation",
-		timing: "Timing",
-		hand: "Hand",
-		board: "Board",
-		panel: "Panel",
-		keybinds: "Keybinds",
-		engine: "Engine",
+		automation: "Play & sessions",
+		timing: "Timing & movement",
+		board: "Board feedback",
+		panel: "Appearance & sound",
+		keybinds: "Shortcuts",
+		engine: "Performance",
 		account: "Account",
-		advanced: "Advanced",
+		advanced: "Diagnostics",
+	},
+	sectionHelp: {
+		strength: "",
+		automation: "Start, stop and pace your playing sessions.",
+		timing: "One move clock covers the wait, exploration and final release.",
+		board: "Choose what appears on the board after each move.",
+		panel: "Adjust this panel and the feedback you hear.",
+		keybinds: "Use these shortcuts while the board or panel is active.",
+		engine: "Balance analysis resources with the rest of your computer.",
+		account: "Your license and device.",
+		advanced: "Inspect behavior, export evidence or restore defaults.",
+	},
+	autoplay: {
+		title: "Auto-play lives in Game",
+		help:
+			"One switch controls this game and keeps your choice for the next. Turn it off to stop automatic moves.",
+		action: "Open Game",
+	},
+	fineTune: (value: string, custom: boolean): string =>
+		`${custom ? "Custom" : "Fine-tune"} · ${value}`,
+	choices: {
+		pace: [
+			{ id: "0.8", label: "Deliberate", description: "More time" },
+			{ id: "1", label: "Natural", description: "Model pace" },
+			{ id: "1.35", label: "Quick", description: "Less time" },
+		],
+		variety: [
+			{ id: "0.4", label: "Steadier" },
+			{ id: "1", label: "Varied" },
+			{ id: "1.6", label: "Wide" },
+		],
+		longThink: [
+			{ id: "0", label: "Off" },
+			{ id: "1", label: "Natural" },
+			{ id: "1.8", label: "More often" },
+		],
+		premove: [
+			{ id: "0", label: "Off" },
+			{ id: "0.5", label: "Balanced" },
+			{ id: "1", label: "Eager" },
+		],
+		motor: [
+			{ id: "0.8", label: "Measured" },
+			{ id: "1", label: "Natural" },
+			{ id: "1.25", label: "Swift" },
+		],
+		preview: [
+			{ id: "0", label: "Off" },
+			{ id: "1", label: "Occasional" },
+			{ id: "2", label: "Frequent" },
+		],
+		input: [
+			{ id: "auto", label: "Mixed", description: "Mostly drags" },
+			{ id: "drag", label: "Drag", description: "Hold & release" },
+			{ id: "click", label: "Click", description: "Piece, then square" },
+		],
 	},
 	jump: "Settings categories",
 	all: "All",
@@ -576,39 +623,42 @@ export const SETTINGS_COPY = {
 			label: "Persona offset",
 			help: "Added to the opponent's rating when matching.",
 		},
-		/**
-		 * H2 (2026-09-13): the mistakes knob is an Elo offset on the rating the human model is asked
-		 * about — the population's own kinds of mistakes, more or fewer of them — not a temperature.
-		 * Shown in Elo with the intuitive sign (settings layout, 2026-09-13); the number comes from
-		 * `MAIA.slider.eloSpan`, never typed here.
-		 */
-		"strength.blunderScale": {
-			label: "Accuracy offset",
-			help: accuracyOffsetHelp(MAIA.slider.eloSpan),
-		},
 		"strength.useOpeningBook": {
 			label: "Opening book",
 			help: "Plays book moves for the first 8–12 moves.",
 		},
-		"timing.profile": { label: "Preset" },
-		"timing.speedScale": { label: "Base speed" },
-		"timing.varianceScale": { label: "Variance" },
-		"timing.longThinkFrequency": { label: "Long-think frequency" },
-		"timing.premoveTendency": { label: "Premove tendency" },
+		"timing.baseSpeed": {
+			label: "Overall pace",
+			help:
+				"Controls total time from the opponent’s move to releasing your piece. Faster leaves less time for thinking and mouse actions; engine search time is unchanged.",
+		},
+		"timing.varianceScale": {
+			label: "Timing variety",
+			help: "Controls the spread between quick replies and slower decisions.",
+		},
+		"timing.longThinkFrequency": {
+			label: "Long thinks",
+			help: "How often to add a longer pause when the position and clock allow it.",
+		},
+		"timing.premoveTendency": {
+			label: "Premoves",
+			help:
+				"Willingness to queue a reply before the opponent moves. Only eligible positions can produce a premove; this is not a percentage of all moves.",
+		},
 		"execution.inputMode": {
-			label: "Input",
+			label: "Move pieces with",
 			help: "Drag pieces, click piece then square, or mix the two per move (mostly drags).",
 		},
-		"execution.motorSpeed": { label: "Motor speed" },
+		"execution.motorSpeed": {
+			label: "Pointer pace",
+			help: "Changes the hand’s speed within the overall move time.",
+		},
 		"execution.previewSelectScale": {
-			label: "Preview selections",
-			help: "Sometimes selects a piece before moving, at a modelled rate. Off never does.",
+			label: "Thinking selections",
+			help:
+				"Selects and releases a candidate piece while considering a move. Off skips these selections; it does not disable premoves.",
 		},
 		"execution.verifyMoves": { label: "Verify moves after playing" },
-		"automation.autoMove": {
-			label: "Auto-play",
-			help: "Armed when a game starts. Hold the toggle in Game to arm one game.",
-		},
 		"automation.resignLostGames": {
 			label: "Resign lost games",
 			help: `When armed, resigns a forced mate in ${RESIGN.maxMateIn} or fewer instead of playing it out.`,
@@ -645,17 +695,25 @@ export const SETTINGS_COPY = {
 			label: "Move ratings",
 			help: "Rates each move on its square — best, mistake, blunder. Off saves the extra searches.",
 		},
+		"automation.moveQualityChipsFor": {
+			label: "Show ratings for",
+			help: "Whose moves get a rating and its sound. Board effects still show for both sides.",
+		},
 		"automation.moveRatingSounds": {
 			label: "Move rating sound effects",
 			help: "Plays a sound when a brilliant, great, inaccuracy, mistake, or blunder rating appears.",
+		},
+		"automation.forcedMateSounds": {
+			label: "Forced mate sound effects",
+			help: "Plays a rising tone on each move of a forced mate, up to the checkmate.",
 		},
 		"keybinds.playMove": { label: COPY.keybind.actions.playMove },
 		"keybinds.toggleAutoMove": { label: COPY.keybind.actions.toggleAutoMove },
 		"keybinds.disable": { label: COPY.keybind.actions.disable },
 		"keybinds.speakMove": { label: COPY.keybind.actions.speakMove },
-		"display.evalBar": { label: "Eval bar" },
+		"display.evalBar": { label: "Position evaluation" },
 		"engine.multiPv": {
-			label: "Lines",
+			label: "Candidate lines",
 			help: "Lines shown in Game; the engine searches at least this many.",
 		},
 		"display.uiSounds": {
@@ -671,7 +729,7 @@ export const SETTINGS_COPY = {
 			help: "Voice for the speak move shortcut.",
 		},
 		"display.theme": { label: "Theme" },
-		"display.reducedMotion": { label: "Reduced motion" },
+		"display.reducedMotion": { label: "Animations" },
 		"display.virtualCursor": {
 			label: "Virtual pointer",
 			help: "Blocks physical mouse input and shows a disabled system cursor while active.",
@@ -684,9 +742,12 @@ export const SETTINGS_COPY = {
 			label: "Engine threads",
 			help: "Auto uses 8 threads, or every core when the device has fewer.",
 		},
-		"engine.hashMb": { label: "Hash", help: "Transposition table; 64 MB is the default." },
+		"engine.hashMb": {
+			label: "Analysis memory",
+			help: "Memory for reusing positions. More can reduce repeated search; 64 MB is the default.",
+		},
 		"engine.depthCap": {
-			label: "Depth cap",
+			label: "Search depth",
 			help: "Automatic from active Elo. Search time remains limited by the clock.",
 		},
 		"advanced.logLevel": { label: "Debug log level" },
@@ -696,11 +757,11 @@ export const SETTINGS_COPY = {
 		},
 	} satisfies Record<string, SettingsRowCopy>,
 	options: {
-		profile: { manual: "Manual", fast: "Fast", natural: "Natural", slow: "Slow", custom: "Custom" },
 		inputMode: { auto: "Auto", drag: "Drag", click: "Click" },
 		highlightStyle: { squares: "Squares", arrows: "Arrows", both: "Both" },
+		moveQualityChipsFor: { mine: "You", theirs: "Opponent", both: "Both" },
 		theme: { dark: "Dark", light: "Light", system: "System" },
-		reducedMotion: { system: "System", on: "On", off: "Off" },
+		reducedMotion: { system: "System", on: "Reduced", off: "Full" },
 		logLevel: { silent: "Silent", error: "Error", warn: "Warn", info: "Info", debug: "Debug" },
 	},
 	format: {
@@ -738,7 +799,6 @@ export const SETTINGS_COPY = {
 		exportFailed: "Couldn't export the timing log.",
 		resetAll: "Reset all settings",
 	},
-	tc: { bullet: "bullet", blitz: "blitz", rapid: "rapid", classical: "classical" },
 } as const;
 
 // ── Task 24: Live view ─────────────────────────────────────────────────────────────────────

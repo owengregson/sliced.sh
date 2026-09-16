@@ -1,15 +1,18 @@
 /**
  * Slider with value bubble (Appendix F §5.3): track / fill / thumb (`role="slider"`) / bubble /
- * scale / resting value. Arrow keys step, Shift ×10, PageUp/Down ×10, Home/End. Pointer drags
+ * caption / resting value. Arrow keys step, Shift ×10, PageUp/Down ×10, Home/End. Pointer drags
  * follow the track; `onChange(value, commit)` fires live while dragging and once with
  * `commit = true` on release (keyboard steps always commit). Danger zone past a threshold.
  * Scrub sounds come from a per-slider detent scheduler (`createDetentScheduler`); a `readout`
  * shows the numeric value under the thumb while the slider changes and fades
- * `UI_TIMINGS.sliderReadoutFadeMs` after the last change.
+ * `UI_TIMINGS.sliderReadoutFadeMs` after the last change. A strength slider in its hot range
+ * launches its warm sweeps itself (`launchSweep`), so no change of cadence ever re-times a sweep
+ * that is already crossing.
  */
 
 import { STRENGTH_UI, UI_TIMINGS } from "@core/constants/ui";
 import { clamp } from "@core/util/clamp";
+import { TOKENS } from "@design/tokens.generated";
 import { createDetentScheduler, playSliderSound } from "../sounds";
 import { instantiate, part } from "../template";
 import html from "../views/templates/components/slider.html?raw";
@@ -37,12 +40,16 @@ export interface SliderOptions {
 	 * change. `aria-hidden` — the bubble already carries `aria-valuetext`.
 	 */
 	readout?: (value: number) => string;
-	/** Optional marks row under the track. */
-	scale?: readonly string[];
+	/**
+	 * One line under the track naming the current value's category ("Club"), kept in step with the
+	 * value (owner, 2026-09-15 — it replaced a row listing every category). `aria-hidden`: the
+	 * thumb's `aria-valuetext` already says it.
+	 */
+	caption?: (value: number) => string;
 	threshold?: SliderThreshold;
 	/**
-	 * Unlabelled hairline markers at these values (no title, no label row): the places a model
-	 * switch happens that are not the primary `threshold`.
+	 * Unlabelled hairline markers at these values (no title, no label row): reference points that
+	 * are not the primary `threshold` (the offset sliders' even point).
 	 */
 	markers?: readonly number[];
 	/** Continuous orange-to-red rating fill, with a glow at very high strength. */
@@ -50,12 +57,19 @@ export interface SliderOptions {
 	danger?: (value: number) => boolean;
 	dangerHint?: string;
 	disabled?: boolean;
+	/**
+	 * Show `value` as given — clamped to the range but not snapped to `step`: a reading of what is
+	 * in effect (the Elo an opponent-matched game plays at), not a position the user picked.
+	 */
+	exact?: boolean;
 	ariaLabel?: string;
 	onChange: (value: number, commit: boolean) => void;
 }
 
 export interface SliderUpdate {
 	value?: number;
+	/** With `value`: show it as given (`SliderOptions.exact`). A later user step snaps again. */
+	exact?: boolean;
 	disabled?: boolean;
 	min?: number;
 	max?: number;
@@ -68,6 +82,9 @@ export interface SliderHandle {
 	dispose(): void;
 }
 
+/** The two keyframe names a sweep alternates between (`css/views/live-progress.css`). */
+const SWEEP_NAMES = ["a", "b"] as const;
+
 export function createSlider(host: HTMLElement | null, options: SliderOptions): SliderHandle {
 	const el = instantiate(html);
 	const track = part(el, ".sl-slider__track");
@@ -76,12 +93,13 @@ export function createSlider(host: HTMLElement | null, options: SliderOptions): 
 	const bubble = part(el, ".sl-slider__bubble");
 	const readoutEl = part(el, ".sl-slider__readout");
 	const valueEl = part(el, ".sl-slider__value");
-	const scale = part(el, ".sl-slider__scale");
+	const captionEl = part(el, ".sl-slider__caption");
 	const hint = part(el, ".sl-slider__hint");
 	const divider = part(el, ".sl-slider__divider");
 	const ticks = part(el, ".sl-slider__ticks");
 	const markers = part(el, ".sl-slider__markers");
 	const boundary = part(el, ".sl-slider__boundary");
+	const sweeps = Array.from(part(el, ".sl-slider__energy").children) as HTMLElement[];
 	const markerEls: Array<{ value: number; el: HTMLElement }> = [];
 	for (const markerValue of options.markers ?? []) {
 		const marker = document.createElement("span");
@@ -96,16 +114,22 @@ export function createSlider(host: HTMLElement | null, options: SliderOptions): 
 		divider.setAttribute("title", options.threshold.description);
 		thumb.setAttribute("aria-description", options.threshold.description);
 	}
+	if (options.caption) captionEl.hidden = false;
 	const format = options.format ?? ((v: number): string => String(v));
 
 	let min = options.min;
 	let max = options.max;
 	let value = options.value;
+	let exact = options.exact === true;
 	let disabled = options.disabled ?? false;
 	let dragging: number | null = null;
 	/** When the last pointer commit happened (`UI_TIMINGS.sliderCommitGraceMs`). */
 	let committedAt: number | null = null;
 	let tickRange = "";
+	/** Hot-range energy, 0 at `STRENGTH_UI.glowElo` → 1 at the maximum. */
+	let energy = 0;
+	let sweepTimer: ReturnType<typeof setTimeout> | null = null;
+	let sweepIndex = 0;
 	const sounds = createDetentScheduler({ min, max, step: options.step });
 	const readout = options.readout ?? null;
 	let readoutTimer: ReturnType<typeof setTimeout> | null = null;
@@ -134,22 +158,57 @@ export function createSlider(host: HTMLElement | null, options: SliderOptions): 
 		}, UI_TIMINGS.sliderReadoutFadeMs);
 	}
 
-	if (options.ariaLabel) thumb.setAttribute("aria-label", options.ariaLabel);
-	if (options.scale?.length) {
-		for (const mark of options.scale) {
-			const span = document.createElement("span");
-			span.className = "sl-slider__mark";
-			span.textContent = mark;
-			scale.append(span);
-		}
-		scale.hidden = false;
+	/**
+	 * The wait before the next warm sweep, from the energy at this moment. Each sweep is one CSS
+	 * crossing of a fixed `strength-sweep` duration; only the wait between launches follows the
+	 * energy. The sweeps take turns, so the per-sweep period (`sweepTravelWidths + gap` widths at
+	 * the fixed speed) is shared between them.
+	 *
+	 * This is the fix for the owner's 2026-09-15 report ("the animation timeskips when I let go of
+	 * the slider knob"): the cadence used to be the running CSS animation's *duration*, written on
+	 * release, and a running animation keeps its start time and re-maps elapsed time onto a new
+	 * duration — so every sweep jumped. Now a crossing in flight is never re-timed; a new cadence
+	 * takes effect at the next launch.
+	 */
+	function sweepDelayMs(): number {
+		const gap = STRENGTH_UI.flowGapMax - (STRENGTH_UI.flowGapMax - STRENGTH_UI.flowGapMin) * energy;
+		const travel = STRENGTH_UI.sweepTravelWidths;
+		return (
+			(TOKENS.motion.durationMs["strength-sweep"] * (travel + gap)) /
+			(travel * Math.max(1, sweeps.length))
+		);
 	}
+
+	/** Restart the next sweep's crossing (switching its keyframe name restarts it without a reflow). */
+	function launchSweep(): void {
+		const sweep = sweeps[sweepIndex % Math.max(1, sweeps.length)];
+		sweepIndex += 1;
+		if (sweep)
+			sweep.dataset.sweep = sweep.dataset.sweep === SWEEP_NAMES[0] ? SWEEP_NAMES[1] : SWEEP_NAMES[0];
+		sweepTimer = setTimeout(launchSweep, sweepDelayMs());
+	}
+
+	/** Sweeps run while the strength slider is hot and enabled; leaving stops launching new ones. */
+	function syncSweeps(running: boolean): void {
+		if (running && sweeps.length > 0) {
+			if (sweepTimer === null) launchSweep();
+		} else if (sweepTimer !== null) {
+			clearTimeout(sweepTimer);
+			sweepTimer = null;
+		}
+	}
+
+	if (options.ariaLabel) thumb.setAttribute("aria-label", options.ariaLabel);
 
 	function snap(raw: number): number {
 		const stepped = Math.round((raw - min) / options.step) * options.step + min;
 		const decimals = (String(options.step).split(".")[1] ?? "").length;
 		return clamp(Number(stepped.toFixed(decimals)), min, max);
 	}
+
+	/** A value as the slider holds it: snapped to the step, or clamped only for an exact reading. */
+	const fit = (raw: number, asGiven: boolean): number =>
+		asGiven ? clamp(raw, min, max) : snap(raw);
 
 	/** Track position of `at`, clamped to the range. */
 	const percentOf = (at: number): string =>
@@ -180,25 +239,15 @@ export function createSlider(host: HTMLElement | null, options: SliderOptions): 
 			divider.dataset.value = String(options.threshold.value);
 		}
 		fill.style.width = `${pct.toFixed(3)}%`;
+		const hot = options.strength === true && value >= STRENGTH_UI.glowElo;
 		el.classList.toggle("sl-slider--strength", options.strength === true);
-		el.classList.toggle("sl-slider--hot", options.strength === true && value >= STRENGTH_UI.glowElo);
+		el.classList.toggle("sl-slider--hot", hot);
 		el.style.setProperty("--sl-slider-heat", String(clamp(pct / 100, 0, 1)));
-		const energy =
+		energy =
 			max > STRENGTH_UI.glowElo
 				? clamp((value - STRENGTH_UI.glowElo) / (max - STRENGTH_UI.glowElo), 0, 1)
 				: 0;
 		el.style.setProperty("--sl-slider-energy", String(energy));
-		// The warm sweep crosses at one speed; only the idle gap between sweeps follows the energy,
-		// so the cadence rises towards the maximum without the crossing ever getting faster. The gap
-		// is the sweep's animation *duration*, and a running CSS animation re-maps its elapsed time
-		// when its duration changes — so it is only written once the pointer lets go (and on
-		// keyboard / external changes), never on every pointer move: writing it live made the sweep
-		// skip back and forth under the drag (owner, 2026-09-11).
-		if (dragging === null)
-			el.style.setProperty(
-				"--sl-slider-flow-gap",
-				(STRENGTH_UI.flowGapMax - (STRENGTH_UI.flowGapMax - STRENGTH_UI.flowGapMin) * energy).toFixed(3)
-			);
 		thumb.style.left = `${pct.toFixed(3)}%`;
 		thumb.setAttribute("aria-valuemin", String(min));
 		thumb.setAttribute("aria-valuemax", String(max));
@@ -207,6 +256,7 @@ export function createSlider(host: HTMLElement | null, options: SliderOptions): 
 		thumb.setAttribute("aria-valuetext", text);
 		bubble.textContent = text;
 		valueEl.textContent = format(value);
+		if (options.caption) captionEl.textContent = options.caption(value);
 		const danger = options.danger?.(value) === true;
 		el.classList.toggle("sl-slider--danger", danger);
 		hint.hidden = disabled || !(danger && options.dangerHint);
@@ -215,6 +265,7 @@ export function createSlider(host: HTMLElement | null, options: SliderOptions): 
 		thumb.setAttribute("tabindex", disabled ? "-1" : "0");
 		if (disabled) thumb.setAttribute("aria-disabled", "true");
 		else thumb.removeAttribute("aria-disabled");
+		syncSweeps(hot && !disabled);
 	}
 
 	/**
@@ -225,6 +276,7 @@ export function createSlider(host: HTMLElement | null, options: SliderOptions): 
 		const snapped = snap(next);
 		const changed = snapped !== value;
 		value = snapped;
+		exact = false;
 		render();
 		if (changed) {
 			showReadout();
@@ -313,7 +365,7 @@ export function createSlider(host: HTMLElement | null, options: SliderOptions): 
 	track.addEventListener("pointerup", onPointerUp);
 	track.addEventListener("pointercancel", onPointerCancel);
 
-	value = snap(value);
+	value = fit(value, exact);
 	render();
 	host?.append(el);
 
@@ -344,17 +396,21 @@ export function createSlider(host: HTMLElement | null, options: SliderOptions): 
 			// drag (they come thick and fast while the hand is moving) yanked the thumb back until the
 			// next pointer move — the "snapping back and forth" the owner saw (2026-09-11). The
 			// commit on release writes the final value, and the snapshots that follow agree with it.
+			const next = patch.value === undefined ? undefined : fit(patch.value, patch.exact === true);
 			const settling =
 				committedAt !== null &&
 				Date.now() - committedAt < UI_TIMINGS.sliderCommitGraceMs &&
-				patch.value !== undefined &&
-				snap(patch.value) !== value;
-			if (patch.value !== undefined && dragging === null && !settling) value = snap(patch.value);
-			else value = snap(value);
+				next !== undefined &&
+				next !== value;
+			if (next !== undefined && dragging === null && !settling) {
+				value = next;
+				exact = patch.exact === true;
+			} else value = fit(value, exact);
 			render();
 		},
 		dispose() {
 			hideReadout();
+			syncSweeps(false);
 			thumb.removeEventListener("keydown", onKeyDown);
 			track.removeEventListener("pointerdown", onPointerDown);
 			track.removeEventListener("pointermove", onPointerMove);

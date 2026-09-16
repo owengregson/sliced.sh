@@ -53,7 +53,7 @@ async function bootOffscreen(): Promise<OffscreenSide> {
 		sf.onError = hooks.onError;
 		side.engines.push(sf);
 		hooks.onLoadingNnue([...sf.recommended]);
-		return { sf, module: "sf_18_smallnet.js", nnue: [...sf.recommended] };
+		return { sf, module: "sf_19_smallnet.js", nnue: [...sf.recommended] };
 	};
 	off = await bootOffscreenContext(sim, {
 		entry: () => {
@@ -238,9 +238,9 @@ describe("RemoteEngine over the simulator", () => {
 		expect(side.current().commands).toEqual(["uci"]);
 		// one `booting` re-sent on accept (pre-configure), one when the boot starts
 		expect(statuses.map((s) => s.state)).toEqual(["booting", "booting", "loading-nnue", "ready"]);
-		side.current().emit("id name Stockfish 18", "uciok");
+		side.current().emit("id name Stockfish 19", "uciok");
 		await settle();
-		expect(lines).toEqual(["id name Stockfish 18", "uciok"]);
+		expect(lines).toEqual(["id name Stockfish 19", "uciok"]);
 		expect(engine.status()?.state).toBe("ready");
 		engine.dispose();
 		expect(() => engine.send("isready")).not.toThrow();

@@ -9,6 +9,8 @@ import { FakeEngineTransport } from "../../fakes/engine-transport";
 
 export interface ScriptOptions {
 	depth?: number;
+	/** Manually fed searches stop with bestmove only, preserving only previously reported evidence. */
+	stopWithReportedEvidence?: boolean;
 	/** Keep the explicitly long ponder request in flight until stop/release, for lifecycle tests. */
 	holdPonder?: boolean;
 	/** `2`: every line's PV carries the first legal reply too (what a ponder's answer reads). */
@@ -68,13 +70,17 @@ export class ScriptedEngineTransport extends FakeEngineTransport {
 	private multiPv = 1;
 	private fen: string | null = null;
 	private pendingGo: string | null = null;
+	private searchGeneration = 0;
+	private reportedBestmove: string | null = null;
 	private infinite = false;
+	private readonly stopWithReportedEvidence: boolean;
 	private readonly holdPonder: boolean;
 	private readonly pvDepth: 1 | 2;
 
 	constructor(options: ScriptOptions = {}) {
 		super();
 		this.depth = options.depth ?? 14;
+		this.stopWithReportedEvidence = options.stopWithReportedEvidence ?? false;
 		this.holdPonder = options.holdPonder ?? false;
 		this.pvDepth = options.pvDepth ?? 1;
 		this.bestCp = options.bestCp ?? 30;
@@ -110,15 +116,47 @@ export class ScriptedEngineTransport extends FakeEngineTransport {
 			return;
 		}
 		if (line.startsWith("go")) {
+			const generation = ++this.searchGeneration;
+			this.reportedBestmove = null;
 			this.goLines.push(line);
 			this.infinite = line.includes("infinite");
 			this.pendingGo = line;
 			// An infinite search answers only on `stop` (Appendix E §4.2).
 			if (!this.infinite && !this.hold && !(this.holdPonder && isPonderSearch(line)))
-				queueMicrotask(() => this.answer());
+				queueMicrotask(() => {
+					if (generation === this.searchGeneration) this.answer();
+				});
 			return;
 		}
-		if (line === "stop" && this.pendingGo !== null) queueMicrotask(() => this.answer());
+		if (line === "stop" && this.pendingGo !== null) {
+			const generation = this.searchGeneration;
+			queueMicrotask(() => {
+				if (generation !== this.searchGeneration || this.pendingGo === null) return;
+				if (!this.stopWithReportedEvidence) this.answer();
+				else {
+					// A legal bestmove acknowledges stop; it is not a scored iteration. UciEngine
+					// retains the complete frames already fed, including none before the first one.
+					const best = this.reportedBestmove ?? (this.fen ? this.movesFor(this.fen)[0] : null);
+					this.feed(`bestmove ${best ?? "(none)"}`);
+				}
+			});
+		}
+	}
+
+	override feed(...lines: string[]): void {
+		for (const line of lines) {
+			if (this.pendingGo !== null) {
+				if (line.startsWith("info ") && !/\bmultipv (?:[2-9]|\d{2,})\b/.test(line)) {
+					const best = /\bpv ([a-h][1-8][a-h][1-8][qrbn]?)\b/.exec(line)?.[1];
+					if (best) this.reportedBestmove = best;
+				}
+				if (line.startsWith("bestmove ")) {
+					this.pendingGo = null;
+					this.infinite = false;
+				}
+			}
+			super.feed(line);
+		}
 	}
 
 	/** Answer a search that was held (`hold = true`). */

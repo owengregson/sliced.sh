@@ -149,7 +149,9 @@ describe("NnueStore.get", () => {
 	});
 
 	it("retains a verified full-network cache fallback if an older installation lacks the asset", async () => {
-		const name = LIMITS.nnueBigNames[1];
+		// The smallnet's net: since Stockfish 19 the full build has a single network and it is checked
+		// in only as `.gz` (`ENGINE_NNUE_SOURCES`), so the raw bytes this reads come from that one.
+		const name = LIMITS.nnueSmallName;
 		const data = new Uint8Array(await Bun.file(`assets/engine/${name}`).arrayBuffer());
 		const h = setup({ useDefaultBundled: true, opfs: fakeOpfs({ [name]: data }) });
 		expect(await h.store.get(name)).toEqual(data);

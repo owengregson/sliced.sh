@@ -1,7 +1,7 @@
 /**
- * tools/human-match/engine.ts — the vendored Stockfish 18 smallnet as a referee under Bun.
+ * tools/human-match/engine.ts — the vendored Stockfish 19 smallnet as a referee under Bun.
  *
- * Boots `sf_18_smallnet` through the offscreen loader exactly as `test/integration/engine.test.ts`
+ * Boots `sf_19_smallnet` through the offscreen loader exactly as `test/integration/engine.test.ts`
  * does (the Emscripten glue takes its Node code path — pthreads on `node:worker_threads` — which
  * Bun supports), then answers one `go` at a time and returns the **last complete MultiPV cycle**
  * as `EvalLine[]` — the same collection rule the `stockfish18-*.json` fixtures were captured with.
@@ -12,12 +12,12 @@ import "./defines";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { pvToSan } from "@core/chess/san";
-import { ENGINE_DIR } from "@core/constants/engine-files";
+import { ENGINE_DIR, ENGINE_FILES } from "@core/constants/engine-files";
 import { parseBestmove, parseInfo } from "@core/engine/uci-parser";
 import { __setLogSinkOutsideServiceWorker, printLog, setLogLevel, setLogSink } from "@core/logger";
 import { compareLines } from "@core/strength/quality";
 import { bootEngine, type StockfishFactory } from "@offscreen/stockfish-loader";
-import type { EvalLine } from "@typedefs/engine";
+import type { EngineVariant, EvalLine } from "@typedefs/engine";
 
 export const ROOT = path.resolve(import.meta.dir, "../..");
 
@@ -36,6 +36,8 @@ export interface SearchSpec {
 	searchmoves?: readonly string[];
 	/** `UCI_LimitStrength true` + `UCI_Elo`; omitted = full strength (the referee). */
 	uciElo?: number;
+	/** UCI moves applied after `fen` (`position fen … moves …`), so repetitions are seen. */
+	moves?: readonly string[];
 }
 
 export interface SearchFrame {
@@ -51,14 +53,27 @@ export interface SearchFrame {
 
 export interface RefereeEngine {
 	search(spec: SearchSpec): Promise<SearchFrame>;
+	/** `ucinewgame` once, queued behind any search in flight (a fresh transposition table). */
+	newGame(): void;
 	dispose(): void;
 }
 
 export interface RefereeOptions {
+	/**
+	 * `smallnet` (default) runs the vendored relaxed-SIMD program as before. `full` runs the
+	 * package's plain-SIMD `sf_19` build — Bun's JavaScriptCore rejects relaxed SIMD — with the
+	 * same Stockfish 19 sources and the packaged full network (`tools/move-review`).
+	 */
+	variant?: EngineVariant;
 	threads?: number;
 	hashMb?: number;
 	/** Per-search wall-clock guard on top of the movetime (default 20 s). */
 	timeoutMs?: number;
+	/**
+	 * `ucinewgame` before every search (default `true`, the fixtures' rule). `false` keeps the
+	 * transposition table across searches, as the extension's review engine does within a game.
+	 */
+	newGameEachSearch?: boolean;
 }
 
 interface RawLine {
@@ -74,13 +89,32 @@ export async function createRefereeEngine(options: RefereeOptions = {}): Promise
 		throw new Error("SharedArrayBuffer is unavailable in this runtime");
 	const listeners = new Set<(line: string) => void>();
 	const errors: string[] = [];
-	const sf = await bootEngine("smallnet", {
+	const variant = options.variant ?? "smallnet";
+	const plainFull: Readonly<Record<string, string>> = {
+		[ENGINE_FILES.full.js]: "sf_19.js",
+		[ENGINE_FILES.full.wasm]: "sf_19.wasm",
+		// The plain glue asks locateFile for its own name, not the registry's relaxed-SIMD name.
+		"sf_19.wasm": "sf_19.wasm",
+	};
+	const getUrl = (p: string): string => {
+		const plain = variant === "full" ? plainFull[path.basename(p)] : undefined;
+		return plain === undefined
+			? pathToFileURL(path.join(ROOT, p)).href
+			: pathToFileURL(path.join(ROOT, "node_modules", "@lichess-org", "stockfish-web", plain)).href;
+	};
+	const sf = await bootEngine(variant, {
 		crossOriginIsolated: true,
-		getUrl: (p) => pathToFileURL(path.join(ROOT, p)).href,
+		getUrl,
+		...(variant === "full" ? { wasmValidate: () => true } : {}),
 		importModule: (url) => import(url) as Promise<{ default: StockfishFactory }>,
 		nnueStore: {
-			get: async (name) =>
-				new Uint8Array(await Bun.file(path.join(ROOT, ENGINE_DIR, name)).arrayBuffer()),
+			get: async (name) => {
+				const raw = Bun.file(path.join(ROOT, ENGINE_DIR, name));
+				if (await raw.exists()) return new Uint8Array(await raw.arrayBuffer());
+				// The big net is committed gzipped (`ENGINE_NNUE_SOURCES`); the build expands it.
+				const packed = await Bun.file(path.join(ROOT, ENGINE_DIR, `${name}.gz`)).arrayBuffer();
+				return Bun.gunzipSync(new Uint8Array(packed));
+			},
 		},
 		listen: (line) => {
 			for (const l of [...listeners]) l(line);
@@ -125,10 +159,11 @@ export async function createRefereeEngine(options: RefereeOptions = {}): Promise
 			lastElo = spec.uciElo;
 		}
 		send(`setoption name MultiPV value ${spec.multiPv}`);
-		send("ucinewgame");
+		if (options.newGameEachSearch !== false) send("ucinewgame");
 		send("isready");
 		await waitFor((l) => l === "readyok", 10_000);
-		send(`position fen ${spec.fen}`);
+		const suffix = spec.moves?.length ? ` moves ${spec.moves.join(" ")}` : "";
+		send(`position fen ${spec.fen}${suffix}`);
 
 		const byDepth = new Map<number, Map<number, RawLine>>();
 		const collect = (line: string): void => {
@@ -204,6 +239,13 @@ export async function createRefereeEngine(options: RefereeOptions = {}): Promise
 			const next = chain.then(() => runSearch(spec));
 			chain = next.catch(() => undefined);
 			return next;
+		},
+		newGame() {
+			chain = chain.then(async () => {
+				send("ucinewgame");
+				send("isready");
+				await waitFor((l) => l === "readyok", 10_000);
+			});
 		},
 		dispose() {
 			try {

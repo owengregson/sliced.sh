@@ -14,6 +14,8 @@
  * `DEFAULT_SETTINGS.strength.personaEloOffset` and has no entry here.
  */
 
+import { SETTINGS_RANGES } from "./limits";
+
 /** Declared here rather than imported, so a constants registry never depends on the timing model. */
 type GainTcClass = "bullet" | "blitz" | "rapid" | "classical" | "untimed";
 
@@ -52,12 +54,14 @@ export const SETTING_GAIN = {
 	/** "long think frequency 1.0x = 0.8x": `λ0` runs at 0.8× the slider. */
 	longThinkFrequency: 0.8,
 	/**
-	 * "base speed 1.0x = 1.3x": the sampled think time runs at 1.3× the slider — **except in the
-	 * two classes where that measurably loses games on the clock**.
+	 * "base speed 1.0x = 1.3x": a move takes 1.3× as long as the user's own knob says — **except
+	 * in the two classes where that measurably loses games on the clock**.
 	 *
-	 * The gain multiplies a *duration*, so 1.3 is 30 % longer per move than the build before
-	 * 2026-09-13. In rapid and classical there is room for it and the owner asked for it. In blitz
-	 * there is not: measured over the owner's own 97 chess.com games (3+0, our Elo 2401–2452,
+	 * This gain multiplies a *duration* (2026-09-15: renamed from `speedScale`, whose name said
+	 * "speed" while its arithmetic said "slowness"; the numbers are unchanged). 1.3 is 30 % longer
+	 * per move than the build before 2026-09-13. In rapid and classical there is room for it and
+	 * the owner asked for it. In blitz there is not: measured over the owner's own 97 chess.com
+	 * games (3+0, our Elo 2401–2452,
 	 * `docs/research/chessmimic-bands-and-the-clock-2026-09-13.md`) we reached move 20 with 75 s
 	 * against the human opponents' 101 s and move 30 with 40 s against their 59 s, and lost 8 of 27
 	 * on time. The simulator prices this term at 11.7 s of that gap by move 20 alone (101.7 s left
@@ -69,8 +73,12 @@ export const SETTING_GAIN = {
 	 * A game whose time control is not known yet takes the blitz value: erring fast costs a little
 	 * realism, erring slow costs the game, and an unknown live time control is far more likely to
 	 * be blitz than classical.
+	 *
+	 * The user's own knob is *not* here: `timing.baseSpeed` is a speed (higher = faster), so
+	 * `timingSettingsFor` divides by it rather than multiplying — the one place the inversion
+	 * happens.
 	 */
-	speedScale: {
+	moveTimeScale: {
 		bullet: 1,
 		blitz: 1,
 		rapid: 1.3,
@@ -91,6 +99,18 @@ export const SETTING_GAIN = {
 		] as ReadonlyArray<readonly [user: number, effective: number]>,
 	},
 } as const;
+
+/**
+ * The base-speed multiplier the model and the hand act on for a stored value: the slider's own
+ * range, and 1 (no change) for a value that is not a finite number. Both consumers — the wait
+ * (`timingSettingsFor`) and the hand's movement (`executorSettingsFor`) — read it here, so the
+ * two can never disagree about what a stored `timing.baseSpeed` means.
+ */
+export function effectiveBaseSpeed(stored: number): number {
+	const { min, max } = SETTINGS_RANGES.baseSpeed;
+	if (!Number.isFinite(stored)) return 1;
+	return Math.min(max, Math.max(min, stored));
+}
 
 /**
  * The premove knob the timing model acts on for a slider value: linear between the

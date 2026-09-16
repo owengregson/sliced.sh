@@ -2,24 +2,28 @@
   "book": "club.bin",
   "script": "scripts/build-club-book.py",
   "inputs": [
-    "lichess_db_standard_rated_2013-01.pgn.zst",
-    "lichess_db_standard_rated_2013-02.pgn.zst",
-    "lichess_db_standard_rated_2013-03.pgn.zst"
+    "lichess_db_standard_rated_2026-08.first6GiB.pgn.zst"
   ],
+  "input_sha256": {
+    "lichess_db_standard_rated_2026-08.first6GiB.pgn.zst": "0de31330ed535d81118db7b174a0234651489924b2d392c934c38d815348259f"
+  },
   "filters": {
-    "min_elo": 1200,
-    "max_elo": 1800,
+    "min_elo": 1000,
+    "max_elo": 2100,
     "max_ply": 30,
-    "min_count_requested": 15,
-    "min_count": 15,
+    "min_count_requested": 5,
+    "min_count": 43,
+    "min_position": 100,
+    "min_share": 0.01,
     "max_bytes": 3145728,
     "max_games": 0,
-    "keep_bullet": false
+    "keep_bullet": false,
+    "allow_unrated": false
   },
-  "games_read": 403928,
-  "games_kept": 224429,
-  "positions": 4211199,
-  "entries": 13416,
-  "bytes": 214656,
-  "sha256": "5ec6fb099c2a3d7bff25cc86edef03db6b9f9e26108b04c2af15445473d59340"
+  "games_read": 19652645,
+  "games_kept": 10251565,
+  "positions": 149834822,
+  "entries": 192000,
+  "bytes": 3072000,
+  "sha256": "d6a496cdb398f1963b87d1d647a66fd0661bb4102bf0da45dc5d359d2255a57f"
 }

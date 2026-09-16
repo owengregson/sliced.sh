@@ -1,0 +1,1790 @@
+{
+  "targetElo": 2450,
+  "note": "Offline runtime coverage diagnostic; no strength or win-rate estimate. Recognition pairing uses the same actual survivor inputs; this is not old-versus-new full-game play.",
+  "runs": [
+    {
+      "mode": "same-process-inference",
+      "startedAt": "2026-09-16T09:19:21.423Z",
+      "finishedAt": "2026-09-16T09:19:31.865Z",
+      "protocol": "12 lexicographically first heldout bucket-2400 cached positions; original PGN clocks/history; target2450 form0; real current RecommendationPipeline + EngineController + SF19 smallnet plain-SIMD 2threads; fresh warm Maia79M queries; V1 timing head; book off; no prior ponder; old and corrected verifiers paired on actual captured survivor/evidence sets, old20k draws plus exact intuition, corrected exact law. No win-rate inference.",
+      "sourceHashes": {
+        "src/core/strength/generate-verify.ts": "658b661af14e2e4178583bc37dc732815960dcb7d81a38d3382e24b14bae44ce",
+        "src/core/strength/move-selector.ts": "5cb11ae884178e93fa6e1471411c6cbf0a05e1e303b7aa4138a6c4bf8c57fe35",
+        "src/core/strength/maia-select.ts": "ef6bc9abeb78c798c571664cb08d869740e1a8805f369662171fa2556c9d7d42",
+        "src/core/strength/selection-elo.ts": "b447f343ae295b57505ffc4b9532dd2d819a380864300c7d984510f9487ae22a",
+        "src/core/policy/maia-size.ts": "ab9a7769439a7ad9cad4eeedba3294f4e10c13cf27b2a502ff6136ac2aa71961",
+        "src/service/game-session/recommendation.ts": "3e7751ecfee6cb219545e7c8e2996560403660b2efb0e508ab97de6ab850e066",
+        "src/core/constants/generate-verify.ts": "2fefd5e71a22dc1c93acd903b416356591f620e5910852968b36dbbd07b2df58",
+        "src/core/constants/maia.ts": "59a251c81d3061424c8ccdd07ff45c1c18ee8d02458b6f9b2a0ed74936b9425c",
+        "src/core/constants/search.ts": "95e673256e451dd412342d70538d5e125a50842e857e03d15a19b761e158c4f0"
+      },
+      "summary": {
+        "n": 12,
+        "verifierEntered": 8,
+        "noCompleteShallowFrame": 4,
+        "queryElo": {
+          "mean": 2355.5833333333335,
+          "min": 2220,
+          "max": 2435
+        },
+        "selectorElo": {
+          "mean": 2318.5833333333335,
+          "min": 2191,
+          "max": 2428
+        },
+        "queryMinusSelector": {
+          "mean": 37,
+          "min": 1,
+          "max": 71
+        },
+        "activeSurvivorShallowCoverage": {
+          "mean": 0.9995143304589225,
+          "min": 0.9961146436713794,
+          "max": 1
+        },
+        "correctedMissingComparisonProbabilityAllDecisions": 0.0002470729982358135,
+        "oldMissingComparisonProbabilityAllDecisions": 0.0004290154411764706,
+        "validComparisonProbabilityAllDecisions": 0.10157021969238701,
+        "activeTotalVariationOldVsCorrected": {
+          "mean": 0.0927352036950083,
+          "min": 0.003571201484464295,
+          "max": 0.2006252577659883
+        },
+        "scoredMaiaMassBeforeGuards": {
+          "mean": 0.9576105455769627,
+          "min": 0.8039041316104013,
+          "max": 0.9995130235815985
+        },
+        "sourceChanged": []
+      },
+      "rows": [
+        {
+          "id": "173827885860-40",
+          "humanElo": 2300,
+          "opponentElo": 1622,
+          "queryElo": 2311,
+          "selectorElo": 2291,
+          "clockPenalty": 139.37730184683838,
+          "pressureReduction": 0,
+          "selectorAdditionalPenalty": 20,
+          "shallowDepth": null,
+          "finalDepth": 7,
+          "scoredMassBeforeGuards": 0.9984929216975622,
+          "wallMs": 641,
+          "returnedSearchBudgetMs": 600,
+          "coverage": {
+            "verifierEntered": false,
+            "survivors": 2,
+            "survivingRawMass": 0.9978919246253517,
+            "survivingShallowMass": 0,
+            "shallowRootCount": 0,
+            "canonicalElo": 2291,
+            "intuitionProbability": 0.6122941176470588,
+            "distinctProposalProbability": 0.363136531298873,
+            "validComparisonPerDecision": 0,
+            "missingComparisonPerDecision": 0,
+            "missingAmongDistinctProposals": 1,
+            "noFrameSkipsVerifier": true
+          }
+        },
+        {
+          "id": "173830362986-23",
+          "humanElo": 2324,
+          "opponentElo": 1958,
+          "queryElo": 2415,
+          "selectorElo": 2378,
+          "clockPenalty": 34.98664534210144,
+          "pressureReduction": 0,
+          "selectorAdditionalPenalty": 37,
+          "shallowDepth": null,
+          "finalDepth": 8,
+          "scoredMassBeforeGuards": 0.9970836971185674,
+          "wallMs": 633,
+          "returnedSearchBudgetMs": 600,
+          "coverage": {
+            "verifierEntered": false,
+            "survivors": 12,
+            "survivingRawMass": 0.9970836971185674,
+            "survivingShallowMass": 0,
+            "shallowRootCount": 0,
+            "canonicalElo": 2378,
+            "intuitionProbability": 0.6071764705882353,
+            "distinctProposalProbability": 0.6220448762688973,
+            "validComparisonPerDecision": 0,
+            "missingComparisonPerDecision": 0,
+            "missingAmongDistinctProposals": 1,
+            "noFrameSkipsVerifier": true
+          }
+        },
+        {
+          "id": "173831357500-57",
+          "humanElo": 2391,
+          "opponentElo": 2405,
+          "queryElo": 2347,
+          "selectorElo": 2346,
+          "clockPenalty": 102.96902113825658,
+          "pressureReduction": 0,
+          "selectorAdditionalPenalty": 1,
+          "shallowDepth": 10,
+          "finalDepth": 10,
+          "scoredMassBeforeGuards": 0.9984758929302628,
+          "wallMs": 628,
+          "returnedSearchBudgetMs": 600,
+          "coverage": {
+            "verifierEntered": true,
+            "survivors": 12,
+            "survivingRawMass": 0.9984758929302628,
+            "survivingShallowMass": 1,
+            "shallowRootCount": 12,
+            "canonicalElo": 2346,
+            "intuitionProbability": 0.6090588235294118,
+            "distinctProposalProbability": 0.006488569857564186,
+            "validComparisonPerDecision": 0.00253664913372774,
+            "missingComparisonPerDecision": 0,
+            "missingAmongDistinctProposals": 0,
+            "noFrameSkipsVerifier": false,
+            "oldMissingComparisonPerDecision": 0,
+            "pairedTotalVariation": 0.1924169332741246,
+            "distributions": [
+              {
+                "uci": "b6b4",
+                "prior": 0.9967490378450018,
+                "old": 0.8044649963443171,
+                "corrected": 0.9968819296182546,
+                "shallow": true
+              },
+              {
+                "uci": "d6d5",
+                "prior": 0.00011811021776021147,
+                "old": 0.00851626548204052,
+                "corrected": 0.00011610717886653292,
+                "shallow": true
+              },
+              {
+                "uci": "e6e5",
+                "prior": 0.0011981040193870134,
+                "old": 0.0707472805303978,
+                "corrected": 0.0011573843696985314,
+                "shallow": true
+              },
+              {
+                "uci": "f7f8",
+                "prior": 1.5066614530969973e-06,
+                "old": 0.00015729411604031566,
+                "corrected": 1.4445138875832889e-06,
+                "shallow": true
+              },
+              {
+                "uci": "f7f6",
+                "prior": 0.00025150822806786256,
+                "old": 0.01637724212902441,
+                "corrected": 0.00024113388415075043,
+                "shallow": true
+              },
+              {
+                "uci": "b8c8",
+                "prior": 1.0349559664653145e-05,
+                "old": 0.000612262314162813,
+                "corrected": 9.922655574172206e-06,
+                "shallow": true
+              },
+              {
+                "uci": "b6b5",
+                "prior": 0.0008468391229783846,
+                "old": 0.05073216895760991,
+                "corrected": 0.0008078217785137865,
+                "shallow": true
+              },
+              {
+                "uci": "h7h6",
+                "prior": 6.460984380838493e-05,
+                "old": 0.00390966884251717,
+                "corrected": 6.147745244974825e-05,
+                "shallow": true
+              },
+              {
+                "uci": "f7e8",
+                "prior": 4.127963083163555e-06,
+                "old": 0.00023707887822135734,
+                "corrected": 3.927832652128609e-06,
+                "shallow": true
+              },
+              {
+                "uci": "h7h5",
+                "prior": 0.0007426253612600511,
+                "old": 0.043573114293560374,
+                "corrected": 0.0007066216638789792,
+                "shallow": true
+              },
+              {
+                "uci": "g6g5",
+                "prior": 3.3355287071134327e-06,
+                "old": 0.00013886094495490898,
+                "corrected": 3.1418253130263664e-06,
+                "shallow": true
+              },
+              {
+                "uci": "b6c6",
+                "prior": 9.84564882844882e-06,
+                "old": 0.0005337671675276328,
+                "corrected": 9.087226760256862e-06,
+                "shallow": true
+              }
+            ]
+          }
+        },
+        {
+          "id": "173832255514-25",
+          "humanElo": 2400,
+          "opponentElo": 2392,
+          "queryElo": 2402,
+          "selectorElo": 2331,
+          "clockPenalty": 48.35897655323682,
+          "pressureReduction": 0,
+          "selectorAdditionalPenalty": 71,
+          "shallowDepth": null,
+          "finalDepth": 9,
+          "scoredMassBeforeGuards": 0.8039041316104013,
+          "wallMs": 629,
+          "returnedSearchBudgetMs": 600,
+          "coverage": {
+            "verifierEntered": false,
+            "survivors": 12,
+            "survivingRawMass": 0.8039041316104013,
+            "survivingShallowMass": 0,
+            "shallowRootCount": 0,
+            "canonicalElo": 2331,
+            "intuitionProbability": 0.6099411764705882,
+            "distinctProposalProbability": 0.8202465373104955,
+            "validComparisonPerDecision": 0,
+            "missingComparisonPerDecision": 0,
+            "missingAmongDistinctProposals": 1,
+            "noFrameSkipsVerifier": true
+          }
+        },
+        {
+          "id": "173832267904-20",
+          "humanElo": 2282,
+          "opponentElo": 2286,
+          "queryElo": 2371,
+          "selectorElo": 2339,
+          "clockPenalty": 78.98747165245855,
+          "pressureReduction": 0,
+          "selectorAdditionalPenalty": 32,
+          "shallowDepth": 10,
+          "finalDepth": 10,
+          "scoredMassBeforeGuards": 0.9965052374800074,
+          "wallMs": 630,
+          "returnedSearchBudgetMs": 600,
+          "coverage": {
+            "verifierEntered": true,
+            "survivors": 6,
+            "survivingRawMass": 0.9893196646852157,
+            "survivingShallowMass": 1,
+            "shallowRootCount": 12,
+            "canonicalElo": 2339,
+            "intuitionProbability": 0.6094705882352941,
+            "distinctProposalProbability": 0.514680499253005,
+            "validComparisonPerDecision": 0.20099787262004118,
+            "missingComparisonPerDecision": 0,
+            "missingAmongDistinctProposals": 0,
+            "noFrameSkipsVerifier": false,
+            "oldMissingComparisonPerDecision": 0,
+            "pairedTotalVariation": 0.04529799114814496,
+            "distributions": [
+              {
+                "uci": "g1e2",
+                "prior": 0.6368064622153071,
+                "old": 0.6846242650006266,
+                "corrected": 0.6989246801615399,
+                "shallow": true
+              },
+              {
+                "uci": "a1c1",
+                "prior": 0.0626031209569377,
+                "old": 0.10798141977853076,
+                "corrected": 0.06686192096344643,
+                "shallow": true
+              },
+              {
+                "uci": "d1c1",
+                "prior": 0.011645644810733491,
+                "old": 0.014576316228471298,
+                "corrected": 0.010991722471752207,
+                "shallow": true
+              },
+              {
+                "uci": "c3e2",
+                "prior": 0.008041447408948264,
+                "old": 0.0069708315649478604,
+                "corrected": 0.006415601883594812,
+                "shallow": true
+              },
+              {
+                "uci": "d1c2",
+                "prior": 0.2750329664789623,
+                "old": 0.18148829798167224,
+                "corrected": 0.21248587396896418,
+                "shallow": true
+              },
+              {
+                "uci": "c3b1",
+                "prior": 0.005870358129111079,
+                "old": 0.0043588694456305884,
+                "corrected": 0.0043202005507023845,
+                "shallow": true
+              }
+            ]
+          }
+        },
+        {
+          "id": "173832667300-34",
+          "humanElo": 2324,
+          "opponentElo": 2218,
+          "queryElo": 2250,
+          "selectorElo": 2191,
+          "clockPenalty": 200.0378837983273,
+          "pressureReduction": 0,
+          "selectorAdditionalPenalty": 59,
+          "shallowDepth": 9,
+          "finalDepth": 9,
+          "scoredMassBeforeGuards": 0.9756934862327743,
+          "wallMs": 628,
+          "returnedSearchBudgetMs": 600,
+          "coverage": {
+            "verifierEntered": true,
+            "survivors": 12,
+            "survivingRawMass": 0.9756934862327743,
+            "survivingShallowMass": 1,
+            "shallowRootCount": 12,
+            "canonicalElo": 2191,
+            "intuitionProbability": 0.6181764705882353,
+            "distinctProposalProbability": 0.7338823076064294,
+            "validComparisonPerDecision": 0.2802135328631372,
+            "missingComparisonPerDecision": 0,
+            "missingAmongDistinctProposals": 0,
+            "noFrameSkipsVerifier": false,
+            "oldMissingComparisonPerDecision": 0,
+            "pairedTotalVariation": 0.037909535966838714,
+            "distributions": [
+              {
+                "uci": "c2c3",
+                "prior": 0.01702814720996888,
+                "old": 0.02257293229585633,
+                "corrected": 0.019373011011025072,
+                "shallow": true
+              },
+              {
+                "uci": "d1e3",
+                "prior": 0.07625433269236223,
+                "old": 0.09196471660376386,
+                "corrected": 0.08132356667316192,
+                "shallow": true
+              },
+              {
+                "uci": "f3g5",
+                "prior": 0.4683232176139168,
+                "old": 0.44128124670026386,
+                "corrected": 0.47905577145653344,
+                "shallow": true
+              },
+              {
+                "uci": "e5e6",
+                "prior": 0.04024549222400059,
+                "old": 0.04612729575188229,
+                "corrected": 0.04116779736705413,
+                "shallow": true
+              },
+              {
+                "uci": "e1e4",
+                "prior": 0.00043470289822220254,
+                "old": 0.0005550907504363016,
+                "corrected": 0.0004416411981057944,
+                "shallow": true
+              },
+              {
+                "uci": "d1c3",
+                "prior": 0.14633119102200134,
+                "old": 0.15468121685000835,
+                "corrected": 0.1469677935291761,
+                "shallow": true
+              },
+              {
+                "uci": "f4g5",
+                "prior": 0.09671735106068387,
+                "old": 0.10562630542921626,
+                "corrected": 0.09713811240173845,
+                "shallow": true
+              },
+              {
+                "uci": "d1f2",
+                "prior": 0.021907737645914603,
+                "old": 0.021962056760053562,
+                "corrected": 0.020491238103937673,
+                "shallow": true
+              },
+              {
+                "uci": "f3d2",
+                "prior": 0.0014465064885301343,
+                "old": 0.001543296275762542,
+                "corrected": 0.0013399991288451107,
+                "shallow": true
+              },
+              {
+                "uci": "e1f1",
+                "prior": 0.010402428868819731,
+                "old": 0.009828766175436883,
+                "corrected": 0.009141165694088547,
+                "shallow": true
+              },
+              {
+                "uci": "d3c4",
+                "prior": 0.07459112044035462,
+                "old": 0.0640370902769216,
+                "corrected": 0.06417210148750255,
+                "shallow": true
+              },
+              {
+                "uci": "g2g4",
+                "prior": 0.046317771835224904,
+                "old": 0.039819986130374484,
+                "corrected": 0.03938780194883118,
+                "shallow": true
+              }
+            ]
+          }
+        },
+        {
+          "id": "173833407926-16",
+          "humanElo": 2271,
+          "opponentElo": 2290,
+          "queryElo": 2435,
+          "selectorElo": 2428,
+          "clockPenalty": 15.494441151778021,
+          "pressureReduction": 0,
+          "selectorAdditionalPenalty": 7,
+          "shallowDepth": 10,
+          "finalDepth": 10,
+          "scoredMassBeforeGuards": 0.9904709936339038,
+          "wallMs": 621,
+          "returnedSearchBudgetMs": 600,
+          "coverage": {
+            "verifierEntered": true,
+            "survivors": 12,
+            "survivingRawMass": 0.9904709936339038,
+            "survivingShallowMass": 0.9999999999999999,
+            "shallowRootCount": 12,
+            "canonicalElo": 2428,
+            "intuitionProbability": 0.604235294117647,
+            "distinctProposalProbability": 0.045725308555878086,
+            "validComparisonPerDecision": 0.018096463291996844,
+            "missingComparisonPerDecision": 8.787741776091829e-17,
+            "missingAmongDistinctProposals": 4.856054818168898e-15,
+            "noFrameSkipsVerifier": false,
+            "oldMissingComparisonPerDecision": 0,
+            "pairedTotalVariation": 0.003571201484464295,
+            "distributions": [
+              {
+                "uci": "b1d2",
+                "prior": 0.976720536028317,
+                "old": 0.9816001027111615,
+                "corrected": 0.9851702994990568,
+                "shallow": true
+              },
+              {
+                "uci": "g1h3",
+                "prior": 0.0001756695634632005,
+                "old": 0.0004425457503467057,
+                "corrected": 0.000122386446808778,
+                "shallow": true
+              },
+              {
+                "uci": "g1f3",
+                "prior": 0.0057943821980254205,
+                "old": 0.005994487878712733,
+                "corrected": 0.003766195697044398,
+                "shallow": true
+              },
+              {
+                "uci": "g2h3",
+                "prior": 1.6917797577194204e-05,
+                "old": 3.0010565688996404e-05,
+                "corrected": 1.0980503071104881e-05,
+                "shallow": true
+              },
+              {
+                "uci": "c5c6",
+                "prior": 0.00018343800600393212,
+                "old": 0.00017020442339249356,
+                "corrected": 0.00011873155961798089,
+                "shallow": true
+              },
+              {
+                "uci": "e2e4",
+                "prior": 0.00024846916909601597,
+                "old": 0.0001897103120561339,
+                "corrected": 0.00015790179711151113,
+                "shallow": true
+              },
+              {
+                "uci": "g2d5",
+                "prior": 0.016051007385961307,
+                "old": 0.011044185168740828,
+                "corrected": 0.010150715785504073,
+                "shallow": true
+              },
+              {
+                "uci": "h2h4",
+                "prior": 2.8536168317783687e-05,
+                "old": 1.7242560056486707e-05,
+                "corrected": 1.8021519645209518e-05,
+                "shallow": true
+              },
+              {
+                "uci": "h2h3",
+                "prior": 6.2045030103070894e-06,
+                "old": 3.7489797012867304e-06,
+                "corrected": 3.893576432945454e-06,
+                "shallow": true
+              },
+              {
+                "uci": "g3g4",
+                "prior": 3.556313024089906e-06,
+                "old": 2.148849846085383e-06,
+                "corrected": 2.2299898925352863e-06,
+                "shallow": true
+              },
+              {
+                "uci": "a1a2",
+                "prior": 0.0005459614166541515,
+                "old": 0.00034967739246302606,
+                "corrected": 0.0003390094499730533,
+                "shallow": true
+              },
+              {
+                "uci": "e1f1",
+                "prior": 0.00022532145054957696,
+                "old": 0.00015593540823795614,
+                "corrected": 0.00013963417584149094,
+                "shallow": true
+              }
+            ]
+          }
+        },
+        {
+          "id": "173833843230-47",
+          "humanElo": 2324,
+          "opponentElo": 2327,
+          "queryElo": 2220,
+          "selectorElo": 2197,
+          "clockPenalty": 229.70183863154796,
+          "pressureReduction": 0,
+          "selectorAdditionalPenalty": 23,
+          "shallowDepth": 9,
+          "finalDepth": 10,
+          "scoredMassBeforeGuards": 0.9452654930157521,
+          "wallMs": 802,
+          "returnedSearchBudgetMs": 600,
+          "coverage": {
+            "verifierEntered": true,
+            "survivors": 7,
+            "survivingRawMass": 0.9405947002450438,
+            "survivingShallowMass": 1.0000000000000002,
+            "shallowRootCount": 12,
+            "canonicalElo": 2197,
+            "intuitionProbability": 0.6178235294117647,
+            "distinctProposalProbability": 0.17824844913447668,
+            "validComparisonPerDecision": 0.06812236317804106,
+            "missingComparisonPerDecision": 0,
+            "missingAmongDistinctProposals": 0,
+            "noFrameSkipsVerifier": false,
+            "oldMissingComparisonPerDecision": 0,
+            "pairedTotalVariation": 0.13962745110153046,
+            "distributions": [
+              {
+                "uci": "e4f6",
+                "prior": 0.9050709473783041,
+                "old": 0.7723903800183725,
+                "corrected": 0.9120178311199515,
+                "shallow": true
+              },
+              {
+                "uci": "c2c6",
+                "prior": 0.03181832472384821,
+                "old": 0.07085064791615851,
+                "corrected": 0.029091170740579632,
+                "shallow": true
+              },
+              {
+                "uci": "e4d6",
+                "prior": 0.037588168389828064,
+                "old": 0.10926988721168213,
+                "corrected": 0.03743077287763579,
+                "shallow": true
+              },
+              {
+                "uci": "h7h5",
+                "prior": 0.005799235443726886,
+                "old": 0.011570392345027216,
+                "corrected": 0.004977317191270381,
+                "shallow": true
+              },
+              {
+                "uci": "c2b2",
+                "prior": 0.00869695377406998,
+                "old": 0.013570867969944481,
+                "corrected": 0.006985814388651075,
+                "shallow": true
+              },
+              {
+                "uci": "f7f6",
+                "prior": 0.004330745176349434,
+                "old": 0.007796800975717505,
+                "corrected": 0.0036389734212471615,
+                "shallow": true
+              },
+              {
+                "uci": "h7h6",
+                "prior": 0.006695625113873564,
+                "old": 0.014551023563000764,
+                "corrected": 0.005858120260664684,
+                "shallow": true
+              }
+            ]
+          }
+        },
+        {
+          "id": "173835312110-22",
+          "humanElo": 2428,
+          "opponentElo": 2424,
+          "queryElo": 2428,
+          "selectorElo": 2358,
+          "clockPenalty": 21.71888815755292,
+          "pressureReduction": 0,
+          "selectorAdditionalPenalty": 70,
+          "shallowDepth": null,
+          "finalDepth": 8,
+          "scoredMassBeforeGuards": 0.8619675154170012,
+          "wallMs": 626,
+          "returnedSearchBudgetMs": 600,
+          "coverage": {
+            "verifierEntered": false,
+            "survivors": 12,
+            "survivingRawMass": 0.8619675154170012,
+            "survivingShallowMass": 0,
+            "shallowRootCount": 0,
+            "canonicalElo": 2358,
+            "intuitionProbability": 0.6083529411764705,
+            "distinctProposalProbability": 0.7328083183134305,
+            "validComparisonPerDecision": 0,
+            "missingComparisonPerDecision": 0,
+            "missingAmongDistinctProposals": 1,
+            "noFrameSkipsVerifier": true
+          }
+        },
+        {
+          "id": "173837746654-26",
+          "humanElo": 2544,
+          "opponentElo": 2574,
+          "queryElo": 2422,
+          "selectorElo": 2386,
+          "clockPenalty": 28.40599470459818,
+          "pressureReduction": 0,
+          "selectorAdditionalPenalty": 36,
+          "shallowDepth": 10,
+          "finalDepth": 10,
+          "scoredMassBeforeGuards": 0.9995130235815985,
+          "wallMs": 631,
+          "returnedSearchBudgetMs": 600,
+          "coverage": {
+            "verifierEntered": true,
+            "survivors": 8,
+            "survivingRawMass": 0.9994778943532622,
+            "survivingShallowMass": 1,
+            "shallowRootCount": 12,
+            "canonicalElo": 2386,
+            "intuitionProbability": 0.6067058823529412,
+            "distinctProposalProbability": 0.5800675320956252,
+            "validComparisonPerDecision": 0.22813714821125589,
+            "missingComparisonPerDecision": 0,
+            "missingAmongDistinctProposals": 0,
+            "noFrameSkipsVerifier": false,
+            "oldMissingComparisonPerDecision": 0,
+            "pairedTotalVariation": 0.09529919479370359,
+            "distributions": [
+              {
+                "uci": "e3b6",
+                "prior": 0.26611145860486607,
+                "old": 0.345650687296979,
+                "corrected": 0.290005724369246,
+                "shallow": true
+              },
+              {
+                "uci": "e3f2",
+                "prior": 0.10274177920681195,
+                "old": 0.13997030063171798,
+                "corrected": 0.10769162764865173,
+                "shallow": true
+              },
+              {
+                "uci": "d3f5",
+                "prior": 0.5806115033768776,
+                "old": 0.46228444387215795,
+                "corrected": 0.5575660446911115,
+                "shallow": true
+              },
+              {
+                "uci": "e3d4",
+                "prior": 0.03524252605282308,
+                "old": 0.040554936100519065,
+                "corrected": 0.03326419900846034,
+                "shallow": true
+              },
+              {
+                "uci": "e3c1",
+                "prior": 0.00012592393187667493,
+                "old": 0.00015505761372800147,
+                "corrected": 0.00011651941519940672,
+                "shallow": true
+              },
+              {
+                "uci": "e3g1",
+                "prior": 9.799439680265181e-05,
+                "old": 9.878318874250298e-05,
+                "corrected": 9.045070156418067e-05,
+                "shallow": true
+              },
+              {
+                "uci": "e3d2",
+                "prior": 0.0006071866705617675,
+                "old": 0.00046670725412788634,
+                "corrected": 0.0004843012290020618,
+                "shallow": true
+              },
+              {
+                "uci": "f3d4",
+                "prior": 0.01446162775938017,
+                "old": 0.010819084041779288,
+                "corrected": 0.01078113293676474,
+                "shallow": true
+              }
+            ]
+          }
+        },
+        {
+          "id": "173838174538-80",
+          "humanElo": 2546,
+          "opponentElo": 2572,
+          "queryElo": 2274,
+          "selectorElo": 2207,
+          "clockPenalty": 175.8740281422048,
+          "pressureReduction": 0,
+          "selectorAdditionalPenalty": 67,
+          "shallowDepth": 9,
+          "finalDepth": 11,
+          "scoredMassBeforeGuards": 0.9257442158215048,
+          "wallMs": 823,
+          "returnedSearchBudgetMs": 600,
+          "coverage": {
+            "verifierEntered": true,
+            "survivors": 11,
+            "survivingRawMass": 0.9204366243930707,
+            "survivingShallowMass": 0.9961146436713794,
+            "shallowRootCount": 12,
+            "canonicalElo": 2207,
+            "intuitionProbability": 0.617235294117647,
+            "distinctProposalProbability": 0.7594368439706515,
+            "validComparisonPerDecision": 0.28772074423981914,
+            "missingComparisonPerDecision": 0.002964875978829674,
+            "missingAmongDistinctProposals": 0.010199596308202465,
+            "noFrameSkipsVerifier": false,
+            "oldMissingComparisonPerDecision": 0.005148185294117647,
+            "pairedTotalVariation": 0.02713406402527153,
+            "distributions": [
+              {
+                "uci": "d5d4",
+                "prior": 0.11452551488815262,
+                "old": 0.14052461045420553,
+                "corrected": 0.12469375723098187,
+                "shallow": true
+              },
+              {
+                "uci": "d1d4",
+                "prior": 0.03208088609960225,
+                "old": 0.03396374928488901,
+                "corrected": 0.032052192658430664,
+                "shallow": true
+              },
+              {
+                "uci": "g1f1",
+                "prior": 0.0366286481621373,
+                "old": 0.043507447362665444,
+                "corrected": 0.03889169232094766,
+                "shallow": true
+              },
+              {
+                "uci": "d1e1",
+                "prior": 0.0705357283948474,
+                "old": 0.06523989988512749,
+                "corrected": 0.06462222199473555,
+                "shallow": true
+              },
+              {
+                "uci": "d5d2",
+                "prior": 0.0006181381994378583,
+                "old": 0.0006686102427471441,
+                "corrected": 0.0005959371025138552,
+                "shallow": true
+              },
+              {
+                "uci": "d5d8",
+                "prior": 0.3295399727818455,
+                "old": 0.2946548079058203,
+                "corrected": 0.31770419094096186,
+                "shallow": true
+              },
+              {
+                "uci": "d1f1",
+                "prior": 4.335973606324945e-05,
+                "old": 2.676315944186332e-05,
+                "corrected": 4.08027224705496e-05,
+                "shallow": true
+              },
+              {
+                "uci": "h2h3",
+                "prior": 0.09082448353573987,
+                "old": 0.09048976210238657,
+                "corrected": 0.08672110324151208,
+                "shallow": true
+              },
+              {
+                "uci": "f2d4",
+                "prior": 0.3213179118735532,
+                "old": 0.3268037293698529,
+                "corrected": 0.3307927454588251,
+                "shallow": true
+              },
+              {
+                "uci": "g2g3",
+                "prior": 0.0029721043308602473,
+                "old": 0.0032889935731597996,
+                "corrected": 0.0029721043308602473,
+                "shallow": false
+              },
+              {
+                "uci": "d5c5",
+                "prior": 0.0009132519977604962,
+                "old": 0.0008316266595588759,
+                "corrected": 0.0009132519977604962,
+                "shallow": false
+              }
+            ]
+          }
+        },
+        {
+          "id": "173840362706-34",
+          "humanElo": 2405,
+          "opponentElo": 2036,
+          "queryElo": 2392,
+          "selectorElo": 2371,
+          "clockPenalty": 57.69762719537293,
+          "pressureReduction": 0,
+          "selectorAdditionalPenalty": 21,
+          "shallowDepth": 10,
+          "finalDepth": 11,
+          "scoredMassBeforeGuards": 0.9982099383842162,
+          "wallMs": 632,
+          "returnedSearchBudgetMs": 600,
+          "coverage": {
+            "verifierEntered": true,
+            "survivors": 5,
+            "survivingRawMass": 0.9905663933546347,
+            "survivingShallowMass": 1,
+            "shallowRootCount": 12,
+            "canonicalElo": 2371,
+            "intuitionProbability": 0.6075882352941177,
+            "distinctProposalProbability": 0.3389752161745806,
+            "validComparisonPerDecision": 0.13301786277062513,
+            "missingComparisonPerDecision": 0,
+            "missingAmongDistinctProposals": 0,
+            "noFrameSkipsVerifier": false,
+            "oldMissingComparisonPerDecision": 0,
+            "pairedTotalVariation": 0.2006252577659883,
+            "distributions": [
+              {
+                "uci": "a8b7",
+                "prior": 0.20669083962060053,
+                "old": 0.4186752695553288,
+                "corrected": 0.24124658645938815,
+                "shallow": true
+              },
+              {
+                "uci": "a8h8",
+                "prior": 0.7862959983853253,
+                "old": 0.5514391274896676,
+                "corrected": 0.7520637014450197,
+                "shallow": true
+              },
+              {
+                "uci": "a8a7",
+                "prior": 0.006481447564499366,
+                "old": 0.02903278364080729,
+                "corrected": 0.0062741776565182995,
+                "shallow": true
+              },
+              {
+                "uci": "a8f3",
+                "prior": 0.000523774766093466,
+                "old": 0.0008479952681752603,
+                "corrected": 0.0004100265823653161,
+                "shallow": true
+              },
+              {
+                "uci": "a8a6",
+                "prior": 7.939663481297246e-06,
+                "old": 4.824046123430545e-06,
+                "corrected": 5.507856708482106e-06,
+                "shallow": true
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "mode": "cached-policy",
+      "startedAt": "2026-09-16T09:20:53.784Z",
+      "finishedAt": "2026-09-16T09:21:01.866Z",
+      "protocol": "12 lexicographically first heldout bucket-2400 cached positions; original PGN clocks/history; target2450 form0; real current RecommendationPipeline + EngineController + SF19 smallnet plain-SIMD 2threads; Maia79M queries (fresh warm or exact-input cached per cachedPolicy flag); V1 timing head; book off; no prior ponder; old and corrected verifiers paired on actual captured survivor/evidence sets, old20k draws plus exact intuition, corrected exact law. No win-rate inference.",
+      "sourceHashes": {
+        "src/core/strength/generate-verify.ts": "658b661af14e2e4178583bc37dc732815960dcb7d81a38d3382e24b14bae44ce",
+        "src/core/strength/move-selector.ts": "5cb11ae884178e93fa6e1471411c6cbf0a05e1e303b7aa4138a6c4bf8c57fe35",
+        "src/core/strength/maia-select.ts": "ef6bc9abeb78c798c571664cb08d869740e1a8805f369662171fa2556c9d7d42",
+        "src/core/strength/selection-elo.ts": "b447f343ae295b57505ffc4b9532dd2d819a380864300c7d984510f9487ae22a",
+        "src/core/policy/maia-size.ts": "ab9a7769439a7ad9cad4eeedba3294f4e10c13cf27b2a502ff6136ac2aa71961",
+        "src/service/game-session/recommendation.ts": "3e7751ecfee6cb219545e7c8e2996560403660b2efb0e508ab97de6ab850e066",
+        "src/core/constants/generate-verify.ts": "2fefd5e71a22dc1c93acd903b416356591f620e5910852968b36dbbd07b2df58",
+        "src/core/constants/maia.ts": "59a251c81d3061424c8ccdd07ff45c1c18ee8d02458b6f9b2a0ed74936b9425c",
+        "src/core/constants/search.ts": "95e673256e451dd412342d70538d5e125a50842e857e03d15a19b761e158c4f0"
+      },
+      "summary": {
+        "n": 12,
+        "verifierEntered": 11,
+        "noCompleteShallowFrame": 1,
+        "queryElo": {
+          "mean": 2355.5833333333335,
+          "min": 2220,
+          "max": 2435
+        },
+        "selectorElo": {
+          "mean": 2318.5833333333335,
+          "min": 2191,
+          "max": 2428
+        },
+        "queryMinusSelector": {
+          "mean": 37,
+          "min": 1,
+          "max": 71
+        },
+        "activeSurvivorShallowCoverage": {
+          "mean": 1.0,
+          "min": 0.9999999999999998,
+          "max": 1
+        },
+        "correctedMissingComparisonProbabilityAllDecisions": 2.1212878947960465e-17,
+        "oldMissingComparisonProbabilityAllDecisions": 0.0,
+        "validComparisonProbabilityAllDecisions": 0.15889451064388296,
+        "activeTotalVariationOldVsCorrected": {
+          "mean": 0.07861800623267504,
+          "min": 0.002638378128203551,
+          "max": 0.19360384423340526
+        },
+        "scoredMaiaMassBeforeGuards": {
+          "mean": 0.9770499335141952,
+          "min": 0.9527744368374509,
+          "max": 0.9987837767680784
+        },
+        "sourceChanged": []
+      },
+      "rows": [
+        {
+          "id": "173827885860-40",
+          "humanElo": 2300,
+          "opponentElo": 1622,
+          "queryElo": 2311,
+          "selectorElo": 2291,
+          "clockPenalty": 139.37730184683838,
+          "pressureReduction": 0,
+          "selectorAdditionalPenalty": 20,
+          "shallowDepth": 10,
+          "finalDepth": 13,
+          "scoredMassBeforeGuards": 0.9987837767680784,
+          "wallMs": 653,
+          "returnedSearchBudgetMs": 350,
+          "coverage": {
+            "verifierEntered": true,
+            "survivors": 2,
+            "survivingRawMass": 0.9978919246253517,
+            "survivingShallowMass": 1,
+            "shallowRootCount": 4,
+            "canonicalElo": 2291,
+            "intuitionProbability": 0.6122941176470588,
+            "distinctProposalProbability": 0.363136531298873,
+            "validComparisonPerDecision": 0.14079016928181604,
+            "missingComparisonPerDecision": 0,
+            "missingAmongDistinctProposals": 0,
+            "noFrameSkipsVerifier": false,
+            "oldMissingComparisonPerDecision": 0,
+            "pairedTotalVariation": 0.10390152938160654,
+            "distributions": [
+              {
+                "uci": "f7e6",
+                "prior": 0.23840540076185918,
+                "old": 0.34362668332541235,
+                "corrected": 0.23972515394392485,
+                "shallow": true
+              },
+              {
+                "uci": "f7e8",
+                "prior": 0.7615945992381408,
+                "old": 0.6563733166743495,
+                "corrected": 0.7602748460560751,
+                "shallow": true
+              }
+            ]
+          }
+        },
+        {
+          "id": "173830362986-23",
+          "humanElo": 2324,
+          "opponentElo": 1958,
+          "queryElo": 2415,
+          "selectorElo": 2378,
+          "clockPenalty": 34.98664534210144,
+          "pressureReduction": 0,
+          "selectorAdditionalPenalty": 37,
+          "shallowDepth": 10,
+          "finalDepth": 12,
+          "scoredMassBeforeGuards": 0.9920645914244632,
+          "wallMs": 625,
+          "returnedSearchBudgetMs": 375,
+          "coverage": {
+            "verifierEntered": true,
+            "survivors": 5,
+            "survivingRawMass": 0.9920645914244632,
+            "survivingShallowMass": 1,
+            "shallowRootCount": 5,
+            "canonicalElo": 2378,
+            "intuitionProbability": 0.6071764705882353,
+            "distinctProposalProbability": 0.6182230631699552,
+            "validComparisonPerDecision": 0.24285256563817417,
+            "missingComparisonPerDecision": 0,
+            "missingAmongDistinctProposals": 0,
+            "noFrameSkipsVerifier": false,
+            "oldMissingComparisonPerDecision": 0,
+            "pairedTotalVariation": 0.015802933178135678,
+            "distributions": [
+              {
+                "uci": "f5e6",
+                "prior": 0.380131084290402,
+                "old": 0.40036892659079976,
+                "corrected": 0.3898588940729127,
+                "shallow": true
+              },
+              {
+                "uci": "f5e4",
+                "prior": 0.47928858015906933,
+                "old": 0.48133574849410254,
+                "corrected": 0.4971386816723583,
+                "shallow": true
+              },
+              {
+                "uci": "f5g4",
+                "prior": 0.02414001770883822,
+                "old": 0.02705083310533151,
+                "corrected": 0.02263442578829963,
+                "shallow": true
+              },
+              {
+                "uci": "f5g6",
+                "prior": 0.04827434948089875,
+                "old": 0.037560343255402466,
+                "corrected": 0.037333950585280766,
+                "shallow": true
+              },
+              {
+                "uci": "h8e8",
+                "prior": 0.06816596836079167,
+                "old": 0.05368414855412348,
+                "corrected": 0.05303404788114854,
+                "shallow": true
+              }
+            ]
+          }
+        },
+        {
+          "id": "173831357500-57",
+          "humanElo": 2391,
+          "opponentElo": 2405,
+          "queryElo": 2347,
+          "selectorElo": 2346,
+          "clockPenalty": 102.96902113825658,
+          "pressureReduction": 0,
+          "selectorAdditionalPenalty": 1,
+          "shallowDepth": 10,
+          "finalDepth": 14,
+          "scoredMassBeforeGuards": 0.9969765601086815,
+          "wallMs": 526,
+          "returnedSearchBudgetMs": 264.5,
+          "coverage": {
+            "verifierEntered": true,
+            "survivors": 4,
+            "survivingRawMass": 0.9969765601086815,
+            "survivingShallowMass": 1,
+            "shallowRootCount": 4,
+            "canonicalElo": 2346,
+            "intuitionProbability": 0.6090588235294118,
+            "distinctProposalProbability": 0.003498886792645872,
+            "validComparisonPerDecision": 0.0013678589190543804,
+            "missingComparisonPerDecision": 0,
+            "missingAmongDistinctProposals": 0,
+            "noFrameSkipsVerifier": false,
+            "oldMissingComparisonPerDecision": 0,
+            "pairedTotalVariation": 0.14618843528439107,
+            "distributions": [
+              {
+                "uci": "b6b4",
+                "prior": 0.9982480285004669,
+                "old": 0.8522909110059742,
+                "corrected": 0.9984793462901368,
+                "shallow": true
+              },
+              {
+                "uci": "d6d5",
+                "prior": 0.00011828784132042105,
+                "old": 0.022140673665237667,
+                "corrected": 0.00011058584263861397,
+                "shallow": true
+              },
+              {
+                "uci": "f7f6",
+                "prior": 0.0002518864661893273,
+                "old": 0.0460694548512334,
+                "corrected": 0.00023608440369025853,
+                "shallow": true
+              },
+              {
+                "uci": "b8b7",
+                "prior": 0.0013817971920233668,
+                "old": 0.07949896047801172,
+                "corrected": 0.0011739834635343335,
+                "shallow": true
+              }
+            ]
+          }
+        },
+        {
+          "id": "173832255514-25",
+          "humanElo": 2400,
+          "opponentElo": 2392,
+          "queryElo": 2402,
+          "selectorElo": 2331,
+          "clockPenalty": 48.35897655323682,
+          "pressureReduction": 0,
+          "selectorAdditionalPenalty": 71,
+          "shallowDepth": 10,
+          "finalDepth": 10,
+          "scoredMassBeforeGuards": 0.9545440339966796,
+          "wallMs": 629,
+          "returnedSearchBudgetMs": 376,
+          "coverage": {
+            "verifierEntered": true,
+            "survivors": 10,
+            "survivingRawMass": 0.9545440339966796,
+            "survivingShallowMass": 1,
+            "shallowRootCount": 10,
+            "canonicalElo": 2331,
+            "intuitionProbability": 0.6099411764705882,
+            "distinctProposalProbability": 0.8564013203303095,
+            "validComparisonPerDecision": 0.33404689147707545,
+            "missingComparisonPerDecision": 0,
+            "missingAmongDistinctProposals": 0,
+            "noFrameSkipsVerifier": false,
+            "oldMissingComparisonPerDecision": 0,
+            "pairedTotalVariation": 0.025319752673603733,
+            "distributions": [
+              {
+                "uci": "c5d4",
+                "prior": 0.15154114227271562,
+                "old": 0.1962258355427151,
+                "corrected": 0.1792169359756984,
+                "shallow": true
+              },
+              {
+                "uci": "c5c4",
+                "prior": 0.14879840209474327,
+                "old": 0.1709933724306281,
+                "corrected": 0.163067342585619,
+                "shallow": true
+              },
+              {
+                "uci": "f7h5",
+                "prior": 0.2557531287151775,
+                "old": 0.24976450539105935,
+                "corrected": 0.2609973066351295,
+                "shallow": true
+              },
+              {
+                "uci": "g8h8",
+                "prior": 0.0364151301414084,
+                "old": 0.03537557261389754,
+                "corrected": 0.03499074935229041,
+                "shallow": true
+              },
+              {
+                "uci": "h7h6",
+                "prior": 0.08879533758840617,
+                "old": 0.07931872679142485,
+                "corrected": 0.08128309536736648,
+                "shallow": true
+              },
+              {
+                "uci": "d8c7",
+                "prior": 0.05639139098958993,
+                "old": 0.05015380783358933,
+                "corrected": 0.05090595311188517,
+                "shallow": true
+              },
+              {
+                "uci": "a8c8",
+                "prior": 0.035528178720123135,
+                "old": 0.031636102067585936,
+                "corrected": 0.03207219698501742,
+                "shallow": true
+              },
+              {
+                "uci": "f8e8",
+                "prior": 0.05137893968796082,
+                "old": 0.04415156327202551,
+                "corrected": 0.045845889312136866,
+                "shallow": true
+              },
+              {
+                "uci": "d8b6",
+                "prior": 0.061163025821544786,
+                "old": 0.05154299498491543,
+                "corrected": 0.05382357275118498,
+                "shallow": true
+              },
+              {
+                "uci": "d8f6",
+                "prior": 0.11423532396833043,
+                "old": 0.09083751907221725,
+                "corrected": 0.09779695792367178,
+                "shallow": true
+              }
+            ]
+          }
+        },
+        {
+          "id": "173832267904-20",
+          "humanElo": 2282,
+          "opponentElo": 2286,
+          "queryElo": 2371,
+          "selectorElo": 2339,
+          "clockPenalty": 78.98747165245855,
+          "pressureReduction": 0,
+          "selectorAdditionalPenalty": 32,
+          "shallowDepth": 10,
+          "finalDepth": 13,
+          "scoredMassBeforeGuards": 0.9755564418951369,
+          "wallMs": 615,
+          "returnedSearchBudgetMs": 387,
+          "coverage": {
+            "verifierEntered": true,
+            "survivors": 4,
+            "survivingRawMass": 0.9755564418951369,
+            "survivingShallowMass": 1,
+            "shallowRootCount": 4,
+            "canonicalElo": 2339,
+            "intuitionProbability": 0.6094705882352941,
+            "distinctProposalProbability": 0.5009919978349451,
+            "validComparisonPerDecision": 0.19565211021330592,
+            "missingComparisonPerDecision": 0,
+            "missingAmongDistinctProposals": 0,
+            "noFrameSkipsVerifier": false,
+            "oldMissingComparisonPerDecision": 0,
+            "pairedTotalVariation": 0.04715151644806881,
+            "distributions": [
+              {
+                "uci": "g1e2",
+                "prior": 0.6457905751146131,
+                "old": 0.6836365558094358,
+                "corrected": 0.7032429048245352,
+                "shallow": true
+              },
+              {
+                "uci": "a1c1",
+                "prior": 0.06348633044034879,
+                "old": 0.10564931880544909,
+                "corrected": 0.06505970183182305,
+                "shallow": true
+              },
+              {
+                "uci": "d1c1",
+                "prior": 0.01180994243328097,
+                "old": 0.018054530208895525,
+                "corrected": 0.011492630734513946,
+                "shallow": true
+              },
+              {
+                "uci": "d1c2",
+                "prior": 0.2789131520117571,
+                "old": 0.19265959517609713,
+                "corrected": 0.22020476260912775,
+                "shallow": true
+              }
+            ]
+          }
+        },
+        {
+          "id": "173832667300-34",
+          "humanElo": 2324,
+          "opponentElo": 2218,
+          "queryElo": 2250,
+          "selectorElo": 2191,
+          "clockPenalty": 200.0378837983273,
+          "pressureReduction": 0,
+          "selectorAdditionalPenalty": 59,
+          "shallowDepth": 9,
+          "finalDepth": 11,
+          "scoredMassBeforeGuards": 0.9637084203995729,
+          "wallMs": 626,
+          "returnedSearchBudgetMs": 380,
+          "coverage": {
+            "verifierEntered": true,
+            "survivors": 9,
+            "survivingRawMass": 0.9637084203995729,
+            "survivingShallowMass": 0.9999999999999998,
+            "shallowRootCount": 9,
+            "canonicalElo": 2191,
+            "intuitionProbability": 0.6181764705882353,
+            "distinctProposalProbability": 0.7273353124734722,
+            "validComparisonPerDecision": 0.2777137360744297,
+            "missingComparisonPerDecision": 1.6956370947863272e-16,
+            "missingAmongDistinctProposals": 6.105701211451351e-16,
+            "noFrameSkipsVerifier": false,
+            "oldMissingComparisonPerDecision": 0,
+            "pairedTotalVariation": 0.05499570551120566,
+            "distributions": [
+              {
+                "uci": "d1c3",
+                "prior": 0.1481510246155714,
+                "old": 0.19162124221676058,
+                "corrected": 0.1663117558073105,
+                "shallow": true
+              },
+              {
+                "uci": "f4g5",
+                "prior": 0.09792016696966444,
+                "old": 0.1173091020402436,
+                "corrected": 0.10496868586859116,
+                "shallow": true
+              },
+              {
+                "uci": "c2c3",
+                "prior": 0.01723991610293373,
+                "old": 0.02178746637210153,
+                "corrected": 0.018887703756196538,
+                "shallow": true
+              },
+              {
+                "uci": "f3g5",
+                "prior": 0.4741474736601515,
+                "old": 0.4237859147467287,
+                "corrected": 0.4747067121723335,
+                "shallow": true
+              },
+              {
+                "uci": "d1e3",
+                "prior": 0.0772026622680298,
+                "old": 0.08445629281027558,
+                "corrected": 0.07712164906130563,
+                "shallow": true
+              },
+              {
+                "uci": "g2g4",
+                "prior": 0.046893798289847154,
+                "old": 0.045903425072234424,
+                "corrected": 0.04335510955557894,
+                "shallow": true
+              },
+              {
+                "uci": "d1f2",
+                "prior": 0.02218019108969994,
+                "old": 0.02579598695068508,
+                "corrected": 0.022206351762811122,
+                "shallow": true
+              },
+              {
+                "uci": "d3c4",
+                "prior": 0.07551876563897107,
+                "old": 0.052048544594114184,
+                "corrected": 0.05612345267972705,
+                "shallow": true
+              },
+              {
+                "uci": "e5e6",
+                "prior": 0.0407460013651309,
+                "old": 0.0372920251968322,
+                "corrected": 0.03631857933614544,
+                "shallow": true
+              }
+            ]
+          }
+        },
+        {
+          "id": "173833407926-16",
+          "humanElo": 2271,
+          "opponentElo": 2290,
+          "queryElo": 2435,
+          "selectorElo": 2428,
+          "clockPenalty": 15.494441151778021,
+          "pressureReduction": 0,
+          "selectorAdditionalPenalty": 7,
+          "shallowDepth": 10,
+          "finalDepth": 14,
+          "scoredMassBeforeGuards": 0.9892245801572519,
+          "wallMs": 503,
+          "returnedSearchBudgetMs": 268.5,
+          "coverage": {
+            "verifierEntered": true,
+            "survivors": 4,
+            "survivingRawMass": 0.9892245801572519,
+            "survivingShallowMass": 1,
+            "shallowRootCount": 4,
+            "canonicalElo": 2428,
+            "intuitionProbability": 0.604235294117647,
+            "distinctProposalProbability": 0.04331948617261294,
+            "validComparisonPerDecision": 0.01714432370407882,
+            "missingComparisonPerDecision": 0,
+            "missingAmongDistinctProposals": 0,
+            "noFrameSkipsVerifier": false,
+            "oldMissingComparisonPerDecision": 0,
+            "pairedTotalVariation": 0.002638378128203551,
+            "distributions": [
+              {
+                "uci": "b1d2",
+                "prior": 0.9779511945293773,
+                "old": 0.983333121777215,
+                "corrected": 0.9859714999052159,
+                "shallow": true
+              },
+              {
+                "uci": "g2d5",
+                "prior": 0.0160712315012138,
+                "old": 0.012026028822380436,
+                "corrected": 0.010241348995424655,
+                "shallow": true
+              },
+              {
+                "uci": "g1f3",
+                "prior": 0.005801683063981807,
+                "old": 0.004376264025483587,
+                "corrected": 0.0036708284284983194,
+                "shallow": true
+              },
+              {
+                "uci": "g1h3",
+                "prior": 0.00017589090542712875,
+                "old": 0.0002645853753263216,
+                "corrected": 0.00011632267086120818,
+                "shallow": true
+              }
+            ]
+          }
+        },
+        {
+          "id": "173833843230-47",
+          "humanElo": 2324,
+          "opponentElo": 2327,
+          "queryElo": 2220,
+          "selectorElo": 2197,
+          "clockPenalty": 229.70183863154796,
+          "pressureReduction": 0,
+          "selectorAdditionalPenalty": 23,
+          "shallowDepth": 9,
+          "finalDepth": 11,
+          "scoredMassBeforeGuards": 0.9614540450952155,
+          "wallMs": 566,
+          "returnedSearchBudgetMs": 264,
+          "coverage": {
+            "verifierEntered": true,
+            "survivors": 3,
+            "survivingRawMass": 0.9165883160351116,
+            "survivingShallowMass": 1,
+            "shallowRootCount": 4,
+            "canonicalElo": 2197,
+            "intuitionProbability": 0.6178235294117647,
+            "distinctProposalProbability": 0.13482175557538867,
+            "validComparisonPerDecision": 0.05152570270431178,
+            "missingComparisonPerDecision": 0,
+            "missingAmongDistinctProposals": 0,
+            "noFrameSkipsVerifier": false,
+            "oldMissingComparisonPerDecision": 0,
+            "pairedTotalVariation": 0.144302583750495,
+            "distributions": [
+              {
+                "uci": "e4f6",
+                "prior": 0.9287756799391526,
+                "old": 0.7902077862587584,
+                "corrected": 0.9345103700093051,
+                "shallow": true
+              },
+              {
+                "uci": "e4d6",
+                "prior": 0.03857264091290927,
+                "old": 0.13878976750049624,
+                "corrected": 0.037712264260327866,
+                "shallow": true
+              },
+              {
+                "uci": "c2c6",
+                "prior": 0.032651679147938234,
+                "old": 0.07100244624064192,
+                "corrected": 0.027777365730366987,
+                "shallow": true
+              }
+            ]
+          }
+        },
+        {
+          "id": "173835312110-22",
+          "humanElo": 2428,
+          "opponentElo": 2424,
+          "queryElo": 2428,
+          "selectorElo": 2358,
+          "clockPenalty": 21.71888815755292,
+          "pressureReduction": 0,
+          "selectorAdditionalPenalty": 70,
+          "shallowDepth": null,
+          "finalDepth": 9,
+          "scoredMassBeforeGuards": 0.9527744368374509,
+          "wallMs": 622,
+          "returnedSearchBudgetMs": 386,
+          "coverage": {
+            "verifierEntered": false,
+            "survivors": 11,
+            "survivingRawMass": 0.9527744368374509,
+            "survivingShallowMass": 0,
+            "shallowRootCount": 0,
+            "canonicalElo": 2358,
+            "intuitionProbability": 0.6083529411764705,
+            "distinctProposalProbability": 0.7744986516165812,
+            "validComparisonPerDecision": 0,
+            "missingComparisonPerDecision": 0,
+            "missingAmongDistinctProposals": 1,
+            "noFrameSkipsVerifier": true
+          }
+        },
+        {
+          "id": "173837746654-26",
+          "humanElo": 2544,
+          "opponentElo": 2574,
+          "queryElo": 2422,
+          "selectorElo": 2386,
+          "clockPenalty": 28.40599470459818,
+          "pressureReduction": 0,
+          "selectorAdditionalPenalty": 36,
+          "shallowDepth": 10,
+          "finalDepth": 15,
+          "scoredMassBeforeGuards": 0.9841931460167682,
+          "wallMs": 619,
+          "returnedSearchBudgetMs": 381,
+          "coverage": {
+            "verifierEntered": true,
+            "survivors": 4,
+            "survivingRawMass": 0.9841931460167682,
+            "survivingShallowMass": 1,
+            "shallowRootCount": 4,
+            "canonicalElo": 2386,
+            "intuitionProbability": 0.6067058823529412,
+            "distinctProposalProbability": 0.5671390432269826,
+            "validComparisonPerDecision": 0.22305244958915327,
+            "missingComparisonPerDecision": 0,
+            "missingAmongDistinctProposals": 0,
+            "noFrameSkipsVerifier": false,
+            "oldMissingComparisonPerDecision": 0,
+            "pairedTotalVariation": 0.10379967247108078,
+            "distributions": [
+              {
+                "uci": "e3b6",
+                "prior": 0.2702442314154617,
+                "old": 0.3551390354598184,
+                "corrected": 0.29614092879768367,
+                "shallow": true
+              },
+              {
+                "uci": "e3f2",
+                "prior": 0.10433738292054985,
+                "old": 0.14866659220251255,
+                "corrected": 0.11027227714305869,
+                "shallow": true
+              },
+              {
+                "uci": "d3f5",
+                "prior": 0.5896285349893268,
+                "old": 0.45652658293398435,
+                "corrected": 0.5603262554051879,
+                "shallow": true
+              },
+              {
+                "uci": "e3d4",
+                "prior": 0.035789850674661644,
+                "old": 0.03966778940343916,
+                "corrected": 0.0332605386540697,
+                "shallow": true
+              }
+            ]
+          }
+        },
+        {
+          "id": "173838174538-80",
+          "humanElo": 2546,
+          "opponentElo": 2572,
+          "queryElo": 2274,
+          "selectorElo": 2207,
+          "clockPenalty": 175.8740281422048,
+          "pressureReduction": 0,
+          "selectorAdditionalPenalty": 67,
+          "shallowDepth": 9,
+          "finalDepth": 12,
+          "scoredMassBeforeGuards": 0.9600848325002473,
+          "wallMs": 742,
+          "returnedSearchBudgetMs": 372,
+          "coverage": {
+            "verifierEntered": true,
+            "survivors": 7,
+            "survivingRawMass": 0.9162515332025951,
+            "survivingShallowMass": 0.9999999999999999,
+            "shallowRootCount": 8,
+            "canonicalElo": 2207,
+            "intuitionProbability": 0.617235294117647,
+            "distinctProposalProbability": 0.7572443650932493,
+            "validComparisonPerDecision": 0.28984641668598665,
+            "missingComparisonPerDecision": 8.499083789689288e-17,
+            "missingAmongDistinctProposals": 2.932271472204195e-16,
+            "noFrameSkipsVerifier": false,
+            "oldMissingComparisonPerDecision": 0,
+            "pairedTotalVariation": 0.02709371749922929,
+            "distributions": [
+              {
+                "uci": "d5d4",
+                "prior": 0.11504862421574935,
+                "old": 0.1394886772879979,
+                "corrected": 0.1242579360533109,
+                "shallow": true
+              },
+              {
+                "uci": "g1f1",
+                "prior": 0.03679595400249599,
+                "old": 0.04284518502048208,
+                "corrected": 0.03815026623545934,
+                "shallow": true
+              },
+              {
+                "uci": "d1d4",
+                "prior": 0.03222741947928328,
+                "old": 0.04063774779977157,
+                "corrected": 0.035863711821030805,
+                "shallow": true
+              },
+              {
+                "uci": "d5d8",
+                "prior": 0.3310451870019825,
+                "old": 0.3373052321888151,
+                "corrected": 0.3432296393031788,
+                "shallow": true
+              },
+              {
+                "uci": "f2d4",
+                "prior": 0.32278557082264514,
+                "old": 0.29155749380241963,
+                "corrected": 0.3114124235413289,
+                "shallow": true
+              },
+              {
+                "uci": "h2h3",
+                "prior": 0.09123933549740187,
+                "old": 0.08770284396319333,
+                "corrected": 0.08530882246249233,
+                "shallow": true
+              },
+              {
+                "uci": "d1e1",
+                "prior": 0.07085790898044188,
+                "old": 0.06046281993716486,
+                "corrected": 0.061777200583198924,
+                "shallow": true
+              }
+            ]
+          }
+        },
+        {
+          "id": "173840362706-34",
+          "humanElo": 2405,
+          "opponentElo": 2036,
+          "queryElo": 2392,
+          "selectorElo": 2371,
+          "clockPenalty": 57.69762719537293,
+          "pressureReduction": 0,
+          "selectorAdditionalPenalty": 21,
+          "shallowDepth": 10,
+          "finalDepth": 13,
+          "scoredMassBeforeGuards": 0.9952343369707963,
+          "wallMs": 622,
+          "returnedSearchBudgetMs": 377,
+          "coverage": {
+            "verifierEntered": true,
+            "survivors": 3,
+            "survivingRawMass": 0.9900396949098362,
+            "survivingShallowMass": 1,
+            "shallowRootCount": 4,
+            "canonicalElo": 2371,
+            "intuitionProbability": 0.6075882352941177,
+            "distinctProposalProbability": 0.33827197698494404,
+            "validComparisonPerDecision": 0.13274190343920952,
+            "missingComparisonPerDecision": 0,
+            "missingAmongDistinctProposals": 0,
+            "noFrameSkipsVerifier": false,
+            "oldMissingComparisonPerDecision": 0,
+            "pairedTotalVariation": 0.19360384423340526,
+            "distributions": [
+              {
+                "uci": "a8b7",
+                "prior": 0.206800798589258,
+                "old": 0.4132090734486979,
+                "corrected": 0.23875842429629232,
+                "shallow": true
+              },
+              {
+                "uci": "a8a7",
+                "prior": 0.00648489567710517,
+                "old": 0.025110761026401494,
+                "corrected": 0.005957565945336543,
+                "shallow": true
+              },
+              {
+                "uci": "a8h8",
+                "prior": 0.7867143057336368,
+                "old": 0.5616801655250312,
+                "corrected": 0.7552840097583712,
+                "shallow": true
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

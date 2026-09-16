@@ -8,7 +8,12 @@ import {
 	BOARD_EFFECT_STYLES,
 	BOARD_EFFECT_KINDS as K,
 } from "@core/constants/board-effects";
-import { MOVE_QUALITY, MOVE_QUALITY_ART, MOVE_QUALITY_ICONS } from "@core/constants/move-quality";
+import {
+	MOVE_QUALITY,
+	MOVE_QUALITY_ART,
+	MOVE_QUALITY_ICONS,
+	MOVE_QUALITY_ORDER,
+} from "@core/constants/move-quality";
 import { bindCode, emit } from "@pagescript";
 import { alpha, palette } from "../../src/design/tokens";
 import { TOKENS } from "../../src/design/tokens.generated";
@@ -618,6 +623,52 @@ describe("effects-overlay", () => {
 		const before = animations.length;
 		sendToPage(win, command("effects", "chip-again", payload));
 		expect(animations).toHaveLength(before);
+	});
+
+	it("draws the forced-mate chip, the eleventh category, from its wire index like any other", () => {
+		expect(MOVE_QUALITY_ICONS).toHaveLength(MOVE_QUALITY_ORDER.length);
+		const index = MOVE_QUALITY_ORDER.indexOf("mate");
+		expect(index).toBe(10);
+		const { win } = boot("<cg-container></cg-container>");
+		captureAnimations(win);
+		sendToPage(win, command("effects", "mate", batch([], { b: { q: "f7", j: index } })));
+		const mate = MOVE_QUALITY_ICONS[index];
+		const fills = [...win.document.querySelectorAll("path")].map((p) => p.getAttribute("fill"));
+		expect(fills).toContain(mate!.background);
+		const glyphs = [...win.document.querySelectorAll("path")].filter(
+			(p) => p.getAttribute("d") === mate?.glyph[0]
+		);
+		expect(glyphs).toHaveLength(2);
+		expect(win.document.querySelectorAll("path")).toHaveLength(2 + 2 * (mate?.glyph.length ?? 0));
+	});
+
+	it("draws just the chip from a batch with no rays at all", () => {
+		// Owner, 2026-09-15: board effects off, move ratings on — the batch carries an empty effect
+		// list and the layer is the chip alone.
+		const { win, posts } = boot("<cg-container></cg-container>");
+		const animations = captureAnimations(win);
+		sendToPage(win, command("effects", "chip-only", batch([], { b: { q: "e4", j: 6 } })));
+		expect(reply(posts, "chip-only")?.p).toBe(true);
+		const icon = MOVE_QUALITY_ICONS[6];
+		const paths = [...win.document.querySelectorAll("path")];
+		// The rim, the disc and each glyph twice — and nothing painted through an arrow gradient.
+		expect(paths).toHaveLength(2 + 2 * (icon?.glyph.length ?? 0));
+		expect(paths.some((p) => (p.getAttribute("fill") ?? "").startsWith("url("))).toBe(false);
+		expect(win.document.querySelectorAll("line")).toHaveLength(0);
+		// One animation: the chip's own life, no effect group behind it.
+		expect(animations).toHaveLength(1);
+		expect(animations[0]?.options.duration).toBe(CHIP_LIFE);
+		// The other side's chip-only batch that follows adds its own chip on its own square.
+		sendToPage(
+			win,
+			command("effects", "chip-only-2", { ...batch([], { b: { q: "d5", j: 2 } }), u: false })
+		);
+		expect(reply(posts, "chip-only-2")?.p).toBe(true);
+		expect(
+			[...win.document.querySelectorAll("g")].filter((g) =>
+				(g.getAttribute("transform") ?? "").includes("scale(")
+			)
+		).toHaveLength(2);
 	});
 
 	it("adds a later verdict without replaying the rays it was sent beside", () => {

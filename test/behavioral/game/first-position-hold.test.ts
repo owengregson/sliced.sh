@@ -23,7 +23,7 @@ describe("game session: the first position waits for the time control", () => {
 	it("decides nothing until the site answers, then once, on the real budget", async () => {
 		h = await createGameHarness({
 			timeControl: null,
-			settings: { automation: { autoMove: false }, timing: { profile: "natural" } },
+			settings: { automation: { autoMove: false } },
 		});
 		await h.arrive(null, { w: BULLET.baseMs, b: BULLET.baseMs });
 		await h.advance(TIMINGS.timeControlGraceMs / 2);
@@ -40,7 +40,7 @@ describe("game session: the first position waits for the time control", () => {
 	it("gives up waiting after the grace and decides untimed on a page that never answers", async () => {
 		h = await createGameHarness({
 			timeControl: null,
-			settings: { automation: { autoMove: false }, timing: { profile: "natural" } },
+			settings: { automation: { autoMove: false } },
 		});
 		await h.arrive(null, { w: BULLET.baseMs, b: BULLET.baseMs });
 		await h.advance(TIMINGS.timeControlGraceMs + 1);
@@ -53,7 +53,7 @@ describe("game session: the first position waits for the time control", () => {
 		const commands: GamePortCommand["kind"][] = [];
 		h = await createGameHarness({
 			timeControl: null,
-			settings: { automation: { autoMove: false }, timing: { profile: "natural" } },
+			settings: { automation: { autoMove: false } },
 			onCommand: (cmd) => {
 				if (cmd.kind === "highlight" || cmd.kind === "clearHighlight") commands.push(cmd.kind);
 			},

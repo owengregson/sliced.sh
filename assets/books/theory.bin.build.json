@@ -1,0 +1,27 @@
+{
+  "book": "theory.bin",
+  "kind": "theory",
+  "script": "scripts/build-theory-book.py",
+  "source": "https://github.com/lichess-org/chess-openings",
+  "inputs": [
+    "a.tsv",
+    "b.tsv",
+    "c.tsv",
+    "d.tsv",
+    "e.tsv"
+  ],
+  "input_sha256": {
+    "a.tsv": "41722fa3d44f294357326fe2ca1b956d9e56490b30efcfa68db61114c9df7e10",
+    "b.tsv": "310f0997d5a26ac6c9abfabac028e47e78f24356a6ba322cfffbf8f5a3f88d25",
+    "c.tsv": "b2e64f32e42e6418b327d03a55af65f3a18e762f7cbc0efffc7e9d1ed3aa7343",
+    "d.tsv": "58cad40b886bd499717eabcce281d4bfcf00eeadbdc00552f42042cf4aac50d2",
+    "e.tsv": "f1f8494f488f660e284f23527d5acfbeccdbbc3acc76e74f05d125f39d2f8a74"
+  },
+  "lines": 3810,
+  "skipped_lines": 0,
+  "max_plies": 36,
+  "positions": 5478,
+  "entries": 8058,
+  "bytes": 128928,
+  "sha256": "dea274e4d6abba7fc4d601c27b88aee37d7cd80085405b361bc3abab1c751d4d"
+}

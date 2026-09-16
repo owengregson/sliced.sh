@@ -12,6 +12,7 @@ import { PANEL_COMMAND_ERRORS } from "@core/constants/cdp";
 import { MSG } from "@core/constants/messages";
 import type { MessageRouter } from "@core/messaging/router";
 import { mayAct, type PanelHandlerDeps } from "@service/handlers/panel";
+import { queueSettingsWrite } from "@service/handlers/settings/write-queue";
 
 export function registerSetAutoMoveHandler(
 	router: MessageRouter,
@@ -21,14 +22,21 @@ export function registerSetAutoMoveHandler(
 		const executor = deps.sources.executor(msg.tabId);
 		if (!executor) throw new Error(PANEL_COMMAND_ERRORS.noExecutor);
 		try {
+			const session = deps.sources.session(msg.tabId);
+			if (session?.setAutoMove) {
+				await session.setAutoMove(msg.armed === true);
+				return;
+			}
 			if (msg.armed !== true) {
 				executor.disarm();
+				await queueSettingsWrite({ automation: { autoMove: false } });
 				return;
 			}
 			// §4.4: disarming is always allowed; arming is not, while the assistant is off (or while
 			// the stored settings are still unknown).
 			if (!mayAct(deps)) throw new Error(PANEL_COMMAND_ERRORS.assistantOff);
 			await executor.arm();
+			if (executor.isArmed()) await queueSettingsWrite({ automation: { autoMove: true } });
 			// The *session* acts on a recommendation this arm unblocked (§3.2 step 5). This handler used
 			// to do it itself, which meant a third hand-written copy of the double-move gate and —
 			// because only the session can build one — an `executor.schedule` with no `MoveContext` at

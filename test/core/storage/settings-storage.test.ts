@@ -1,6 +1,8 @@
 // test/core/storage/settings-storage.test.ts
 import { beforeEach, describe, expect, it } from "bun:test";
+import { chromeLocalSet } from "@core/chrome/storage";
 import { FORCED_SETTING_VALUES, LIMITS, LOCAL_KEYS } from "@core/constants";
+import { SETTINGS_RANGES } from "@core/constants/limits";
 import {
 	getSettings,
 	normalizeSettings,
@@ -8,7 +10,7 @@ import {
 	setSettings,
 } from "@core/storage/settings-storage";
 import { createSimulator } from "@test/sim";
-import { DEFAULT_SETTINGS } from "@typedefs/settings";
+import { DEFAULT_SETTINGS, type Settings } from "@typedefs/settings";
 
 beforeEach(() => {
 	(globalThis as Record<string, unknown>).chrome = createSimulator().chrome;
@@ -23,6 +25,47 @@ describe("settings storage", () => {
 		await setSettings({ automation: { moveRatingSounds: true }, display: { uiSounds: false } });
 		expect((await getSettings()).automation.moveRatingSounds).toBe(true);
 		expect((await getSettings()).display.uiSounds).toBe(false);
+	});
+	it("ships forced-mate sounds on and persists them independently of rating sounds", async () => {
+		expect(DEFAULT_SETTINGS.automation.forcedMateSounds).toBe(true);
+		expect(normalizeSettings({ automation: {} }).automation.forcedMateSounds).toBe(true);
+		expect(
+			normalizeSettings({ automation: { forcedMateSounds: "false" } }).automation.forcedMateSounds
+		).toBe(true);
+		expect(
+			normalizeSettings({ automation: { forcedMateSounds: false } }).automation.forcedMateSounds
+		).toBe(false);
+		await setSettings({ automation: { forcedMateSounds: false } });
+		expect((await getSettings()).automation.forcedMateSounds).toBe(false);
+		expect((await getSettings()).automation.moveRatingSounds).toBe(false);
+		await setSettings({ automation: { moveRatingSounds: true } });
+		expect((await getSettings()).automation.forcedMateSounds).toBe(false);
+		expect((await getSettings()).automation.moveRatingSounds).toBe(true);
+	});
+	it("shows ratings for both sides unless one is chosen, and loads settings from before the picker as both", async () => {
+		expect(DEFAULT_SETTINGS.automation.moveQualityChipsFor).toBe("both");
+		expect(normalizeSettings({ automation: {} }).automation.moveQualityChipsFor).toBe("both");
+		for (const side of ["mine", "theirs", "both"] as const)
+			expect(
+				normalizeSettings({ automation: { moveQualityChipsFor: side } }).automation.moveQualityChipsFor
+			).toBe(side);
+		expect(
+			normalizeSettings({ automation: { moveQualityChipsFor: "you" } }).automation.moveQualityChipsFor
+		).toBe("both");
+		// A settings object stored before the key existed.
+		const { moveQualityChipsFor: _, ...legacyAutomation } = {
+			...DEFAULT_SETTINGS.automation,
+			moveQualityChips: false,
+		};
+		await chromeLocalSet(LOCAL_KEYS.settings, {
+			...DEFAULT_SETTINGS,
+			automation: legacyAutomation,
+		} as unknown as Settings);
+		expect((await getSettings()).automation.moveQualityChipsFor).toBe("both");
+		expect((await getSettings()).automation.moveQualityChips).toBe(false);
+		await setSettings({ automation: { moveQualityChipsFor: "theirs" } });
+		expect((await getSettings()).automation.moveQualityChipsFor).toBe("theirs");
+		expect((await getSettings()).automation.moveQualityChips).toBe(false);
 	});
 	it("returns defaults when nothing stored", async () => {
 		expect(await getSettings()).toEqual(DEFAULT_SETTINGS);
@@ -131,26 +174,52 @@ describe("normalizeSettings", () => {
 		});
 
 		it("forces `timing.respectBudget` on and `keybinds.global` off whatever was stored", () => {
+			// Updated 2026-09-15: `timing.speedScale` became `timing.baseSpeed`, so the stored leaf
+			// this test carried alongside the forced one is the new name. The point is unchanged —
+			// forcing one leaf must not disturb its neighbours.
 			const s = normalizeSettings({
-				timing: { respectBudget: false, speedScale: 2 },
+				timing: { respectBudget: false, baseSpeed: 2 },
 				keybinds: { global: true },
 			});
 			expect(s.timing.respectBudget).toBe(true);
-			expect(s.timing.speedScale).toBe(2);
+			expect(s.timing.baseSpeed).toBe(2);
 			expect(s.keybinds.global).toBe(false);
 		});
 
-		it("reads `strength.blunderScale` again (the accuracy offset), clamped to its range", () => {
-			expect(normalizeSettings({ strength: { blunderScale: 1.5 } }).strength.blunderScale).toBe(1.5);
-			expect(normalizeSettings({ strength: { blunderScale: 9 } }).strength.blunderScale).toBe(
-				LIMITS.blunderScaleMax
-			);
-			expect(normalizeSettings({ strength: { blunderScale: -1 } }).strength.blunderScale).toBe(
-				LIMITS.blunderScaleMin
-			);
-			expect(normalizeSettings({ strength: { blunderScale: "x" } }).strength.blunderScale).toBe(
-				DEFAULT_SETTINGS.strength.blunderScale
-			);
+		// ── base speed, 2026-09-15: the knob was backwards, so the leaf was inverted and renamed ──
+		it("migrates a stored `timing.speedScale` into `timing.baseSpeed` as its reciprocal", () => {
+			// The old leaf multiplied a *duration* (2 = twice as long), the new one is a speed
+			// (higher = faster), so the same pace is `1 / speedScale` — rounded to 2 decimals.
+			expect(normalizeSettings({ timing: { speedScale: 2 } }).timing.baseSpeed).toBe(0.5);
+			expect(normalizeSettings({ timing: { speedScale: 0.5 } }).timing.baseSpeed).toBe(2);
+			expect(normalizeSettings({ timing: { speedScale: 1 } }).timing.baseSpeed).toBe(1);
+			// The instructed default of the previous build, 1.3× duration.
+			expect(normalizeSettings({ timing: { speedScale: 1.3 } }).timing.baseSpeed).toBe(0.77);
+			// The old slider's own endpoints land inside the new range, which is its reciprocal span.
+			const { min, max } = SETTINGS_RANGES.baseSpeed;
+			expect(normalizeSettings({ timing: { speedScale: 0.25 } }).timing.baseSpeed).toBe(max);
+			expect(normalizeSettings({ timing: { speedScale: 3 } }).timing.baseSpeed).toBe(min);
+			// Out of range either way is clamped, not dropped: pace is preserved as far as it can be.
+			expect(normalizeSettings({ timing: { speedScale: 100 } }).timing.baseSpeed).toBe(min);
+			expect(normalizeSettings({ timing: { speedScale: 0.001 } }).timing.baseSpeed).toBe(max);
+		});
+
+		it("a stored `timing.baseSpeed` wins over a stale `speedScale`, and neither key survives", () => {
+			const s = normalizeSettings({ timing: { baseSpeed: 1.5, speedScale: 2 } });
+			expect(s.timing.baseSpeed).toBe(1.5);
+			expect(keys(s.timing)).not.toContain("speedScale");
+			expect(keys(DEFAULT_SETTINGS.timing)).not.toContain("speedScale");
+			// Nothing usable to migrate from reads the default.
+			for (const timing of [{}, { speedScale: 0 }, { speedScale: -2 }, { speedScale: "fast" }])
+				expect(normalizeSettings({ timing }).timing.baseSpeed).toBe(DEFAULT_SETTINGS.timing.baseSpeed);
+		});
+
+		it("retires the old accuracy offset without changing target rating", () => {
+			for (const old of [0, 0.5, 1, 1.5, 2, 9, -1, "x"]) {
+				const normalized = normalizeSettings({ strength: { targetElo: 1800, blunderScale: old } });
+				expect(normalized.strength.blunderScale).toBe(1);
+				expect(normalized.strength.targetElo).toBe(1800);
+			}
 		});
 
 		it("reads the new booleans with their shipped defaults", () => {
@@ -170,7 +239,7 @@ describe("normalizeSettings", () => {
 		const s = normalizeSettings({
 			enabled: "yes",
 			strength: { persona: "reckless", selectionMode: 3 },
-			timing: { profile: "warp", speedScale: "fast" },
+			timing: { profile: "warp", baseSpeed: "fast" },
 			display: { theme: "neon", ttsVoice: 42 },
 			engine: { nnue: "huge" },
 			advanced: { logLevel: "verbose" },
@@ -178,8 +247,11 @@ describe("normalizeSettings", () => {
 		expect(s.enabled).toBe(DEFAULT_SETTINGS.enabled);
 		expect(s.strength.persona).toBe("balanced");
 		expect(s.strength.selectionMode).toBe("hybrid");
-		expect(s.timing.profile).toBe("natural");
-		expect(s.timing.speedScale).toBe(1);
+		// 2026-09-15: `timing.profile` (the timing presets) was removed. The normaliser rebuilds
+		// `timing` leaf by leaf, so a stored profile — here the junk value an older build would
+		// have replaced with "natural" — is never read and never written back.
+		expect("profile" in s.timing).toBe(false);
+		expect(s.timing.baseSpeed).toBe(1);
 		expect(s.display.theme).toBe("dark");
 		expect(s.display.ttsVoice).toBeNull();
 		expect(s.engine.nnue).toBe("auto");
@@ -242,8 +314,8 @@ describe("normalizeSettings", () => {
 		});
 		const s = await getSettings();
 		expect(s.strength.persona).toBe("balanced");
-		// The accuracy offset is a real setting again (2026-09-13): the patch lands.
-		expect(s.strength.blunderScale).toBe(2);
+		// Retired accuracy offsets cannot silently alter target strength.
+		expect(s.strength.blunderScale).toBe(1);
 		expect(s.timing.respectBudget).toBe(true);
 		expect(s.engine.nnue).toBe("auto");
 	});

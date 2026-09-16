@@ -1,3 +1,5 @@
+import type { MoveQuality } from "@core/constants/move-quality";
+
 /** Directory of every UI sound, relative to the extension root. */
 export const SOUNDS_DIR = "assets/sounds/";
 
@@ -10,6 +12,31 @@ export const MOVE_RATING_SOUNDS = {
 } as const;
 
 export type MoveRatingSoundQuality = keyof typeof MOVE_RATING_SOUNDS;
+
+/** The rating clips play at the media element's own volume and speed. */
+export const MOVE_RATING_PLAYBACK = {
+	volume: 1,
+	playbackRate: 1,
+} as const;
+
+/** The chip whose sound is `FORCED_MATE_SOUNDS.file` rather than a `MOVE_RATING_SOUNDS` clip. */
+export type ForcedMateSoundQuality = Extract<MoveQuality, "mate">;
+
+/**
+ * The forced-mate sound (owner, 2026-09-14; one clip since 2026-09-15: "just use forced.mp3
+ * without a number, don't swap between the sound files"). Every move of a forced mating sequence,
+ * the checkmate included, plays `file` at the pitch the service worker put on its chip
+ * (`MOVE_QUALITY.mateTopSemitones` and friends), applied the way the panel pitches its slider
+ * ticks: `playbackRate` 2^(semitones / `semitonesPerOctave`) with `preservesPitch` off, so a
+ * higher step is also a shorter one. That resampling replaces the 2026-09-14 1.5× pitch-preserving
+ * speed-up — one media element cannot both time-stretch and resample. At `volumeScale` of
+ * `MOVE_RATING_PLAYBACK.volume`.
+ */
+export const FORCED_MATE_SOUNDS = {
+	file: "forced.mp3",
+	volumeScale: 0.8,
+	semitonesPerOctave: 12,
+} as const;
 
 /** File names under `SOUNDS_DIR`. */
 export const SOUNDS = {

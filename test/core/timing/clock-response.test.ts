@@ -1,12 +1,11 @@
 import { describe, expect, it } from "bun:test";
-import { DEFAULT_SETTINGS } from "@core/constants/defaults";
 import { createRng } from "@core/rng";
 import { computeFeatures } from "@core/timing/features";
 import { createMoveBudget } from "@core/timing/move-budget";
 import { samplePersona } from "@core/timing/persona-latents";
 import { TimingModel } from "@core/timing/timing-model";
 import { V1ParametricHead } from "@core/timing/v1-head";
-import { ctx } from "./helpers";
+import { ctx, MODEL_TIMING } from "./helpers";
 
 const ENDING = "8/4k3/5pp1/7p/7P/5PP1/4K3/8 w - - 0 60";
 const RATINGS = [400, 800, 1200, 1600, 2000, 2400, 2800, 3200, 3800];
@@ -50,11 +49,7 @@ describe("rating and clock allocation", () => {
 				[1800, 0],
 			] as const) {
 				const gameId = `long-${targetElo}-${baseSec}-${incSec}`;
-				const model = new TimingModel(
-					new V1ParametricHead(),
-					DEFAULT_SETTINGS.timing,
-					createRng(gameId)
-				);
+				const model = new TimingModel(new V1ParametricHead(), MODEL_TIMING, createRng(gameId));
 				model.startGame({ gameId, targetElo, profile: "balanced", baseSec, incSec, site: "chesscom" });
 				let clock = baseSec * 1000;
 				for (let move = 0; move < 110; move++) {

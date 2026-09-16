@@ -24,9 +24,11 @@
  *   - applies `highlight` / `arrow` / `clearHighlight` only while the
  *     `settings` command has turned `highlightMoves` on (off until it arrives);
  *   - applies `effects` / `clearEffects` — the board-effect layer for the move
- *     that just landed — only while the same command has turned `boardEffects`
- *     on (also off until it arrives); it is a separate page element from the
- *     recommendation mark and neither clear touches the other;
+ *     that just landed — the rays only while the same command has turned
+ *     `boardEffects` on and the rating chip only while it has turned
+ *     `moveRatings` on, each independently (both off until it arrives); it is a
+ *     separate page element from the recommendation mark and neither clear
+ *     touches the other;
  *   - installs the in-page keybinds (`keybinds` command updates them; the
  *     initial set comes from the `CONTENT_HELLO` request) and the cursor
  *     tracker (trusted samples on the port; unthrottled while the hand moves);
@@ -493,7 +495,9 @@ function bootContent(
 			case "settings":
 				highlights.setEnabled(cmd.highlightMoves);
 				boardEffects.setEnabled(cmd.boardEffects === true);
+				boardEffects.setRatingsEnabled(cmd.moveRatings === true);
 				boardEffects.setSoundsEnabled(cmd.moveRatingSounds === true);
+				boardEffects.setForcedMateSoundsEnabled(cmd.forcedMateSounds === true);
 				return;
 			case "startNewGame": {
 				const answer = (reachable: boolean) => {

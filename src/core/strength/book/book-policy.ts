@@ -1,8 +1,10 @@
 /**
  * Opening-book policy (Task 15, §7.3, Appendix E §2.2–§2.3): while `ply ≤ 30`
  * and `Settings.strength.useOpeningBook`, play from the bundled Polyglot book
- * for the rating band (`gm2600` from E ≥ 1800, `club` below), else `null` so
- * §7.2 engine selection takes over. Moves are sampled `p ∝ weight^γ(E)`, so a
+ * for the rating band (`gm2600` from E ≥ 1800, `club` below) — or, when that
+ * book does not know the position, from the other game book and then the named
+ * theory (2026-09-15), so a line one book is thin on still has book moves —
+ * else `null` so §7.2 engine selection takes over. Moves are sampled `p ∝ weight^γ(E)`, so a
  * weaker target spreads its probability over the sidelines a strong one would
  * not touch. From E ≥ 1800 a book move that loses ≥ 0.15 win-fraction against
  * the engine's best line is refused (the "known trap" check); the engine lines
@@ -19,7 +21,7 @@
 
 import { legalMoves, parseUci, uciToSan } from "@core/chess/san";
 import { runtimeGetURL } from "@core/chrome/runtime";
-import { BOOK, BOOKS, type BookName } from "@core/constants/books";
+import { BOOK, BOOKS, type BookName, THEORY_BOOKS } from "@core/constants/books";
 import { log } from "@core/logger";
 import { createRng, type Rng } from "@core/rng";
 import { loadRepertoireKeys } from "@core/storage/repertoire-storage";
@@ -89,6 +91,12 @@ export interface BookPolicy {
 	bookMove(ctx: BookContext): Promise<ChosenMove | null>;
 	/** H14.1: read (or create) the repertoire keys ahead of the first move; idempotent. */
 	prepare?(): Promise<void>;
+	/**
+	 * Every move the master book or the named theory plays from `fen` (`THEORY_BOOKS`, weight > 0) —
+	 * opening theory, for the move review's Book rating (2026-09-14). Never the club book: amateur
+	 * traps are brilliants on chess.com, not book. Position-based, so a transposition counts.
+	 */
+	bookMoves?(fen: string): Promise<string[]>;
 	dispose(): void;
 }
 
@@ -103,9 +111,25 @@ async function fetchBundledBook(name: string): Promise<Uint8Array | null> {
 	}
 }
 
+/**
+ * Opening theory at a position for the move review's Book rating: every move the given books hold
+ * (weight > 0) — the `THEORY_BOOKS`.
+ */
+export function theoryMoves(...books: ReadonlyArray<readonly BookMove[]>): string[] {
+	const moves = new Set<string>();
+	for (const entries of books)
+		for (const entry of entries) if (entry.weight > 0) moves.add(entry.uci);
+	return [...moves];
+}
+
 /** `gm2600` from `BOOK.gmBookElo`, `club` below. */
 export function bookNameFor(E: number): BookName {
 	return E >= BOOK.gmBookElo ? "gm2600" : "club";
+}
+
+/** The books a target plays from, in order: its band's book, the other game book, the named theory. */
+export function bookOrderFor(E: number): BookName[] {
+	return E >= BOOK.gmBookElo ? ["gm2600", "club", "theory"] : ["club", "gm2600", "theory"];
 }
 
 export interface LineFacts {
@@ -247,10 +271,20 @@ export function createBookPolicy(deps: BookPolicyDeps = {}): BookPolicy {
 			log.debug("book: left book early (weak target)", E);
 			return null;
 		}
-		const name = bookNameFor(E);
-		const [book, keys] = await Promise.all([bookFor(name), repertoireKeys()]);
-		if (!book || disposed) return null;
-		const entries = book.lookup(ctx.fen);
+		const [first, ...fallbacks] = bookOrderFor(E);
+		if (!first) return null;
+		const [primary, keys] = await Promise.all([bookFor(first), repertoireKeys()]);
+		if (disposed) return null;
+		let name: BookName = first;
+		let entries = primary?.lookup(ctx.fen) ?? [];
+		// A position the band's book does not know may still be theory in another book.
+		for (const next of fallbacks) {
+			if (entries.length > 0) break;
+			const book = await bookFor(next);
+			if (disposed) return null;
+			name = next;
+			entries = book?.lookup(ctx.fen) ?? [];
+		}
 		if (entries.length === 0) return null;
 		const rng = samplerRng(ctx, keys);
 		const pick = sampleByFrequency<BookMove>(
@@ -281,6 +315,11 @@ export function createBookPolicy(deps: BookPolicyDeps = {}): BookPolicy {
 		async prepare() {
 			if (disposed) return;
 			await repertoireKeys();
+		},
+		async bookMoves(fen) {
+			if (disposed) return [];
+			const books = await Promise.all(THEORY_BOOKS.map((name) => bookFor(name)));
+			return theoryMoves(...books.map((book) => book?.lookup(fen) ?? []));
 		},
 		dispose() {
 			disposed = true;

@@ -137,6 +137,8 @@ export const CLICK = {
 } as const;
 
 export const PROMOTION_LOOK_DELAY_MS: MsRange = [150, 400];
+/** Four picker choices can place the requested piece three square widths from the pawn. */
+export const PROMOTION_PICKER_TRAVEL_SQUARES = 3;
 
 /**
  * §9.3a preview-selection model: `p_preview = clamp(base · f · g · scale, 0, cap)` —
@@ -165,12 +167,46 @@ export const PREVIEW = {
 	dragDisplacementPx: [8, 40] as MsRange,
 	/** Drag previews release within this distance of the press, inside the origin square. */
 	dragReturnSigmaPx: 3,
+	/** Design prior: reconsider at the excursion before returning, within the preview budget. */
+	dragReconsiderMs: [180, 480] as MsRange,
+	/** Keep every held preview point inside its origin, including during cancellation. */
+	dragBoundaryPadPx: 1,
 	/** Target rect for the outbound leg of a drag preview. */
 	dragTargetRectPx: 6,
 	/** Deselect squares within this king-distance of the piece are preferred. */
 	deselectMaxDistance: 3,
 	/** Time reserved for the preview before the scan phase spends the budget. */
 	reserveMs: 2200,
+} as const;
+
+/**
+ * Mouse repertoire design priors, NOT fitted Elo/cursor measurements. Chess expertise papers
+ * motivate salient/relational attention, but do not measure mouse gestures or their frequency.
+ * Intents in order: still, prepare, inspect, compare, verify, relate.
+ */
+export const REPERTOIRE = {
+	eloRange: [800, 2800] as const,
+	defaultElo: 1600,
+	minWindowMs: 1000,
+	lowClockMs: 8000,
+	bouts: [2, 3] as const,
+	repeatScale: 0.45,
+	baseWeights: [0.32, 0.1, 0.28, 0.14, 0.12, 0.04] as const,
+	expertWeights: [0.38, 0.18, 0.16, 0.08, 0.1, 0.1] as const,
+	persona: {
+		balanced: [1, 1, 1, 1, 1, 1],
+		cautious: [1, 0.8, 1, 1.25, 1.6, 1],
+		aggressive: [0.9, 1.3, 1.2, 1, 0.8, 1.2],
+		blitz: [1.4, 1.6, 0.8, 0.6, 0.8, 0.8],
+	} satisfies Record<PersonaId, readonly number[]>,
+	openingPrepareScale: 2,
+	sharpVerifyScale: 2.5,
+	sharpStillScale: 0.7,
+	endgameRelationScale: 1.5,
+	orientationFrac: [0.08, 0.16] as MsRange,
+	dwellMs: [240, 780] as MsRange,
+	verifyDwellMs: [420, 1050] as MsRange,
+	compareMinCandidates: 2,
 } as const;
 
 /**
