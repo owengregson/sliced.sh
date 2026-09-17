@@ -342,6 +342,13 @@ export const ROWS: readonly RowSpec[] = [
 		items: items(SETTINGS_COPY.options.highlightStyle),
 	},
 	toggle("automation.boardEffects"),
+	toggle("automation.freeTitle"),
+	{
+		kind: "segment",
+		path: "automation.freeTitleBadge",
+		...rowCopy("automation.freeTitleBadge"),
+		items: items(SETTINGS_COPY.options.freeTitleBadge),
+	},
 	toggle("automation.moveQualityChips"),
 	{
 		kind: "segment",

@@ -691,13 +691,19 @@ export const SETTINGS_COPY = {
 			label: "Board effects",
 			help: "After every move, shows what it did — threats, checks, forks, captures.",
 		},
+		"automation.freeTitle": {
+			label: "Free title",
+			help: "Shows a title on your own player cards and profile, only in your browser.",
+		},
+		"automation.freeTitleBadge": { label: "Title" },
 		"automation.moveQualityChips": {
 			label: "Move ratings",
-			help: "Rates each move on its square — best, mistake, blunder. Off saves the extra searches.",
+			help:
+				"Rates moves on the board and keeps both players’ ratings in the move log. Off saves the extra searches.",
 		},
 		"automation.moveQualityChipsFor": {
-			label: "Show ratings for",
-			help: "Whose moves get a rating and its sound. Board effects still show for both sides.",
+			label: "Board ratings for",
+			help: "Whose moves get a board badge and sound. The move log keeps ratings for both sides.",
 		},
 		"automation.moveRatingSounds": {
 			label: "Move rating sound effects",
@@ -760,6 +766,7 @@ export const SETTINGS_COPY = {
 		inputMode: { auto: "Auto", drag: "Drag", click: "Click" },
 		highlightStyle: { squares: "Squares", arrows: "Arrows", both: "Both" },
 		moveQualityChipsFor: { mine: "You", theirs: "Opponent", both: "Both" },
+		freeTitleBadge: { GM: "GM", IM: "IM", NM: "NM", FM: "FM", CM: "CM" },
 		theme: { dark: "Dark", light: "Light", system: "System" },
 		reducedMotion: { system: "System", on: "Reduced", off: "Full" },
 		logLevel: { silent: "Silent", error: "Error", warn: "Warn", info: "Info", debug: "Debug" },

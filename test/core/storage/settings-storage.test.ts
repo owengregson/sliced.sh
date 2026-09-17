@@ -17,6 +17,16 @@ beforeEach(() => {
 });
 
 describe("settings storage", () => {
+	it("keeps free title opt-in, validates its choices and persists the selected abbreviation", async () => {
+		expect(normalizeSettings({}).automation.freeTitle).toBe(false);
+		expect(
+			normalizeSettings({ automation: { freeTitle: "true", freeTitleBadge: "ADMIN" } }).automation
+		).toMatchObject({ freeTitle: false, freeTitleBadge: "GM" });
+		for (const freeTitleBadge of ["GM", "IM", "NM", "FM", "CM"] as const) {
+			await setSettings({ automation: { freeTitle: true, freeTitleBadge } });
+			expect((await getSettings()).automation).toMatchObject({ freeTitle: true, freeTitleBadge });
+		}
+	});
 	it("keeps rating sounds opt-in and persists the preference independently of control sounds", async () => {
 		expect(normalizeSettings({ automation: {} }).automation.moveRatingSounds).toBe(false);
 		expect(

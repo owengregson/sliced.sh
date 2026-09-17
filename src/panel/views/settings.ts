@@ -537,6 +537,8 @@ export function createSettingsView(overrides: Partial<SettingsViewDeps> = {}): V
 						return !automation.autoQueue;
 					case "automation.highlightStyle":
 						return !automation.highlightMoves;
+					case "automation.freeTitleBadge":
+						return !automation.freeTitle;
 					// Move ratings and board effects are independent (owner, 2026-09-15): nothing in the
 					// ratings chain waits on board effects.
 					case "automation.moveQualityChipsFor":

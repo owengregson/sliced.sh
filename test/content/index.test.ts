@@ -129,6 +129,21 @@ describe("site-detect", () => {
 });
 
 describe("content entry — feed", () => {
+	it("applies free title from worker settings without relying on the board bridge and cleans up on dispose", async () => {
+		const { dom, feed, handle } = boot("chesscom-live");
+		dom.document.body.insertAdjacentHTML(
+			"beforeend",
+			'<a class="sidebar-link" data-user-activity-key="profile" href="/member/OnlyMe">Profile</a><div class="cc-user-block-component"><div class="cc-user-username-component">OnlyMe</div></div>'
+		);
+		const card = dom.document.body.lastElementChild;
+		feed.command({ kind: "settings", highlightMoves: false, freeTitle: "IM" });
+		expect(card?.firstElementChild?.textContent).toBe("IM");
+		feed.command({ kind: "settings", highlightMoves: false, freeTitle: null });
+		expect(card?.firstElementChild?.textContent).toBe("OnlyMe");
+		feed.command({ kind: "settings", highlightMoves: false, freeTitle: "FM" });
+		handle.dispose();
+		expect(card?.firstElementChild?.textContent).toBe("OnlyMe");
+	});
 	it("sends hello (site, pageKind, adapterVersion), opponent, and starts the session with the current position", () => {
 		const { feed, handle } = boot("chesscom-live");
 		expect(handle.site).toBe("chesscom");
@@ -1000,6 +1015,59 @@ describe("content entry — the page-kind gate (2026-09-13)", () => {
 		return event as unknown as PointerEvent;
 	};
 	const glideSteps = Math.ceil(CURSOR_UNLOCK.glideMs / CURSOR_UNLOCK.stepMs);
+
+	it("read-only controls release input without a URL, board or clock change and reject late ownership", async () => {
+		const bridge = new FakeBridge();
+		bridge.responses.set("getState", () => ({ mode: "playing", playingAs: "w", gameOver: false }));
+		const { feed, dom, handle } = boot("chesscom-live", { bridge });
+		feed.command({ kind: "inputOwnership", owned: true });
+		feed.command({ kind: "cursorTo", x: 410, y: 320, down: false });
+		expect(keydown(dom, "q", "KeyQ").defaultPrevented).toBe(true);
+		const controls = await Bun.file(
+			new URL("../fixtures/controls/chesscom-inactive-game.html", import.meta.url)
+		).text();
+		dom.document.body.insertAdjacentHTML("beforeend", controls);
+		dom.layout(".game-icons-container-component button, .game-icons-container-component a", {
+			x: 100,
+			y: 650,
+			width: 30,
+			height: 30,
+		});
+		await waitFor(() => handle.pageKind() === "live-spectate");
+		expect(feed.of("hello").at(-1)?.pageKind).toBe("live-spectate");
+		expect(bridge.notified.at(-1)?.kind).toBe("cursorHide");
+		expect(keydown(dom, "q", "KeyQ").defaultPrevented).toBe(false);
+		expect(trustedPointer(dom, "pointerdown", 700, 140).defaultPrevented).toBe(false);
+		feed.command({ kind: "inputOwnership", owned: true });
+		feed.command({ kind: "cursorTo", x: 400, y: 300, down: true });
+		expect(keydown(dom, "q", "KeyQ").defaultPrevented).toBe(false);
+		expect(bridge.notified.at(-1)?.kind).toBe("cursorHide");
+		// The same DOM node can become inactive/active by visibility alone.
+		dom.document.body.insertAdjacentHTML(
+			"beforeend",
+			'<button data-cy="game-over-modal-new-game-button">New Game</button>'
+		);
+		dom.layout('[data-cy="game-over-modal-new-game-button"]', {
+			x: 100,
+			y: 100,
+			width: 100,
+			height: 30,
+		});
+		await waitFor(() => handle.pageKind() === "live-postgame");
+		feed.command({ kind: "inputOwnership", owned: true });
+		expect(keydown(dom, "q", "KeyQ").defaultPrevented).toBe(false);
+		feed.command({ kind: "settings", highlightMoves: false, queueInput: true });
+		feed.command({ kind: "inputOwnership", owned: true });
+		expect(keydown(dom, "q", "KeyQ").defaultPrevented).toBe(true);
+		feed.command({ kind: "settings", highlightMoves: false, queueInput: false });
+		expect(keydown(dom, "q", "KeyQ").defaultPrevented).toBe(false);
+		dom.query('[data-cy="game-over-modal-new-game-button"]').remove();
+		await waitFor(() => handle.pageKind() === "live-spectate");
+		dom.query(".game-icons-container-component").setAttribute("hidden", "");
+		await waitFor(() => handle.pageKind() === "live-game");
+		dom.query(".game-icons-container-component").removeAttribute("hidden");
+		await waitFor(() => handle.pageKind() === "live-spectate");
+	});
 
 	it("on a non-game page neither ownership nor the mirror is taken, whatever the worker sends", async () => {
 		const { feed, bridge, dom, handle } = boot("chesscom-live");

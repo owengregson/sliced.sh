@@ -6,6 +6,23 @@ import { createGameHarness, type GameHarness } from "./harness";
 
 let h: GameHarness;
 let restore: (() => void) | undefined;
+
+it("sends free-title settings on profile pages independently of permission to play moves", async () => {
+	h = await createGameHarness({
+		settings: { automation: { freeTitle: true, freeTitleBadge: "NM" } },
+	});
+	await h.drive(() => h.site.hello("other"));
+	const last = () =>
+		h
+			.commands()
+			.filter((command) => command.kind === "settings")
+			.at(-1);
+	expect(last()).toMatchObject({ freeTitle: "NM", highlightMoves: false });
+	await h.patch({ automation: { freeTitleBadge: "CM" } });
+	expect(last()).toMatchObject({ freeTitle: "CM" });
+	await h.patch({ enabled: false });
+	expect(last()).toMatchObject({ freeTitle: null });
+});
 afterEach(async () => {
 	await h?.dispose();
 	restore?.();

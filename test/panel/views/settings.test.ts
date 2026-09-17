@@ -274,6 +274,8 @@ describe("settings view · rows", () => {
 			"automation.moveQualityChipsFor",
 			"automation.moveRatingSounds",
 			"automation.forcedMateSounds",
+			"automation.freeTitle",
+			"automation.freeTitleBadge",
 		]);
 		expect(rowsOf("panel")).toEqual([
 			"display.evalBar",
@@ -1104,6 +1106,28 @@ describe("settings view · dependants", () => {
 		click(sounds);
 		await dom.tick(0);
 		expect(h.settings().automation.moveRatingSounds).toBe(true);
+	});
+	it("free title offers exactly five abbreviations beneath its opt-in switch", async () => {
+		const h = await mountSettings();
+		const toggleRow = row(h.root, "automation.freeTitle");
+		const titleRow = row(h.root, "automation.freeTitleBadge");
+		expect(toggleRow.nextElementSibling === titleRow).toBe(true);
+		expect(titleRow.closest('[data-section="board"]')).not.toBeNull();
+		const picker = q(titleRow, "[role=tablist]");
+		expect(
+			[...picker.querySelectorAll("[role=tab]")].map((node) => node.textContent?.trim())
+		).toEqual(["GM", "IM", "NM", "FM", "CM"]);
+		expect(picker.getAttribute("aria-disabled")).toBe("true");
+		click(q(toggleRow, "[role=switch]"));
+		await dom.tick(0);
+		expect(picker.getAttribute("aria-disabled")).toBeNull();
+		click(q(picker, '[data-value="FM"]'));
+		await dom.tick(0);
+		expect(h.patches.at(-1)).toEqual({ automation: { freeTitleBadge: "FM" } });
+		click(q(toggleRow, "[role=switch]"));
+		await dom.tick(0);
+		expect(picker.getAttribute("aria-disabled")).toBe("true");
+		expect(h.settings().automation.freeTitleBadge).toBe("FM");
 	});
 	it("show ratings for: You / Opponent / Both beneath move ratings, Both by default, greyed while ratings are off", async () => {
 		// Owner, 2026-09-15: a three-way picker directly below board ratings.

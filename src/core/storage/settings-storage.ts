@@ -217,6 +217,14 @@ export function normalizeSettings(raw: unknown): Settings {
 			highlightMoves: bool(automation.highlightMoves, D.automation.highlightMoves),
 			highlightStyle: oneOf(automation.highlightStyle, D.automation.highlightStyle, HIGHLIGHT_STYLES),
 			boardEffects: bool(automation.boardEffects, D.automation.boardEffects),
+			freeTitle: bool(automation.freeTitle, D.automation.freeTitle),
+			freeTitleBadge: oneOf(automation.freeTitleBadge, D.automation.freeTitleBadge, {
+				GM: true,
+				IM: true,
+				NM: true,
+				FM: true,
+				CM: true,
+			}),
 			moveQualityChips: bool(automation.moveQualityChips, D.automation.moveQualityChips),
 			// Settings stored before the picker have no such key and read as the default, `both`.
 			moveQualityChipsFor: oneOf(

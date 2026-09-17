@@ -8,7 +8,7 @@ import type { PreparedPointer } from "./cdp";
 
 import type { BoardEffect } from "@core/constants/board-effects";
 import type { MaiaSize } from "@core/constants/maia";
-import type { MoveQualityMark } from "@core/constants/move-quality";
+import type { MoveListRating, MoveQualityMark } from "@core/constants/move-quality";
 import type { TOAST_KEYS } from "@core/constants/toasts";
 import type { LogEntry } from "@core/logger";
 import type { Occupancy, Pt, Rect } from "@core/motor/types";
@@ -243,6 +243,7 @@ export type GamePortMessage =
 
 /** SW → content */
 export type GamePortCommand =
+	| { kind: "moveListRating"; gameId: string; rating: MoveListRating }
 	/**
 	 * `overlay` asks the content script to draw through the bridge's own SVG overlay instead of
 	 * the site's native markings — the mark of a move the hand is acting on, which has to outlive
@@ -282,6 +283,9 @@ export type GamePortCommand =
 	| {
 			kind: "settings";
 			highlightMoves: boolean;
+			/** Permit the queue gesture on a confirmed post-game screen; never permits board moves. */
+			queueInput?: boolean;
+			freeTitle?: import("./free-title").FreeTitle | null;
 			boardEffects?: boolean;
 			moveRatings?: boolean;
 			moveRatingSounds?: boolean;

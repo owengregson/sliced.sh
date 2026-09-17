@@ -3,6 +3,7 @@
  * — the ONLY definition of the defaults (`@core/constants/defaults` re-exports).
  */
 
+import type { FreeTitle } from "@core/constants/free-title";
 import { LIMITS } from "@core/constants/limits";
 
 export type PersonaId = "cautious" | "balanced" | "aggressive" | "blitz";
@@ -126,6 +127,8 @@ export interface Settings {
 		 * `moveQualityChips`, independent of this (owner, 2026-09-15).
 		 */
 		boardEffects: boolean;
+		freeTitle: boolean;
+		freeTitleBadge: FreeTitle;
 		/**
 		 * The move-quality chip of the effect layer (settings layout, 2026-09-13): the one board
 		 * element that shows an evaluation, and the only part of the layer that costs engine time.
@@ -267,6 +270,8 @@ export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze<Settings>({
 		highlightMoves: true,
 		highlightStyle: "both",
 		boardEffects: true,
+		freeTitle: false,
+		freeTitleBadge: "GM",
 		moveQualityChips: true,
 		moveQualityChipsFor: "both",
 		moveRatingSounds: false,

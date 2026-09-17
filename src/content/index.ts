@@ -63,6 +63,7 @@ import {
 	createCursorTracker,
 } from "@content/cursor-tracker";
 import { createFeedPort, type FeedPort } from "@content/feed-port";
+import { createFreeTitle } from "@content/free-title";
 import { createHighlights } from "@content/highlights";
 import { installKeybinds } from "@content/keybinds";
 import { type BridgeCursor, createPageBridgeClient } from "@content/page-bridge-client";
@@ -78,6 +79,7 @@ import { log } from "@core/logger";
 import { sendTyped } from "@core/messaging/typed-messages";
 import type { PageKind, PositionSnapshot, Site, Square } from "@typedefs/game";
 import { DEFAULT_KEYBINDS, type Keybinds } from "@typedefs/settings";
+import { createMoveListRatings } from "./move-list-ratings";
 
 export interface ContentOptions {
 	window?: Window;
@@ -101,7 +103,7 @@ type ObserveMoveCommand = Extract<GamePortCommand, { kind: "observeMove" }>;
 type GeometryCommand = Extract<GamePortCommand, { kind: "geometry" }>;
 type BoardCheckCommand = Extract<GamePortCommand, { kind: "boardCheck" }>;
 
-const LIVE_KINDS: ReadonlySet<PageKind> = new Set(["live-game", "vs-computer"]);
+const LIVE_KINDS: ReadonlySet<PageKind> = new Set(["live-game", "vs-computer", "live-postgame"]);
 
 interface CursorBinding {
 	tracker: CursorTracker;
@@ -196,6 +198,8 @@ function bootContent(
 	const adapter = createChesscomAdapter({ document: doc, window: win, bridge });
 	const highlights = createHighlights(adapter, false);
 	// Its own layer, its own setting and its own clear (§13.3 rule 4: off until `settings` says so).
+	const moveListRatings = createMoveListRatings(bridge);
+	const freeTitle = createFreeTitle(doc, win);
 	const boardEffects = createBoardEffects(bridge, { flipped: () => adapter.isFlipped() });
 	let pageKind = adapter.detectPageKind();
 	/**
@@ -212,7 +216,9 @@ function bootContent(
 	 * is answered as not owned, a `cursorTo` draws nothing, and leaving a game page by SPA
 	 * navigation releases whatever was up.
 	 */
-	const gamePage = (): boolean => isGamePage(pageKind);
+	let queueInput = false;
+	const gamePage = (): boolean =>
+		isGamePage(pageKind) || (pageKind === "live-postgame" && queueInput);
 	/** The shield is up while the mirror is drawn (glide included) or the hand owns the input. */
 	const syncExclusive = (): void => {
 		cursorBinding.exclusiveKeyboard = cursorBinding.inputOwned || virtualCursor.shown();
@@ -295,6 +301,7 @@ function bootContent(
 		const snapshot: PositionSnapshot = s;
 		if (snapshot.gameId !== sessionGameId) {
 			sessionGameId = snapshot.gameId;
+			moveListRatings.setGame(snapshot.gameId);
 			stopReadyPoll();
 			post({
 				kind: "gameStarted",
@@ -326,8 +333,10 @@ function bootContent(
 	const startSessionIfLive = (): void => {
 		if (sessionGameId !== null || !LIVE_KINDS.has(pageKind)) return;
 		const s = adapter.readSnapshot();
-		if (s) publish(s);
-		else startReadyPoll();
+		if (s) {
+			publish(s);
+			if (pageKind === "live-postgame") post({ kind: "gameEnded", result: "*" });
+		} else startReadyPoll();
 	};
 
 	function startReadyPoll(): void {
@@ -473,8 +482,14 @@ function bootContent(
 
 	const handleCommand = (cmd: GamePortCommand): void => {
 		if (disposed) return;
+		if (cmd.kind === "settings") {
+			freeTitle.set(cmd.freeTitle ?? null);
+			queueInput = cmd.queueInput === true;
+			if (!gamePage() && (cursorBinding.inputOwned || virtualCursor.shown())) releaseInput();
+		}
 		if (highlights.apply(cmd)) return;
 		if (boardEffects.apply(cmd)) return;
+		if (moveListRatings.apply(cmd)) return;
 		if (virtualCursor.apply(cmd)) return;
 		switch (cmd.kind) {
 			case "inputOwnership":
@@ -496,6 +511,7 @@ function bootContent(
 				highlights.setEnabled(cmd.highlightMoves);
 				boardEffects.setEnabled(cmd.boardEffects === true);
 				boardEffects.setRatingsEnabled(cmd.moveRatings === true);
+				moveListRatings.setEnabled(cmd.moveRatings === true);
 				boardEffects.setSoundsEnabled(cmd.moveRatingSounds === true);
 				boardEffects.setForcedMateSoundsEnabled(cmd.forcedMateSounds === true);
 				return;
@@ -616,6 +632,7 @@ function bootContent(
 		)
 	);
 	disposers.push(adapter.onGameStart(() => redetect()));
+	disposers.push(adapter.onPageKindChange(redetect));
 	disposers.push(adapter.onGameEnd((result) => post({ kind: "gameEnded", result })));
 	disposers.push(adapter.onFocusEdge((edge) => post({ kind: "focus", ...edge })));
 
@@ -655,6 +672,8 @@ function bootContent(
 			// Before the bridge goes: the mirror and the effect layer are page DOM and must not be
 			// left behind (§13.3).
 			boardEffects.dispose();
+			moveListRatings.dispose();
+			freeTitle.dispose();
 			virtualCursor.dispose();
 			cursor.dispose();
 			adapter.destroy();

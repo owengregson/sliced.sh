@@ -103,6 +103,8 @@ export const SECTIONS: readonly SectionSpec[] = [
 		"automation.moveQualityChipsFor",
 		"automation.moveRatingSounds",
 		"automation.forcedMateSounds",
+		"automation.freeTitle",
+		"automation.freeTitleBadge",
 	]),
 	// This side panel: the Game view's content, then appearance, then feedback.
 	section("panel", [
