@@ -16,6 +16,56 @@ afterEach(async () => {
 
 const [MIN_DELAY, MAX_DELAY] = TIMINGS.autoQueueDelayRangeMs as unknown as [number, number];
 
+it.each([true, false])(
+	"preserves auto-queue with post-game controls (controls first: %s)",
+	async (controlsFirst) => {
+		h = await createGameHarness({
+			settings: { automation: { autoMove: true, autoQueue: true } },
+			myColor: "b",
+		});
+		await h.arrive();
+		expect(await h.until(() => h.executor()?.isArmed() === true, 10_000)).toBe(true);
+		if (controlsFirst) await h.drive(() => h.site.hello("live-postgame"));
+		await h.drive(() => h.site.endGame("0-1"));
+		const deadline = h.session().view().autoQueue?.dueAt;
+		if (!controlsFirst) await h.drive(() => h.site.hello("live-postgame"));
+		expect(h.session().view().autoQueue?.dueAt).toBe(deadline);
+		expect(h.executor()?.isArmed()).toBe(false);
+		expect(h.debuggerManager.isAttached(h.tabId)).toBe(true);
+		expect(await h.until(() => newGameCommands() > 0, MAX_DELAY + 5000)).toBe(true);
+	}
+);
+
+it("waits for a late requeue popup without cancelling or restarting the queue", async () => {
+	h = await createGameHarness({ settings: { automation: { autoQueue: true } } });
+	await h.arrive();
+	await h.drive(() => h.site.hello("live-spectate"));
+	await h.drive(() => h.site.endGame("0-1"));
+	const deadline = h.session().view().autoQueue?.dueAt;
+	expect(deadline).toBeDefined();
+	await h.advance(MAX_DELAY + 500);
+	expect(newGameCommands()).toBe(0);
+	const retry = h.session().view().autoQueue;
+	// Once the original deadline passes, the existing queue polls its admission gate.
+	expect(retry?.attempts).toBe(0);
+	await h.drive(() => h.site.hello("live-postgame"));
+	expect(h.session().view().autoQueue?.dueAt).toBe(retry?.dueAt);
+	expect(await h.until(() => newGameCommands() > 0, 5000)).toBe(true);
+});
+
+it("keeps post-game controls hands-off when auto-queue is disabled", async () => {
+	h = await createGameHarness({
+		settings: { automation: { autoMove: true, autoQueue: false } },
+		myColor: "b",
+	});
+	await h.arrive();
+	await h.drive(() => h.site.hello("live-postgame"));
+	await h.drive(() => h.site.endGame("0-1"));
+	await h.advance(MAX_DELAY + 500);
+	expect(h.executor()?.isArmed()).toBe(false);
+	expect(newGameCommands()).toBe(0);
+});
+
 const newGameCommands = (): number => h.commands().filter((c) => c.kind === "startNewGame").length;
 
 describe("game session: game over and the auto-queue (Step 2d)", () => {

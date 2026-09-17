@@ -202,6 +202,8 @@ export interface SiteAdapter {
 	readSnapshot(): AdapterPositionSnapshot | null;
 	/** Debounced (`TIMINGS.adapterDebounceMs`), deduped; never fires mid-drag/animation/promotion. */
 	onPositionChange(cb: (s: AdapterPositionSnapshot) => void): () => void;
+	/** Page controls can make a board inactive without changing its position or URL. */
+	onPageKindChange(cb: () => void): () => void;
 	onGameStart(cb: () => void): () => void;
 	onGameEnd(cb: (result: GameResult) => void): () => void;
 
@@ -289,6 +291,7 @@ export const BRIDGE_KINDS = {
 	 */
 	effects: "effects",
 	effectsClear: "effectsClear",
+	moveListRatings: "mlr",
 } as const;
 
 /** Normalised `getState` / `move` / `state` payload from the bridge. */
@@ -433,6 +436,8 @@ export abstract class AdapterBase implements SiteAdapter {
 	protected bridgeState: BridgeState | null = null;
 	protected highlightKeys: string[] = [];
 	private readonly positionCbs = new Set<(s: AdapterPositionSnapshot) => void>();
+	private readonly pageKindCbs = new Set<() => void>();
+	private lastPageKind: PageKind | null = null;
 	private readonly startCbs = new Set<() => void>();
 	private readonly endCbs = new Set<(r: GameResult) => void>();
 	private readonly disposers: Array<() => void> = [];
@@ -440,6 +445,7 @@ export abstract class AdapterBase implements SiteAdapter {
 	private readonly observerDisposers: Array<() => void> = [];
 	private readonly pending: { trigger(): void; cancel(): void };
 	private lastKey: string | null = null;
+	private lastMoveMetadata = "";
 	/** Last delivered site reading; DOM churn with unchanged clocks is not a new snapshot. */
 	private lastClocks: PositionSnapshot["clocks"] | null = null;
 	/**
@@ -621,6 +627,11 @@ export abstract class AdapterBase implements SiteAdapter {
 		return () => this.startCbs.delete(cb);
 	}
 
+	onPageKindChange(cb: () => void): () => void {
+		this.pageKindCbs.add(cb);
+		return () => this.pageKindCbs.delete(cb);
+	}
+
 	onGameEnd(cb: (result: GameResult) => void): () => void {
 		this.endCbs.add(cb);
 		return () => this.endCbs.delete(cb);
@@ -776,6 +787,7 @@ export abstract class AdapterBase implements SiteAdapter {
 		this.disconnectObservers();
 		for (const d of this.disposers.splice(0)) d();
 		this.positionCbs.clear();
+		this.pageKindCbs.clear();
 		this.startCbs.clear();
 		this.endCbs.clear();
 		this.boardRectCbs.clear();
@@ -1154,11 +1166,16 @@ export abstract class AdapterBase implements SiteAdapter {
 		return bridgeColor(this.bridgeState?.playingAs);
 	}
 
+	private moveMetadata(snapshot: AdapterPositionSnapshot): string {
+		return JSON.stringify([snapshot.ply, snapshot.lastMove ?? null, snapshot.moveHistory ?? null]);
+	}
+
 	private prime(): void {
 		const reading = this.reading();
 		if (!reading) return;
 		this.primed = true;
 		this.lastKey = reading.key;
+		this.lastMoveMetadata = this.moveMetadata(reading.snapshot);
 		this.lastColor = reading.snapshot.myColor;
 		this.lastTimeControl = reading.snapshot.timeControl ?? null;
 		this.lastClocks = reading.snapshot.clocks;
@@ -1176,6 +1193,11 @@ export abstract class AdapterBase implements SiteAdapter {
 
 	private apply(): void {
 		if (this.destroyed) return;
+		const pageKind = this.detectPageKind();
+		if (pageKind !== this.lastPageKind) {
+			this.lastPageKind = pageKind;
+			for (const cb of this.pageKindCbs) cb();
+		}
 		const reading = this.reading();
 		if (!reading) return; // unstable: the next mutation re-triggers
 		if (!this.primed) {
@@ -1273,6 +1295,7 @@ export abstract class AdapterBase implements SiteAdapter {
 		const timeControlLearned =
 			!gameChanged && this.lastTimeControl === null && reading.snapshot.timeControl !== undefined;
 		this.lastTimeControl = reading.snapshot.timeControl ?? null;
+		const metadata = this.moveMetadata(snapshot);
 		const clocks = snapshot.clocks;
 		const clockChanged =
 			this.lastClocks === null ||
@@ -1282,6 +1305,7 @@ export abstract class AdapterBase implements SiteAdapter {
 			this.lastClocks.b.running !== clocks.b.running;
 		if (
 			reading.key !== this.lastKey ||
+			metadata !== this.lastMoveMetadata ||
 			colourChanged ||
 			colourWithdrawn ||
 			colourLearned ||
@@ -1289,6 +1313,7 @@ export abstract class AdapterBase implements SiteAdapter {
 			(!gameChanged && clockChanged)
 		) {
 			this.lastKey = reading.key;
+			this.lastMoveMetadata = metadata;
 			this.lastClocks = clocks;
 			// `lastColor` is what the session has actually been *told*, so it advances only with a
 			// delivery. Advancing it on every reading let a colour this class had just refused to

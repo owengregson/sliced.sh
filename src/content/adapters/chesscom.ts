@@ -4,7 +4,7 @@
  * colour / mode and for native markings when it is available.
  */
 
-import { turnFieldOf } from "@core/chess/fen";
+import { plyOf as fenPly, loadPosition, parseFen, turnFieldOf } from "@core/chess/fen";
 import { squareOf } from "@core/chess/squares";
 import type {
 	NewGameTargetResult,
@@ -46,7 +46,7 @@ import {
 import { activeClockColor, bottomClockColor, readClock, readComputerClock } from "./clocks";
 import { approximateFen, placementFromDom, placementOf, replayMoves } from "./dom-fen";
 import { type MoveList, readMoveList } from "./move-list";
-import { newGameControl, newGameSearchActive } from "./new-game";
+import { newGameControl, newGameSearchActive, rendered } from "./new-game";
 import { pageKindFromPath } from "./page-kind";
 import { queryAllSafe, queryFirst, queryFirstElement, querySafe } from "./query";
 import { incomingRematchShowing, rematchControl } from "./rematch";
@@ -101,8 +101,12 @@ const RELEVANT = [
 	...S.moveList,
 	...S.gameOver,
 	...S.result,
+	...S.newGame,
+	...S.queueCancel,
+	...S.queueStatus,
 	...S.promotionWindow,
 	S.computerClock,
+	S.postGameToolbar,
 ].join(",");
 
 function squareFromClass(el: Element): Square | null {
@@ -157,6 +161,19 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 
 	detectPageKind(): PageKind {
 		const kind = pageKindFromPath(this.win.location.pathname);
+		// This explicit read-only toolbar outranks a stale `playing` bridge state or live URL.
+		if (
+			(kind === "live-game" || kind === "live-lobby") &&
+			queryAllSafe(this.doc, S.postGameToolbar).some((toolbar) =>
+				S.postGameActions.every((selector) =>
+					queryAllSafe(toolbar, selector).some((action) => rendered(action, this.win))
+				)
+			)
+		)
+			return newGameControl(this.doc, this.win, "new", false) ||
+				newGameSearchActive(this.doc, this.win)
+				? "live-postgame"
+				: "live-spectate";
 		const mode = this.bridgeState?.mode;
 		// The bridge mode only refines the live pages; puzzles/analysis/daily keep their URL kind.
 		if (!mode || (kind !== "live-lobby" && kind !== "live-game")) return kind;
@@ -409,6 +426,7 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 
 	/** A game is being played on this board: a running clock, or the bridge saying so. */
 	private inGame(): boolean {
+		if (this.detectPageKind() === "live-postgame") return false;
 		const running = [this.getClock("w"), this.getClock("b")].some(
 			(clock) => clock?.running && clock.ms > 0
 		);
@@ -575,8 +593,24 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 				characterData: true,
 			});
 		// SPA: board replacement, game-over modal, result row (filtered to those subtrees)
-		this.observe(this.doc.body, { childList: true, subtree: true }, (records) =>
-			this.touches(records, RELEVANT)
+		this.observe(
+			this.doc.body,
+			{
+				childList: true,
+				subtree: true,
+				attributes: true,
+				attributeFilter: ["class", "style", "hidden", "aria-hidden", "aria-label", "href"],
+			},
+			(records) =>
+				this.touches(records, RELEVANT) ||
+				records.some((record) => {
+					const target = record.target.nodeType === 1 ? (record.target as Element) : null;
+					return (
+						target !== null &&
+						(target.closest(RELEVANT) !== null ||
+							(record.type === "attributes" && target.querySelector(RELEVANT) !== null))
+					);
+				})
 		);
 		const onPop = (): void => this.schedule();
 		this.win.addEventListener("popstate", onPop);
@@ -608,8 +642,12 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 		// A board that renders pieces but cannot be read is mid-animation: retry on the next record.
 		if (domPieces && placement === null) return null;
 		const sideToMove = this.reconciledTurn(info, this.sideToMoveFor(placement, list));
-		const ply = plyOf(list);
-		const replay = replayMoves(list.sans.slice(0, ply));
+		// The exact board can lead the move-list render by several fast opening plies.
+		// Never assign that board the old list's ply or attach its stale last move.
+		const parts = info.approximate ? null : parseFen(info.fen);
+		const ply = parts ? fenPly(parts) : plyOf(list);
+		const candidate = replayMoves(list.sans.slice(0, ply));
+		const replay = candidate && candidate.fen === loadPosition(info.fen)?.fen() ? candidate : null;
 		const lastMove = replay?.lastMove ?? this.bridgeLastMove();
 		const gameOver = this.gameResultFor(list);
 		const computer = this.detectPageKind() === "vs-computer";
@@ -849,7 +887,7 @@ export class ChessComAdapter extends AdapterBase implements SiteAdapter {
 		if (s?.gameOver) return this.parseResult(s.result) ?? "*";
 		if (list.result) return list.result;
 		const over = queryFirst(S.gameOver, this.doc)?.element;
-		if (!over) return null;
+		if (!over) return this.detectPageKind() === "live-postgame" ? "*" : null;
 		const header = querySafe(this.doc, S.gameOverHeader);
 		const m = S.gameOverHeaderClassRe.exec(header?.getAttribute("class") ?? "");
 		const me = this.getMyColor();

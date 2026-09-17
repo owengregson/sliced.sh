@@ -198,6 +198,9 @@ export class SessionRegistry implements GameSessionRegistry, SnapshotSources {
 				if (!session) return "hold";
 				const view = session.view();
 				if (view.gameId !== null && view.gameId !== gameId) return "cancel";
+				// A finished board can render its toolbar before its requeue popup. Retain the
+				// deadline, but permit no native gesture until the adapter sees queue controls.
+				if (view.pageKind === "live-spectate") return "hold";
 				return view.state === "game-over" || view.state === "waiting-for-game" ? "allow" : "hold";
 			},
 			onChanged: () => {

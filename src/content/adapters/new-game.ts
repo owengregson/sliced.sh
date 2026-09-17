@@ -12,7 +12,7 @@ export function labels(element: Element): string[] {
 }
 
 /** Both the control and its ancestors must be rendered; hidden modal copies are common. */
-export function visible(element: Element, win: Window): boolean {
+export function rendered(element: Element, win: Window): boolean {
 	if (!element.isConnected || element.closest(S.actionHidden)) return false;
 	for (let node: Element | null = element; node; node = node.parentElement) {
 		const style = win.getComputedStyle(node);
@@ -25,13 +25,15 @@ export function visible(element: Element, win: Window): boolean {
 			return false;
 	}
 	const rect = element.getBoundingClientRect();
+	return rect.width > 0 && rect.height > 0;
+}
+
+/** A rendered control must also be inside the viewport before we can click it. */
+export function visible(element: Element, win: Window): boolean {
+	if (!rendered(element, win)) return false;
+	const rect = element.getBoundingClientRect();
 	return (
-		rect.width > 0 &&
-		rect.height > 0 &&
-		rect.right > 0 &&
-		rect.bottom > 0 &&
-		rect.left < win.innerWidth &&
-		rect.top < win.innerHeight
+		rect.right > 0 && rect.bottom > 0 && rect.left < win.innerWidth && rect.top < win.innerHeight
 	);
 }
 

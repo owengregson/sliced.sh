@@ -12,6 +12,7 @@ export type Site = "chesscom";
 export type PageKind =
 	| "live-game"
 	| "live-spectate"
+	| "live-postgame"
 	| "live-lobby"
 	| "vs-computer"
 	| "daily"

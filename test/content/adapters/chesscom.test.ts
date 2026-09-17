@@ -23,6 +23,9 @@ import {
 
 const LIVE_FEN = "r1bqkbnr/1ppp1ppp/p1n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 4";
 const SETTLE = TIMINGS.adapterDebounceMs * 3;
+const INACTIVE_CONTROLS = await Bun.file(
+	new URL("../../fixtures/controls/chesscom-inactive-game.html", import.meta.url)
+).text();
 
 const cleanups: Array<() => void> = [];
 afterEach(() => {
@@ -69,6 +72,57 @@ function playD4(dom: TabDom): void {
 }
 
 describe("ChessComAdapter — page kind and opponent (V2)", () => {
+	it("the supplied read-only controls override stale playing state and stop overriding when hidden or removed", async () => {
+		const bridge = new FakeBridge();
+		bridge.responses.set("getState", () => ({
+			fen: LIVE_FEN,
+			mode: "playing",
+			playingAs: "w",
+			gameOver: false,
+		}));
+		const { dom, adapter } = boot("chesscom-live", bridge);
+		await waitFor(() => bridge.callsOf("getState").length > 0);
+		dom.document.body.insertAdjacentHTML("beforeend", INACTIVE_CONTROLS);
+		dom.layout(".game-icons-container-component button, .game-icons-container-component a", {
+			x: 100,
+			y: 650,
+			width: 30,
+			height: 30,
+		});
+		expect(adapter.detectPageKind()).toBe("live-spectate");
+		const toolbar = dom.query(".game-icons-container-component");
+		dom.document.body.insertAdjacentHTML(
+			"beforeend",
+			'<button data-cy="game-over-modal-new-game-button">New Game</button>'
+		);
+		dom.layout('[data-cy="game-over-modal-new-game-button"]', {
+			x: 100,
+			y: 100,
+			width: 100,
+			height: 30,
+		});
+		expect(adapter.detectPageKind()).toBe("live-postgame");
+		expect(adapter.newGameTarget("new").status).toBe("ready");
+		dom.query('[data-cy="game-over-modal-new-game-button"]').remove();
+		// Scrolling the toolbar out of view cannot make this game live again.
+		dom.layout(".game-icons-container-component button, .game-icons-container-component a", {
+			x: 100,
+			y: 2000,
+			width: 30,
+			height: 30,
+		});
+		expect(adapter.detectPageKind()).toBe("live-spectate");
+		toolbar.setAttribute("hidden", "");
+		expect(adapter.detectPageKind()).toBe("live-game");
+		toolbar.removeAttribute("hidden");
+		// Glyph identities keep the detector independent of English labels.
+		for (const button of toolbar.querySelectorAll("button")) button.removeAttribute("aria-label");
+		expect(adapter.detectPageKind()).toBe("live-spectate");
+		toolbar.querySelector('a[href*="/analysis/game/live/"]')?.remove();
+		expect(adapter.detectPageKind()).toBe("live-game");
+		toolbar.remove();
+		expect(adapter.detectPageKind()).toBe("live-game");
+	});
 	it("classifies the live game, the vs-computer page and the bot opponent", () => {
 		const live = boot("chesscom-live");
 		expect(live.adapter.site).toBe("chesscom");
@@ -792,7 +846,14 @@ describe("ChessComAdapter — observer wiring (fix round 1)", () => {
 				characterData: true,
 			},
 		]);
-		expect(registry.on("body").map((r) => r.init)).toEqual([{ childList: true, subtree: true }]);
+		expect(registry.on("body").map((r) => r.init)).toEqual([
+			{
+				childList: true,
+				subtree: true,
+				attributes: true,
+				attributeFilter: ["class", "style", "hidden", "aria-hidden", "aria-label", "href"],
+			},
+		]);
 		const initial = registry.active().length;
 		expect(initial).toBe(5);
 		for (let i = 0; i < 2; i++) {

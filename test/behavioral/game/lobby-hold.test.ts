@@ -38,6 +38,63 @@ const cursorTos = (): number => h.commands().filter((c) => c.kind === "cursorTo"
 const hides = (): number => h.commands().filter((c) => c.kind === "cursorHide").length;
 
 describe("game session: the lobby hold", () => {
+	it("an inactive game detected during a drag releases the held button and cancels further moves", async () => {
+		h = await createGameHarness({ settings: { automation: { autoMove: true } } });
+		await h.arrive();
+		expect(await h.until(() => h.sim.input.pointer(h.tabId)?.buttons === 1, 60_000)).toBe(true);
+		await h.drive(() => h.site.hello("live-spectate"));
+		await h.advance(1000);
+		expect(h.sim.input.pointer(h.tabId)?.buttons).toBe(0);
+		expect(h.executor()?.isArmed()).toBe(false);
+		expect(h.executor()?.pendingMove()).toBeNull();
+		expect(h.executor()?.runningMove()).toBeNull();
+		const presses = () =>
+			h.sim.debugger
+				.commandsFor(CDP.inputDispatchMouseEvent)
+				.filter((command) => command.params?.type === "mousePressed").length;
+		const stoppedAt = presses();
+		await h.arrive();
+		await h.advance(30_000);
+		expect(presses()).toBe(stoppedAt);
+	});
+
+	it("attaching to an inactive game with auto-move enabled never takes ownership", async () => {
+		h = await createGameHarness({ settings: { automation: { autoMove: true } }, manualStart: true });
+		await h.drive(() => h.site.hello("live-spectate"));
+		await h.arrive(null, TICKED);
+		await h.advance(2000);
+		expect(h.executor()?.isArmed()).toBe(false);
+		expect(ownership()).not.toContain(true);
+	});
+
+	it("read-only controls disarm immediately despite running clocks and retain intent for the next live game", async () => {
+		h = await createGameHarness({
+			settings: { automation: { autoMove: true, moveQualityChips: true } },
+			myColor: "b",
+		});
+		await h.arrive(null, TICKED);
+		expect(await h.until(() => h.executor()?.isArmed() === true, 10_000)).toBe(true);
+		const hidesBefore = hides();
+		await h.drive(() => h.site.hello("live-spectate"));
+		expect(h.executor()?.isArmed()).toBe(false);
+		expect(ownership().at(-1)).toBe(false);
+		expect(hides()).toBeGreaterThan(hidesBefore);
+		expect(
+			h
+				.commands()
+				.filter((command) => command.kind === "settings")
+				.at(-1)
+		).toMatchObject({ moveRatings: true });
+		expect(h.sim.input.pointer(h.tabId)?.buttons ?? 0).toBe(0);
+		// Stale clock messages and an explicit arm cannot reactivate this board.
+		await h.arrive(null, { w: THREE - 200, b: THREE });
+		await h.drive(() => h.session().command("armAutoMove"));
+		await h.advance(2000);
+		expect(h.executor()?.isArmed()).toBe(false);
+		expect(h.settings().automation.autoMove).toBe(true);
+		await h.drive(() => h.site.hello("live-game"));
+		expect(await h.until(() => h.executor()?.isArmed() === true, 10_000)).toBe(true);
+	});
 	it("the single panel switch remembers intent without taking the lobby mouse, and off cancels it", async () => {
 		h = await createGameHarness({ lobby: true });
 		await h.arrive(null, STATIC);
