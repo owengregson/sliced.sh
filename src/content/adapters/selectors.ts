@@ -17,6 +17,35 @@ const NEW_GAME_IDENTITIES = [
 ] as const;
 
 export const SELECTORS = {
+	freeTitle: {
+		account: 'a.sidebar-link[data-user-activity-key="profile"][href]',
+		block: ".cc-user-block-component",
+		username: '.cc-user-username-component, [data-test-element="user-tagline-username"]',
+		large: ".cc-user-block-large",
+		title: ".cc-user-title-component",
+		profile: ".profile-badges",
+		profileNative: ".profile-badge:has(.badges-titled)",
+		profileStreak: ".profile-badge:has(.streak-badge-icon, .streak-badge-name)",
+		popover: ".user-popover-content",
+		tagline: ".user-popover-tagline",
+		avatar: "a.user-popover-avatar[href]",
+		about: ".user-popover-about",
+		ratings: ".user-popover-ratings",
+		popoverBadges: ".user-popover-badges-component",
+		popoverNative: ".user-popover-badges-titled",
+		classes: {
+			small: "cc-user-title-component cc-text-x-small-bold",
+			large: "cc-user-title-component cc-text-x-large-bold",
+			profile: "profile-badge",
+			profileIcon: "badges-icon-square badges-titled",
+			profileAbout: "badges-about",
+			profileName: "cc-heading-xx-small badges-name",
+			profileExtra: "cc-text-small badges-extra",
+			popoverBadges: "user-popover-badges-component",
+			popoverBadge: "user-popover-badges-badge user-popover-badges-titled",
+			popoverLabel: "cc-text-small-bold user-popover-badges-label",
+		},
+	},
 	// board + pieces (§1.2)
 	/** Custom-element tag the MAIN-world bridge awaits (`customElements.whenDefined`). */
 	boardTag: "wc-chess-board",
@@ -54,6 +83,10 @@ export const SELECTORS = {
 		".move-text-component",
 		".move-text",
 	],
+	moveListAnnotationNodes: ".node.main-line-ply[data-node]",
+	moveListNodeAttr: "data-node",
+	moveListOffsetClass: "offset-for-annotation-icon",
+	moveListDecoration: "svg, .node-annotation-icon",
 	moveText: [".node-highlight-content", ".move-san"],
 	moveSelected: [
 		".node-highlight-content.selected",
@@ -102,6 +135,13 @@ export const SELECTORS = {
 	playerTitle: ".cc-user-title-component",
 	bottomColorClass: { w: ".cc-user-block-white", b: ".cc-user-block-black" } as const,
 	capturedPieces: "wc-captured-pieces[player-color]",
+	/** Read-only game toolbar supplied by the owner: no live game owns this board. */
+	postGameToolbar: ".game-icons-container-component",
+	postGameActions: [
+		'button[aria-label="Share"], button:has(svg[data-glyph="graph-nodes-share"])',
+		'button[aria-label="Add to Collection"], button:has(svg[data-glyph="board-simple-stack-plus"])',
+		'a[href*="/analysis/game/live/"]',
+	],
 	// game over / new game (§1.6)
 	gameOver: [
 		".game-over-modal-shell-content",
