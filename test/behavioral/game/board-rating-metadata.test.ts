@@ -199,3 +199,39 @@ describe("board ratings from late lastMove metadata", () => {
 		expect(ratings()).toHaveLength(0);
 	});
 });
+
+it.each([false, true])(
+	"recovers every skipped opening ply when history arrives late (game over: %s)",
+	async (over) => {
+		await start();
+		for (const uci of ["e2e4", "e7e5", "g1f3", "b8c6"]) h.site.board.applyOpponent(uci);
+		const snapshot = position(false);
+		await post(snapshot);
+		if (over) await h.drive(() => h.site.endGame("1-0"));
+		const playingCommands = [...h.transport.sent];
+		const rec = h.session().recommendation();
+		const state = h.session().currentState();
+		const withHistory = { ...snapshot, moveHistory: ["e4", "e5", "Nf3", "Nc6"] };
+		await post(withHistory); // same FEN, ply, timestamp and clocks
+		expect(h.transport.sent).toEqual(playingCommands);
+		expect(h.session().recommendation()).toBe(rec);
+		expect(h.session().currentState()).toBe(state);
+		const log = () => h.commands().filter((cmd) => cmd.kind === "moveListRating");
+		expect(await h.until(() => log().length === 4, 10_000)).toBe(true);
+		expect(
+			log()
+				.map((cmd) => cmd.rating)
+				.sort((a, b) => a.ply - b.ply)
+				.map(({ ply, san }) => [ply, san])
+		).toEqual([
+			[0, "e4"],
+			[1, "e5"],
+			[2, "Nf3"],
+			[3, "Nc6"],
+		]);
+		expect(ratings()).toHaveLength(0);
+		await post(withHistory);
+		await h.advance(100);
+		expect(log()).toHaveLength(4);
+	}
+);

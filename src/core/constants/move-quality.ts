@@ -61,6 +61,13 @@ export const MOVE_QUALITY_ORDER = [
 
 export type MoveQuality = (typeof MOVE_QUALITY_ORDER)[number];
 
+export interface MoveListRating {
+	/** Zero-based ply in the game. */
+	ply: number;
+	san: string;
+	quality: MoveQuality;
+}
+
 /** Wire index of a category (`-1` is impossible: the union is closed). */
 export function moveQualityIndex(quality: MoveQuality): number {
 	return MOVE_QUALITY_ORDER.indexOf(quality);
@@ -115,6 +122,10 @@ export const MOVE_QUALITY = {
 
 	/** Chip motion: scale/fade in, hold, fade out. */
 	chipInMs: 200,
+	/** Fraction of the entrance spent reaching its overshoot scale. */
+	chipOvershootAt: 0.72,
+	/** Move-log text fades at half its original speed (320 ms beside a 200 ms badge). */
+	logTextInRatio: 1.6,
 	chipHoldMs: 1_200,
 	chipOutMs: 220,
 	/** Opacity while held; the in/out ramps run between 0 and this. */
@@ -149,8 +160,7 @@ export const MOVE_QUALITY_ART = {
 
 /**
  * Per-category disc colour and glyph paths, indexed by `MOVE_QUALITY_ORDER`. Transcribed from the
- * owner's SVGs; `miss` was supplied without a colour, so it takes the blunder red (the brief's
- * instruction: "use the same red family as Blunder").
+ * owner's SVGs, with the owner's corrected Miss background (#fb7766).
  */
 export const MOVE_QUALITY_ICONS: ReadonlyArray<
 	Readonly<{ background: string; glyph: readonly string[] }>
@@ -167,7 +177,7 @@ export const MOVE_QUALITY_ICONS: ReadonlyArray<
 	},
 	{
 		// miss — a cross
-		background: "#FA412D",
+		background: "#fb7766",
 		glyph: [
 			"M13.99,12.01s.06,.08,.08,.13c.02,.05,.03,.1,.03,.15s-.01,.1-.03,.15c-.02,.05-.05,.09-.08,.13l-1.37,1.37s-.08,.06-.13,.08c-.05,.02-.1,.03-.15,.03s-.1-.01-.15-.03c-.05-.02-.09-.05-.13-.08l-3.06-3.06-3.06,3.06s-.08,.06-.13,.08c-.05,.02-.1,.03-.15,.03s-.1-.01-.15-.03c-.05-.02-.09-.05-.13-.08l-1.37-1.37c-.07-.07-.11-.17-.11-.28s.04-.2,.11-.28l3.06-3.06-3.06-3.06c-.07-.07-.11-.17-.11-.28s.04-.2,.11-.28l1.37-1.37c.07-.07,.17-.11,.28-.11s.2,.04,.28,.11l3.06,3.06,3.06-3.06c.07-.07,.17-.11,.28-.11s.2,.04,.28,.11l1.37,1.37s.06,.08,.08,.13c.02,.05,.03,.1,.03,.15s-.01,.1-.03,.15c-.02,.05-.05,.09-.08,.13l-3.06,3.06,3.06,3.06Z",
 		],

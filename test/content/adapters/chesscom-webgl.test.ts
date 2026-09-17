@@ -421,3 +421,25 @@ describe("ChessComAdapter — the colour is never guessed", () => {
 		expect(adapter.isFlipped()).toBe(false);
 	});
 });
+
+it("keeps the board's true ply while the fast move list lags, then republishes recovered history", async () => {
+	const { dom, adapter, bridge } = boot(() => ({ fen: AFTER_DXE4, mode: "playing", playingAs: 1 }));
+	const seen: AdapterPositionSnapshot[] = [];
+	adapter.onPositionChange((snapshot) => seen.push(snapshot));
+	await sleep(SETTLE);
+	const early = adapter.readSnapshot();
+	expect(early?.ply).toBe(7);
+	expect(early?.moveHistory).toBeUndefined();
+	expect(early?.lastMove).toBeUndefined(); // must not reuse the old dxe4 by Black
+	const count = seen.length;
+	pushDxe4(dom);
+	bridge.emit("ply", undefined);
+	await waitFor(() => seen.length > count);
+	expect(seen.at(-1)).toMatchObject({ fen: AFTER_DXE4, ply: 7, lastMove: { from: "d3", to: "e4" } });
+	expect(seen.at(-1)?.moveHistory).toHaveLength(7);
+	expect(seen.at(-1)?.clocks).toEqual(early?.clocks);
+	const settled = seen.length;
+	bridge.emit("ply", undefined);
+	await sleep(SETTLE);
+	expect(seen).toHaveLength(settled);
+});

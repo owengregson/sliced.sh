@@ -25,6 +25,7 @@ export const SPOOF_PURPOSES = {
 	 * with separate lifetimes, and each finds itself by looking its class up in the DOM.
 	 */
 	effectsClass: "effectsCls",
+	moveListClass: "moveListCls",
 } as const;
 
 export type SpoofPurpose = (typeof SPOOF_PURPOSES)[keyof typeof SPOOF_PURPOSES];

@@ -23,11 +23,17 @@
  * reached from a runtime bundle.
  */
 
+import { FIGURINES } from "@content/adapters/move-list";
 import { SELECTORS } from "@content/adapters/selectors";
 import { BOARD_EFFECT_STYLES } from "@core/constants/board-effects";
-import { MOVE_QUALITY_ICONS } from "@core/constants/move-quality";
+import {
+	MOVE_QUALITY_ART,
+	MOVE_QUALITY_ICONS,
+	MOVE_QUALITY_ORDER,
+	MOVE_QUALITY as Q,
+} from "@core/constants/move-quality";
 import { SPOOF_PURPOSES } from "@core/constants/spoof";
-import { TIMINGS } from "@core/constants/timings";
+import { HIGHLIGHT_MOTION, TIMINGS } from "@core/constants/timings";
 import { deriveToken } from "@core/spoof";
 import { TOKENS } from "@design/tokens.generated";
 import type { AnyPageProgram, EntryEnv } from "@pagescript";
@@ -70,12 +76,14 @@ export function bridgeTokens(env: EntryEnv): {
 	overlayClass: string;
 	cursorClass: string;
 	effectsClass: string;
+	moveListClass: string;
 } {
 	return {
 		token: deriveToken(env.seed, SPOOF_PURPOSES.pageToken),
 		peer: deriveToken(env.seed, SPOOF_PURPOSES.contentToken),
 		overlayClass: deriveToken(env.seed, SPOOF_PURPOSES.overlayClass),
 		cursorClass: deriveToken(env.seed, SPOOF_PURPOSES.cursorClass),
+		moveListClass: deriveToken(env.seed, SPOOF_PURPOSES.moveListClass),
 		effectsClass: deriveToken(env.seed, SPOOF_PURPOSES.effectsClass),
 	};
 }
@@ -92,6 +100,27 @@ export const chesscomEntryArgs = (env: EntryEnv) => ({
 	effectPalette: EFFECT_COLORS,
 	effectStyles: BOARD_EFFECT_STYLES,
 	qualityIcons: MOVE_QUALITY_ICONS,
+	moveListConfig: {
+		hosts: SELECTORS.moveList.join(","),
+		nodes: SELECTORS.moveListAnnotationNodes,
+		text: SELECTORS.moveText.join(","),
+		nodeAttr: SELECTORS.moveListNodeAttr,
+		offsetClass: SELECTORS.moveListOffsetClass,
+		figurineAttr: SELECTORS.figurineAttr,
+		figurines: FIGURINES,
+		labels: MOVE_QUALITY_ORDER.map((name) => name[0]?.toUpperCase() + name.slice(1)),
+		labelPrefix: "Bot: ",
+		reducedMotion: HIGHLIGHT_MOTION.reducedMotionQuery,
+		badgeFrames: [
+			{ opacity: 0, transform: `scale(${Q.chipScaleFrom})`, offset: 0, easing: Q.chipEasing },
+			{ opacity: Q.chipOpacity, transform: `scale(${Q.chipScalePeak})`, offset: Q.chipOvershootAt },
+			{ opacity: Q.chipOpacity, transform: "scale(1)", offset: 1 },
+		],
+		badgeTiming: { duration: Q.chipInMs },
+		textTiming: { duration: Q.chipInMs * Q.logTextInRatio, easing: Q.chipEasing },
+		foreground: MOVE_QUALITY_ART.glyphFill,
+		style: `display:inline-block;vertical-align:middle;margin-bottom:2.5px;margin-left:2px;margin-right:0px;pointer-events:none;flex-shrink:0;transform-origin:50% 50%;opacity:${Q.chipOpacity}`,
+	},
 });
 
 export const programs: readonly AnyPageProgram[] = [

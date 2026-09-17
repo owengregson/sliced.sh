@@ -208,6 +208,9 @@ describe("PageBridgeClient — wire", () => {
 		expect(encodePayload("cursor", undefined)).toBeUndefined();
 		expect(encodePayload("clear", undefined)).toBeUndefined();
 		expect(encodePayload("other", { a: 1 })).toEqual({ a: 1 });
+		expect(
+			encodePayload(BRIDGE_KINDS.moveListRatings, [{ ply: 2, san: "Nf3", quality: "best" }])
+		).toEqual([[2, "Nf3", 6]]);
 	});
 });
 

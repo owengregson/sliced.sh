@@ -8,7 +8,7 @@ import type { GameResult } from "@typedefs/game";
 import { queryAllFirst, queryFirst } from "./query";
 import { SELECTORS } from "./selectors";
 
-const FIGURINES: Record<string, string> = {
+export const FIGURINES: Record<string, string> = {
 	"♔": "K",
 	"♕": "Q",
 	"♖": "R",
@@ -46,6 +46,7 @@ export function sanFromMoveNode(node: Element): string {
 	for (const child of Array.from(content.childNodes)) {
 		if (child.nodeType === 1) {
 			const el = child as Element;
+			if (el.matches(SELECTORS.moveListDecoration)) continue;
 			const fig = el.getAttribute(SELECTORS.figurineAttr);
 			text += fig ?? el.textContent ?? "";
 		} else text += child.textContent ?? "";

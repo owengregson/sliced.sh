@@ -90,6 +90,16 @@ describe("board ratings from the review engine", () => {
 	});
 });
 
+it("finishes a pending log rating after game over without a late board badge", async () => {
+	const after = await opponentMoveAwaitingReview();
+	await h.drive(() => h.site.endGame("0-1"));
+	await h.drive(() => h.reviewTransport.feed(...iteration(after, REVIEW.targetDepth, -40)));
+	const log = () => h.commands().filter((cmd) => cmd.kind === "moveListRating");
+	expect(await h.until(() => log().length === 1, 1_000, 1)).toBe(true);
+	expect(log()[0]).toMatchObject({ gameId: h.site.gameId, rating: { ply: 0, san: "Rf8+" } });
+	expect(rated()).toHaveLength(0);
+});
+
 describe("manually fed review fixture lifecycle", () => {
 	it("acknowledges an empty stopped search without inventing an iteration", async () => {
 		const wire = new ScriptedEngineTransport({ depth: 18, stopWithReportedEvidence: true });

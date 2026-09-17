@@ -35,6 +35,7 @@ import {
 } from "./bridge-common";
 import { effects, effectsStatements } from "./effects-overlay";
 import { overlay, overlayStatements } from "./highlight-overlay";
+import { moveListStatements } from "./move-list-ratings";
 import { cursor, cursorStatements } from "./virtual-cursor";
 
 const doc = js.id("document");
@@ -67,6 +68,8 @@ export const chesscomBridge = defineProgram({
 		effectPalette: "json",
 		effectStyles: "json",
 		qualityIcons: "json",
+		moveListClass: "string",
+		moveListConfig: "json",
 	},
 	entry: true,
 	build: (p) =>
@@ -88,6 +91,7 @@ export const chesscomBridge = defineProgram({
 				styles: p.effectStyles,
 				icons: p.qualityIcons,
 			}),
+			...moveListStatements(p.moveListConfig, p.moveListClass, p.qualityIcons),
 			...cursorStatements({ cls: p.cursorClass, fadeMs: p.cursorFadeMs, accent: p.cursorAccent }),
 			// first board element (in ladder order) that carries the `game` API
 			js.const_(
@@ -376,6 +380,10 @@ export const chesscomBridge = defineProgram({
 					},
 					// The board-effect layer is its own element with its own lifetime: a `clear` of the
 					// recommendation mark leaves it alone, and this leaves the mark alone.
+					{
+						kind: KINDS.moveListRatings,
+						body: [js.expr(js.call(js.id("mlUpdate"), q)), post(KINDS.moveListRatings, i, js.nil())],
+					},
 					{ kind: KINDS.effects, body: [post(KINDS.effects, i, effects.draw(q))] },
 					{
 						kind: KINDS.effectsClear,

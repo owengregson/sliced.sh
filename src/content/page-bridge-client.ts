@@ -189,6 +189,10 @@ export function encodePayload(kind: string, payload: unknown): unknown {
 			const keys = isDict(payload) && Array.isArray(payload.keys) ? payload.keys : undefined;
 			return keys === undefined ? undefined : { [W.keys]: keys };
 		}
+		case BRIDGE_KINDS.moveListRatings: {
+			const rows = payload as import("@core/constants/move-quality").MoveListRating[];
+			return rows.map((row) => [row.ply, row.san, moveQualityIndex(row.quality)]);
+		}
 		case BRIDGE_KINDS.effects: {
 			// One letter per kind and one index per verdict: the batch names no chess idea and no
 			// category on the wire (§13.3 rule 5). The page reads both out of its bound tables.
