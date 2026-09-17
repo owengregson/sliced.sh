@@ -677,7 +677,7 @@ describe("effects-overlay", () => {
 		sendToPage(win, command("effects", "rays", batch([THREAT])));
 		const rayAnimations = animations.length;
 		const shaft = win.document.querySelector("path");
-		sendToPage(win, command("effects", "verdict", batch([THREAT], { b: { q: "e4", j: 6 } })));
+		sendToPage(win, command("effects", "verdict", batch([], { b: { q: "e4", j: 6 } })));
 		// The shaft is the same element, none of its animations were cancelled, and only the chip
 		// animation was added.
 		expect(win.document.querySelector("path")).toBe(shaft);
@@ -690,6 +690,27 @@ describe("effects-overlay", () => {
 		);
 		expect(chip?.isConnected).toBe(true);
 	});
+
+	it.each([false, true])(
+		"late badges preserve newer arrows without replaying them (reduced motion: %s)",
+		(reduced) => {
+			const { win } = boot("<cg-container></cg-container>");
+			const animations = captureAnimations(win, reduced);
+			sendToPage(win, command("effects", "first", batch([THREAT])));
+			const next = batch([{ n: K.check, f: "f8", t: "e8" }], { u: false });
+			sendToPage(win, command("effects", "second", next));
+			const arrows = [...win.document.querySelectorAll("path")];
+			const before = animations.length;
+			sendToPage(win, command("effects", "old-badge", batch([], { b: { q: "e4", j: 6 } })));
+			expect(arrows.every((arrow) => arrow.isConnected)).toBe(true);
+			expect(animations).toHaveLength(before + (reduced ? 0 : 1));
+			const withBadge = win.document.querySelectorAll("path").length;
+			// The badge did not disturb the current ray-batch deduplication either.
+			sendToPage(win, command("effects", "repeat-second", next));
+			expect(win.document.querySelectorAll("path")).toHaveLength(withBadge);
+			expect(arrows.every((arrow) => arrow.isConnected)).toBe(true);
+		}
+	);
 
 	it("keeps the previous move's rays and chip running when a new batch arrives; each removes itself", async () => {
 		const { win } = boot("<cg-container></cg-container>");
@@ -768,7 +789,7 @@ describe("effects-overlay", () => {
 		const staticPaths = win.document.querySelectorAll("path").length;
 		expect(staticPaths).toBeGreaterThan(1);
 		// A late verdict for the same batch joins it; a new batch replaces the whole static layer.
-		sendToPage(win, command("effects", "late", batch([THREAT], { b: { q: "e4", j: 6 } })));
+		sendToPage(win, command("effects", "late", batch([], { b: { q: "e4", j: 6 } })));
 		expect(shaft?.isConnected).toBe(true);
 		sendToPage(win, command("effects", "next", batch([{ n: K.threat, f: "g1", t: "e7" }])));
 		expect(shaft?.isConnected).toBe(false);

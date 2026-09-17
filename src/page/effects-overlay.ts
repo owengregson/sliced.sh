@@ -56,7 +56,7 @@ const LIFE = M.drawMs + M.holdMs + M.fadeMs;
 const HOLD_END = (M.drawMs + M.holdMs) / LIFE;
 /** Chip life, and the four stops of its scale/fade. */
 const CHIP_LIFE = Q.chipInMs + Q.chipHoldMs + Q.chipOutMs;
-const CHIP_OVERSHOOT = (Q.chipInMs * 0.72) / CHIP_LIFE;
+const CHIP_OVERSHOOT = (Q.chipInMs * Q.chipOvershootAt) / CHIP_LIFE;
 const CHIP_SETTLED = Q.chipInMs / CHIP_LIFE;
 const CHIP_HELD = (Q.chipInMs + Q.chipHoldMs) / CHIP_LIFE;
 /** The stub the arrow draw grows from, at the layer's arrow scale. */
@@ -601,35 +601,42 @@ export function effectsStatements(p: EffectsParams): Statement[] {
 					js.assign(id("efMark"), js.nil()),
 					js.assign(id("efChipMark"), js.nil()),
 				]),
-				js.if_(js.op(id("efMark"), "!==", id("mark")), [
-					js.assign(id("efMark"), id("mark")),
-					js.if_(js.not(id("motion")), [
-						flush(live),
-						flush(chips),
-						js.assign(id("efChipMark"), js.nil()),
-					]),
-					js.let_("prev", js.nil()),
-					js.let_("run", n(0)),
-					js.forOf("e", id("list"), [
-						js.if_(
-							js.op(js.member(id("e"), W.effectKind), "===", id("prev")),
-							[js.assign(id("run"), add(id("run"), n(1)))],
-							[js.assign(id("prev"), js.member(id("e"), W.effectKind)), js.assign(id("run"), n(0))]
-						),
-						js.const_("st", js.member(p.styles, js.member(id("e"), W.effectKind))),
-						js.expr(
-							js.call(
-								id("efEffect"),
-								el,
-								id("e"),
-								black,
-								js.member(id("q"), W.mine),
-								id("motion"),
-								js.cond(st, mul(js.member(st, "delayMs"), id("run")), n(0))
-							)
-						),
-					]),
-				]),
+				// A badge-only delivery must not replace the ray batch (including reduced motion).
+				js.if_(
+					js.and(
+						js.or(js.member(id("list"), "length"), js.not(js.member(id("q"), W.badge))),
+						js.op(id("efMark"), "!==", id("mark"))
+					),
+					[
+						js.assign(id("efMark"), id("mark")),
+						js.if_(js.not(id("motion")), [
+							flush(live),
+							flush(chips),
+							js.assign(id("efChipMark"), js.nil()),
+						]),
+						js.let_("prev", js.nil()),
+						js.let_("run", n(0)),
+						js.forOf("e", id("list"), [
+							js.if_(
+								js.op(js.member(id("e"), W.effectKind), "===", id("prev")),
+								[js.assign(id("run"), add(id("run"), n(1)))],
+								[js.assign(id("prev"), js.member(id("e"), W.effectKind)), js.assign(id("run"), n(0))]
+							),
+							js.const_("st", js.member(p.styles, js.member(id("e"), W.effectKind))),
+							js.expr(
+								js.call(
+									id("efEffect"),
+									el,
+									id("e"),
+									black,
+									js.member(id("q"), W.mine),
+									id("motion"),
+									js.cond(st, mul(js.member(st, "delayMs"), id("run")), n(0))
+								)
+							),
+						]),
+					]
+				),
 				js.const_("chip", js.member(id("q"), W.badge)),
 				js.if_(id("chip"), [
 					js.const_(

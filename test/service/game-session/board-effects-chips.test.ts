@@ -1,12 +1,12 @@
 // test/service/game-session/board-effects-chips.test.ts — `BoardEffectsReporter` over a scripted
 // review engine and a manual clock (2026-09-14): what it asks the review engine for and in which
-// order, and when a landed move's rating ships — inside the first batch when the frames were
-// reviewed ahead of time, later as a repeat of the same effect list otherwise.
+// order, and when a landed move's rating ships — separately after the immediate effects, even
+// when the verdict was prepared ahead of time. Later badges never replay an effect list.
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import { boardEffectsFor } from "@core/chess/board-effects";
 import { applyMoves } from "@core/chess/san";
 import type { GamePortCommand } from "@core/constants/messages";
-import { MOVE_QUALITY } from "@core/constants/move-quality";
+import { MOVE_QUALITY, type MoveListRating } from "@core/constants/move-quality";
 import { REVIEW } from "@core/constants/review";
 import * as moveQuality from "@core/engine/move-quality";
 import type {
@@ -161,6 +161,7 @@ function setup(
 		chipsFor?: () => MoveQualityChipSide;
 		bookMoves?: (fen: string) => Promise<string[]>;
 		fail?: boolean;
+		annotate?: (rating: MoveListRating) => void;
 	} = {}
 ) {
 	const posts: GamePortCommand[] = [];
@@ -169,6 +170,7 @@ function setup(
 	const r = new BoardEffectsReporter({
 		reviewer: () => reviewer,
 		post: (cmd) => posts.push(cmd),
+		...(over.annotate ? { annotate: over.annotate } : {}),
 		...(over.chips === undefined ? {} : { chips: () => over.chips as boolean }),
 		...(over.rays === undefined ? {} : { rays: () => over.rays as boolean }),
 		...(over.chipsFor ? { chipsFor: over.chipsFor } : {}),
@@ -201,6 +203,35 @@ const startLines = (): EvalLine[] => [
 ];
 
 describe("BoardEffectsReporter · play admission", () => {
+	it("posts arrows before starting any rating work, even when book and review answers stall", async () => {
+		let atLookup: Effects[] = [];
+		let lookupCount = 0;
+		const h = setup({
+			bookMoves: () => {
+				lookupCount += 1;
+				atLookup = [...h.effects()];
+				return new Promise<string[]>(() => {});
+			},
+		});
+		try {
+			const move = landed("e4d5", true, ["e2e4", "d7d5"]);
+			h.r.report({ moves: [move] });
+			expect(lookupCount).toBe(1);
+			expect(atLookup).toEqual([
+				{
+					kind: "effects",
+					mine: true,
+					effects: boardEffectsFor({ fen: move.beforeFen, uci: move.uci }),
+				},
+			]);
+			expect(atLookup[0]?.effects).toContainEqual({ kind: "capture", from: "e4", to: "d5" });
+			await settle();
+			expect(h.effects()).toEqual(atLookup);
+		} finally {
+			h.r.dispose();
+		}
+	});
+
 	it("preserves frames and rays but defers classification, timers and chips until resume", async () => {
 		const { r, effects, open, searches, clock, reviewer } = setup();
 		r.observe({ fen: START, history: { fen: START, moves: [] } });
@@ -252,11 +283,12 @@ describe("BoardEffectsReporter · play admission", () => {
 		try {
 			r.setPlayBusy(true);
 			r.report({ moves: [landed("e2e4", true)] });
-			expect(effects()).toHaveLength(1);
-			expect(effects()[0]?.quality?.quality).toBe("best");
+			expect(effects()).toHaveLength(2);
+			expect(effects()[0]?.quality).toBeUndefined();
+			expect(effects()[1]?.quality?.quality).toBe("best");
 			expect(classify).not.toHaveBeenCalled();
 			r.setPlayBusy(false);
-			expect(effects()).toHaveLength(1);
+			expect(effects()).toHaveLength(2);
 		} finally {
 			classify.mockRestore();
 			r.dispose();
@@ -406,7 +438,7 @@ describe("BoardEffectsReporter · play admission", () => {
 			expect(classify).toHaveBeenCalledTimes(1); // no second 300 ms reserve
 			r.setInputBusy(true);
 			r.report({ moves: [landed("e2e4", true)] });
-			expect(effects()[0]?.quality?.quality).toBe("best"); // cached verdict is cheap
+			expect(effects().at(-1)?.quality?.quality).toBe("best"); // cached verdict is cheap
 			r.setInputBusy(false);
 			r.report({ moves: [landed("d2d4", false)] });
 			clock.advance(1); // queued while admissible, timer fires at the boundary
@@ -503,11 +535,11 @@ describe("BoardEffectsReporter · play admission", () => {
 			moves: [{ beforeFen: fen, historyFen: fen, historyMoves: [], uci: "a1a8", ply: 0, mine: false }],
 		});
 		r.cancel();
-		expect(effects()).toHaveLength(1);
-		expect(effects()[0]?.quality).toMatchObject({ square: "a8", quality: "mate" });
+		expect(effects()).toHaveLength(2);
+		expect(effects()[1]?.quality).toMatchObject({ square: "a8", quality: "mate" });
 		expect(searches).toHaveLength(0);
 		r.setPlayBusy(false);
-		expect(effects()).toHaveLength(1);
+		expect(effects()).toHaveLength(2);
 		r.dispose();
 	});
 
@@ -522,7 +554,7 @@ describe("BoardEffectsReporter · play admission", () => {
 					{ beforeFen: fen, historyFen: fen, historyMoves: [], uci: "a8b8", ply: 0, mine: false },
 				],
 			});
-			expect(effects()[0]?.quality).toMatchObject({ square: "b8", quality: "forced" });
+			expect(effects().at(-1)?.quality).toMatchObject({ square: "b8", quality: "forced" });
 			expect(searches).toHaveLength(0);
 			expect(classify).not.toHaveBeenCalled();
 		} finally {
@@ -649,7 +681,7 @@ describe("BoardEffectsReporter · review scheduling", () => {
 		after?.update(REVIEW.targetDepth, [line(1, "e7e5", { cp: -10 })]);
 		await settle();
 		expect(effects()).toHaveLength(2);
-		expect(effects()[1]?.effects).toEqual(effects()[0]?.effects ?? []);
+		expect(effects()[1]?.effects).toEqual([]);
 		expect(effects()[1]?.quality).toEqual({ square: "a3", quality: "excellent" });
 		r.dispose();
 	});
@@ -682,7 +714,7 @@ describe("BoardEffectsReporter · review scheduling", () => {
 		await settle();
 		expect(open(["g1f3"])?.req.priority).toBe("panel");
 		r.report({ moves: [landed("g1f3", true)] });
-		expect(effects()[0]?.quality).toEqual({ square: "f3", quality: "excellent" });
+		expect(effects().at(-1)?.quality).toEqual({ square: "f3", quality: "excellent" });
 		r.dispose();
 	});
 
@@ -780,8 +812,9 @@ describe("BoardEffectsReporter · whose ratings show", () => {
 		expect(effects()[0]?.quality).toBeUndefined();
 		const posted = effects().at(-1);
 		expect(posted?.mine).toBe(mine);
-		expect(posted?.effects).toEqual(boardEffectsFor({ fen, uci: TAKE }));
-		expect(posted?.effects.some((e) => e.kind === "capture")).toBe(true);
+		expect(effects()[0]?.effects).toEqual(boardEffectsFor({ fen, uci: TAKE }));
+		expect(effects()[0]?.effects.some((e) => e.kind === "capture")).toBe(true);
+		if (shown) expect(posted?.effects).toEqual([]);
 		if (shown) expect(posted?.quality?.square).toBe("d5");
 		else expect(posted && "quality" in posted).toBe(false);
 		// A hidden side's move is neither delivered nor a missing chip.
@@ -903,8 +936,8 @@ describe("BoardEffectsReporter · forced move", () => {
 				},
 			],
 		});
-		expect(effects()).toHaveLength(1);
-		expect(effects()[0]?.quality).toEqual({ square: "b8", quality: "forced" });
+		expect(effects()).toHaveLength(2);
+		expect(effects()[1]?.quality).toEqual({ square: "b8", quality: "forced" });
 		expect(searches).toHaveLength(0);
 		expect(r.stats().delivered).toBe(1);
 		r.dispose();
@@ -966,8 +999,9 @@ describe("BoardEffectsReporter · forced mate", () => {
 		const history = ["e2e4", "e7e5", "f1c4", "b8c6", "d1h5", "g8f6"];
 		const { r, effects, searches } = setup();
 		r.report({ moves: [landed("h5f7", true, history)] });
-		expect(effects()).toHaveLength(1);
-		expect(effects()[0]?.quality).toEqual({
+		expect(effects()).toHaveLength(2);
+		expect(effects()[0]?.quality).toBeUndefined();
+		expect(effects()[1]?.quality).toEqual({
 			square: "f7",
 			quality: "mate",
 			mateSemitones: MOVE_QUALITY.mateTopSemitones,
@@ -1028,4 +1062,112 @@ describe("BoardEffectsReporter · forced mate", () => {
 		expect(effects().at(-1)?.quality).toEqual({ square: "h5", quality: "mate", mateSemitones: 3 });
 		r.dispose();
 	});
+});
+
+describe("persistent move-log reviews", () => {
+	it("catches up every ply after the live window, independently of chip side, without old effects", async () => {
+		const ratings: MoveListRating[] = [];
+		const h = setup({
+			annotate: (rating) => ratings.push(rating),
+			chipsFor: () => "mine",
+			rays: false,
+		});
+		const moves = ["e2e4", "e7e5", "g1f3", "b8c6", "f1c4", "g8f6"];
+		h.r.setPlayBusy(true);
+		for (const [i, uci] of moves.entries())
+			h.r.report({ moves: [landed(uci, i % 2 === 0, moves.slice(0, i))] });
+		h.r.finish();
+		h.r.setPlayBusy(false);
+		for (let guard = 0; guard < 20 && ratings.length < moves.length; guard++) {
+			await settle();
+			if (ratings.length === moves.length) break;
+			const search = h.searches.find((s) => !s.done);
+			expect(search).toBeDefined();
+			if (!search) break;
+			const index = search.req.moves?.length ?? 0;
+			search.update(REVIEW.targetDepth, [line(1, moves[index] ?? "d2d3", { cp: 20 })]);
+			search.finish();
+		}
+		await settle();
+		expect(ratings.map((r) => r.ply).sort()).toEqual([0, 1, 2, 3, 4, 5]);
+		expect(ratings.find((r) => r.ply === 2)?.san).toBe("Nf3");
+		expect(h.effects()).toEqual([]);
+		expect(h.searches.every((s) => s.req.priority === "panel")).toBe(true);
+		h.r.backfill(
+			{ fen: applyMoves(START, moves) ?? START, history: { fen: START, moves } },
+			moves.length
+		);
+		await settle();
+		expect(ratings).toHaveLength(6);
+		h.r.dispose();
+	});
+
+	it("backfills an attached game's history once and preempts it for a fresh move", async () => {
+		const ratings: MoveListRating[] = [];
+		const h = setup({ annotate: (r) => ratings.push(r), rays: false });
+		const moves = ["e2e4", "e7e5", "g1f3"];
+		const position = { fen: applyMoves(START, moves) ?? START, history: { fen: START, moves } };
+		h.r.backfill(position, 3);
+		await settle();
+		const old = h.open([]);
+		expect(old?.req.priority).toBe("panel");
+		h.r.backfill(position, 3);
+		expect(h.searches).toHaveLength(1);
+		h.r.report({ moves: [landed("b8c6", false, moves)] });
+		await settle();
+		expect(old?.stopped).toBe(true);
+		expect(h.open(moves)?.req.priority).toBe("move");
+		h.r.cancel();
+		await settle();
+		expect(ratings).toEqual([]);
+		expect(h.searches.filter((s) => !s.done)).toEqual([]);
+		h.r.dispose();
+	});
+
+	it("publishes a hidden side's rating only to the log", async () => {
+		const ratings: MoveListRating[] = [];
+		const h = setup({ annotate: (r) => ratings.push(r), chipsFor: () => "theirs", rays: false });
+		h.r.report({ moves: [landed("e2e4", true)] });
+		h.open([])?.update(REVIEW.targetDepth, startLines());
+		h.open([])?.finish();
+		await settle();
+		expect(ratings).toEqual([{ ply: 0, san: "e4", quality: "best" }]);
+		expect(h.effects()).toEqual([]);
+		h.r.dispose();
+	});
+});
+
+it("reuses a completed log verdict when the same live move gains late board metadata", async () => {
+	const ratings: MoveListRating[] = [];
+	const h = setup({ annotate: (r) => ratings.push(r), rays: false });
+	const moves = ["e2e4"];
+	h.r.backfill({ fen: applyMoves(START, moves) ?? START, history: { fen: START, moves } }, 1);
+	h.open([])?.update(REVIEW.targetDepth, startLines());
+	h.open([])?.finish();
+	await settle();
+	expect(ratings).toHaveLength(1);
+	expect(h.effects()).toEqual([]);
+	h.r.report({ moves: [landed("e2e4", true)] });
+	expect(h.effects()).toHaveLength(1);
+	expect(h.effects()[0]?.quality).toMatchObject({ square: "e4", quality: "best" });
+	expect(ratings).toHaveLength(1);
+	h.r.dispose();
+});
+
+it("reviews missed real moves before speculative replies once the live position is ready", async () => {
+	const h = setup({ annotate: () => {}, rays: false });
+	const moves = ["e2e4", "e7e5", "g1f3"];
+	const position = { fen: applyMoves(START, moves) ?? START, history: { fen: START, moves } };
+	h.r.setPlayBusy(true);
+	h.r.backfill(position, 3);
+	h.r.observe(position);
+	h.r.setPlayBusy(false);
+	const current = h.open(moves);
+	expect(current?.req.priority).toBe("ponder");
+	current?.update(REVIEW.targetDepth, [line(1, "b8c6", { cp: 20 })]);
+	current?.finish();
+	await settle();
+	expect(h.open([])?.req.priority).toBe("panel");
+	expect(h.open([...moves, "b8c6"])).toBeUndefined();
+	h.r.dispose();
 });

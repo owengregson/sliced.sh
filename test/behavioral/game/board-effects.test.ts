@@ -141,11 +141,11 @@ describe("game session: board effects", () => {
 		expect(first?.mine).toBe(false);
 		expect(first?.effects).toEqual([{ kind: "check", from: "f8", to: "e8" }]);
 
-		// The rating rides inside the first batch or follows with the *same* effect list, so the page
-		// adds the chip without replaying the rays.
+		// The rating follows independently, without rays that could be replayed on a later board.
 		expect(await h.until(() => batches().some((b) => b.quality !== undefined), 20_000)).toBe(true);
 		const verdict = batches().find((b) => b.quality !== undefined);
-		expect(verdict?.effects).toEqual(first?.effects ?? []);
+		expect(first?.quality).toBeUndefined();
+		expect(verdict?.effects).toEqual([]);
 		expect(verdict?.mine).toBe(false);
 		expect(verdict?.quality?.square).toBe("f8");
 		expect(MOVE_QUALITY_ORDER).toContain(verdict?.quality?.quality ?? ("none" as never));
@@ -183,7 +183,7 @@ describe("game session: board effects", () => {
 		expect(batches().find((b) => b.mine && b.quality)?.quality?.square).toBe("f8");
 	});
 
-	it("reviews our planned move before it lands, so the chip ships inside the first batch", async () => {
+	it("reviews our planned move before it lands, then sends its cached chip separately from effects", async () => {
 		h = await createGameHarness({
 			myColor: "b",
 			fen: CHECK_FEN,
@@ -214,8 +214,10 @@ describe("game session: board effects", () => {
 		expect(await h.until(() => batches().length > beforeOurs, 10_000)).toBe(true);
 		const ours = batches()[beforeOurs];
 		expect(ours?.mine).toBe(true);
-		expect(ours?.quality?.square).toBe(rec?.chosen.to);
-		// Exactly one rating for our move: nothing follows as a second command.
+		expect(ours?.quality).toBeUndefined();
+		expect(batches()[beforeOurs + 1]?.quality?.square).toBe(rec?.chosen.to);
+		expect(batches()[beforeOurs + 1]?.effects).toEqual([]);
+		// Exactly one rating for our move; the first effects delivery did not wait for it.
 		await h.advance(2_000);
 		expect(
 			batches()

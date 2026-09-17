@@ -20,20 +20,24 @@
  * A more urgent need stops the search in flight; what it completed stays in the store and the
  * position is picked up again later. A landed move publishes when its frames reach
  * `REVIEW.targetDepth`, or after `REVIEW.landedWaitMs` from frames at `REVIEW.publishDepth` — a
- * late rating repeats its effect list, so the overlay adds the chip without replaying the rays.
+ * late rating carries only its chip, so it cannot delay or replay the rays.
  * `setPlayBusy` suspends search and classification only during foreground preparation. Input
  * activity gates classification separately; background search keeps producing frames. Heavy
  * classification yields between jobs and admits work before the caller's input lead boundary.
- * Existing verdicts, forced/checkmate marks and rays publish immediately. Only two live plies wait.
+ * Existing verdicts, forced/checkmate marks and rays publish immediately. Two live plies get
+ * board effects; older unresolved plies continue at low priority for the persistent move log.
  */
 
 import { boardEffectsFor } from "@core/chess/board-effects";
 import { loadPosition } from "@core/chess/fen";
 import { positionKey } from "@core/chess/history";
-import { applyMoves, legalMoves } from "@core/chess/san";
-import type { BoardEffect } from "@core/constants/board-effects";
+import { applyMoves, legalMoves, playUci, uciToSan } from "@core/chess/san";
 import type { GamePortCommand } from "@core/constants/messages";
-import { type MoveQualityMark, MOVE_QUALITY as Q } from "@core/constants/move-quality";
+import {
+	type MoveListRating,
+	type MoveQualityMark,
+	MOVE_QUALITY as Q,
+} from "@core/constants/move-quality";
 import { BRILLIANT, MOVE_CLASSIFICATION, REVIEW, reviewRetryDelayMs } from "@core/constants/review";
 import {
 	classifyMoveQuality,
@@ -105,6 +109,8 @@ export interface BoardEffectsReporterDeps {
 	/** `null` while no review engine is attached: the effects still go out, the rating does not. */
 	reviewer(): ReviewSearcher | null;
 	post(cmd: GamePortCommand): void;
+	/** Persistent log ratings, independent of board-chip side and freshness. */
+	annotate?: (rating: MoveListRating) => void;
 	/**
 	 * `Settings.automation.moveQualityChips`. `false`: the rays still go out, but nothing is
 	 * reviewed or sent. Absent means on.
@@ -257,8 +263,8 @@ interface VerdictJob {
 	after: { key: string; fen: string } | null;
 	/** The position before the previous ply (Miss), when the history reaches back that far. */
 	previousKey: string | null;
-	/** Set once the move landed: the effect list its chip is sent beside, and when. */
-	landed: { effects: BoardEffect[]; at: number } | null;
+	/** Set once the move landed; effects have already been posted independently. */
+	landed: { at: number } | null;
 	/** The position had exactly one legal move: rated `forced` at once, no review needed. */
 	forced: boolean;
 	/**
@@ -270,6 +276,7 @@ interface VerdictJob {
 	book: boolean | undefined;
 	verdict: MoveQualityVerdict | null;
 	delivered: boolean;
+	boardDropped: boolean;
 	blocker: DropReason;
 	closed: boolean;
 	timer: unknown;
@@ -285,6 +292,8 @@ export class BoardEffectsReporter {
 	private readonly frames = new Map<string, StoredFrame>();
 	/** The last `MOVE_QUALITY.landedWindow` landed moves, oldest first. */
 	private landed: VerdictJob[] = [];
+	private readonly archive = new Map<number, VerdictJob>();
+	private readonly annotated = new Map<number, VerdictJob>();
 	/** The job started by `prepare()` for our planned move, waiting for it to land. */
 	private prepared: VerdictJob | null = null;
 	private current: ReviewedPosition | null = null;
@@ -361,7 +370,7 @@ export class BoardEffectsReporter {
 				const at = this.landed.indexOf(next);
 				const square = next.move.uci.slice(2, 4);
 				const predecessor = this.landed
-					.slice(0, at)
+					.slice(0, Math.max(0, at))
 					.find(
 						(job) =>
 							!job.closed &&
@@ -409,6 +418,58 @@ export class BoardEffectsReporter {
 		this.pump();
 	}
 
+	/** Recover validated history when attaching midgame or after missed position events. */
+	backfill(position: ReviewedPosition, ply: number): void {
+		if (!this.deps.annotate || !this.chipsOn() || this.disposed) return;
+		const chess = loadPosition(position.history.fen);
+		if (!chess) return;
+		const start = ply - position.history.moves.length;
+		const trail: string[] = [];
+		for (const [i, uci] of position.history.moves.entries()) {
+			const index = start + i;
+			const beforeFen = chess.fen();
+			if (!playUci(chess, uci)) return;
+			if (
+				!this.annotated.has(index) &&
+				!this.archive.has(index) &&
+				!this.landed.some((job) => job.move.ply === index)
+			) {
+				const move = {
+					beforeFen,
+					historyFen: position.history.fen,
+					historyMoves: [...trail],
+					uci,
+					ply: index,
+				};
+				const job = this.open(this.keyOf(move), move, false);
+				job.landed = { at: this.deps.now() - REVIEW.landedWaitMs };
+				this.archive.set(index, job);
+			}
+			trail.push(uci);
+		}
+		this.resolveAll();
+		this.pump();
+	}
+
+	/** Finish log reviews after game over, without speculative work or late board effects. */
+	finish(): void {
+		if (!this.deps.annotate) {
+			this.cancel();
+			return;
+		}
+		for (const job of this.landed) {
+			if (job.closed) continue;
+			this.noteDrop(job, job.blocker);
+			this.archive.set(job.move.ply, job);
+		}
+		this.landed = [];
+		if (this.prepared) this.close(this.prepared, null);
+		this.prepared = null;
+		this.current = null;
+		this.resolveAll();
+		this.pump();
+	}
+
 	/**
 	 * Our next move is decided: open its verdict now and review the position it will produce
 	 * while the hand waits out the think time, so the chip is ready when the move lands. A repeat
@@ -435,31 +496,30 @@ export class BoardEffectsReporter {
 
 	/**
 	 * Report the moves that produced the current position. Returns at once — one `effects`
-	 * command per landed move goes out synchronously (the opponent's first), each with its rating
-	 * inside when it is already decided; a rating decided later follows as its own command.
+	 * command per landed move goes out synchronously (the opponent's first), before any review
+	 * bookkeeping. Ratings travel separately and never carry rays to replay.
 	 */
 	report(arrival: Arrival): void {
 		if (this.disposed || arrival.moves.length === 0) return;
 		const rays = this.raysOn();
-		if (!this.chipsOn()) {
-			// Rays only: nothing is opened, so nothing is reviewed and no chip can follow later.
-			this.cancel();
-			if (!rays) return;
+		// No book lookup, review-job construction or classification may hold up the visual move.
+		if (rays)
 			for (const move of arrival.moves)
 				this.deps.post({
 					kind: "effects",
 					effects: boardEffectsFor({ fen: move.beforeFen, uci: move.uci }),
 					mine: move.mine,
 				});
+		if (!this.chipsOn()) {
+			// Rays only: nothing is opened, so nothing is reviewed and no chip can follow later.
+			this.cancel();
 			return;
 		}
 		const at = this.deps.now();
-		const batches: Array<{ job: VerdictJob | null; effects: BoardEffect[]; mine: boolean }> = [];
+		const batches: VerdictJob[] = [];
 		for (const move of arrival.moves) {
-			// Board effects off: the chip alone, beside an empty list (the page draws just the chip).
-			const effects = rays ? boardEffectsFor({ fen: move.beforeFen, uci: move.uci }) : [];
 			const key = this.keyOf(move);
-			if (!this.shows(move.mine)) {
+			if (!this.shows(move.mine) && !this.deps.annotate) {
 				// A side whose ratings are hidden: its effects go out, nothing is tracked or counted. A
 				// plan for this very move (ours, under "theirs") has done its job — the position it
 				// made was reviewed for the opponent's reply — and closes quietly.
@@ -467,25 +527,34 @@ export class BoardEffectsReporter {
 					this.close(this.prepared, null);
 					this.prepared = null;
 				}
-				batches.push({ job: null, effects, mine: move.mine });
 				continue;
 			}
+			const reviewed = this.annotated.get(move.ply);
+			if (reviewed?.delivered) {
+				continue;
+			}
+			const archived = this.archive.get(move.ply) ?? reviewed;
 			let job: VerdictJob;
 			if (this.prepared?.key === key && !this.prepared.closed) {
 				// The move we planned is the move that landed: its rating is ready or on its way.
 				job = this.prepared;
 				this.prepared = null;
+			} else if (archived?.key === key) {
+				job = archived;
+				job.closed = false;
+				this.archive.delete(move.ply);
+				job.mine = move.mine;
 			} else {
 				job = this.open(key, move, move.mine);
 			}
-			job.landed = { effects, at };
+			job.landed = { at };
 			job.timer = this.deps.scheduler.setTimeout(() => {
 				job.timer = null;
 				this.resolve(job);
 				this.pump();
 			}, REVIEW.landedWaitMs);
 			this.landed.push(job);
-			batches.push({ job, effects, mine: move.mine });
+			batches.push(job);
 		}
 		if (this.prepared) {
 			// A plan for a move we did not play: abandoned, never counted (it never landed).
@@ -498,21 +567,20 @@ export class BoardEffectsReporter {
 			this.prepared = null;
 		}
 		this.trimLanded();
-		// Resolved here, the rating rides inside the first batch rather than as a second command.
+		// Resolve cheap/cached verdicts now; even these follow the already posted effects.
 		this.reporting = true;
 		try {
 			this.resolveAll();
 		} finally {
 			this.reporting = false;
 		}
-		for (const { job, effects, mine } of batches) {
-			if (job?.verdict && !job.delivered) {
+		for (const job of batches) {
+			if (job.verdict) this.publishAnnotation(job);
+			if (job.verdict && !job.delivered && this.shows(job.mine)) {
 				job.delivered = true;
 				this.counters.delivered += 1;
 				this.close(job, null);
-				this.deps.post({ kind: "effects", effects, mine: job.mine, ...this.mark(job) });
-			} else if (rays) {
-				this.deps.post({ kind: "effects", effects, mine: job?.mine ?? mine });
+				this.deps.post({ kind: "effects", effects: [], mine: job.mine, ...this.mark(job) });
 			}
 			// With the rays off a move whose chip is not decided yet posts nothing now: an empty batch
 			// would draw nothing, and its chip, if one comes, follows on its own (`deliver`).
@@ -529,6 +597,9 @@ export class BoardEffectsReporter {
 		if (this.classificationTimer !== null) this.deps.scheduler.clearTimeout(this.classificationTimer);
 		this.classificationTimer = null;
 		this.classifications.clear();
+		for (const job of this.archive.values()) this.close(job, null);
+		this.archive.clear();
+		this.annotated.clear();
 		for (const job of this.landed) this.close(job, job.blocker);
 		this.landed = [];
 		if (this.prepared) this.close(this.prepared, null);
@@ -580,7 +651,7 @@ export class BoardEffectsReporter {
 	}
 
 	private keyOf(move: ClassifiedMove): string {
-		return `${reviewKey(move.beforeFen)}|${move.uci}`;
+		return `${move.ply}|${reviewKey(move.beforeFen)}|${move.uci}`;
 	}
 
 	private open(key: string, move: ClassifiedMove, mine: boolean): VerdictJob {
@@ -602,6 +673,7 @@ export class BoardEffectsReporter {
 			book: move.inBook === true ? true : undefined,
 			verdict: null,
 			delivered: false,
+			boardDropped: false,
 			blocker: "no-frame",
 			closed: false,
 			timer: null,
@@ -664,8 +736,15 @@ export class BoardEffectsReporter {
 			this.deps.scheduler.clearTimeout(job.timer);
 			job.timer = null;
 		}
+		this.noteDrop(job, reason);
+	}
+
+	/** Losing board freshness does not discard the persistent review. Count it once. */
+	private noteDrop(job: VerdictJob, reason: DropReason | null): void {
+		if (job.boardDropped) return;
 		// A side hidden since its move landed is not a missing chip: nothing is counted for it.
 		if (reason === null || job.delivered || !job.landed || !this.shows(job.mine)) return;
+		job.boardDropped = true;
 		this.counters.dropped[reason] = (this.counters.dropped[reason] ?? 0) + 1;
 		log.debug("board effects: no rating for the landed move", {
 			uci: job.move.uci,
@@ -678,13 +757,17 @@ export class BoardEffectsReporter {
 	private openJobs(): VerdictJob[] {
 		const jobs = this.landed.filter((job) => !job.closed && !job.verdict).reverse();
 		if (this.prepared && !this.prepared.closed && !this.prepared.verdict) jobs.push(this.prepared);
+		jobs.push(...[...this.archive.values()].filter((job) => !job.closed && !job.verdict));
 		return jobs;
 	}
 
 	private trimLanded(): void {
 		while (this.landed.length > Q.landedWindow) {
 			const oldest = this.landed.shift();
-			if (oldest) this.close(oldest, oldest.blocker);
+			if (oldest && !oldest.closed && !oldest.verdict && this.deps.annotate) {
+				this.noteDrop(oldest, oldest.blocker);
+				this.archive.set(oldest.move.ply, oldest);
+			} else if (oldest) this.close(oldest, oldest.blocker);
 		}
 	}
 
@@ -765,9 +848,20 @@ export class BoardEffectsReporter {
 		if (job.landed && !this.reporting) this.deliver(job);
 	}
 
+	private publishAnnotation(job: VerdictJob): void {
+		if (!this.deps.annotate || !job.landed || !job.verdict || this.annotated.has(job.move.ply))
+			return;
+		const san = uciToSan(job.move.beforeFen, job.move.uci);
+		if (!san) return;
+		this.annotated.set(job.move.ply, job);
+		this.deps.annotate({ ply: job.move.ply, san, quality: job.verdict.quality });
+		this.archive.delete(job.move.ply);
+	}
+
 	/** A rating for a landed move that `report()` did not ship inside the first command. */
 	private deliver(job: VerdictJob): void {
 		if (job.closed || job.delivered || !job.landed || !job.verdict) return;
+		this.publishAnnotation(job);
 		if (!this.shows(job.mine)) {
 			// The side's ratings were hidden after the move landed: no chip, and nothing counted.
 			this.close(job, null);
@@ -775,7 +869,7 @@ export class BoardEffectsReporter {
 		}
 		const at = this.landed.indexOf(job);
 		if (at < 0) {
-			this.close(job, "stale");
+			this.close(job, this.deps.annotate ? null : "stale");
 			return;
 		}
 		const to = job.move.uci.slice(2, 4);
@@ -786,15 +880,11 @@ export class BoardEffectsReporter {
 				this.close(job, "stale");
 				return;
 			}
-		// Board effects turned off since the move landed: the layer was erased, so the chip goes
-		// alone. Turned on since: the rays were never computed, and nothing is drawn retroactively.
-		const effects = this.raysOn() ? job.landed.effects : [];
 		job.delivered = true;
 		this.counters.delivered += 1;
 		this.close(job, null);
-		// The same effect list, so the page's dedupe skips the rays it has already drawn and only
-		// adds the chip. Sending an empty list here would look like a new batch.
-		this.deps.post({ kind: "effects", effects, mine: job.mine, ...this.mark(job) });
+		// Effects were sent on arrival. A late badge cannot replay rays after another move landed.
+		this.deps.post({ kind: "effects", effects: [], mine: job.mine, ...this.mark(job) });
 	}
 
 	/** The move's "after" position is needed: the "before" frame does not score the move itself. */
@@ -821,11 +911,13 @@ export class BoardEffectsReporter {
 				add(job.after.key, job.move.historyFen, [...job.move.historyMoves, job.move.uci], urgency);
 		};
 		for (const job of [...this.landed].reverse())
-			if (!job.closed && !job.verdict && this.shows(job.mine)) halves(job, 0, false);
+			if (!job.closed && !job.verdict && (this.shows(job.mine) || this.deps.annotate))
+				halves(job, 0, false);
 		const current = this.current;
 		if (current) add(reviewKey(current.fen), current.history.fen, current.history.moves, 1);
 		const prepared = this.prepared;
 		if (prepared && !prepared.closed) halves(prepared, 2, true);
+		for (const job of this.archive.values()) if (!job.closed && !job.verdict) halves(job, 3, false);
 		if (current) {
 			const frame = this.frames.get(reviewKey(current.fen));
 			if (final(frame) && frame)
@@ -833,7 +925,7 @@ export class BoardEffectsReporter {
 					const reply = line.pvUci[0];
 					const next = reply ? applyMoves(current.fen, [reply]) : null;
 					if (reply && next && legalMoves(next).length > 0)
-						add(reviewKey(next), current.history.fen, [...current.history.moves, reply], 3);
+						add(reviewKey(next), current.history.fen, [...current.history.moves, reply], 4);
 				}
 		}
 		return out;

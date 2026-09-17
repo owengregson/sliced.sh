@@ -683,6 +683,14 @@ export class GameSession implements SessionSource {
 			post: (cmd) => {
 				this.deps.link.post(this.deps.tabId, cmd);
 			},
+			annotate: (rating) => {
+				if (this.game)
+					this.deps.link.post(this.deps.tabId, {
+						kind: "moveListRating",
+						gameId: this.game.gameId,
+						rating,
+					});
+			},
 			chips: () => this.deps.getSettings().automation.moveQualityChips,
 			rays: () => this.deps.getSettings().automation.boardEffects,
 			chipsFor: () => this.deps.getSettings().automation.moveQualityChipsFor,
@@ -1003,11 +1011,16 @@ export class GameSession implements SessionSource {
 		// Move ratings off: the review work stops now rather than at the next position, whatever
 		// board effects say (the review engine itself is released by `game-stack`).
 		if (!settings.automation.moveQualityChips) this.boardEffects.cancel();
+		else if (on && this.snapshot) {
+			this.boardEffects.backfill(
+				{ fen: this.snapshot.fen, history: this.historyFor(this.snapshot.fen) },
+				this.snapshot.ply
+			);
+		}
 		// Fix D: the mirror is page DOM, so it goes the moment it is no longer allowed — which is
 		// either the switch or `display.virtualCursor`, and only the switch makes `flipped` true.
 		if (!this.virtualCursorAllowed()) this.hideVirtualCursor();
-		if (!on || !this.deps.getSettings().automation.autoQueue)
-			this.deps.autoQueue.cancel(this.deps.tabId);
+		if (!this.mayQueue()) this.deps.autoQueue.cancel(this.deps.tabId);
 		else if (this.game) this.cancelQueueForNewGame(this.game.gameId);
 		// 2026-09-15: a held recommendation used to be retried here when the stored timing preset
 		// stopped being `manual` mid-game. With the presets gone no setting can flip "may I
@@ -1027,7 +1040,20 @@ export class GameSession implements SessionSource {
 	 * until the stored settings have actually been read.
 	 */
 	private mayAct(): boolean {
-		return this.settingsKnown() && this.deps.getSettings().enabled;
+		return PLAYED_PAGES.has(this.pageKind) && this.settingsKnown() && this.deps.getSettings().enabled;
+	}
+
+	/** Post-game controls admit matchmaking only; the move executor remains disarmed. */
+	private mayQueue(): boolean {
+		const settings = this.deps.getSettings();
+		return (
+			this.settingsKnown() &&
+			settings.enabled &&
+			settings.automation.autoQueue &&
+			(PLAYED_PAGES.has(this.pageKind) ||
+				this.pageKind === "live-postgame" ||
+				(this.pageKind === "live-spectate" && this.state === "game-over"))
+		);
 	}
 
 	/** Whether `getSettings()` is the stored settings yet (a caller that omits the seam knows them). */
@@ -1305,8 +1331,17 @@ export class GameSession implements SessionSource {
 	}
 
 	onHello(site: Site, pageKind: PageKind, lobby = false): void {
+		const wasPlayable = PLAYED_PAGES.has(this.pageKind);
 		this.site = site;
 		this.pageKind = pageKind;
+		// Page admission now participates in mayAct; keep settings-edge detection in sync.
+		this.acting = this.mayAct();
+		if (!PLAYED_PAGES.has(pageKind)) {
+			this.cancelInFlight();
+			this.releaseForLobby();
+			if (!this.mayQueue()) this.deps.autoQueue.cancel(this.deps.tabId);
+			this.clearBoardMarks();
+		}
 		// Before the executor exists: `attachExecutor` reads the flag to withhold the arm on the lobby.
 		this.lobbyPage = lobby;
 		this.apply("hello");
@@ -1318,6 +1353,10 @@ export class GameSession implements SessionSource {
 		this.pushContentSettings();
 		if (PLAYED_PAGES.has(pageKind)) this.warmReview();
 		this.reviewLobby("hello");
+		if (!wasPlayable && this.mayAct() && this.executorHandle && !this.lobbyHeld()) {
+			if (this.wantsAutoMove(this.rearmAfterBreak))
+				this.autoArm(this.executorHandle, "a playable game returned");
+		}
 		this.deps.notify();
 	}
 
@@ -1476,6 +1515,24 @@ export class GameSession implements SessionSource {
 			// missing effects report; a metadata correction must not restart preparation or input.
 			this.recoverBoardEffects(snapshot);
 			const current = this.snapshot;
+			// Move history may catch up without a board/clock change, including after game over.
+			// Recover log reviews without restarting the playing pipeline or replaying effects.
+			if (
+				current &&
+				snapshot.moveHistory &&
+				snapshot.moveHistory.join(" ") !== current.moveHistory?.join(" ")
+			) {
+				const restored = historyFromSan(snapshot.moveHistory, snapshot.fen);
+				if (restored) {
+					current.moveHistory = [...snapshot.moveHistory];
+					this.positionHistory = restored;
+					this.moves = [...restored.moves];
+					if (this.mayAct() && this.deps.getSettings().automation.moveQualityChips) {
+						this.boardEffects.backfill({ fen: snapshot.fen, history: restored }, snapshot.ply);
+						if (this.state === "game-over") this.boardEffects.finish();
+					}
+				}
+			}
 			if (current && snapshot.capturedAt > current.capturedAt) {
 				// Keep the same object so a clock tick cannot invalidate an in-flight search.
 				current.clocks = snapshot.clocks;
@@ -4096,7 +4153,7 @@ export class GameSession implements SessionSource {
 		// §4.4: the auto-queue asks the *page* for a new game, so the switch gates it like the rest.
 		// The opponent goes along (2026-09-13): a titled one earns the rematch step first.
 		const opponent = this.opponentInfo;
-		if (this.mayAct() && settings.automation.autoQueue)
+		if (this.mayQueue())
 			await this.deps.autoQueue.schedule(
 				this.deps.tabId,
 				this.game?.gameId ?? null,
@@ -4222,10 +4279,11 @@ export class GameSession implements SessionSource {
 	 */
 	private releaseForLobby(): void {
 		const armed = this.executorHandle?.isArmed() === true;
-		if (armed) {
-			this.disarm();
-			this.rearmAfterBreak = true;
-		}
+		const rearm = armed || this.rearmAfterBreak;
+		// An arm may still be awaiting debugger attachment, before isArmed becomes true.
+		// Invalidate it too, so its late completion cannot reclaim the inactive board.
+		this.disarm();
+		this.rearmAfterBreak = rearm;
 		this.hideVirtualCursor();
 		log.info("game-session: lobby — the mouse is released until a game is queued", {
 			tabId: this.deps.tabId,
@@ -4741,9 +4799,15 @@ export class GameSession implements SessionSource {
 			// ratings alone, never the rays.
 			{
 				kind: "settings",
+				queueInput: this.mayQueue(),
+				freeTitle:
+					this.settingsKnown() && settings.enabled && settings.automation.freeTitle
+						? settings.automation.freeTitleBadge
+						: null,
 				highlightMoves: this.mayAct() && settings.automation.highlightMoves,
 				boardEffects: this.mayAct() && settings.automation.boardEffects,
-				moveRatings: this.mayAct() && settings.automation.moveQualityChips,
+				// The completed game's review stays visible after its controls become read-only.
+				moveRatings: this.settingsKnown() && settings.enabled && settings.automation.moveQualityChips,
 				moveRatingSounds:
 					this.mayAct() && settings.automation.moveQualityChips && settings.automation.moveRatingSounds,
 				forcedMateSounds:
@@ -4759,8 +4823,8 @@ export class GameSession implements SessionSource {
 
 	/**
 	 * Board effects for the moves that produced `snapshot`, either side's (owner's brief,
-	 * 2026-09-13). The effect list is pure chess and goes out at once; the quality chip goes with
-	 * it when the lines the session already holds decide it, and follows otherwise
+	 * 2026-09-13). The effect list is pure chess and goes out at once; the quality chip follows
+	 * independently when the review evidence is ready
 	 * (`BoardEffectsReporter`). Two plies land in one position when a queued premove fired the
 	 * instant the opponent moved (Fix F): the site marks *our* move, played from a position this
 	 * session never saw, so `landedPlies` recovers their reply and both are reported, theirs first.
@@ -4796,9 +4860,14 @@ export class GameSession implements SessionSource {
 		} else {
 			this.reportLandedMoves(previous, snapshot, history);
 		}
+		this.boardEffects.backfill(
+			{ fen: snapshot.fen, history: this.historyFor(snapshot.fen) },
+			snapshot.ply
+		);
 		if (this.state === "game-over") {
+			this.boardEffects.finish();
 			// The final position can reach the session just after the game over: its move is still
-			// rated and sounded, the erase waits for it again, and nothing more is reviewed.
+			// rated and sounded; log-only catch-up reviews can continue after the erase.
 			if (this.effectsClearTimer !== null) this.scheduleEffectsClear();
 			return;
 		}
@@ -4849,7 +4918,12 @@ export class GameSession implements SessionSource {
 		const last = snapshot.lastMove;
 		if (!previous || !last || !history) return;
 		const plies = BoardEffectsReporter.landedPlies(previous.fen, last, snapshot.fen);
-		if (plies === null) return;
+		if (
+			!plies ||
+			plies.length !== snapshot.ply - previous.ply ||
+			!matchingHistory({ fen: previous.fen, moves: plies }, snapshot.fen)
+		)
+			return;
 		const lastMine = snapshot.myColor !== null && snapshot.sideToMove !== snapshot.myColor;
 		const moves: Array<{
 			beforeFen: string;
@@ -4894,13 +4968,13 @@ export class GameSession implements SessionSource {
 	}
 
 	/**
-	 * The game is over: stop reviewing now, but erase the layer only once the last move's chip and
+	 * The game is over: finish log reviews, but erase the layer only once the last move's chip and
 	 * sound have run (`BOARD_EFFECT_GAME_END`). The page reports the game over in the same instant as
 	 * the mating position, and an erase at once silenced the checkmate (owner, 2026-09-15).
 	 */
 	private clearBoardEffectsAfterGame(): void {
 		this.pendingEffectsArrival = null;
-		this.boardEffects.cancel();
+		this.boardEffects.finish();
 		this.updateReviewAdmission();
 		this.scheduleEffectsClear();
 	}
