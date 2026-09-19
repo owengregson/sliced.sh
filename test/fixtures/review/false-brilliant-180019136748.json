@@ -1,0 +1,245 @@
+{
+  "note": "User reported 16...Nxd4 was not Brilliant on Chess.com; no exact replacement label was supplied. Scores are a fresh local SF19 full-network replay, not Chess.com scores. Movetext reconstructed from supplied PGN with corrected move numbering.",
+  "pgn": "[Event \"Live Chess\"]\n[Site \"Chess.com\"]\n[Date \"2026.09.16\"]\n[Round \"?\"]\n[White \"Omer-Sarikaya\"]\n[Black \"zurdo1969\"]\n[Result \"0-1\"]\n[WhiteElo \"2456\"]\n[BlackElo \"2490\"]\n[TimeControl \"180\"]\n[Link \"https://www.chess.com/analysis/game/live/180019136748/analysis\"]\n\n1. e4 c5 2. Nf3 d6 3. d4 cxd4 4. Nxd4 Nf6 5. Nc3 Nc6 6. Bc4 e6 7. Be3 d5 8. exd5 exd5 9. Bb3 Be7 10. O-O O-O 11. Nce2 Re8 12. Re1 Bg4 13. h3 Bh5 14. Qd3 Bg6 15. Qb5 Qc7 16. Bf4 Nxd4 17. Nxd4 Qxf4 18. Qxb7 Bd6 19. Rxe8+ Rxe8 20. Nf3 Bh5 21. Re1 Rxe1+ 22. Nxe1 Qh2+ 0-1",
+  "reportedPly": 32,
+  "provenance": {
+    "version": "Stockfish 19",
+    "module": "sf_19_relaxed-simd.js",
+    "networks": {
+      "nn-1a298aa575a0.nnue": "1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2"
+    },
+    "variant": "full",
+    "limitedStrength": false,
+    "wasmSha256": "11ebe6bdbae23c4e2b8d665f55c4d13500dc110ce83755663ce6533e6bb36b1b",
+    "runtime": "v25.6.1",
+    "threads": 2,
+    "hashMb": 64,
+    "requestedDepth": 18,
+    "movetimeMs": 5000,
+    "multiPv": 3
+  },
+  "input": {
+    "fen": "r3r1k1/ppq1bppp/2n2nb1/1Q1p4/3N1B2/1B5P/PPP1NPP1/R3R1K1 b - - 6 16",
+    "uci": "c6d4",
+    "moverRating": 2490,
+    "before": {
+      "depth": 18,
+      "complete": true,
+      "lines": [
+        {
+          "multipv": 1,
+          "depth": 18,
+          "score": {
+            "cp": 536
+          },
+          "pvUci": [
+            "c6d4",
+            "b5e8",
+            "f6e8",
+            "f4c7",
+            "d4b3",
+            "a2b3",
+            "e8c7",
+            "e2f4",
+            "g8f8",
+            "f4g6",
+            "h7g6",
+            "c2c3",
+            "e7f6",
+            "a1a5",
+            "d5d4",
+            "a5c5",
+            "c7e6",
+            "c5c4",
+            "a7a6",
+            "g1f1",
+            "b7b5"
+          ],
+          "pvSan": [],
+          "wdl": [
+            1000,
+            0,
+            0
+          ]
+        },
+        {
+          "multipv": 2,
+          "depth": 18,
+          "score": {
+            "cp": 15
+          },
+          "pvUci": [
+            "c7d7",
+            "c2c3",
+            "a7a6",
+            "b5b6",
+            "e8c8",
+            "d4c6",
+            "c8c6",
+            "b6d4",
+            "e7c5",
+            "d4d1",
+            "c6e6",
+            "e2d4",
+            "e6e1",
+            "d1e1",
+            "c5d4",
+            "c3d4"
+          ],
+          "pvSan": [],
+          "wdl": [
+            26,
+            966,
+            8
+          ]
+        },
+        {
+          "multipv": 3,
+          "depth": 18,
+          "score": {
+            "cp": 0
+          },
+          "pvUci": [
+            "c7c8",
+            "c2c3",
+            "a7a6",
+            "b5b6",
+            "e7d8",
+            "b6c5",
+            "d8e7"
+          ],
+          "pvSan": [],
+          "wdl": [
+            14,
+            972,
+            14
+          ]
+        }
+      ],
+      "bestmove": "c6d4",
+      "elapsedMs": 2348.085709
+    },
+    "after": {
+      "depth": 17,
+      "complete": true,
+      "lines": [
+        {
+          "multipv": 1,
+          "depth": 17,
+          "score": {
+            "cp": -528
+          },
+          "pvUci": [
+            "b5e8",
+            "f6e8",
+            "f4c7",
+            "d4b3",
+            "a2b3",
+            "e8c7",
+            "e2f4",
+            "g8f8",
+            "f4g6",
+            "h7g6",
+            "c2c3",
+            "a7a6",
+            "e1d1",
+            "e7f6",
+            "a1a2"
+          ],
+          "pvSan": [],
+          "wdl": [
+            0,
+            0,
+            1000
+          ]
+        },
+        {
+          "multipv": 2,
+          "depth": 17,
+          "score": {
+            "cp": -629
+          },
+          "pvUci": [
+            "b5a4",
+            "d4e2",
+            "e1e2",
+            "e7d6",
+            "f4d6",
+            "c7d6",
+            "e2e8",
+            "a8e8",
+            "a4a7",
+            "b7b6",
+            "b3a4",
+            "e8f8",
+            "a4b3",
+            "h7h5",
+            "a1d1",
+            "f8d8"
+          ],
+          "pvSan": [],
+          "wdl": [
+            0,
+            0,
+            1000
+          ]
+        },
+        {
+          "multipv": 3,
+          "depth": 17,
+          "score": {
+            "cp": -636
+          },
+          "pvUci": [
+            "f4c7",
+            "d4b5",
+            "c7h2",
+            "e7c5",
+            "g2g4",
+            "a8d8",
+            "g1g2",
+            "b5d6",
+            "a1d1",
+            "d6c4",
+            "e2f4",
+            "e8e1",
+            "d1e1",
+            "c4d2",
+            "f4g6",
+            "h7g6",
+            "e1d1"
+          ],
+          "pvSan": [],
+          "wdl": [
+            0,
+            0,
+            1000
+          ]
+        }
+      ],
+      "bestmove": "b5e8",
+      "elapsedMs": 5000.537917
+    }
+  },
+  "originalVerdict": {
+    "quality": "brilliant",
+    "loss": 0,
+    "bestPoints": 0.950288264627867,
+    "playedPoints": 0.950288264627867,
+    "top": true,
+    "depth": 18,
+    "mateIn": null,
+    "brilliant": {
+      "brilliant": true,
+      "reason": "sound-sacrifice",
+      "offers": [
+        {
+          "capture": "f4c7",
+          "square": "c7",
+          "shape": "ignored-threat",
+          "concession": 6
+        }
+      ]
+    }
+  }
+}

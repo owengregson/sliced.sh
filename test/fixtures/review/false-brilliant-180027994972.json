@@ -1,0 +1,380 @@
+{
+  "note": "User reports Chess.com Great, bot Brilliant for 12...Qf6. Movetext normalized from supplied PGN; evidence is local full-network Stockfish, not Chess.com scores.",
+  "pgn": "[Event \"Live Chess\"]\n[Site \"Chess.com\"]\n[Date \"2026.09.16\"]\n[White \"martidianos\"]\n[Black \"zurdo1969\"]\n[Result \"0-1\"]\n[WhiteElo \"2472\"]\n[BlackElo \"2502\"]\n[TimeControl \"180\"]\n[Link \"https://www.chess.com/game/180027994972\"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bc4 Nf6 4. O-O Bc5 5. c3 Nxe4 6. d4 d5 7. Bb5 exd4 8. Nxd4 O-O 9. Nxc6 bxc6 10. Bxc6 Ba6 11. Bxa8 Bxf1 12. Qxd5 Qf6 13. Qxc5 Nxc5 14. Bf3 Nd3 15. Nd2 Bxg2 16. Bxg2 a6 17. Ne4 Qg6 18. Be3 Ne5 19. Bd4 Nf3+ 20. Kf1 Qxe4 21. Re1 Qxe1# 0-1",
+  "reportedPly": 24,
+  "expectedQuality": "great",
+  "provenance": {
+    "version": "Stockfish 19",
+    "module": "sf_19_relaxed-simd.js",
+    "networks": {
+      "nn-1a298aa575a0.nnue": "1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2"
+    },
+    "variant": "full",
+    "limitedStrength": false,
+    "wasmSha256": "11ebe6bdbae23c4e2b8d665f55c4d13500dc110ce83755663ce6533e6bb36b1b",
+    "runtime": "v25.6.1",
+    "threads": 2,
+    "hashMb": 64,
+    "requestedDepth": 18,
+    "movetimeMs": 5000,
+    "multiPv": 3
+  },
+  "input": {
+    "fen": "B2q1rk1/p1p2ppp/8/2bQ4/4n3/2P5/PP3PPP/RNB2bK1 b - - 0 12",
+    "uci": "d8f6",
+    "moverRating": 2502,
+    "previous": {
+      "depth": 18,
+      "complete": true,
+      "lines": [
+        {
+          "multipv": 1,
+          "depth": 18,
+          "score": {
+            "cp": -450
+          },
+          "pvUci": [
+            "g1f1",
+            "d8h4",
+            "d1f3",
+            "h4h2",
+            "g2g4",
+            "f8a8",
+            "c1f4",
+            "h2h4",
+            "b1d2",
+            "e4f2",
+            "b2b4",
+            "c5b6",
+            "f4g3",
+            "h4h3",
+            "f3g2",
+            "h3g2",
+            "f1g2",
+            "f2g4",
+            "a2a4",
+            "a7a5"
+          ],
+          "pvSan": [],
+          "wdl": [
+            0,
+            0,
+            1000
+          ]
+        },
+        {
+          "multipv": 2,
+          "depth": 18,
+          "score": {
+            "cp": -639
+          },
+          "pvUci": [
+            "b1d2",
+            "e4f2",
+            "d1f1",
+            "f2g4",
+            "g1h1",
+            "g4h2",
+            "f1e2",
+            "d8h4",
+            "g2g3",
+            "h4g3",
+            "e2g2",
+            "g3h4",
+            "g2h2",
+            "h4e1",
+            "h1g2",
+            "f8e8",
+            "h2c7",
+            "e8e2",
+            "g2f3"
+          ],
+          "pvSan": [],
+          "wdl": [
+            0,
+            0,
+            1000
+          ]
+        },
+        {
+          "multipv": 3,
+          "depth": 18,
+          "score": {
+            "cp": -688
+          },
+          "pvUci": [
+            "c1e3",
+            "c5e3",
+            "g1f1",
+            "e4f2",
+            "d1d5",
+            "d8a8",
+            "d5f3",
+            "f8e8",
+            "b1a3",
+            "a8d8",
+            "a3c4",
+            "e3c5"
+          ],
+          "pvSan": [],
+          "wdl": [
+            0,
+            0,
+            1000
+          ]
+        }
+      ],
+      "bestmove": "g1f1",
+      "elapsedMs": 3433.788958
+    },
+    "before": {
+      "depth": 18,
+      "complete": true,
+      "lines": [
+        {
+          "multipv": 1,
+          "depth": 18,
+          "score": {
+            "cp": 806
+          },
+          "pvUci": [
+            "d8f6",
+            "d5c5",
+            "e4c5",
+            "a8f3",
+            "f1g2",
+            "f3g2",
+            "f8d8",
+            "b1d2",
+            "f6e6",
+            "b2b3",
+            "e6e1",
+            "d2f1",
+            "c5d3",
+            "c1g5",
+            "e1f2",
+            "g1h1",
+            "d8e8",
+            "g2c6"
+          ],
+          "pvSan": [],
+          "wdl": [
+            1000,
+            0,
+            0
+          ]
+        },
+        {
+          "multipv": 2,
+          "depth": 18,
+          "score": {
+            "cp": 709
+          },
+          "pvUci": [
+            "f1c4",
+            "d5d8",
+            "c5f2",
+            "g1h1",
+            "f8d8",
+            "b1d2",
+            "e4d2",
+            "a8c6",
+            "f7f5",
+            "b2b3",
+            "c4d5",
+            "c6d5",
+            "d8d5",
+            "g2g3",
+            "d2e4",
+            "c1a3",
+            "f2b6",
+            "c3c4"
+          ],
+          "pvSan": [],
+          "wdl": [
+            1000,
+            0,
+            0
+          ]
+        },
+        {
+          "multipv": 3,
+          "depth": 18,
+          "score": {
+            "cp": 659
+          },
+          "pvUci": [
+            "f1a6",
+            "c1e3",
+            "c5e3",
+            "f2e3",
+            "d8a8",
+            "d5a8",
+            "f8a8",
+            "a2a4",
+            "a8d8",
+            "b1a3",
+            "a6b7",
+            "a3b5",
+            "a7a6",
+            "b5d4",
+            "c7c5"
+          ],
+          "pvSan": [],
+          "wdl": [
+            1000,
+            0,
+            0
+          ]
+        }
+      ],
+      "bestmove": "d8f6",
+      "elapsedMs": 3603.0399580000003
+    },
+    "after": {
+      "depth": 14,
+      "complete": true,
+      "lines": [
+        {
+          "multipv": 1,
+          "depth": 14,
+          "score": {
+            "cp": -847
+          },
+          "pvUci": [
+            "d5c5",
+            "e4c5",
+            "b1d2",
+            "f8a8",
+            "d2f1",
+            "f6a6",
+            "c1g5",
+            "a6e2",
+            "f1g3",
+            "e2b2",
+            "a1f1",
+            "b2a2",
+            "g3f5",
+            "g8h8",
+            "f5e7",
+            "h7h5",
+            "f1d1",
+            "c5a6",
+            "h2h3",
+            "a2e2",
+            "e7g6",
+            "f7g6",
+            "d1d8",
+            "a8d8"
+          ],
+          "pvSan": [],
+          "wdl": [
+            0,
+            0,
+            1000
+          ]
+        },
+        {
+          "multipv": 2,
+          "depth": 14,
+          "score": {
+            "cp": -918
+          },
+          "pvUci": [
+            "c1f4",
+            "f6f4",
+            "d5c5",
+            "e4c5",
+            "b1a3",
+            "f1d3",
+            "a8f3",
+            "f4d2",
+            "b2b4",
+            "f8e8",
+            "h2h3",
+            "d2c3",
+            "a1d1",
+            "g7g5",
+            "b4c5",
+            "c3c5",
+            "d1d3",
+            "e8e1",
+            "g1h2",
+            "c5f2",
+            "d3d8",
+            "g8g7"
+          ],
+          "pvSan": [],
+          "wdl": [
+            0,
+            0,
+            1000
+          ]
+        },
+        {
+          "multipv": 3,
+          "depth": 14,
+          "score": {
+            "cp": -1315
+          },
+          "pvUci": [
+            "c1e3",
+            "c5e3",
+            "d5d2",
+            "e3f2",
+            "g1f1",
+            "f2e3",
+            "f1e2",
+            "f6f2",
+            "e2d1",
+            "e4d2",
+            "a8c6",
+            "f2f1",
+            "d1c2",
+            "f1f5",
+            "c2d1",
+            "d2b1",
+            "d1e2",
+            "f5f2",
+            "e2d3"
+          ],
+          "pvSan": [],
+          "wdl": [
+            0,
+            0,
+            1000
+          ]
+        }
+      ],
+      "bestmove": "d5c5",
+      "elapsedMs": 5002.863541000001
+    }
+  },
+  "originalVerdict": {
+    "quality": "brilliant",
+    "loss": 0,
+    "bestPoints": 0.988474885592805,
+    "playedPoints": 0.988474885592805,
+    "top": true,
+    "depth": 18,
+    "mateIn": null,
+    "brilliant": {
+      "brilliant": true,
+      "reason": "sound-sacrifice",
+      "offers": [
+        {
+          "capture": "d5e4",
+          "square": "e4",
+          "shape": "ignored-threat",
+          "concession": 3
+        },
+        {
+          "capture": "g1f1",
+          "square": "f1",
+          "shape": "ignored-threat",
+          "concession": 3
+        }
+      ]
+    }
+  }
+}

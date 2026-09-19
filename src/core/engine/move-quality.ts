@@ -79,7 +79,8 @@ export interface MoveQualityVerdict {
 	depth: number;
 	/**
 	 * Moves to checkmate for the mover, this move included (1 = the move is checkmate), when the
-	 * move keeps a forced mate; `null` otherwise. Such a move is rated `mate`.
+	 * move keeps a forced mate; `null` otherwise. Such a move is rated `mate` when it is as fast as
+	 * the fastest mate the review knew — one of the mating sequence's own moves.
 	 */
 	mateIn: number | null;
 	/** The brilliant gates' answer when the move offered material (diagnostics). */
@@ -269,14 +270,22 @@ export function classifyMoveQuality(
 	}
 
 	// Mate (owner, 2026-09-14): every move of a forced mating sequence, the checkmate included,
-	// outranks the whole ladder.
-	if (mateIn !== null) return settle("mate");
+	// outranks the whole ladder. Only the sequence's own moves (owner, 2026-09-19): a move that
+	// keeps a forced mate but is slower than the fastest one known is not playing the mate, and
+	// is graded like any other. A mate the review had not seen before the move starts one.
+	const fastestMate = (best.score.mate ?? 0) > 0 ? (best.score.mate ?? null) : null;
+	if (mateIn !== null && (fastestMate === null || mateIn <= fastestMate)) return settle("mate");
 
 	// Book: theory is recognised rather than graded — unless it is a trap that loses real points.
 	if (input.inBook === true && loss < c.bookMaxLoss) return settle("book");
 
 	// Brilliant: a sound sacrifice the player chose.
 	if (brilliant?.brilliant) return settle("brilliant");
+
+	// A best quiet move that makes every apparent sacrifice untakeable by a short mate is
+	// a tactical find, not a material sacrifice. The proof also requires a winning plain
+	// alternative; it must not suppress genuine sacrifices that are needed to save the game.
+	if (top && specialEvidence && brilliant?.reason === "mating-threat") return settle("great");
 
 	// Great: the best move, and the only good one.
 	const runnerUp = alternatives[0];
@@ -307,5 +316,10 @@ export function classifyMoveQuality(
 	)
 		return settle("miss");
 
-	return settle(ordinaryMoveQuality(loss, top, c));
+	const ordinary = ordinaryMoveQuality(loss, top, c);
+	// The rating multiplier must not turn a moderate slip into a Blunder on its own. Retain
+	// the measured loss for diagnostics; only the harshest label gets this conservative margin.
+	return settle(
+		ordinary === "blunder" && refLoss < c.blunderMinReferenceLoss ? "mistake" : ordinary
+	);
 }

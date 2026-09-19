@@ -4,6 +4,7 @@ import {
 	type BrilliantEvidence,
 	classifyBrilliant,
 	planBrilliant,
+	type SacrificeOffer,
 	staticExchange,
 } from "@core/engine/brilliant";
 
@@ -100,6 +101,94 @@ describe("staticExchange", () => {
 });
 
 describe("sacrifice correctness regressions", () => {
+	it("does not call the queen countertrade in 16...Nxd4 an ignored-threat sacrifice", () => {
+		// Omer-Sarikaya–zurdo1969, 180019136748: after Nxd4, Bxc7 permits Nxb5.
+		const fen = "r3r1k1/ppq1bppp/2n2nb1/1Q1p4/3N1B2/1B5P/PPP1NPP1/R3R1K1 b - - 6 16";
+		expect(staticExchange(fen, "c6d4")).toBe(0);
+		expect(planBrilliant({ fen, uci: "c6d4" })).toMatchObject({
+			offers: [],
+			materialComplete: true,
+		});
+	});
+	it("does not call a pawn lost after an even piece trade a piece sacrifice (33.Bb4)", () => {
+		// zurdo1969–Streetmasters, 184035279236: the bishop steps to a pawn-defended square.
+		// Nxb4 axb4 Qxb4 trades bishop for knight and then drops the a-pawn — a pawn, not a piece.
+		const fen = "4r1k1/1p4p1/p1nR4/2B1r3/4pQpP/Pq2P1P1/1P3P2/3R2K1 w - - 3 33";
+		expect(staticExchange(fen, "c5b4")).toBe(-1);
+		expect(planBrilliant({ fen, uci: "c5b4" })).toMatchObject({
+			offers: [],
+			materialComplete: true,
+		});
+		// A rook on the same square is still given for a knight: the pawn only adds to the gift.
+		const rook = "6k1/8/1qn5/8/5R2/P7/8/7K w - - 0 1";
+		expect(planBrilliant({ fen: rook, uci: "f4b4" })?.offers).toEqual([
+			{ capture: "c6b4", square: "b4", shape: "exchange-sacrifice", concession: 3 },
+		]);
+	});
+	it("does not call a moved piece that cannot be taken a sacrifice, for a strong mover (17.Nxd4)", () => {
+		// Sa-skia–zurdo1969, 184035634254: a knight for two pawns on d4, but leaving e2 unmasks
+		// Re1 on the queen at e7 — cxd4 loses her to a capture that stood before the acceptance.
+		const fen = "1r3rk1/p2bqppp/5n2/2p5/N2p4/1P3P2/P1P1NKPP/R2QR3 w - - 4 17";
+		const offers: SacrificeOffer[] = [
+			{
+				capture: "c5d4",
+				square: "d4",
+				shape: "capture-sacrifice",
+				concession: 1,
+				standing: true,
+			},
+		];
+		expect(planBrilliant({ fen, uci: "e2d4" })?.offers).toEqual(offers);
+		const found = { playedPoints: 0.48, alternatives: [{ uci: "e2g3", points: 0.44 }] };
+		expect(
+			classifyBrilliant({ fen, uci: "e2d4", ...evidence({ ...found, moverRating: 2560 }) })
+		).toEqual({ brilliant: false, reason: "illusion", offers });
+		// Chess.com is more generous with newer players: the benchmark's 13.Nxc6 (808) is this idea.
+		expect(
+			classifyBrilliant({ fen, uci: "e2d4", ...evidence({ ...found, moverRating: 900 }) }).brilliant
+		).toBe(true);
+		// A deflection's regain exists only because the offer was accepted: still a sacrifice.
+		const deflection = "3qk3/8/8/8/2B5/8/8/3QK3 w - - 0 1";
+		expect(planBrilliant({ fen: deflection, uci: "c4f7" })?.offers).toEqual([
+			{ capture: "e8f7", square: "f7", shape: "hanging-piece", concession: 3 },
+		]);
+	});
+	it("requires safe off-square recovery, not just a high-value capture", () => {
+		// h3 leaves Ne3 attacked, but dxe3 Rxa5 recovers a bishop for that knight.
+		const safe = "7k/8/8/b7/3p4/4N3/7P/R5K1 w - - 0 1";
+		expect(planBrilliant({ fen: safe, uci: "h2h3" })?.offers).toEqual([]);
+		// With b6 guarding a5, Rxa5 bxa5 loses the rook: no proof of recovery.
+		const defended = "7k/8/1p6/b7/3p4/4N3/7P/R5K1 w - - 0 1";
+		expect(planBrilliant({ fen: defended, uci: "h2h3" })?.offers).toContainEqual({
+			capture: "d4e3",
+			square: "e3",
+			shape: "ignored-threat",
+			concession: 3,
+		});
+	});
+	it("keeps a checking intermediate capture from erasing a genuine tactical sacrifice", () => {
+		// Chessigma #39, 14.Ne5: Kxc7 Nxc6+ recovers a bishop for a moment, but the
+		// knight on c6 is still attacked; SEE cannot account for the intervening check evasion.
+		const fen = "2kr1b1r/p1Np1ppp/1pb2n2/8/1nRP1B2/5N2/PP2B1PP/4K2R w K - 1 14";
+		expect(planBrilliant({ fen, uci: "f3e5" })?.offers).toContainEqual({
+			capture: "c8c7",
+			square: "c7",
+			shape: "ignored-threat",
+			concession: 3,
+		});
+	});
+	it("abstains when proving the off-square recovery exceeds the shared material budget", () => {
+		const fen = "7k/8/8/b7/3p4/4N3/7P/R5K1 w - - 0 1";
+		const verdict = classifyBrilliant(
+			{
+				fen,
+				uci: "h2h3",
+				...evidence({ alternatives: [{ uci: "e3c4", points: 0.5 }] }),
+			},
+			{ ...BRILLIANT, maxExchangeNodes: 1 }
+		);
+		expect(verdict.reason).toBe("insufficient-evidence");
+	});
 	it("does not count a pinned pawn's pseudo-legal capture", () => {
 		const fen = "4k3/4p3/8/7N/8/8/8/4R1K1 w - - 0 1";
 		// Nf6 is attacked geometrically by e7, but exf6 exposes its own king to Re1.

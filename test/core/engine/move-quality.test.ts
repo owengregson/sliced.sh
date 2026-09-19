@@ -58,7 +58,8 @@ describe("classifyMoveQuality — chess.com's expected-points bands", () => {
 		expect(loses(0.46)?.quality).toBe("good");
 		expect(loses(0.42)?.quality).toBe("inaccuracy");
 		expect(loses(0.35)?.quality).toBe("mistake");
-		expect(loses(0.2)?.quality).toBe("blunder");
+		expect(loses(0.25)?.quality).toBe("mistake");
+		expect(loses(0.19)?.quality).toBe("blunder");
 		expect(loses(0.35)?.loss).toBeCloseTo(0.15, 2);
 	});
 
@@ -191,6 +192,28 @@ describe("classifyMoveQuality — mate", () => {
 		expect(classify({ uci: "a2a3", before, after: afterScore({ mate: -2 }) })).toMatchObject({
 			quality: "mate",
 			mateIn: 3,
+		});
+	});
+
+	it("rates only the mating sequence's own moves mate: a slower mate is graded on the ladder", () => {
+		// Owner, 2026-09-19: a forced mate that is on the board but not being played is not Mate.
+		const before = frame([line(1, "e2e4", { mate: 2 }), line(2, "d2d4", { mate: 5 })]);
+		expect(classify({ uci: "e2e4", before })).toMatchObject({ quality: "mate", mateIn: 2 });
+		// Still a forced mate, and the distance is still reported — but not the sequence's move.
+		const slower = classify({ uci: "d2d4", before });
+		expect(slower?.mateIn).toBe(5);
+		expect(slower?.quality).not.toBe("mate");
+		// The same for a move outside the lines, scored from the position it made.
+		const unlisted = classify({ uci: "a2a3", before, after: afterScore({ mate: -4 }) });
+		expect(unlisted?.mateIn).toBe(5);
+		expect(unlisted?.quality).not.toBe("mate");
+	});
+
+	it("rates the move that starts a forced mate the review had not seen yet", () => {
+		const before = frame([line(1, "e2e4", { cp: 900 }), line(2, "d2d4", { cp: 850 })]);
+		expect(classify({ uci: "a2a3", before, after: afterScore({ mate: -3 }) })).toMatchObject({
+			quality: "mate",
+			mateIn: 4,
 		});
 	});
 

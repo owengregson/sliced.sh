@@ -12,7 +12,7 @@ import { PIECE_VALUES } from "@core/chess/material";
 import { playUci } from "@core/chess/san";
 import { BRILLIANT } from "@core/constants/review";
 import type { Chess, Move } from "chess.js";
-import { byRating } from "./expected-points";
+import { byRating, effectiveRating } from "./expected-points";
 
 export type BrilliantTuning = { readonly [K in keyof typeof BRILLIANT]: number };
 
@@ -30,6 +30,11 @@ export interface SacrificeOffer {
 	shape: SacrificeShape;
 	/** Pawn units the mover loses in the legal exchange on `square`, net of the move's own gain. */
 	concession: number;
+	/**
+	 * Taking the moved piece loses at least as much elsewhere, to a capture that already won it
+	 * before the offer was accepted (`BRILLIANT.standingThreatMinRating`).
+	 */
+	standing?: boolean;
 }
 
 export interface BrilliantPlanInput {
@@ -91,6 +96,7 @@ export type BrilliantReason =
 	| "unsound"
 	| "not-near-best"
 	| "trivial-win"
+	| "mating-threat"
 	| "continuation"
 	| "sound-sacrifice";
 
@@ -104,10 +110,14 @@ function uciOf(move: Move): string {
 	return move.from + move.to + (move.promotion ?? "");
 }
 
-/** Material a move wins by itself: the captured piece and a promotion's upgrade. */
-function gain(move: Move): number {
+/**
+ * Material a move wins by itself: the captured piece and a promotion's upgrade. `pawnsOf` prices
+ * that side's pawns at nothing — the piece-only exchange of `BRILLIANT.pawnLossNotSacrifice`.
+ */
+function gain(move: Move, pawnsOf?: "w" | "b"): number {
+	const free = move.captured === "p" && pawnsOf !== undefined && move.color !== pawnsOf;
 	return (
-		(move.captured ? PIECE_VALUES[move.captured] : 0) +
+		(move.captured && !free ? PIECE_VALUES[move.captured] : 0) +
 		(move.promotion ? PIECE_VALUES[move.promotion] - PIECE_VALUES.p : 0)
 	);
 }
@@ -121,7 +131,8 @@ function exchangeGain(
 	move: Move,
 	tuning: BrilliantTuning,
 	budget: { nodes: number },
-	plies = 0
+	plies = 0,
+	pawnsOf?: "w" | "b"
 ): number | null {
 	if (++budget.nodes > tuning.maxExchangeNodes || plies >= tuning.maxExchangePlies) return null;
 	board.move(move);
@@ -133,11 +144,11 @@ function exchangeGain(
 		let replyGain = canStop ? 0 : Number.NEGATIVE_INFINITY;
 		for (const reply of legal) {
 			if (!reply.captured || reply.to !== move.to) continue;
-			const value = exchangeGain(board, reply, tuning, budget, plies + 1);
+			const value = exchangeGain(board, reply, tuning, budget, plies + 1, pawnsOf);
 			if (value === null) return null;
 			replyGain = Math.max(replyGain, value);
 		}
-		return gain(move) - replyGain;
+		return gain(move, pawnsOf) - replyGain;
 	} finally {
 		board.undo();
 	}
@@ -158,11 +169,104 @@ export function staticExchange(
 	return exchangeGain(board, move, tuning, { nodes: 0 });
 }
 
-/** Every piece `candidate` leaves to be taken for a concession — not only the piece that moved. */
+/**
+ * An untouched piece is not a gift when taking it permits an immediate, safe countercapture
+ * elsewhere. Check the acceptance branch itself: the engine's main PV may decline the offer.
+ * Same-square recovery is already counted by exchangeGain. Do not use a capture's face value:
+ * the capturing piece may itself be lost. Null means the shared material-search budget ran out.
+ */
+function hasOffSquareRecovery(
+	board: Chess,
+	capture: Move,
+	tuning: BrilliantTuning,
+	budget: { nodes: number },
+	standing?: Chess | null
+): boolean | null {
+	if (standing === null) return false;
+	board.move(capture);
+	try {
+		const needed = gain(capture);
+		for (const answer of board.moves({ verbose: true })) {
+			// A checking intermediate capture can only postpone the loss of its own piece:
+			// same-square SEE cannot follow that check evasion and prove a lasting recovery.
+			// Keep those tactical sacrifices for the engine/PV gates instead of erasing them.
+			if (
+				!answer.captured ||
+				answer.to === capture.to ||
+				/[+#]/.test(answer.san) ||
+				gain(answer) < needed
+			)
+				continue;
+			const recovered = exchangeGain(board, answer, tuning, budget);
+			if (recovered === null) return null;
+			if (recovered < needed) continue;
+			if (standing === undefined) return true;
+			// The moved piece: only a capture that already won this much before the offer was
+			// accepted — a deflection's regain exists because of the acceptance, and is a sacrifice.
+			const threat = standing
+				.moves({ verbose: true })
+				.find((move) => move.from === answer.from && move.to === answer.to);
+			if (!threat?.captured) continue;
+			const already = exchangeGain(standing, threat, tuning, budget);
+			if (already === null) return null;
+			if (already >= needed) return true;
+		}
+		return false;
+	} finally {
+		board.undo();
+	}
+}
+
+/** The position with the move handed back to the side that just played; `null` out of a check. */
+function passed(board: Chess): Chess | null {
+	if (board.isCheck()) return null;
+	const fields = board.fen().split(" ");
+	fields[1] = board.turn() === "w" ? "b" : "w";
+	fields[3] = "-";
+	return loadPosition(fields.join(" "));
+}
+
+/** A short checking mate proves an ignored piece cannot actually be taken safely. */
+function checkingMate(
+	board: Chess,
+	attacker: "w" | "b",
+	plies: number,
+	tuning: BrilliantTuning,
+	budget: { nodes: number }
+): boolean | null {
+	if (++budget.nodes > tuning.maxExchangeNodes) return null;
+	const moves = board.moves({ verbose: true });
+	if (moves.length === 0) return board.isCheck() && board.turn() !== attacker;
+	if (plies <= 0) return false;
+	const attacking = board.turn() === attacker;
+	// Only checking continuations are proof here; a quiet move may have an unexamined defence.
+	const candidates = attacking ? moves.filter((move) => /[+#]/.test(move.san)) : moves;
+	if (attacking && candidates.some((move) => move.san.endsWith("#"))) return true;
+	for (const move of candidates) {
+		board.move(move);
+		let result: boolean | null;
+		try {
+			result = checkingMate(board, attacker, plies - 1, tuning, budget);
+		} finally {
+			board.undo();
+		}
+		if (result === null) return null;
+		if (attacking && result) return true;
+		if (!attacking && !result) return false;
+	}
+	return !attacking;
+}
+
+/**
+ * Every piece `candidate` leaves to be taken for a concession — not only the piece that moved.
+ * `piecesOnly` is the played move's test (`BRILLIANT.pawnLossNotSacrifice`); an alternative is
+ * scanned without it, because "gives up less" and "gives nothing away" count a pawn too.
+ */
 function scanOffers(
 	fen: string,
 	candidate: string,
-	tuning: BrilliantTuning
+	tuning: BrilliantTuning,
+	piecesOnly = false
 ): { offers: SacrificeOffer[]; complete: boolean } {
 	const before = loadPosition(fen);
 	const board = loadPosition(fen);
@@ -173,14 +277,37 @@ function scanOffers(
 	let complete = true;
 	for (const reply of board.moves({ verbose: true })) {
 		if (!reply.captured || PIECE_VALUES[reply.captured] < tuning.minOfferedPiece) continue;
-		const value = exchangeGain(board, reply, tuning, { nodes: 0 });
+		const budget = { nodes: 0 };
+		const value = exchangeGain(board, reply, tuning, budget);
 		if (value === null) {
 			complete = false;
 			continue;
 		}
 		const concession = value - gain(moved);
 		if (concession < tuning.minConcession) continue;
+		// A piece traded evenly whose recapturing pawn then falls gave up a pawn, not a piece.
+		if (piecesOnly && tuning.pawnLossNotSacrifice > 0) {
+			const pieces = exchangeGain(board, reply, tuning, { nodes: 0 }, 0, moved.color);
+			if (pieces === null) {
+				complete = false;
+				continue;
+			}
+			if (pieces - gain(moved) < tuning.minConcession) continue;
+		}
 		const indirect = reply.to !== moved.to;
+		if (indirect) {
+			const recovered = hasOffSquareRecovery(board, reply, tuning, budget);
+			if (recovered === null) complete = false;
+			if (recovered === true) continue;
+		}
+		// The moved piece stays an offer — whether its standing threat unmakes the gift depends on
+		// the mover's rating, which only `evaluateBrilliant` knows.
+		let standing = false;
+		if (!indirect && piecesOnly && tuning.standingThreatMinRating > 0) {
+			const threat = hasOffSquareRecovery(board, reply, tuning, { nodes: 0 }, passed(board));
+			if (threat === null) complete = false;
+			standing = threat === true;
+		}
 		const shape: SacrificeShape = indirect
 			? before.isAttacked(reply.to, reply.color)
 				? "ignored-threat"
@@ -190,7 +317,13 @@ function scanOffers(
 				: moved.captured
 					? "capture-sacrifice"
 					: "hanging-piece";
-		offers.push({ capture: uciOf(reply), square: reply.to, shape, concession });
+		offers.push({
+			capture: uciOf(reply),
+			square: reply.to,
+			shape,
+			concession,
+			...(standing ? { standing } : {}),
+		});
 	}
 	return { offers, complete };
 }
@@ -204,7 +337,7 @@ export function planBrilliant(
 	if (!board) return null;
 	const moves = board.moves({ verbose: true });
 	if (!moves.some((move) => uciOf(move) === input.uci)) return null;
-	const scan = scanOffers(input.fen, input.uci, tuning);
+	const scan = scanOffers(input.fen, input.uci, tuning, true);
 	const offers = scan.offers;
 	const worst = (list: readonly SacrificeOffer[]): number =>
 		Math.max(0, ...list.map((offer) => offer.concession));
@@ -288,6 +421,12 @@ export function evaluateBrilliant(
 	if (plan.offers.length === 0) return verdict("not-sacrifice");
 	if (tuning.movedPieceOffersOnly > 0 && !plan.offers.some(offersMovedPiece))
 		return verdict("not-sacrifice");
+	if (
+		tuning.standingThreatMinRating > 0 &&
+		effectiveRating(evidence.moverRating) >= tuning.standingThreatMinRating &&
+		plan.offers.every((offer) => offer.standing === true)
+	)
+		return verdict("illusion");
 	if (evidence.playedPv && regainedAtOnce(plan, evidence.playedPv, tuning))
 		return verdict("illusion");
 	if (!plan.safeAlternative) return verdict("no-safe-alternative");
@@ -342,6 +481,31 @@ export function evaluateBrilliant(
 						.map((alt) => alt.points)
 				)
 			: bestAlternative;
+	// A quiet mating threat in an already won position need not be a sacrifice. Require a
+	// winning non-sacrificing alternative AND prove that every already-attacked piece is
+	// tactically untakeable. New/indirect offers, checks, and genuine moved-piece sacrifices
+	// remain eligible, even when accepting them leads to mate.
+	if (
+		plainBest >= tuning.matingThreatAlternative &&
+		(evidence.playedMate ?? 0) <= 0 &&
+		tuning.ignoredThreatMatePlies > 0 &&
+		plan.offers.every((offer) => offer.shape === "ignored-threat") &&
+		board
+	) {
+		const move = playUci(board, plan.uci);
+		if (move && !move.captured && !move.promotion && !/[+#]/.test(move.san)) {
+			const budget = { nodes: 0 };
+			const protectedByMate = plan.offers.every((offer) => {
+				if (!playUci(board, offer.capture)) return false;
+				try {
+					return checkingMate(board, move.color, tuning.ignoredThreatMatePlies, tuning, budget) === true;
+				} finally {
+					board.undo();
+				}
+			});
+			if (protectedByMate) return verdict("mating-threat");
+		}
+	}
 	// The fastest mate is still the move that had to be found, however winning the rest is.
 	const playedMate = evidence.playedMate ?? 0;
 	const alternativeMates = evidence.alternatives.flatMap((alt) =>

@@ -102,6 +102,13 @@ export const MOVE_CLASSIFICATION = {
 	inaccuracyLoss: 0.05,
 	mistakeLoss: 0.1,
 	blunderLoss: 0.2,
+	/**
+	 * Conservative Blunder admission for our approximate curve: also require this much loss on
+	 * the reference curve. The 2450 multiplier alone overclassified the owner's reviewed game.
+	 * A 0.10 margin above the published 0.20 band reserves the harshest label for clear errors;
+	 * smaller losses remain Mistakes. This is a local calibration, not Chess.com's fitted model.
+	 */
+	blunderMinReferenceLoss: 0.3,
 	/** Floating-point equality, not an allowance: a move that loses anything is not Best. */
 	zeroLossTolerance: 1e-9,
 	/** A frame shallower than this supports no verdict at all. */
@@ -159,6 +166,9 @@ export const BRILLIANT = {
 	/** Bounds on the same-square exchange search per offered capture. */
 	maxExchangeNodes: 256,
 	maxExchangePlies: 16,
+	/** Short mate proof for already-attacked pieces, only with a winning plain alternative. */
+	ignoredThreatMatePlies: 3,
+	matingThreatAlternative: 0.9,
 	/**
 	 * Tuned with `tools/move-review`: chess.com badges the second- or third-best line of a depth-18
 	 * review, and with the loss measured at the mover's rating (`nearBestRatedLoss`) the owner's
@@ -244,4 +254,26 @@ export const BRILLIANT = {
 	 * move is not decisive just because the moves matching it are sacrifices too.
 	 */
 	sacrificialAlternativeNotTrivial: 1,
+	/**
+	 * 1 = the concession must survive with the mover's own pawns priced at nothing: a piece traded
+	 * evenly on its square whose recapturing pawn then falls is a pawn given up, not "a good piece
+	 * sacrifice". The owner's 33.Bb4 (2026-09-18, 184035279236): the bishop steps to a square its
+	 * a-pawn defends, Nxb4 axb4 Qxb4 is bishop for knight and then the pawn — a concession of 1 that
+	 * is all pawn — and as the only winning move it passed every engine gate. The reported
+	 * concession stays the real one; a rook given for a knight there is still an offer.
+	 */
+	pawnLossNotSacrifice: 1,
+	/**
+	 * From this mover rating up, a moved piece that cannot be taken is no sacrifice: accepting it
+	 * loses at least its value elsewhere, to a capture that already won that much before the
+	 * acceptance (a discovered attack). A deflection's regain exists only because the offer was
+	 * accepted, and stays a sacrifice. The owner's 17.Nxd4 (2026-09-18, 184035634254, 2560): a knight
+	 * for two pawns on d4, but leaving e2 unmasks Re1 on the queen at e7, so cxd4 loses her.
+	 * Rating-gated because chess.com is "more generous" with newer players and the evidence says so:
+	 * applied to everyone it removes 8 of the benchmark's 100 brilliants, every one played at 1117 or
+	 * below (13.Nxc6 at 808 is the same discovered attack on a queen); from 1400 up it removes none
+	 * of the benchmark's 33 or the owner's 11 reviewed brilliants. An unknown rating is judged at the
+	 * reference rating, as everywhere else. 0 turns it off.
+	 */
+	standingThreatMinRating: 1_400,
 } as const;

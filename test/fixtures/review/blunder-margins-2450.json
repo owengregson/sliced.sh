@@ -1,0 +1,2053 @@
+{
+  "pgn": "1. e4 c5 2. Nf3 d6 3. d4 cxd4 4. Nxd4 Nf6 5. Nc3 a6 6. Bc4 e6 7. O-O b5 8. Bb3 Be7 9. f4 Bb7 10. Bxe6 fxe6 11. Nxe6 Qd7 12. Nxg7+ Kf7 13. Nf5 Rg8 14. Nh6+ Kf8 15. Nxg8 Kxg8 16. e5 Qc6 17. Rf2 dxe5 18. Be3 exf4 19. Bd4 Nbd7 20. Qf3 Qxf3 21. gxf3 Kf7 22. Re1 Rg8+ 23. Kf1 Bc5 24. Bxc5 Nxc5 25. Re5 Ne6 26. Ne4 Nxe4 27. fxe4 Rd8 28. Ke1 Rd4 29. Rd2 Rxe4+ 30. Rxe4 Bxe4 31. Rd7+ Kf6 32. Ra7 Bxc2 33. Rxa6 Ke5 34. Rb6 Nd4 35. Kf2 Ke4 36. Rh6 Bb1 37. a3 Kd5 38. Rf6 f3 39. h4 Kc4 40. Ke3 Nf5+ 41. Kf2 Be4 42. h5 Kd4 43. Rb6 Ne3 44. Rxb5 Nd1+ 45. Ke1 f2+ 46. Ke2 Bg2 47. Rf5 Bh3 48. Rxf2 Bc8 0-1",
+  "source": "Owner supplied move log; owner reports Chess.com did not call these five moves blunders. Expected categories below are local conservative grades, not Chess.com labels.",
+  "cases": [
+    {
+      "ply": 26,
+      "san": "Rg8",
+      "reportedQuality": "blunder",
+      "input": {
+        "fen": "rn5r/1b1qbk1p/p2p1n2/1p3N2/4PP2/2N5/PPP3PP/R1BQ1RK1 b - - 2 13",
+        "uci": "h8g8",
+        "moverRating": 2450,
+        "before": {
+          "provenance": {
+            "version": "Stockfish 19",
+            "module": "sf_19_relaxed-simd.js",
+            "networks": {
+              "nn-1a298aa575a0.nnue": "1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2"
+            },
+            "variant": "full",
+            "limitedStrength": false,
+            "wasmSha256": "11ebe6bdbae23c4e2b8d665f55c4d13500dc110ce83755663ce6533e6bb36b1b",
+            "runtime": "v25.6.1",
+            "threads": 2,
+            "hashMb": 64,
+            "datasetSha256": "008dd205e07d63cc55099252518e8f6a040645687395ab7152ce5d34df67c100",
+            "requestedDepth": 18,
+            "movetimeMs": 5000,
+            "multiPv": 3
+          },
+          "game": 0,
+          "index": 25,
+          "fen": "rn5r/1b1qbk1p/p2p1n2/1p3N2/4PP2/2N5/PPP3PP/R1BQ1RK1 b - - 2 13",
+          "depth": 18,
+          "complete": true,
+          "elapsedMs": 2952,
+          "lines": [
+            {
+              "multipv": 1,
+              "depth": 18,
+              "score": {
+                "cp": 137
+              },
+              "pvUci": [
+                "b5b4",
+                "f5h6",
+                "f7g7",
+                "h6f5",
+                "g7f8",
+                "c3e2",
+                "f6e4",
+                "f5h6",
+                "b8c6",
+                "a2a3",
+                "f8g7",
+                "f4f5",
+                "h8f8",
+                "e2f4",
+                "g7h8",
+                "f4e6",
+                "c6e5",
+                "a3b4",
+                "d7c6",
+                "a1a3",
+                "e7f6",
+                "e6f8",
+                "a8f8",
+                "c1f4"
+              ],
+              "wdl": [
+                842,
+                158,
+                0
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 2,
+              "depth": 18,
+              "score": {
+                "cp": 57
+              },
+              "pvUci": [
+                "d7e6",
+                "f5h6",
+                "f7e8",
+                "f1e1",
+                "h8f8",
+                "a2a4",
+                "b5b4",
+                "c3d5",
+                "b7d5",
+                "f4f5",
+                "e6e5",
+                "e4d5",
+                "e5d5",
+                "c1f4",
+                "e8d7",
+                "d1e2",
+                "b8c6",
+                "a1d1"
+              ],
+              "wdl": [
+                128,
+                871,
+                1
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 3,
+              "depth": 18,
+              "score": {
+                "cp": 41
+              },
+              "pvUci": [
+                "e7f8",
+                "f5e3",
+                "h8g8",
+                "c3d5",
+                "d7e6",
+                "d5f6",
+                "f7f6",
+                "c1d2",
+                "e6e4",
+                "f1f2",
+                "b5b4",
+                "c2c3",
+                "f6g7",
+                "a1c1",
+                "d6d5",
+                "c3b4",
+                "d5d4"
+              ],
+              "wdl": [
+                66,
+                932,
+                2
+              ],
+              "pvSan": []
+            }
+          ]
+        },
+        "after": {
+          "provenance": {
+            "version": "Stockfish 19",
+            "module": "sf_19_relaxed-simd.js",
+            "networks": {
+              "nn-1a298aa575a0.nnue": "1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2"
+            },
+            "variant": "full",
+            "limitedStrength": false,
+            "wasmSha256": "11ebe6bdbae23c4e2b8d665f55c4d13500dc110ce83755663ce6533e6bb36b1b",
+            "runtime": "v25.6.1",
+            "threads": 2,
+            "hashMb": 64,
+            "datasetSha256": "008dd205e07d63cc55099252518e8f6a040645687395ab7152ce5d34df67c100",
+            "requestedDepth": 18,
+            "movetimeMs": 5000,
+            "multiPv": 3
+          },
+          "game": 0,
+          "index": 26,
+          "fen": "rn4r1/1b1qbk1p/p2p1n2/1p3N2/4PP2/2N5/PPP3PP/R1BQ1RK1 w - - 3 14",
+          "depth": 18,
+          "complete": true,
+          "elapsedMs": 4419,
+          "lines": [
+            {
+              "multipv": 1,
+              "depth": 18,
+              "score": {
+                "cp": 111
+              },
+              "pvUci": [
+                "f5h6",
+                "f7f8",
+                "h6g8",
+                "f8g8",
+                "b2b4",
+                "d7e6",
+                "a2a4",
+                "b5a4",
+                "a1a4",
+                "b8d7",
+                "f1e1",
+                "a8c8",
+                "a4a3",
+                "e7d8",
+                "f4f5",
+                "d8b6",
+                "g1h1",
+                "e6e5",
+                "c3d5",
+                "f6e4",
+                "d5b6",
+                "d7b6"
+              ],
+              "wdl": [
+                621,
+                379,
+                0
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 2,
+              "depth": 18,
+              "score": {
+                "cp": -109
+              },
+              "pvUci": [
+                "d1e2",
+                "e7f8",
+                "b2b4",
+                "d7e6",
+                "f5g3",
+                "b8d7",
+                "c1b2",
+                "e6c4",
+                "a1e1",
+                "c4b4",
+                "e4e5",
+                "g8g3",
+                "h2g3",
+                "b4b2",
+                "e5f6",
+                "d7f6",
+                "e2e6",
+                "f7g7"
+              ],
+              "wdl": [
+                0,
+                404,
+                596
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 3,
+              "depth": 18,
+              "score": {
+                "cp": -130
+              },
+              "pvUci": [
+                "f1f2",
+                "e7f8",
+                "d1d3",
+                "b5b4",
+                "c3d5",
+                "b7d5",
+                "e4d5",
+                "d7b5",
+                "d3h3",
+                "b8d7",
+                "c1e3",
+                "b5d5",
+                "f2d2",
+                "d5e6",
+                "a1d1",
+                "d6d5",
+                "e3f2",
+                "g8g6"
+              ],
+              "wdl": [
+                0,
+                210,
+                790
+              ],
+              "pvSan": []
+            }
+          ]
+        },
+        "previous": {
+          "provenance": {
+            "version": "Stockfish 19",
+            "module": "sf_19_relaxed-simd.js",
+            "networks": {
+              "nn-1a298aa575a0.nnue": "1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2"
+            },
+            "variant": "full",
+            "limitedStrength": false,
+            "wasmSha256": "11ebe6bdbae23c4e2b8d665f55c4d13500dc110ce83755663ce6533e6bb36b1b",
+            "runtime": "v25.6.1",
+            "threads": 2,
+            "hashMb": 64,
+            "datasetSha256": "008dd205e07d63cc55099252518e8f6a040645687395ab7152ce5d34df67c100",
+            "requestedDepth": 18,
+            "movetimeMs": 5000,
+            "multiPv": 3
+          },
+          "game": 0,
+          "index": 24,
+          "fen": "rn5r/1b1qbkNp/p2p1n2/1p6/4PP2/2N5/PPP3PP/R1BQ1RK1 w - - 1 13",
+          "depth": 18,
+          "complete": true,
+          "elapsedMs": 2568,
+          "lines": [
+            {
+              "multipv": 1,
+              "depth": 18,
+              "score": {
+                "cp": -123
+              },
+              "pvUci": [
+                "g7f5",
+                "b5b4",
+                "f5h6",
+                "f7g7",
+                "h6f5",
+                "g7f8",
+                "f5e7",
+                "d7e7",
+                "e4e5",
+                "h8g8",
+                "g2g3",
+                "b4c3",
+                "e5f6",
+                "e7f6",
+                "a1b1",
+                "b8d7",
+                "b2c3",
+                "b7c6",
+                "c1a3",
+                "a8e8",
+                "d1d3",
+                "g8g6",
+                "b1e1",
+                "d7c5"
+              ],
+              "wdl": [
+                0,
+                261,
+                739
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 2,
+              "depth": 18,
+              "score": {
+                "cp": -139
+              },
+              "pvUci": [
+                "g7h5",
+                "d7g4",
+                "h5f6",
+                "g4d1",
+                "f1d1",
+                "e7f6",
+                "d1d6",
+                "f6c3",
+                "b2c3",
+                "b7e4",
+                "c1b2",
+                "h8e8",
+                "a1e1",
+                "b8c6",
+                "c3c4",
+                "a8d8",
+                "d6d8",
+                "c6d8",
+                "c4b5",
+                "a6b5",
+                "g2g4",
+                "e4c2",
+                "e1e8",
+                "f7e8",
+                "g1f2",
+                "b5b4",
+                "f2e3",
+                "c2b1",
+                "a2a3",
+                "b4b3",
+                "a3a4",
+                "d8b7"
+              ],
+              "wdl": [
+                0,
+                146,
+                854
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 3,
+              "depth": 18,
+              "score": {
+                "cp": -385
+              },
+              "pvUci": [
+                "c1e3",
+                "f7g7",
+                "e4e5",
+                "d6e5",
+                "f4e5",
+                "f6g4",
+                "e3d4",
+                "d7e6",
+                "c3e2",
+                "b8c6",
+                "e2f4",
+                "e6f5",
+                "f4d5",
+                "f5h5",
+                "h2h3",
+                "c6d4",
+                "d5e7",
+                "h8e8",
+                "h3g4",
+                "h5e5",
+                "e7f5",
+                "d4f5",
+                "d1d7",
+                "f5e7"
+              ],
+              "wdl": [
+                0,
+                0,
+                1000
+              ],
+              "pvSan": []
+            }
+          ]
+        }
+      },
+      "originalQuality": "blunder",
+      "expectedQuality": "mistake"
+    },
+    {
+      "ply": 33,
+      "san": "Rf2",
+      "reportedQuality": "blunder",
+      "input": {
+        "fen": "rn4k1/1b2b2p/p1qp1n2/1p2P3/5P2/2N5/PPP3PP/R1BQ1RK1 w - - 1 17",
+        "uci": "f1f2",
+        "moverRating": 2450,
+        "before": {
+          "provenance": {
+            "version": "Stockfish 19",
+            "module": "sf_19_relaxed-simd.js",
+            "networks": {
+              "nn-1a298aa575a0.nnue": "1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2"
+            },
+            "variant": "full",
+            "limitedStrength": false,
+            "wasmSha256": "11ebe6bdbae23c4e2b8d665f55c4d13500dc110ce83755663ce6533e6bb36b1b",
+            "runtime": "v25.6.1",
+            "threads": 2,
+            "hashMb": 64,
+            "datasetSha256": "008dd205e07d63cc55099252518e8f6a040645687395ab7152ce5d34df67c100",
+            "requestedDepth": 18,
+            "movetimeMs": 5000,
+            "multiPv": 3
+          },
+          "game": 0,
+          "index": 32,
+          "fen": "rn4k1/1b2b2p/p1qp1n2/1p2P3/5P2/2N5/PPP3PP/R1BQ1RK1 w - - 1 17",
+          "depth": 18,
+          "complete": true,
+          "elapsedMs": 2891,
+          "lines": [
+            {
+              "multipv": 1,
+              "depth": 18,
+              "score": {
+                "cp": 202
+              },
+              "pvUci": [
+                "d1e2",
+                "f6h5",
+                "e2g4",
+                "h5g7",
+                "f4f5",
+                "d6e5",
+                "f5f6",
+                "e7f6",
+                "c1h6",
+                "c6d7",
+                "g4d7",
+                "b8d7",
+                "a1d1",
+                "b7c6",
+                "d1d7",
+                "c6d7",
+                "f1f6",
+                "g7f5",
+                "c3d5",
+                "a8d8",
+                "h6g5",
+                "d7e8",
+                "d5c3",
+                "f5d4",
+                "c3e4",
+                "d4c2",
+                "f6a6",
+                "d8d1",
+                "g1f2",
+                "e8g6",
+                "e4f6",
+                "g8g7"
+              ],
+              "wdl": [
+                993,
+                7,
+                0
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 2,
+              "depth": 18,
+              "score": {
+                "cp": 115
+              },
+              "pvUci": [
+                "f1f3",
+                "f6h5",
+                "e5e6",
+                "b5b4",
+                "f3f2",
+                "h5f6",
+                "c3e2",
+                "e7d8",
+                "e2d4",
+                "c6e4",
+                "f2e2",
+                "e4d5",
+                "c1e3",
+                "b8c6",
+                "d1d3",
+                "c6e7",
+                "f4f5",
+                "d8b6"
+              ],
+              "wdl": [
+                673,
+                327,
+                0
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 3,
+              "depth": 18,
+              "score": {
+                "cp": -13
+              },
+              "pvUci": [
+                "d1f3",
+                "d6e5",
+                "f4e5",
+                "c6f3",
+                "g2f3",
+                "f6d7",
+                "e5e6",
+                "d7c5",
+                "c1e3",
+                "b5b4",
+                "c3e4",
+                "c5e6",
+                "f1d1",
+                "b7c6",
+                "d1d2",
+                "b8d7",
+                "a1d1"
+              ],
+              "wdl": [
+                4,
+                982,
+                14
+              ],
+              "pvSan": []
+            }
+          ]
+        },
+        "after": {
+          "provenance": {
+            "version": "Stockfish 19",
+            "module": "sf_19_relaxed-simd.js",
+            "networks": {
+              "nn-1a298aa575a0.nnue": "1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2"
+            },
+            "variant": "full",
+            "limitedStrength": false,
+            "wasmSha256": "11ebe6bdbae23c4e2b8d665f55c4d13500dc110ce83755663ce6533e6bb36b1b",
+            "runtime": "v25.6.1",
+            "threads": 2,
+            "hashMb": 64,
+            "datasetSha256": "008dd205e07d63cc55099252518e8f6a040645687395ab7152ce5d34df67c100",
+            "requestedDepth": 18,
+            "movetimeMs": 5000,
+            "multiPv": 3
+          },
+          "game": 0,
+          "index": 33,
+          "fen": "rn4k1/1b2b2p/p1qp1n2/1p2P3/5P2/2N5/PPP2RPP/R1BQ2K1 b - - 2 17",
+          "depth": 17,
+          "complete": true,
+          "elapsedMs": 7331,
+          "lines": [
+            {
+              "multipv": 1,
+              "depth": 17,
+              "score": {
+                "cp": 119
+              },
+              "pvUci": [
+                "d6e5",
+                "d1e2",
+                "e5e4",
+                "c1e3",
+                "b8d7",
+                "e3d4",
+                "a8d8",
+                "e2e3",
+                "g8f7",
+                "e3h3",
+                "d7f8",
+                "d4e3",
+                "h7h5",
+                "f4f5",
+                "b5b4",
+                "c3e2",
+                "c6c2",
+                "e2d4",
+                "c2d3"
+              ],
+              "wdl": [
+                721,
+                279,
+                0
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 2,
+              "depth": 17,
+              "score": {
+                "cp": -299
+              },
+              "pvUci": [
+                "f6e8",
+                "d1g4",
+                "g8h8",
+                "c1e3",
+                "b5b4",
+                "c3e2",
+                "c6c8",
+                "g4c8",
+                "b7c8",
+                "e2d4",
+                "a6a5",
+                "h2h3",
+                "h8g8",
+                "g2g4",
+                "d6e5",
+                "f4e5",
+                "e7c5",
+                "d4f5",
+                "c5e3",
+                "f5e3",
+                "b8c6",
+                "a1d1",
+                "c6e5"
+              ],
+              "wdl": [
+                0,
+                0,
+                1000
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 3,
+              "depth": 17,
+              "score": {
+                "cp": -312
+              },
+              "pvUci": [
+                "f6e4",
+                "c3e4",
+                "c6e4",
+                "e5d6",
+                "e7f6",
+                "f2e2",
+                "e4f5",
+                "c1e3",
+                "b8d7",
+                "e3d4",
+                "f5f4",
+                "d4f6",
+                "d7f6",
+                "d1d2",
+                "f4d2",
+                "e2d2",
+                "a8d8",
+                "a2a4",
+                "b7c6",
+                "a4b5"
+              ],
+              "wdl": [
+                0,
+                0,
+                1000
+              ],
+              "pvSan": []
+            }
+          ]
+        },
+        "previous": {
+          "provenance": {
+            "version": "Stockfish 19",
+            "module": "sf_19_relaxed-simd.js",
+            "networks": {
+              "nn-1a298aa575a0.nnue": "1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2"
+            },
+            "variant": "full",
+            "limitedStrength": false,
+            "wasmSha256": "11ebe6bdbae23c4e2b8d665f55c4d13500dc110ce83755663ce6533e6bb36b1b",
+            "runtime": "v25.6.1",
+            "threads": 2,
+            "hashMb": 64,
+            "datasetSha256": "008dd205e07d63cc55099252518e8f6a040645687395ab7152ce5d34df67c100",
+            "requestedDepth": 18,
+            "movetimeMs": 5000,
+            "multiPv": 3
+          },
+          "game": 0,
+          "index": 31,
+          "fen": "rn4k1/1b1qb2p/p2p1n2/1p2P3/5P2/2N5/PPP3PP/R1BQ1RK1 b - - 0 16",
+          "depth": 18,
+          "complete": true,
+          "elapsedMs": 3106,
+          "lines": [
+            {
+              "multipv": 1,
+              "depth": 18,
+              "score": {
+                "cp": -17
+              },
+              "pvUci": [
+                "d6e5",
+                "f4e5",
+                "f6g4",
+                "g1h1",
+                "d7d1",
+                "c3d1",
+                "b8d7",
+                "h2h3",
+                "g4e5",
+                "d1e3",
+                "a8c8",
+                "c1d2",
+                "e7c5"
+              ],
+              "wdl": [
+                3,
+                980,
+                17
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 2,
+              "depth": 18,
+              "score": {
+                "cp": -168
+              },
+              "pvUci": [
+                "f6e8",
+                "c3d5",
+                "e7d8",
+                "d5e3",
+                "e8g7",
+                "g1h1",
+                "d6e5",
+                "f4e5",
+                "h7h5",
+                "c1d2",
+                "d8b6",
+                "c2c4"
+              ],
+              "wdl": [
+                0,
+                36,
+                964
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 3,
+              "depth": 18,
+              "score": {
+                "cp": -200
+              },
+              "pvUci": [
+                "d7c6",
+                "d1e2",
+                "d6e5",
+                "f4e5",
+                "f6e4",
+                "c3e4",
+                "c6e4",
+                "c1e3",
+                "b8c6",
+                "f1f4",
+                "e4d5",
+                "a1d1",
+                "d5e6",
+                "f4g4",
+                "g8h8",
+                "g1h1",
+                "a8d8",
+                "g4g3",
+                "e7h4",
+                "d1d8",
+                "c6d8",
+                "g3g4",
+                "h4e7",
+                "e3g5",
+                "e7g5",
+                "g4g5",
+                "d8f7"
+              ],
+              "wdl": [
+                0,
+                8,
+                992
+              ],
+              "pvSan": []
+            }
+          ]
+        }
+      },
+      "originalQuality": "blunder",
+      "expectedQuality": "mistake"
+    },
+    {
+      "ply": 46,
+      "san": "Bc5",
+      "reportedQuality": "blunder",
+      "input": {
+        "fen": "6r1/1b1nbk1p/p4n2/1p6/3B1p2/2N2P2/PPP2R1P/4RK2 b - - 4 23",
+        "uci": "e7c5",
+        "moverRating": 2450,
+        "before": {
+          "provenance": {
+            "version": "Stockfish 19",
+            "module": "sf_19_relaxed-simd.js",
+            "networks": {
+              "nn-1a298aa575a0.nnue": "1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2"
+            },
+            "variant": "full",
+            "limitedStrength": false,
+            "wasmSha256": "11ebe6bdbae23c4e2b8d665f55c4d13500dc110ce83755663ce6533e6bb36b1b",
+            "runtime": "v25.6.1",
+            "threads": 2,
+            "hashMb": 64,
+            "datasetSha256": "008dd205e07d63cc55099252518e8f6a040645687395ab7152ce5d34df67c100",
+            "requestedDepth": 18,
+            "movetimeMs": 5000,
+            "multiPv": 3
+          },
+          "game": 0,
+          "index": 45,
+          "fen": "6r1/1b1nbk1p/p4n2/1p6/3B1p2/2N2P2/PPP2R1P/4RK2 b - - 4 23",
+          "depth": 18,
+          "complete": true,
+          "elapsedMs": 3099,
+          "lines": [
+            {
+              "multipv": 1,
+              "depth": 18,
+              "score": {
+                "cp": 324
+              },
+              "pvUci": [
+                "g8g6",
+                "f2e2",
+                "e7f8",
+                "e2g2",
+                "g6h6",
+                "g2g5",
+                "h6h2",
+                "g5f5",
+                "b7f3",
+                "f5f4",
+                "f3c6",
+                "d4f6",
+                "d7f6"
+              ],
+              "wdl": [
+                1000,
+                0,
+                0
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 2,
+              "depth": 18,
+              "score": {
+                "cp": 314
+              },
+              "pvUci": [
+                "b5b4",
+                "c3e2",
+                "e7d6",
+                "e2c1",
+                "g8g5",
+                "f2d2",
+                "d7e5",
+                "d4e5",
+                "d6e5",
+                "c1d3",
+                "e5c7",
+                "d2g2",
+                "g5f5",
+                "g2e2",
+                "f6d5",
+                "d3e5",
+                "f7g7",
+                "e5c4",
+                "b7c6",
+                "e2e6"
+              ],
+              "wdl": [
+                1000,
+                0,
+                0
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 3,
+              "depth": 18,
+              "score": {
+                "cp": 285
+              },
+              "pvUci": [
+                "h7h6",
+                "f2g2",
+                "b7f3",
+                "g2f2",
+                "f3c6",
+                "f2f4",
+                "e7d6",
+                "f4f2",
+                "b5b4",
+                "c3e2",
+                "c6b5",
+                "b2b3",
+                "d7e5",
+                "c2c4",
+                "b4c3",
+                "a2a4",
+                "b5d3",
+                "e1d1"
+              ],
+              "wdl": [
+                1000,
+                0,
+                0
+              ],
+              "pvSan": []
+            }
+          ]
+        },
+        "after": {
+          "provenance": {
+            "version": "Stockfish 19",
+            "module": "sf_19_relaxed-simd.js",
+            "networks": {
+              "nn-1a298aa575a0.nnue": "1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2"
+            },
+            "variant": "full",
+            "limitedStrength": false,
+            "wasmSha256": "11ebe6bdbae23c4e2b8d665f55c4d13500dc110ce83755663ce6533e6bb36b1b",
+            "runtime": "v25.6.1",
+            "threads": 2,
+            "hashMb": 64,
+            "datasetSha256": "008dd205e07d63cc55099252518e8f6a040645687395ab7152ce5d34df67c100",
+            "requestedDepth": 18,
+            "movetimeMs": 5000,
+            "multiPv": 3
+          },
+          "game": 0,
+          "index": 46,
+          "fen": "6r1/1b1n1k1p/p4n2/1pb5/3B1p2/2N2P2/PPP2R1P/4RK2 w - - 5 24",
+          "depth": 18,
+          "complete": true,
+          "elapsedMs": 4549,
+          "lines": [
+            {
+              "multipv": 1,
+              "depth": 18,
+              "score": {
+                "cp": -135
+              },
+              "pvUci": [
+                "d4c5",
+                "d7c5",
+                "e1e5",
+                "g8c8",
+                "e5f5",
+                "c5e6",
+                "c3e2",
+                "c8c2",
+                "e2f4",
+                "c2c1",
+                "f1g2",
+                "e6g7",
+                "f5g5",
+                "h7h6",
+                "f4d3",
+                "h6g5",
+                "d3c1",
+                "g5g4",
+                "c1d3",
+                "g7f5",
+                "g2g1",
+                "g4f3",
+                "d3e5",
+                "f7f8",
+                "a2a4",
+                "b5b4",
+                "a4a5",
+                "f5d4"
+              ],
+              "wdl": [
+                0,
+                131,
+                869
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 2,
+              "depth": 18,
+              "score": {
+                "cp": -243
+              },
+              "pvUci": [
+                "f2d2",
+                "c5e7",
+                "c3e2",
+                "f6d5",
+                "e2c3",
+                "b7c6",
+                "c3d5",
+                "c6d5",
+                "b2b3",
+                "d5c6",
+                "d2g2",
+                "g8g6",
+                "g2g6",
+                "h7g6",
+                "f1e2",
+                "d7f8",
+                "c2c4",
+                "b5c4",
+                "b3c4",
+                "f8e6",
+                "d4e5",
+                "g6g5"
+              ],
+              "wdl": [
+                0,
+                0,
+                1000
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 3,
+              "depth": 18,
+              "score": {
+                "cp": -268
+              },
+              "pvUci": [
+                "e1d1",
+                "c5e7",
+                "d1d2",
+                "g8g6",
+                "a2a3",
+                "g6h6",
+                "d2d3",
+                "h6h5",
+                "d4f6",
+                "d7f6",
+                "f2d2",
+                "a6a5",
+                "d3d4",
+                "h5f5",
+                "d2d3",
+                "b5b4",
+                "a3b4",
+                "a5b4",
+                "c3e2",
+                "b7a6",
+                "c2c4",
+                "b4c3",
+                "d3c3",
+                "e7c5",
+                "d4a4"
+              ],
+              "wdl": [
+                0,
+                0,
+                1000
+              ],
+              "pvSan": []
+            }
+          ]
+        },
+        "previous": {
+          "provenance": {
+            "version": "Stockfish 19",
+            "module": "sf_19_relaxed-simd.js",
+            "networks": {
+              "nn-1a298aa575a0.nnue": "1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2"
+            },
+            "variant": "full",
+            "limitedStrength": false,
+            "wasmSha256": "11ebe6bdbae23c4e2b8d665f55c4d13500dc110ce83755663ce6533e6bb36b1b",
+            "runtime": "v25.6.1",
+            "threads": 2,
+            "hashMb": 64,
+            "datasetSha256": "008dd205e07d63cc55099252518e8f6a040645687395ab7152ce5d34df67c100",
+            "requestedDepth": 18,
+            "movetimeMs": 5000,
+            "multiPv": 3
+          },
+          "game": 0,
+          "index": 44,
+          "fen": "6r1/1b1nbk1p/p4n2/1p6/3B1p2/2N2P2/PPP2R1P/4R1K1 w - - 3 23",
+          "depth": 18,
+          "complete": true,
+          "elapsedMs": 2041,
+          "lines": [
+            {
+              "multipv": 1,
+              "depth": 18,
+              "score": {
+                "cp": -255
+              },
+              "pvUci": [
+                "f2g2",
+                "g8d8",
+                "g2e2",
+                "d8e8",
+                "g1g2",
+                "e8g8",
+                "g2f1",
+                "e7d8",
+                "e2f2",
+                "d7f8",
+                "f2g2",
+                "b7f3",
+                "g2g8",
+                "f6g8",
+                "c3e4"
+              ],
+              "wdl": [
+                0,
+                0,
+                1000
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 2,
+              "depth": 18,
+              "score": {
+                "cp": -290
+              },
+              "pvUci": [
+                "g1f1",
+                "g8g6",
+                "f2e2",
+                "e7d6",
+                "e2e6",
+                "d6f8",
+                "a2a3",
+                "b7f3",
+                "e6a6",
+                "f3g2",
+                "f1f2",
+                "f6g4",
+                "f2g2",
+                "g6a6",
+                "h2h3",
+                "g4h6",
+                "c3b5"
+              ],
+              "wdl": [
+                0,
+                0,
+                1000
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 3,
+              "depth": 18,
+              "score": {
+                "cp": -513
+              },
+              "pvUci": [
+                "g1h1",
+                "b5b4",
+                "c3b1",
+                "f6g4",
+                "f2f1",
+                "e7f6",
+                "e1d1",
+                "d7e5",
+                "d4e5",
+                "g4e5",
+                "b1d2",
+                "b7c6",
+                "a2a3",
+                "b4a3",
+                "b2a3",
+                "f6e7",
+                "d1e1",
+                "f7f6",
+                "e1b1",
+                "f6f5"
+              ],
+              "wdl": [
+                0,
+                0,
+                1000
+              ],
+              "pvSan": []
+            }
+          ]
+        }
+      },
+      "originalQuality": "mistake",
+      "expectedQuality": "mistake"
+    },
+    {
+      "ply": 51,
+      "san": "Ne4",
+      "reportedQuality": "blunder",
+      "input": {
+        "fen": "6r1/1b3k1p/p3nn2/1p2R3/5p2/2N2P2/PPP2R1P/5K2 w - - 2 26",
+        "uci": "c3e4",
+        "moverRating": 2450,
+        "before": {
+          "provenance": {
+            "version": "Stockfish 19",
+            "module": "sf_19_relaxed-simd.js",
+            "networks": {
+              "nn-1a298aa575a0.nnue": "1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2"
+            },
+            "variant": "full",
+            "limitedStrength": false,
+            "wasmSha256": "11ebe6bdbae23c4e2b8d665f55c4d13500dc110ce83755663ce6533e6bb36b1b",
+            "runtime": "v25.6.1",
+            "threads": 2,
+            "hashMb": 64,
+            "datasetSha256": "008dd205e07d63cc55099252518e8f6a040645687395ab7152ce5d34df67c100",
+            "requestedDepth": 18,
+            "movetimeMs": 5000,
+            "multiPv": 3
+          },
+          "game": 0,
+          "index": 50,
+          "fen": "6r1/1b3k1p/p3nn2/1p2R3/5p2/2N2P2/PPP2R1P/5K2 w - - 2 26",
+          "depth": 18,
+          "complete": true,
+          "elapsedMs": 2685,
+          "lines": [
+            {
+              "multipv": 1,
+              "depth": 18,
+              "score": {
+                "cp": -50
+              },
+              "pvUci": [
+                "f2e2",
+                "b7c8",
+                "f1f2",
+                "e6g5",
+                "e5e7",
+                "f7f8",
+                "e7c7",
+                "c8d7",
+                "h2h4",
+                "g5h3",
+                "f2e1",
+                "g8g7",
+                "c3e4",
+                "f6d5",
+                "c7d7",
+                "g7d7",
+                "e2h2",
+                "d5b4",
+                "h2h3",
+                "b4c2",
+                "e1f2",
+                "c2d4",
+                "h4h5",
+                "d7c7",
+                "h3h4"
+              ],
+              "wdl": [
+                0,
+                935,
+                65
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 2,
+              "depth": 18,
+              "score": {
+                "cp": -267
+              },
+              "pvUci": [
+                "e5f5",
+                "g8d8",
+                "a2a3",
+                "h7h6",
+                "h2h3",
+                "f7g6",
+                "f5e5",
+                "e6g5",
+                "e5e7",
+                "b7c6",
+                "e7a7",
+                "g5h3",
+                "f2h2",
+                "h3g5",
+                "a7a6",
+                "d8c8",
+                "c3e2",
+                "g5f3",
+                "e2f4",
+                "g6g5"
+              ],
+              "wdl": [
+                0,
+                0,
+                1000
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 3,
+              "depth": 18,
+              "score": {
+                "cp": -340
+              },
+              "pvUci": [
+                "h2h4",
+                "e6d4",
+                "c3e4",
+                "f6d5",
+                "e4d6",
+                "f7f6",
+                "e5g5",
+                "d5e3",
+                "f1g1",
+                "g8b8",
+                "d6b7",
+                "b8b7",
+                "g5g8",
+                "b7d7",
+                "g8f8",
+                "f6e5",
+                "f8e8",
+                "d4e6",
+                "e8a8",
+                "d7d1",
+                "g1h2",
+                "e6d4",
+                "a8a6",
+                "e3c2"
+              ],
+              "wdl": [
+                0,
+                0,
+                1000
+              ],
+              "pvSan": []
+            }
+          ]
+        },
+        "after": {
+          "provenance": {
+            "version": "Stockfish 19",
+            "module": "sf_19_relaxed-simd.js",
+            "networks": {
+              "nn-1a298aa575a0.nnue": "1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2"
+            },
+            "variant": "full",
+            "limitedStrength": false,
+            "wasmSha256": "11ebe6bdbae23c4e2b8d665f55c4d13500dc110ce83755663ce6533e6bb36b1b",
+            "runtime": "v25.6.1",
+            "threads": 2,
+            "hashMb": 64,
+            "datasetSha256": "008dd205e07d63cc55099252518e8f6a040645687395ab7152ce5d34df67c100",
+            "requestedDepth": 18,
+            "movetimeMs": 5000,
+            "multiPv": 3
+          },
+          "game": 0,
+          "index": 51,
+          "fen": "6r1/1b3k1p/p3nn2/1p2R3/4Np2/5P2/PPP2R1P/5K2 b - - 3 26",
+          "depth": 18,
+          "complete": true,
+          "elapsedMs": 2367,
+          "lines": [
+            {
+              "multipv": 1,
+              "depth": 18,
+              "score": {
+                "cp": 524
+              },
+              "pvUci": [
+                "b7e4",
+                "f3e4",
+                "f6g4",
+                "e5d5",
+                "g4f2",
+                "f1f2",
+                "g8g5",
+                "f2f3",
+                "f7f6",
+                "c2c3",
+                "h7h6",
+                "b2b3",
+                "g5g1",
+                "d5f5",
+                "f6g7",
+                "f5d5",
+                "g1c1",
+                "d5d6",
+                "c1c3",
+                "f3g4"
+              ],
+              "wdl": [
+                1000,
+                0,
+                0
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 2,
+              "depth": 18,
+              "score": {
+                "cp": 282
+              },
+              "pvUci": [
+                "f6e4",
+                "f3e4",
+                "g8g4",
+                "f2d2",
+                "f7f6",
+                "e5f5",
+                "f6e7",
+                "b2b3",
+                "b7e4",
+                "f5e5",
+                "e4c6",
+                "d2e2",
+                "g4g6",
+                "c2c4",
+                "g6h6",
+                "a2a4",
+                "b5c4",
+                "b3c4",
+                "e7d6",
+                "e5a5",
+                "c6b7",
+                "e2d2",
+                "d6c7"
+              ],
+              "wdl": [
+                1000,
+                0,
+                0
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 3,
+              "depth": 18,
+              "score": {
+                "cp": 0
+              },
+              "pvUci": [
+                "g8d8",
+                "e5e6",
+                "f7e6",
+                "e4c5",
+                "e6f5",
+                "c5b7",
+                "d8d1",
+                "f1e2",
+                "d1b1",
+                "b2b3",
+                "f6d5",
+                "a2a3",
+                "b1a1",
+                "e2d3",
+                "d5e3",
+                "d3d4",
+                "h7h6"
+              ],
+              "wdl": [
+                5,
+                991,
+                4
+              ],
+              "pvSan": []
+            }
+          ]
+        },
+        "previous": {
+          "provenance": {
+            "version": "Stockfish 19",
+            "module": "sf_19_relaxed-simd.js",
+            "networks": {
+              "nn-1a298aa575a0.nnue": "1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2"
+            },
+            "variant": "full",
+            "limitedStrength": false,
+            "wasmSha256": "11ebe6bdbae23c4e2b8d665f55c4d13500dc110ce83755663ce6533e6bb36b1b",
+            "runtime": "v25.6.1",
+            "threads": 2,
+            "hashMb": 64,
+            "datasetSha256": "008dd205e07d63cc55099252518e8f6a040645687395ab7152ce5d34df67c100",
+            "requestedDepth": 18,
+            "movetimeMs": 5000,
+            "multiPv": 3
+          },
+          "game": 0,
+          "index": 49,
+          "fen": "6r1/1b3k1p/p4n2/1pn1R3/5p2/2N2P2/PPP2R1P/5K2 b - - 1 25",
+          "depth": 18,
+          "complete": true,
+          "elapsedMs": 2114,
+          "lines": [
+            {
+              "multipv": 1,
+              "depth": 18,
+              "score": {
+                "cp": 136
+              },
+              "pvUci": [
+                "g8c8",
+                "c3e2",
+                "c5e6",
+                "e5f5",
+                "c8c2",
+                "e2f4",
+                "c2c1",
+                "f1g2",
+                "e6g7",
+                "f5g5",
+                "h7h6",
+                "f4d3",
+                "h6g5",
+                "d3c1",
+                "g5g4",
+                "g2g3",
+                "g4f3",
+                "f2f3",
+                "g7h5",
+                "g3f2",
+                "b7f3",
+                "f2f3",
+                "f7e6",
+                "c1b3",
+                "e6d6",
+                "b3d4",
+                "d6d5",
+                "d4c2",
+                "d5c4"
+              ],
+              "wdl": [
+                875,
+                125,
+                0
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 2,
+              "depth": 18,
+              "score": {
+                "cp": 65
+              },
+              "pvUci": [
+                "c5e6",
+                "f2e2",
+                "b7c8",
+                "f1f2",
+                "e6g5",
+                "e5e7",
+                "f7f8",
+                "e7c7",
+                "c8d7",
+                "h2h4",
+                "g5h3",
+                "f2e1",
+                "g8g7",
+                "c3e4",
+                "f6d5",
+                "c7a7",
+                "h3g1",
+                "a7a8",
+                "f8e7",
+                "e2f2",
+                "d5c7",
+                "a8a7",
+                "e7d8",
+                "f2h2"
+              ],
+              "wdl": [
+                133,
+                867,
+                0
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 3,
+              "depth": 18,
+              "score": {
+                "cp": 0
+              },
+              "pvUci": [
+                "c5d7",
+                "e5f5",
+                "d7f8",
+                "f5f4",
+                "f8e6",
+                "f4f5",
+                "e6d4",
+                "f5f4",
+                "d4e6"
+              ],
+              "wdl": [
+                5,
+                991,
+                4
+              ],
+              "pvSan": []
+            }
+          ]
+        }
+      },
+      "originalQuality": "blunder",
+      "expectedQuality": "blunder"
+    },
+    {
+      "ply": 81,
+      "san": "Kf2",
+      "reportedQuality": "blunder",
+      "input": {
+        "fen": "8/7p/5R2/1p3n2/2k4P/P3Kp2/1P6/1b6 w - - 3 41",
+        "uci": "e3f2",
+        "moverRating": 2450,
+        "before": {
+          "provenance": {
+            "version": "Stockfish 19",
+            "module": "sf_19_relaxed-simd.js",
+            "networks": {
+              "nn-1a298aa575a0.nnue": "1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2"
+            },
+            "variant": "full",
+            "limitedStrength": false,
+            "wasmSha256": "11ebe6bdbae23c4e2b8d665f55c4d13500dc110ce83755663ce6533e6bb36b1b",
+            "runtime": "v25.6.1",
+            "threads": 2,
+            "hashMb": 64,
+            "datasetSha256": "008dd205e07d63cc55099252518e8f6a040645687395ab7152ce5d34df67c100",
+            "requestedDepth": 18,
+            "movetimeMs": 5000,
+            "multiPv": 3
+          },
+          "game": 0,
+          "index": 80,
+          "fen": "8/7p/5R2/1p3n2/2k4P/P3Kp2/1P6/1b6 w - - 3 41",
+          "depth": 18,
+          "complete": true,
+          "elapsedMs": 1184,
+          "lines": [
+            {
+              "multipv": 1,
+              "depth": 18,
+              "score": {
+                "cp": -24
+              },
+              "pvUci": [
+                "e3f3",
+                "f5h4",
+                "f3f2",
+                "h4f5",
+                "f6c6",
+                "c4d4",
+                "b2b3",
+                "b1e4",
+                "c6c7",
+                "f5d6",
+                "c7d7",
+                "d4d5",
+                "d7c7",
+                "h7h5",
+                "a3a4",
+                "b5b4",
+                "a4a5",
+                "e4d3",
+                "f2e3"
+              ],
+              "wdl": [
+                1,
+                985,
+                14
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 2,
+              "depth": 18,
+              "score": {
+                "cp": -289
+              },
+              "pvUci": [
+                "e3f2",
+                "b1e4",
+                "f6f8",
+                "c4d4",
+                "b2b3",
+                "f5e3",
+                "f8d8",
+                "e4d5",
+                "f2g3",
+                "h7h5",
+                "a3a4",
+                "b5a4",
+                "b3a4"
+              ],
+              "wdl": [
+                0,
+                0,
+                1000
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 3,
+              "depth": 18,
+              "score": {
+                "cp": -705
+              },
+              "pvUci": [
+                "f6f5",
+                "b1f5",
+                "b2b4",
+                "f5g6",
+                "e3f3",
+                "c4b3",
+                "h4h5",
+                "g6h5",
+                "f3g2",
+                "h5g6"
+              ],
+              "wdl": [
+                0,
+                0,
+                1000
+              ],
+              "pvSan": []
+            }
+          ]
+        },
+        "after": {
+          "provenance": {
+            "version": "Stockfish 19",
+            "module": "sf_19_relaxed-simd.js",
+            "networks": {
+              "nn-1a298aa575a0.nnue": "1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2"
+            },
+            "variant": "full",
+            "limitedStrength": false,
+            "wasmSha256": "11ebe6bdbae23c4e2b8d665f55c4d13500dc110ce83755663ce6533e6bb36b1b",
+            "runtime": "v25.6.1",
+            "threads": 2,
+            "hashMb": 64,
+            "datasetSha256": "008dd205e07d63cc55099252518e8f6a040645687395ab7152ce5d34df67c100",
+            "requestedDepth": 18,
+            "movetimeMs": 5000,
+            "multiPv": 3
+          },
+          "game": 0,
+          "index": 81,
+          "fen": "8/7p/5R2/1p3n2/2k4P/P4p2/1P3K2/1b6 b - - 4 41",
+          "depth": 18,
+          "complete": true,
+          "elapsedMs": 1691,
+          "lines": [
+            {
+              "multipv": 1,
+              "depth": 18,
+              "score": {
+                "cp": 364
+              },
+              "pvUci": [
+                "b1e4",
+                "a3a4",
+                "b5a4",
+                "f6a6",
+                "c4b3",
+                "h4h5",
+                "f5g7",
+                "a6b6",
+                "b3c4",
+                "b6a6",
+                "g7h5",
+                "a6a4",
+                "c4d3",
+                "b2b4",
+                "h5f6",
+                "b4b5",
+                "f6g4",
+                "f2g3",
+                "f3f2",
+                "a4a1",
+                "h7h5",
+                "b5b6",
+                "e4d5"
+              ],
+              "wdl": [
+                1000,
+                0,
+                0
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 2,
+              "depth": 18,
+              "score": {
+                "cp": 41
+              },
+              "pvUci": [
+                "h7h5",
+                "f2f3",
+                "f5h4",
+                "f3f2",
+                "h4f5",
+                "f6c6",
+                "c4d5",
+                "c6c3",
+                "h5h4",
+                "c3c8",
+                "b1e4",
+                "c8h8",
+                "d5c5"
+              ],
+              "wdl": [
+                37,
+                963,
+                0
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 3,
+              "depth": 18,
+              "score": {
+                "cp": 40
+              },
+              "pvUci": [
+                "c4b3",
+                "f6b6",
+                "b1d3",
+                "h4h5",
+                "d3e2",
+                "h5h6",
+                "b3c2",
+                "b6f6",
+                "e2d3",
+                "f6b6",
+                "d3e4",
+                "b6b5",
+                "c2d3",
+                "b5b3",
+                "d3d4",
+                "b3f3",
+                "e4f3",
+                "f2f3",
+                "d4e5",
+                "a3a4",
+                "f5h6",
+                "a4a5",
+                "h6f5"
+              ],
+              "wdl": [
+                36,
+                964,
+                0
+              ],
+              "pvSan": []
+            }
+          ]
+        },
+        "previous": {
+          "provenance": {
+            "version": "Stockfish 19",
+            "module": "sf_19_relaxed-simd.js",
+            "networks": {
+              "nn-1a298aa575a0.nnue": "1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2"
+            },
+            "variant": "full",
+            "limitedStrength": false,
+            "wasmSha256": "11ebe6bdbae23c4e2b8d665f55c4d13500dc110ce83755663ce6533e6bb36b1b",
+            "runtime": "v25.6.1",
+            "threads": 2,
+            "hashMb": 64,
+            "datasetSha256": "008dd205e07d63cc55099252518e8f6a040645687395ab7152ce5d34df67c100",
+            "requestedDepth": 18,
+            "movetimeMs": 5000,
+            "multiPv": 3
+          },
+          "game": 0,
+          "index": 79,
+          "fen": "8/7p/5R2/1p6/2kn3P/P3Kp2/1P6/1b6 b - - 2 40",
+          "depth": 18,
+          "complete": true,
+          "elapsedMs": 958,
+          "lines": [
+            {
+              "multipv": 1,
+              "depth": 18,
+              "score": {
+                "cp": 17
+              },
+              "pvUci": [
+                "d4f5",
+                "e3f3",
+                "f5h4",
+                "f3f2",
+                "h4f5",
+                "f6c6",
+                "c4d4",
+                "c6b6",
+                "d4c5",
+                "b6a6",
+                "b1c2",
+                "a6a7",
+                "f5d4",
+                "f2e3",
+                "d4c6",
+                "b2b4",
+                "c5d5",
+                "a7d7",
+                "d5e5",
+                "d7c7"
+              ],
+              "wdl": [
+                10,
+                988,
+                2
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 2,
+              "depth": 18,
+              "score": {
+                "cp": 1
+              },
+              "pvUci": [
+                "c4d5",
+                "f6f4",
+                "d4f5",
+                "e3f3",
+                "d5e5",
+                "f4g4",
+                "b1c2",
+                "f3f2",
+                "c2b3",
+                "g4g1",
+                "h7h5",
+                "g1g5",
+                "b3d1",
+                "g5g8",
+                "e5f4",
+                "g8b8",
+                "f5d6",
+                "b8f8",
+                "f4e4",
+                "f2e1",
+                "d1g4"
+              ],
+              "wdl": [
+                4,
+                992,
+                4
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 3,
+              "depth": 18,
+              "score": {
+                "cp": 0
+              },
+              "pvUci": [
+                "b1f5",
+                "f6d6",
+                "d4c2",
+                "e3f3",
+                "h7h5",
+                "f3f4",
+                "f5g4",
+                "d6c6",
+                "c4b3",
+                "c6c5",
+                "b3b2",
+                "c5b5",
+                "b2a3",
+                "b5b7",
+                "c2e1",
+                "b7a7",
+                "a3b4",
+                "a7a6"
+              ],
+              "wdl": [
+                4,
+                992,
+                4
+              ],
+              "pvSan": []
+            }
+          ]
+        }
+      },
+      "originalQuality": "blunder",
+      "expectedQuality": "mistake"
+    }
+  ]
+}

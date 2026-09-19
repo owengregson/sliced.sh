@@ -1,0 +1,745 @@
+{
+  "note": "Three Chessigma labelled Brilliant controls: a capturing sacrifice and two forced-mate sequences, evaluated on existing full-network SF19 depth-18 benchmark frames.",
+  "controls": [
+    {
+      "game": 3,
+      "ply": 38,
+      "san": "Qxf2",
+      "link": "https://www.chess.com/game/live/20637053973",
+      "label": "brilliant",
+      "input": {
+        "fen": "5rk1/r3np1p/p4qp1/1pQ5/3nB2P/3P4/PPP2PP1/2KR2R1 b - - 0 19",
+        "uci": "f6f2",
+        "moverRating": 1719,
+        "before": {
+          "depth": 18,
+          "complete": true,
+          "lines": [
+            {
+              "multipv": 1,
+              "depth": 18,
+              "score": {
+                "cp": 781
+              },
+              "pvUci": [
+                "f8c8",
+                "c5a7",
+                "c8c2",
+                "c1b1",
+                "c2b2",
+                "b1b2",
+                "d4c6",
+                "d3d4",
+                "c6a7",
+                "e4c2",
+                "b5b4",
+                "c2b3",
+                "a7b5",
+                "g1e1",
+                "b5d4",
+                "b2b1",
+                "d4b3",
+                "d1d8",
+                "g8g7"
+              ],
+              "wdl": [
+                1000,
+                0,
+                0
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 2,
+              "depth": 18,
+              "score": {
+                "cp": 618
+              },
+              "pvUci": [
+                "a7d7",
+                "c1b1",
+                "f8c8",
+                "c5g5",
+                "f6f2",
+                "c2c3",
+                "d4e6",
+                "g5h6",
+                "e7f5",
+                "h6d2",
+                "f2d2",
+                "d1d2",
+                "f5h4",
+                "d3d4",
+                "h4f5",
+                "e4f5"
+              ],
+              "wdl": [
+                1000,
+                0,
+                0
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 3,
+              "depth": 18,
+              "score": {
+                "cp": 584
+              },
+              "pvUci": [
+                "f6f2",
+                "c1b1",
+                "a7d7",
+                "d1f1",
+                "f2g3",
+                "h4h5",
+                "f8c8",
+                "c5b6",
+                "g3d6",
+                "f1f6",
+                "d6b6",
+                "f6b6",
+                "c8c2",
+                "g1c1",
+                "c2c1",
+                "b1c1",
+                "d7c7"
+              ],
+              "wdl": [
+                1000,
+                0,
+                0
+              ],
+              "pvSan": []
+            }
+          ]
+        },
+        "after": {
+          "depth": 18,
+          "complete": true,
+          "lines": [
+            {
+              "multipv": 1,
+              "depth": 18,
+              "score": {
+                "cp": -591
+              },
+              "pvUci": [
+                "c1b1",
+                "a7d7",
+                "d1f1",
+                "f2g3",
+                "c2c3",
+                "d4e6",
+                "c5a3",
+                "g3h4",
+                "a3a6",
+                "h4g5",
+                "g2g4",
+                "e7d5",
+                "a6c6",
+                "d7d8",
+                "c6b7",
+                "d5c7",
+                "d3d4",
+                "d8d6"
+              ],
+              "wdl": [
+                0,
+                0,
+                1000
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 2,
+              "depth": 18,
+              "score": {
+                "cp": -852
+              },
+              "pvUci": [
+                "c5d4",
+                "f2d4",
+                "g1e1",
+                "a7c7",
+                "c1b1",
+                "b5b4",
+                "g2g4",
+                "f8c8",
+                "d1d2",
+                "d4d8",
+                "e4h1",
+                "b4b3",
+                "a2b3",
+                "g6g5",
+                "h4g5",
+                "a6a5"
+              ],
+              "wdl": [
+                0,
+                0,
+                1000
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 3,
+              "depth": 18,
+              "score": {
+                "cp": -857
+              },
+              "pvUci": [
+                "d1e1",
+                "f8c8",
+                "g1f1",
+                "d4b3",
+                "a2b3",
+                "f2c5",
+                "e1e2",
+                "c8c7",
+                "g2g4",
+                "c5d6",
+                "f1e1",
+                "b5b4"
+              ],
+              "wdl": [
+                0,
+                0,
+                1000
+              ],
+              "pvSan": []
+            }
+          ]
+        },
+        "previous": {
+          "depth": 18,
+          "complete": true,
+          "lines": [
+            {
+              "multipv": 1,
+              "depth": 18,
+              "score": {
+                "cp": -716
+              },
+              "pvUci": [
+                "h5h6",
+                "d4e2",
+                "c1b1",
+                "e2g1",
+                "h6e3",
+                "f6d6",
+                "g2g4",
+                "g1h3",
+                "e3h3",
+                "f7f5",
+                "g4f5",
+                "e7f5",
+                "e4f5",
+                "f8f5"
+              ],
+              "wdl": [
+                0,
+                0,
+                1000
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 2,
+              "depth": 18,
+              "score": {
+                "cp": -744
+              },
+              "pvUci": [
+                "h5g5",
+                "d4e2",
+                "c1d2",
+                "f6g5",
+                "h4g5",
+                "e2g1",
+                "d1g1",
+                "f8c8",
+                "e4f3",
+                "c5c4",
+                "d3d4"
+              ],
+              "wdl": [
+                0,
+                0,
+                1000
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 3,
+              "depth": 18,
+              "score": {
+                "cp": -770
+              },
+              "pvUci": [
+                "h5c5",
+                "f8c8",
+                "c5a7",
+                "c8c2",
+                "c1b1",
+                "c2b2",
+                "b1b2",
+                "d4c6",
+                "b2b1",
+                "c6a7",
+                "h4h5",
+                "b5b4",
+                "h5g6",
+                "f7g6",
+                "g1h1",
+                "a7b5"
+              ],
+              "wdl": [
+                0,
+                0,
+                1000
+              ],
+              "pvSan": []
+            }
+          ]
+        }
+      },
+      "expectedQuality": "brilliant"
+    },
+    {
+      "game": 60,
+      "ply": 33,
+      "san": "Qh5",
+      "link": "https://www.chess.com/game/live/143542139438",
+      "label": "brilliant",
+      "input": {
+        "fen": "r1b2rk1/pp2qpp1/4p3/2ppPBp1/8/4P1P1/PPP2PP1/R2QK2R w KQ - 4 17",
+        "uci": "d1h5",
+        "moverRating": 673,
+        "before": {
+          "depth": 18,
+          "complete": true,
+          "lines": [
+            {
+              "multipv": 1,
+              "depth": 18,
+              "score": {
+                "mate": 3
+              },
+              "pvUci": [
+                "d1h5",
+                "f7f6",
+                "h5h7",
+                "g8f7",
+                "f5g6"
+              ],
+              "wdl": [
+                1000,
+                0,
+                0
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 2,
+              "depth": 18,
+              "score": {
+                "mate": 3
+              },
+              "pvUci": [
+                "h1h8",
+                "g8h8",
+                "d1h5",
+                "h8g8",
+                "h5h7"
+              ],
+              "wdl": [
+                1000,
+                0,
+                0
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 3,
+              "depth": 18,
+              "score": {
+                "mate": 4
+              },
+              "pvUci": [
+                "f5h7",
+                "g8h8",
+                "d1h5",
+                "e7f6",
+                "h7g6",
+                "h8g8",
+                "h5h7"
+              ],
+              "wdl": [
+                1000,
+                0,
+                0
+              ],
+              "pvSan": []
+            }
+          ]
+        },
+        "after": {
+          "depth": 18,
+          "complete": true,
+          "lines": [
+            {
+              "multipv": 1,
+              "depth": 18,
+              "score": {
+                "mate": -2
+              },
+              "pvUci": [
+                "f7f6",
+                "h5h7",
+                "g8f7",
+                "f5g6"
+              ],
+              "wdl": [
+                0,
+                0,
+                1000
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 2,
+              "depth": 18,
+              "score": {
+                "mate": -1
+              },
+              "pvUci": [
+                "c5c4",
+                "h5h7"
+              ],
+              "wdl": [
+                0,
+                0,
+                1000
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 3,
+              "depth": 18,
+              "score": {
+                "mate": -1
+              },
+              "pvUci": [
+                "d5d4",
+                "h5h7"
+              ],
+              "wdl": [
+                0,
+                0,
+                1000
+              ],
+              "pvSan": []
+            }
+          ]
+        },
+        "previous": {
+          "depth": 18,
+          "complete": true,
+          "lines": [
+            {
+              "multipv": 1,
+              "depth": 18,
+              "score": {
+                "mate": -3
+              },
+              "pvUci": [
+                "h8g8",
+                "d1h5",
+                "f7f6",
+                "h5h7",
+                "g8f7",
+                "f5g6"
+              ],
+              "wdl": [
+                0,
+                0,
+                1000
+              ],
+              "pvSan": []
+            }
+          ]
+        }
+      },
+      "expectedQuality": "mate"
+    },
+    {
+      "game": 77,
+      "ply": 59,
+      "san": "Qh6",
+      "link": "https://www.chess.com/game/live/169307682848",
+      "label": "brilliant",
+      "input": {
+        "fen": "2r2rk1/1b3p2/p4Bp1/1pbpPp1p/3N4/1P1PQNK1/1q4PP/8 w - - 0 30",
+        "uci": "e3h6",
+        "moverRating": 1925,
+        "before": {
+          "depth": 18,
+          "complete": true,
+          "lines": [
+            {
+              "multipv": 1,
+              "depth": 18,
+              "score": {
+                "mate": 5
+              },
+              "pvUci": [
+                "e3h6",
+                "h5h4",
+                "g3h3",
+                "b2g2",
+                "h3g2",
+                "h4h3",
+                "g2h3",
+                "c5d4",
+                "h6g7"
+              ],
+              "wdl": [
+                1000,
+                0,
+                0
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 2,
+              "depth": 18,
+              "score": {
+                "cp": 729
+              },
+              "pvUci": [
+                "e3f4",
+                "b2d4",
+                "f3d4",
+                "g8h7",
+                "d4f5",
+                "c5e3",
+                "f5e3",
+                "f8g8",
+                "g3f2",
+                "c8c3",
+                "f4d4",
+                "g6g5",
+                "d4c3",
+                "g8g6",
+                "c3d4",
+                "g6f6",
+                "e5f6"
+              ],
+              "wdl": [
+                1000,
+                0,
+                0
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 3,
+              "depth": 18,
+              "score": {
+                "cp": 188
+              },
+              "pvUci": [
+                "b3b4",
+                "g8h7",
+                "b4c5",
+                "c8e8",
+                "h2h3",
+                "b7c8",
+                "g3h2",
+                "f5f4",
+                "f3g5",
+                "h7g8",
+                "e3f4",
+                "b2b4",
+                "g5f3"
+              ],
+              "wdl": [
+                989,
+                11,
+                0
+              ],
+              "pvSan": []
+            }
+          ]
+        },
+        "after": {
+          "depth": 18,
+          "complete": true,
+          "lines": [
+            {
+              "multipv": 1,
+              "depth": 18,
+              "score": {
+                "mate": -4
+              },
+              "pvUci": [
+                "h5h4",
+                "g3h3",
+                "b2g2",
+                "h3g2",
+                "h4h3",
+                "g2h3",
+                "c5d4",
+                "h6g7"
+              ],
+              "wdl": [
+                0,
+                0,
+                1000
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 2,
+              "depth": 18,
+              "score": {
+                "mate": -3
+              },
+              "pvUci": [
+                "f5f4",
+                "g3h3",
+                "b2g2",
+                "h3g2",
+                "c5d4",
+                "h6g7"
+              ],
+              "wdl": [
+                0,
+                0,
+                1000
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 3,
+              "depth": 18,
+              "score": {
+                "mate": -3
+              },
+              "pvUci": [
+                "b2f2",
+                "g3h3",
+                "f2f3",
+                "g2f3",
+                "b5b4",
+                "h6g7"
+              ],
+              "wdl": [
+                0,
+                0,
+                1000
+              ],
+              "pvSan": []
+            }
+          ]
+        },
+        "previous": {
+          "depth": 15,
+          "complete": true,
+          "lines": [
+            {
+              "multipv": 1,
+              "depth": 15,
+              "score": {
+                "cp": -258
+              },
+              "pvUci": [
+                "g8h7",
+                "f3g5",
+                "h7g8",
+                "g5f7",
+                "f8f7",
+                "e3h6",
+                "f7f6",
+                "e5f6",
+                "c8c7",
+                "h6g6",
+                "g8h8",
+                "d4e6",
+                "b2d2",
+                "g6h5",
+                "h8g8",
+                "h5g6",
+                "g8h8",
+                "e6c7",
+                "c5f8",
+                "c7e6",
+                "d2e3",
+                "g3g4",
+                "e3e2",
+                "g4h4",
+                "f8d6"
+              ],
+              "wdl": [
+                0,
+                0,
+                1000
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 2,
+              "depth": 15,
+              "score": {
+                "cp": -374
+              },
+              "pvUci": [
+                "b2d4",
+                "f3d4",
+                "g8h7",
+                "f5g6",
+                "f7g6",
+                "f6g7",
+                "h5h4",
+                "g3h3",
+                "h7g7",
+                "d4e6",
+                "g7h7",
+                "e6c5",
+                "c8c7",
+                "d3d4"
+              ],
+              "wdl": [
+                0,
+                0,
+                1000
+              ],
+              "pvSan": []
+            },
+            {
+              "multipv": 3,
+              "depth": 15,
+              "score": {
+                "cp": -767
+              },
+              "pvUci": [
+                "b2f2",
+                "g3f2",
+                "g8h7",
+                "f2e2"
+              ],
+              "wdl": [
+                0,
+                0,
+                1000
+              ],
+              "pvSan": []
+            }
+          ]
+        }
+      },
+      "expectedQuality": "mate"
+    }
+  ]
+}
