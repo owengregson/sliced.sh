@@ -300,6 +300,9 @@ describe("createGameStack: the real service-worker stack", () => {
 			moveRatings: true,
 			moveRatingSounds: false,
 			forcedMateSounds: false,
+			// Nothing to queue into before a game, and the title badge is off by default.
+			queueInput: false,
+			freeTitle: null,
 		});
 	});
 

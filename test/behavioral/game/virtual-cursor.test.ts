@@ -458,13 +458,16 @@ describe("game session: the unlock glide and the page-kind gate (2026-09-13)", (
 		// the tab moves to the analysis board (SPA navigation: the content script re-sends hello)
 		await h.drive(() => h.site.hello("analysis"));
 		expect(owned()).toBe(false);
-		// re-arming on that page announces nothing
-		await h.sw.run(() => h.session().command("disarm"));
+		// the hand is released outright there (page admission is part of `mayAct`), and an arm
+		// request on that page is refused: nothing is armed, nothing is announced
+		expect(h.executor()?.isArmed()).toBe(false);
 		await h.sw.run(() => h.session().command("armAutoMove"));
-		expect(await h.until(() => h.executor()?.isArmed() === true, 10_000)).toBe(true);
+		await h.advance(1_000);
+		expect(h.executor()?.isArmed()).toBe(false);
 		expect(owned()).toBe(false);
-		// and the tab coming back to a game page gets the standing arm announced again
+		// and the tab coming back to a game page gets the standing arm back, announced again
 		await h.drive(() => h.site.hello("live-game"));
+		expect(await h.until(() => h.executor()?.isArmed() === true, 10_000)).toBe(true);
 		expect(owned()).toBe(true);
 	});
 });
