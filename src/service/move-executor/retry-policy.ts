@@ -68,6 +68,14 @@ function unavailable(
 	return r;
 }
 
+/** The board shows the move after all: report it `executed`, without the failure's reason. */
+function landed(result: ExecutionResult, attempts: number, keepError = false): ExecutionResult {
+	const upgraded: ExecutionResult = { ...result, ok: true, outcome: "executed", attempts };
+	delete upgraded.reason;
+	if (!keepError) delete upgraded.error;
+	return upgraded;
+}
+
 export async function runWithRetry(o: RetryRunnerOptions): Promise<ExecutionResult> {
 	let attempts = 0;
 	let last: ExecutionResult | null = null;
@@ -80,10 +88,7 @@ export async function runWithRetry(o: RetryRunnerOptions): Promise<ExecutionResu
 			const pre = await o.recheck(o.checkSignal());
 			if (pre.outcome === "ok") {
 				log.info("executor: move landed before the retry; not re-dispatching", { attempt: i });
-				const upgraded = { ...last, ok: true, outcome: "executed" as const, attempts };
-				delete upgraded.reason;
-				delete upgraded.error;
-				return upgraded;
+				return landed(last, attempts);
 			}
 			if (pre.outcome === "unavailable") return unavailable(last, attempts, pre);
 		}
@@ -97,10 +102,7 @@ export async function runWithRetry(o: RetryRunnerOptions): Promise<ExecutionResu
 				if (i + 1 === EXECUTOR.maxAttempts) {
 					const late = await o.recheck(o.checkSignal());
 					if (late.outcome === "ok") {
-						const upgraded = { ...result, ok: true, outcome: "executed" as const, attempts };
-						delete upgraded.reason;
-						delete upgraded.error;
-						return upgraded;
+						return landed(result, attempts);
 					}
 					if (late.outcome === "unavailable") return unavailable(result, attempts, late);
 					return { ...result, attempts };
@@ -120,9 +122,7 @@ export async function runWithRetry(o: RetryRunnerOptions): Promise<ExecutionResu
 			const late = await o.recheck(o.checkSignal());
 			if (late.outcome === "ok") {
 				log.info("executor: interrupted attempt still landed the move", { outcome: result.outcome });
-				const upgraded: ExecutionResult = { ...result, ok: true, outcome: "executed", attempts };
-				delete upgraded.reason;
-				return upgraded;
+				return landed(result, attempts, true);
 			}
 			if (late.outcome === "unavailable") {
 				log.warn("executor: interrupted attempt could not be checked", { late });
