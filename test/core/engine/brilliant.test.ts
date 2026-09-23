@@ -177,6 +177,12 @@ describe("sacrifice correctness regressions", () => {
 			concession: 3,
 		});
 	});
+	it("counts a checking recovery that no evasion can attack", () => {
+		// The owner's 28.Rc1 (2026-09-23, 184245091060): ...exf4 Rxc2+ wins a rook for the bishop,
+		// and no evasion attacks c2 with anything cheaper. chess.com does not badge it.
+		const fen = "2k5/p2rb2R/1p1p4/4pp2/1P3B2/P7/2r2PPP/R5K1 w - - 0 28";
+		expect(planBrilliant({ fen, uci: "a1c1" })?.offers).toEqual([]);
+	});
 	it("abstains when proving the off-square recovery exceeds the shared material budget", () => {
 		const fen = "7k/8/8/b7/3p4/4N3/7P/R5K1 w - - 0 1";
 		const verdict = classifyBrilliant(
@@ -288,6 +294,28 @@ describe("classifyBrilliant — the gates", () => {
 		expect(classifyBrilliant(input, { ...BRILLIANT, gratuitousWinning: 0.9 }).reason).toBe(
 			"trivial-win"
 		);
+	});
+
+	it("2 — a piece the engine's line takes to win more at once is a combination, from 1400 up", () => {
+		// The owner's 36.Bg5 (2026-09-23, 184245091060, 2647): Bxg5 Rxd7+ wins the exchange.
+		const bg5 = {
+			fen: "8/1k1rb2R/8/p4p1P/4p3/P2p4/5PP1/2BK4 w - - 2 36",
+			uci: "c1g5",
+			...evidence({
+				playedPoints: 0.938,
+				alternatives: [
+					{ uci: "h5h6", points: 0.881 },
+					{ uci: "h7f7", points: 0.881 },
+				],
+				playedPv: ["c1g5", "e7g5", "h7d7", "b7c6"],
+				moverRating: 2647,
+			}),
+		};
+		expect(classifyBrilliant(bg5).reason).toBe("illusion");
+		// Chess.com is more generous below 1400 (the benchmark's Rxf6 at 1117 is this idea).
+		expect(classifyBrilliant({ ...bg5, moverRating: 1100 }).brilliant).toBe(true);
+		// A line that declines the piece proves nothing.
+		expect(classifyBrilliant({ ...bg5, playedPv: ["c1g5", "e4e3"] }).brilliant).toBe(true);
 	});
 
 	it("3 — is more generous about near-best for newer players", () => {

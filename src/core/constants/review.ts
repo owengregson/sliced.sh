@@ -283,4 +283,13 @@ export const BRILLIANT = {
 	 * reference rating, as everywhere else. 0 turns it off.
 	 */
 	standingThreatMinRating: 1_400,
+	/**
+	 * Gate 2: a moved piece the engine's line takes, answered at once by a capture that leaves the
+	 * mover this many pawns ahead of the position before the move, won material — a combination,
+	 * not a sacrifice. The owner's 36.Bg5 (2026-09-23, 184245091060, 2647): Bxg5 Rxd7+ wins the
+	 * exchange. Only from `netRegainMinRating` up: below it chess.com badges these (the benchmark's
+	 * Qxc6+ at 1252, Rxf6 at 1117, Nxc6 at 600 …), as with `standingThreatMinRating`. 0 turns it off.
+	 */
+	netRegainNotSacrifice: 2,
+	netRegainMinRating: 1_400,
 } as const;

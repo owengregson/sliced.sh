@@ -187,16 +187,10 @@ function hasOffSquareRecovery(
 	try {
 		const needed = gain(capture);
 		for (const answer of board.moves({ verbose: true })) {
-			// A checking intermediate capture can only postpone the loss of its own piece:
-			// same-square SEE cannot follow that check evasion and prove a lasting recovery.
-			// Keep those tactical sacrifices for the engine/PV gates instead of erasing them.
-			if (
-				!answer.captured ||
-				answer.to === capture.to ||
-				/[+#]/.test(answer.san) ||
-				gain(answer) < needed
-			)
-				continue;
+			if (!answer.captured || answer.to === capture.to || gain(answer) < needed) continue;
+			// A checking capture may only postpone the loss of its own piece: same-square SEE cannot
+			// follow the evasion. It proves a recovery only when no evasion leaves it attacked.
+			if (/[+#]/.test(answer.san) && !checkerSurvives(board, answer)) continue;
 			const recovered = exchangeGain(board, answer, tuning, budget);
 			if (recovered === null) return null;
 			if (recovered < needed) continue;
@@ -212,6 +206,41 @@ function hasOffSquareRecovery(
 			if (already >= needed) return true;
 		}
 		return false;
+	} finally {
+		board.undo();
+	}
+}
+
+/**
+ * A checking capture keeps its piece through every evasion: none checks back, and none leaves the
+ * checker attacked by a cheaper piece, or by the king while undefended. The mover is to move after
+ * the evasion, so an even attacker is answered by a trade or a retreat. Capturing the checker is
+ * the same-square exchange `exchangeGain` already priced. The owner's 28.Rc1 (2026-09-23,
+ * 184245091060): ...exf4 Rxc2+ wins a rook for the bishop, and no evasion touches c2 for less.
+ * The Chessigma 14.Ne5 is not recovered: after Kxc7 Nxc6+ every evasion leaves d7xc6.
+ */
+function checkerSurvives(board: Chess, answer: Move): boolean {
+	board.move(answer);
+	try {
+		for (const evasion of board.moves({ verbose: true })) {
+			if (evasion.to === answer.to) continue;
+			board.move(evasion);
+			try {
+				if (board.isCheck()) return false;
+				const defended = board.isAttacked(answer.to, answer.color);
+				for (const square of board.attackers(answer.to, evasion.color)) {
+					const attacker = board.get(square);
+					if (!attacker) continue;
+					if (
+						attacker.type === "k" ? !defended : PIECE_VALUES[attacker.type] < PIECE_VALUES[answer.piece]
+					)
+						return false;
+				}
+			} finally {
+				board.undo();
+			}
+		}
+		return true;
 	} finally {
 		board.undo();
 	}
@@ -397,6 +426,29 @@ function regainedAtOnce(
 	return balance(board, color) >= afterMove - tuning.illusionRegainTolerance;
 }
 
+/**
+ * A moved piece the engine's line takes, and the mover's very next move leaves it at least
+ * `netRegainNotSacrifice` pawns ahead of where it stood before the move: material won by force.
+ */
+function wonAtOnce(
+	plan: BrilliantPlan,
+	pv: readonly string[],
+	rating: number | undefined,
+	tuning: BrilliantTuning
+): boolean {
+	const [move, reply, answer] = pv;
+	if (tuning.netRegainNotSacrifice <= 0 || effectiveRating(rating) < tuning.netRegainMinRating)
+		return false;
+	if (move !== plan.uci || !reply || !answer) return false;
+	if (!plan.offers.some((offer) => offer.capture === reply && offersMovedPiece(offer))) return false;
+	const board = loadPosition(plan.fen);
+	if (!board) return false;
+	const color = board.turn();
+	const before = balance(board, color);
+	if (!playUci(board, move) || !playUci(board, reply) || !playUci(board, answer)) return false;
+	return balance(board, color) >= before + tuning.netRegainNotSacrifice;
+}
+
 /** The offer is the piece that moved: hung on its new square, capturing, or given for the exchange. */
 function offersMovedPiece(offer: SacrificeOffer): boolean {
 	return offer.shape !== "ignored-threat" && offer.shape !== "indirect";
@@ -427,7 +479,11 @@ export function evaluateBrilliant(
 		plan.offers.every((offer) => offer.standing === true)
 	)
 		return verdict("illusion");
-	if (evidence.playedPv && regainedAtOnce(plan, evidence.playedPv, tuning))
+	if (
+		evidence.playedPv &&
+		(regainedAtOnce(plan, evidence.playedPv, tuning) ||
+			wonAtOnce(plan, evidence.playedPv, evidence.moverRating, tuning))
+	)
 		return verdict("illusion");
 	if (!plan.safeAlternative) return verdict("no-safe-alternative");
 	const probability = (value: number): boolean => Number.isFinite(value) && value >= 0 && value <= 1;
