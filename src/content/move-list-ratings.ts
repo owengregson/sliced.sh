@@ -4,8 +4,17 @@ import type { MoveListRating } from "@core/constants/move-quality";
 import { TIMINGS } from "@core/constants/timings";
 import { log } from "@core/logger";
 
+export interface MoveListRatings {
+	/** Follow `id`: a new game starts an empty log. */
+	setGame(id: string): void;
+	setEnabled(on: boolean): void;
+	/** Apply a port command; returns whether it was a move-list rating. */
+	apply(cmd: GamePortCommand): boolean;
+	dispose(): void;
+}
+
 /** Retains a game's log through page rerenders, separate from transient board effects. */
-export function createMoveListRatings(bridge: PageBridge) {
+export function createMoveListRatings(bridge: PageBridge): MoveListRatings {
 	let gameId: string | null = null;
 	let enabled = false;
 	let disposed = false;

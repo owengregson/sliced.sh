@@ -45,7 +45,13 @@ function member(href: string | null, base: string): string | null {
 	}
 }
 
-export function createFreeTitle(doc: Document, win: Window) {
+export interface FreeTitleBadges {
+	/** Decorate the signed-in account with `value`, or remove every decoration (`null`). */
+	set(value: FreeTitle | null): void;
+	dispose(): void;
+}
+
+export function createFreeTitle(doc: Document, win: Window): FreeTitleBadges {
 	let title: FreeTitle | null = null;
 	let disposed = false;
 	let queued = false;
