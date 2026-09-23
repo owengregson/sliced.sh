@@ -12,14 +12,12 @@
  */
 
 import { defineProgram, js } from "@pagescript";
+import { defineSafe, safe } from "./bridge-common";
 
 const doc = js.id("document");
 const el = js.id("el");
 const game = js.id("game");
 const lm = js.id("lm");
-
-const safe = (expr: Parameters<typeof js.arrow>[1]): ReturnType<typeof js.call> =>
-	js.call(js.id("safe"), js.arrow([], expr));
 
 export const verifyMoveProbe = defineProgram({
 	name: "verify-move-probe",
@@ -28,10 +26,7 @@ export const verifyMoveProbe = defineProgram({
 		js.program([
 			js.expr(
 				js.iife([
-					js.const_(
-						"safe",
-						js.arrow(["fn"], [js.try_([js.ret(js.call(js.id("fn")))], "err", [js.ret(js.nil())])])
-					),
+					defineSafe(),
 					js.const_("empty", js.obj({ lastMove: js.nil(), ply: js.nil(), position: js.nil() })),
 					js.let_("game", js.nil()),
 					js.forOf("s", p.boardSelectors, [
