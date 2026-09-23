@@ -94,6 +94,9 @@ export const HOST_OWNERS: Readonly<Record<string, readonly string[]>> = {
 	// NNUE mirror and its redirect target — both fetched by the SW.
 	"tests.stockfishchess.org": SW_AND_PANEL,
 	"data.stockfishchess.org": SW_AND_PANEL,
+	// Endgame tablebase API (2026-09-23): probed by the SW's tablebase client and nowhere else — a
+	// separate top-level export (`TABLEBASE_ENDPOINT`), so no other bundle inlines it.
+	"tablebase.lichess.ovh": [BUNDLES.serviceWorker],
 	// The site, as a navigable link in the panel's Not-supported view.
 	"www.chess.com": SW_AND_PANEL,
 	// Upstream metadata for the vendored components (licence notices, not requests).
