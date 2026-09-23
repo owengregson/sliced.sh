@@ -58,15 +58,16 @@ Run (from the repository root; the venv is git-ignored):
 from __future__ import annotations
 
 import argparse
-import hashlib
 import io
 import json
-import os
 import random
-import subprocess
 import sys
 import types
 from pathlib import Path
+
+from datalib.hashing import sha256_bytes, sha256_file
+from datalib.onnx_fp16 import to_fp16_weights
+from datalib.upstream import ensure_clone
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -116,35 +117,7 @@ EXPECTED_NOTE = (
 )
 
 
-def sha256_bytes(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
-
-
-def sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as fh:
-        for chunk in iter(lambda: fh.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
 # ── upstream clone and checkpoints ────────────────────────────────────────────────────────────
-
-
-def ensure_clone(upstream: Path, commit: str) -> None:
-    env = dict(os.environ)
-    if not (upstream / ".git").exists():
-        upstream.parent.mkdir(parents=True, exist_ok=True)
-        print(f"cloning {UPSTREAM_REPO} → {upstream}")
-        subprocess.run(["git", "clone", "--quiet", UPSTREAM_REPO, str(upstream)], check=True, env=env)
-    head = subprocess.run(["git", "-C", str(upstream), "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
-    if head != commit:
-        subprocess.run(["git", "-C", str(upstream), "fetch", "--quiet", "origin", commit], check=False, env=env)
-        subprocess.run(["git", "-C", str(upstream), "checkout", "--quiet", commit], check=True, env=env)
-        head = subprocess.run(["git", "-C", str(upstream), "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
-    if head != commit:
-        raise SystemExit(f"upstream is at {head}, expected {commit}")
-    print(f"upstream {UPSTREAM_REPO} @ {commit}")
 
 
 def fetch_checkpoint(hf_hub_download, size: str, cache: Path) -> Path:
@@ -218,30 +191,6 @@ def export_onnx(torch, wrapped) -> bytes:
         dynamic_axes={name: {0: "batch"} for name in (*INPUT_NAMES, *OUTPUT_NAMES)},
     )
     return buf.getvalue()
-
-
-def to_fp16_weights(onnx, np, model_bytes: bytes) -> tuple[bytes, int]:
-    from onnx import TensorProto, helper, numpy_helper
-
-    model = onnx.load_from_string(model_bytes)
-    graph = model.graph
-    casts = []
-    for init in list(graph.initializer):
-        if init.data_type != TensorProto.FLOAT:
-            continue
-        arr = numpy_helper.to_array(init)
-        if arr.size < FP16_MIN_ELEMENTS:
-            continue
-        if float(np.abs(arr).max()) > 65504.0:
-            raise SystemExit(f"{init.name}: |w| exceeds the float16 range")
-        half = numpy_helper.from_array(arr.astype(np.float16), init.name + "_fp16")
-        graph.initializer.remove(init)
-        graph.initializer.append(half)
-        casts.append(helper.make_node("Cast", [half.name], [init.name], to=TensorProto.FLOAT, name="cast_" + init.name))
-    for i, node in enumerate(casts):
-        graph.node.insert(i, node)
-    onnx.checker.check_model(model)
-    return model.SerializeToString(), len(casts)
 
 
 # ── repository layout ─────────────────────────────────────────────────────────────────────────
@@ -392,7 +341,7 @@ def main() -> int:
         return 2
 
     upstream = Path(args.upstream)
-    ensure_clone(upstream, args.commit)
+    ensure_clone(UPSTREAM_REPO, upstream, args.commit)
     sys.path.insert(0, str(upstream))
     import maia3.dataset  # noqa: E402  (upstream, AGPL — used, never copied)
     import maia3.model_registry  # noqa: E402
@@ -471,7 +420,7 @@ def main() -> int:
         wrapped_models[size] = wrapped
         fp32 = export_onnx(torch, wrapped)
         onnx.checker.check_model(onnx.load_from_string(fp32))
-        data, casts = to_fp16_weights(onnx, np, fp32)
+        data, casts = to_fp16_weights(onnx, np, fp32, FP16_MIN_ELEMENTS)
         onnx.checker.check_model(onnx.load_from_string(data))
         file = f"{spec['name']}.onnx"
         names = write_source(out, file, data)

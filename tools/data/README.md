@@ -20,6 +20,11 @@ Nothing here runs in the extension or in `bun run check`. Python 3.10+, dependen
 | 8 | `08_export_chessmimic.py [--bands …] [--precision fp16\|int8] [--positions 1000]` (Task 34) | clones `thomasj02/1e4_ai` at the pinned commit into `tools/data/upstream/` (git-ignored), fetches the band checkpoints through the Git LFS batch API (SHA-256 verified), exports `assets/models/chessmimic/<band>.onnx` (opset 14, fp16 weights) + `scalers.json` / `buckets.json` / `vocab.json` / `models.json`, and writes `test/fixtures/chessmimic-reference.json`; needs `torch onnx onnxruntime numpy chess` — recipe in the script's docstring and in `docs/models.md` |
 | 9 | `09_export_maia3.py [--sizes 79m] [--positions 60]` (Maia-3, 2026-09-11; 79M only since 2026-09-13) | clones `CSSLab/maia3` at the pinned commit into `tools/data/upstream/` (imported for the model class and the reference tokeniser only — AGPL, nothing is copied into `src/`), downloads each size's `.pt` from Hugging Face at the pinned revision (bytes + SHA-256 verified against `src/core/constants/maia.ts`), exports `assets/models/maia3/maia3-<size>.onnx` (opset 17, fp16 weights behind `Cast`; a file over the Git cap is written as `.part<i>` slices of `MAIA_FILES.partBytes`), writes `models.json`, and the fixtures `test/fixtures/maia3/positions.json` + `expected-<size>.json` — the `top` UCIs there are in the model's **mirrored side-to-move frame** (black's `g8f6` appears as `g1f3`), never un-mirrored to the board frame; needs `torch onnx onnxruntime numpy chess huggingface-hub` |
 
+Shared helpers live in `datalib/` (imported as `datalib.<module>`; the scripts run with
+`tools/data/` on `sys.path`): `lichess.py` (streaming a `.pgn.zst` dump, the time-control classes,
+reservoir sampling), `hashing.py`, `upstream.py` (the pinned upstream clone of steps 8 and 9) and
+`onnx_fp16.py` (fp16 weights behind `Cast`). Each numbered script's command line is unchanged.
+
 Simulated rows come from the extension's timing log (`LOCAL_KEYS.timingLog`, exported from the
 Engine view) or from the Task 33 harness driving `TimingModel` over the sampled games: one row per
 ply with `think` (= `TimingPlan.thinkMs / 1000`), `clock_s`, `opp_clock_s`, `tc`, `phase`, `elo`,

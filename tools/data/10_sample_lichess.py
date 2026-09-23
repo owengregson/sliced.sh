@@ -35,11 +35,12 @@ through `python-chess` for FENs and UCI; without it the script writes the sample
 from __future__ import annotations
 
 import argparse
-import io
 import json
 import random
 import re
 import sys
+
+from datalib.lichess import iter_games, open_pgn_zst, reservoir_add
 
 BUCKETS = [1000, 1300, 1600, 1900, 2200, 2500]
 EVENTS = {"Rated Blitz game": "blitz", "Rated Rapid game": "rapid"}
@@ -76,24 +77,6 @@ def eval_cp(text: str) -> int | None:
 def bucket_for(elo: int, width: int) -> int | None:
     best = min(BUCKETS, key=lambda b: abs(b - elo))
     return best if abs(best - elo) <= width else None
-
-
-def iter_games(stream: io.TextIOBase):
-    headers: dict[str, str] = {}
-    moves: list[str] = []
-    for line in stream:
-        line = line.rstrip("\n")
-        if line.startswith("["):
-            m = re.match(r'\[(\w+) "(.*)"\]', line)
-            if m:
-                headers[m.group(1)] = m.group(2)
-        elif line.strip():
-            moves.append(line)
-        elif moves:
-            yield headers, " ".join(moves)
-            headers, moves = {}, []
-    if moves:
-        yield headers, " ".join(moves)
 
 
 def parse_game(headers: dict[str, str], text: str) -> dict | None:
@@ -142,9 +125,7 @@ def sample(inputs: list[str], games_per_bucket: int, width: int, seed: int, limi
     seen: dict[int, int] = {b: 0 for b in BUCKETS}
     accepted = 0
     for path in inputs:
-        with open(path, "rb") as fh:
-            reader = zstandard.ZstdDecompressor().stream_reader(fh)
-            text = io.TextIOWrapper(reader, encoding="utf-8", errors="replace")
+        with open_pgn_zst(path, zstandard) as text:
             for headers, body in iter_games(text):
                 game = parse_game(headers, body)
                 if game is None:
@@ -154,14 +135,7 @@ def sample(inputs: list[str], games_per_bucket: int, width: int, seed: int, limi
                     if b is None:
                         continue
                     seen[b] += 1
-                    row = dict(game, side=side)
-                    res = reservoirs[b]
-                    if len(res) < games_per_bucket:
-                        res.append(row)
-                    else:
-                        j = rng.randrange(seen[b])
-                        if j < games_per_bucket:
-                            res[j] = row
+                    reservoir_add(reservoirs[b], seen[b], dict(game, side=side), games_per_bucket, rng)
                 accepted += 1
                 if limit and accepted >= limit:
                     break
