@@ -241,8 +241,8 @@ export function classifyMoveQuality(
 		brilliant,
 	});
 
-	// The brilliant gates run whenever the move offers material — also under a Mate or Book
-	// rating, so the verdict still says whether the sacrifice itself was sound.
+	// The brilliant gates run whenever the move offers material — also under a Book rating, so
+	// the verdict still says whether the sacrifice itself was sound.
 	if (!terminal || terminal.mate !== undefined) {
 		const plan = planBrilliant(
 			{ fen: input.fen, uci: input.uci, inBook: input.inBook },
@@ -269,8 +269,12 @@ export function classifyMoveQuality(
 					);
 	}
 
-	// Mate (owner, 2026-09-14): every move of a forced mating sequence, the checkmate included,
-	// outranks the whole ladder. Only the sequence's own moves (owner, 2026-09-19): a move that
+	// Brilliant outranks Mate (owner, 2026-09-23): chess.com badges 40.Qf8+ Bxf8 41.Qxf8#
+	// brilliant, the queen sacrifice that starts the mate (184243330558).
+	if (brilliant?.brilliant) return settle("brilliant");
+
+	// Mate (owner, 2026-09-14): every other move of a forced mating sequence, the checkmate
+	// included, outranks the rest of the ladder. Only the sequence's own moves (owner, 2026-09-19): a move that
 	// keeps a forced mate but is slower than the fastest one known is not playing the mate, and
 	// is graded like any other. A mate the review had not seen before the move starts one.
 	const fastestMate = (best.score.mate ?? 0) > 0 ? (best.score.mate ?? null) : null;
@@ -278,9 +282,6 @@ export function classifyMoveQuality(
 
 	// Book: theory is recognised rather than graded — unless it is a trap that loses real points.
 	if (input.inBook === true && loss < c.bookMaxLoss) return settle("book");
-
-	// Brilliant: a sound sacrifice the player chose.
-	if (brilliant?.brilliant) return settle("brilliant");
 
 	// A best quiet move that makes every apparent sacrifice untakeable by a short mate is
 	// a tactical find, not a material sacrifice. The proof also requires a winning plain

@@ -457,9 +457,13 @@ export function evaluateBrilliant(
 		tuning.nearBestRatedLoss > 0 && evidence.ratedLoss !== undefined
 			? evidence.ratedLoss
 			: evidence.loss;
+	const fasterMateElsewhere = evidence.alternatives.some(
+		(alt) => (alt.mate ?? 0) > 0 && (alt.mate ?? 0) < (evidence.playedMate ?? 0)
+	);
 	if (
 		nearBestLoss > byRating(tuning.maxLossNovice, tuning.maxLossExpert, evidence.moverRating) ||
-		(mateElsewhere && (evidence.playedMate ?? 0) <= 0)
+		(mateElsewhere && (evidence.playedMate ?? 0) <= 0) ||
+		(tuning.slowerMateNotBrilliant > 0 && fasterMateElsewhere)
 	)
 		return verdict("not-near-best");
 	// 4. Fight, or victory lap?

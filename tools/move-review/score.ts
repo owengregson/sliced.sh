@@ -210,8 +210,6 @@ for (const [game, entry] of games.entries()) {
 		const mark = entry.labels?.[String(index + 1)];
 		if (mark !== undefined && mark !== "Brilliant")
 			marks.push({ game, ply: index + 1, san: move.san, chesscom: mark, ours: verdict.quality });
-		// The brilliant signal is the gates' answer: a sound sacrifice that also starts a forced mate
-		// is rated `mate` on the board, but chess.com still badges it brilliant.
 		const badged = verdict.brilliant?.brilliant === true && verdict.quality !== "book";
 		if (mark !== undefined && mark !== "Brilliant") {
 			negativeClassified += 1;

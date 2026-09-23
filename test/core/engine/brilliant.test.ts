@@ -258,6 +258,14 @@ describe("classifyBrilliant — the gates", () => {
 		expect(
 			classifyBrilliant(input({ alternatives: [{ uci: "g5f3", points: 1, mate: 3 }] })).reason
 		).toBe("not-near-best");
+		// A slower mate is second best too, though mate in 6 scores as mate in 5 (the owner's 37.Qc8,
+		// 2026-09-23): whatever the alternative gives away, as every winning move there left g5.
+		const slower = input({
+			playedPoints: 1,
+			playedMate: 6,
+			alternatives: [{ uci: "g5f3", points: 1, mate: 5 }],
+		});
+		expect(classifyBrilliant(slower).reason).toBe("not-near-best");
 	});
 	it("judges soundness at the mover's rating while retaining the reference comparison scale", () => {
 		expect(
@@ -370,9 +378,11 @@ describe("classifyBrilliant — the gates", () => {
 			classifyBrilliant(input({ playedPoints: 1, alternatives: [{ uci: "g5f3", points: 0.98 }] }))
 				.reason
 		).toBe("trivial-win");
+		// Gate 3 now declines a slower mate first (`slowerMateNotBrilliant`); without it, gate 4 does.
 		expect(
 			classifyBrilliant(
-				input({ playedPoints: 1, playedMate: 4, alternatives: [{ uci: "g5f3", points: 1, mate: 2 }] })
+				input({ playedPoints: 1, playedMate: 4, alternatives: [{ uci: "g5f3", points: 1, mate: 2 }] }),
+				{ ...BRILLIANT, slowerMateNotBrilliant: 0 }
 			).reason
 		).toBe("trivial-win");
 	});

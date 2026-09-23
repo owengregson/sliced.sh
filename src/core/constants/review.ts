@@ -204,6 +204,13 @@ export const BRILLIANT = {
 	fastestMateNotTrivial: 1,
 	fasterMateDecisive: 1,
 	/**
+	 * 1 = a move that keeps a forced mate slower than one another root move had is not near-best,
+	 * however little expected points the extra moves cost (mate in 5 and mate in 6 score alike).
+	 * The owner's 37.Qc8 (2026-09-23, 184243330558, 2628): mate in 6 beside 37.Qad8's mate in 5,
+	 * leaving the g5 bishop every winning move left, badged brilliant; chess.com does not.
+	 */
+	slowerMateNotBrilliant: 1,
+	/**
 	 * Gratuitous sacrifices (the owner's reviewed games, 2026-09-15): 20.Rxd4 at +8.7, where the
 	 * plain 20.Nxd4 kept +8.5, is not brilliant. A victory lap is also a best alternative already at
 	 * `gratuitousWinning` that the sacrifice improves on by less than `gratuitousGain` (reference

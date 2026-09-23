@@ -334,10 +334,12 @@ describe("classifyMoveQuality — brilliant", () => {
 		expect(verdict?.brilliant?.brilliant).toBe(false);
 	});
 
-	it("keeps the brilliant gates' answer under a mate rating", () => {
+	it("rates a sound sacrifice that starts a forced mate brilliant, not mate", () => {
+		// The owner's 40.Qf8+ Bxf8 41.Qxf8# (2026-09-23): chess.com badges the sacrifice brilliant.
 		const before = frame([line(1, "g5e6", { mate: 5 }), line(2, "g5f3", { cp: 40 })]);
 		const verdict = classifyMoveQuality({ fen, uci: "g5e6", before });
-		expect(verdict?.quality).toBe("mate");
+		expect(verdict?.quality).toBe("brilliant");
+		expect(verdict?.mateIn).toBe(5);
 		expect(verdict?.brilliant?.brilliant).toBe(true);
 	});
 });
