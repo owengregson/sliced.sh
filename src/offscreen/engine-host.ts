@@ -48,6 +48,7 @@ import { DEFAULT_SCHEDULER, type TimerScheduler } from "@core/util/scheduler";
 import type StockfishWeb from "@lichess-org/stockfish-web";
 import type { EngineStatus, EngineVariant } from "@typedefs/engine";
 import { POLICY_NOT_AVAILABLE, type PolicyInference } from "./policy-inference";
+import { errorMessage } from "./shared/errors";
 import type { BootedEngine, NnueSource } from "./stockfish-loader";
 import { TIMING_NOT_AVAILABLE, type TimingInference } from "./timing-inference";
 
@@ -81,10 +82,6 @@ const ID_NAME_PREFIX = "id name ";
 /** stderr prefix the engine wrapper uses for a rejected network: evict the cached copy. */
 const BAD_NNUE_PREFIX = "BAD_NNUE";
 const NOOP = (): void => {};
-
-function errorMessage(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
-}
 
 export class EngineHost {
 	private readonly sched: HostScheduler;

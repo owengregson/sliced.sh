@@ -24,6 +24,7 @@ import { LIMITS } from "@core/constants/limits";
 import { log } from "@core/logger";
 import type StockfishWeb from "@lichess-org/stockfish-web";
 import type { EngineVariant } from "@typedefs/engine";
+import { errorMessage } from "./shared/errors";
 
 /** Status error when the document is not cross-origin isolated (no `SharedArrayBuffer`). */
 export const CROSS_ORIGIN_ISOLATION_ERROR = "cross-origin isolation missing";
@@ -141,10 +142,6 @@ export function recommendedNnue(sf: StockfishWeb): string[] {
 		names.push(name);
 	}
 	return names;
-}
-
-function errorMessage(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
 }
 
 export async function bootEngineDetailed(

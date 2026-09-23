@@ -24,280 +24,93 @@
  * a backstop.
  *
  * Chunks carry base64 because runtime ports JSON-serialise their payloads (see `NnueChunk`).
+ *
+ * The parts: `asset-store/cache.ts` (OPFS + IndexedDB), `asset-store/relay.ts` (the relayed
+ * download and its budgets), `asset-store/hash.ts` (verification). This class is the policy that
+ * orders them.
  */
 
 import { runtimeGetURL } from "@core/chrome/runtime";
-import type { EnginePortMessage } from "@core/constants/messages";
 import { TIMINGS } from "@core/constants/timings";
 import { log } from "@core/logger";
-import { base64ToBytes } from "@core/util/base64";
-import { DEFAULT_SCHEDULER, type TimerScheduler } from "@core/util/scheduler";
+import { DEFAULT_SCHEDULER } from "@core/util/scheduler";
+import { AssetCache, defaultOpfs } from "./asset-store/cache";
+import { type Digest, defaultDigest, sha256Hex } from "./asset-store/hash";
+import { DownloadRelay } from "./asset-store/relay";
+import type {
+	AssetChunk,
+	AssetFetchResponse,
+	AssetSpec,
+	AssetStoreDeps,
+} from "./asset-store/types";
+import { errorMessage } from "./shared/errors";
+import { SingleFlight } from "./shared/single-flight";
+
+export { sha256Hex } from "./asset-store/hash";
+export { ASSET_DOWNLOAD_STALLED, ASSET_DOWNLOAD_TOO_LONG } from "./asset-store/relay";
+export type {
+	AssetChunk,
+	AssetFetchResponse,
+	AssetSpec,
+	AssetStoreDeps,
+	OpfsDirectory,
+	OpfsFileHandle,
+	OpfsWritable,
+} from "./asset-store/types";
 
 /** Downloads tried before giving up on a checksum mismatch (initial + one re-request). */
 const DOWNLOAD_ATTEMPTS = 2;
 
-/** The slice of the File System Access API the store uses (structural, so tests can fake it). */
-export interface OpfsWritable {
-	write(data: Uint8Array): Promise<void>;
-	close(): Promise<void>;
-}
-export interface OpfsFileHandle {
-	getFile(): Promise<{ arrayBuffer(): Promise<ArrayBuffer> }>;
-	createWritable(): Promise<OpfsWritable>;
-}
-export interface OpfsDirectory {
-	getFileHandle(name: string, options?: { create?: boolean }): Promise<OpfsFileHandle>;
-	removeEntry(name: string): Promise<void>;
-}
-
-export interface AssetFetchResponse {
-	ok: boolean;
-	body?: ReadableStream<Uint8Array> | null;
-	arrayBuffer(): Promise<ArrayBuffer>;
-}
-
-/** One relayed slice, or the relay's failure; `NnueChunk` and `ModelChunk` both fit. */
-export type AssetChunk =
-	| { name: string; index: number; total: number; bytes: string }
-	| { name: string; error: string };
-
-/** What distinguishes one asset family from another. */
-export interface AssetSpec {
-	/** Log prefix, e.g. `nnue-store`. */
-	label: string;
-	/** Error message for a name the store does not serve (checked before any storage access). */
-	nameError: string;
-	/** Error message after the download attempts failed verification. */
-	checksumError: string;
-	/** True when `name` is well-formed and known. */
-	accepts(name: string): boolean;
-	/** Extension-relative path when `name` ships in the package; `undefined` otherwise. */
-	bundledPath(name: string): string | undefined;
-	/** Optional package decoder. Decoded bytes must match the canonical registry hash. */
-	decodeBundled?(name: string, response: AssetFetchResponse): Promise<Uint8Array>;
-	/** Expected SHA-256 hex (full digest, or a prefix) `name` must hash to. */
-	expectedHash(name: string): string | undefined;
-	/** The port message asking the service worker to download `name`. */
-	request(name: string): EnginePortMessage;
-	/** IndexedDB fallback location. */
-	db: { name: string; store: string; version: number };
-}
-
-export interface AssetStoreDeps {
-	/** Posts the download request to the service worker. */
-	post: (msg: EnginePortMessage) => void;
-	fetch?: (url: string) => Promise<AssetFetchResponse>;
-	getUrl?: (path: string) => string;
-	/** `null` = OPFS unavailable (IndexedDB only). Default: `navigator.storage.getDirectory`. */
-	opfs?: (() => Promise<OpfsDirectory>) | null;
-	/** `null` = no IndexedDB. Default: `globalThis.indexedDB`. */
-	indexedDb?: IDBFactory | null;
-	digest?: (data: Uint8Array) => Promise<ArrayBuffer>;
-	onProgress?: (name: string, progress: number) => void;
-	/** Timers for the download stall budget; tests pass a fake. */
-	scheduler?: TimerScheduler;
-	/** Chunk-to-chunk budget before a relayed download is abandoned; default `TIMINGS.assetDownloadStallMs`. */
-	stallMs?: number;
-	/** Whole-download backstop; default `TIMINGS.assetDownloadTotalMs`. */
-	totalMs?: number;
-}
-
-/** Rejection message when the relay went quiet; the caller may retry or substitute. */
-export const ASSET_DOWNLOAD_STALLED = "download stalled";
-/** Rejection message when a download ran past its whole-transfer backstop. */
-export const ASSET_DOWNLOAD_TOO_LONG = "download exceeded its total budget";
-
-interface Download {
-	chunks: Array<Uint8Array | undefined>;
-	received: number;
-	total: number;
-	resolve: (data: Uint8Array) => void;
-	reject: (error: Error) => void;
-	/** Stall-budget timer handle; cleared whenever the download leaves `downloads`. */
-	timer: unknown;
-	/** Whole-download backstop handle; cleared with `timer`. */
-	totalTimer: unknown;
-}
-
-const defaultDigest = (data: Uint8Array): Promise<ArrayBuffer> =>
-	crypto.subtle.digest("SHA-256", data as Uint8Array<ArrayBuffer>);
-
-export async function sha256Hex(
-	data: Uint8Array,
-	digest: (data: Uint8Array) => Promise<ArrayBuffer> = defaultDigest
-): Promise<string> {
-	const hash = new Uint8Array(await digest(data));
-	let hex = "";
-	for (const b of hash) hex += b.toString(16).padStart(2, "0");
-	return hex;
-}
-
-function defaultOpfs(): (() => Promise<OpfsDirectory>) | null {
-	const storage = globalThis.navigator?.storage;
-	if (!storage || typeof storage.getDirectory !== "function") return null;
-	return () => storage.getDirectory() as Promise<OpfsDirectory>;
-}
-
-function errorMessage(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
-}
-
-// ── IndexedDB fallback ────────────────────────────────────────────────────
-
-function request<T>(req: IDBRequest<T>): Promise<T> {
-	return new Promise((resolve, reject) => {
-		req.onsuccess = () => resolve(req.result);
-		req.onerror = () => reject(req.error ?? new Error("IndexedDB request failed"));
-	});
-}
-
-function openDb(factory: IDBFactory, db: AssetSpec["db"]): Promise<IDBDatabase> {
-	const req = factory.open(db.name, db.version);
-	req.onupgradeneeded = () => {
-		if (!req.result.objectStoreNames.contains(db.store)) req.result.createObjectStore(db.store);
-	};
-	return request(req);
-}
-
-async function withStore<T>(
-	factory: IDBFactory,
-	db: AssetSpec["db"],
-	mode: IDBTransactionMode,
-	fn: (store: IDBObjectStore) => IDBRequest<T>
-): Promise<T> {
-	const handle = await openDb(factory, db);
-	try {
-		const tx = handle.transaction(db.store, mode);
-		const result = await request(fn(tx.objectStore(db.store)));
-		await new Promise<void>((resolve, reject) => {
-			tx.oncomplete = () => resolve();
-			tx.onerror = () => reject(tx.error ?? new Error("IndexedDB transaction failed"));
-			tx.onabort = () => reject(tx.error ?? new Error("IndexedDB transaction aborted"));
-		});
-		return result;
-	} finally {
-		handle.close();
-	}
-}
-
-// ── store ────────────────────────────────────────────────────────────────
-
 export class AssetStore {
-	private readonly inFlight = new Map<string, Promise<Uint8Array>>();
-	private readonly downloads = new Map<string, Download>();
+	private readonly flights = new SingleFlight<string, Uint8Array>();
 	private readonly fetchFn: (url: string) => Promise<AssetFetchResponse>;
 	private readonly getUrl: (path: string) => string;
-	private readonly opfs: (() => Promise<OpfsDirectory>) | null;
-	private readonly indexedDb: IDBFactory | null;
-	private readonly digest: (data: Uint8Array) => Promise<ArrayBuffer>;
-	private readonly sched: TimerScheduler;
-	private readonly stallMs: number;
-	private readonly totalMs: number;
+	private readonly digest: Digest;
+	private readonly cache: AssetCache;
+	private readonly relay: DownloadRelay;
 
 	constructor(
 		protected readonly spec: AssetSpec,
-		private readonly deps: AssetStoreDeps
+		deps: AssetStoreDeps
 	) {
 		this.fetchFn = deps.fetch ?? ((url) => fetch(url));
 		this.getUrl = deps.getUrl ?? runtimeGetURL;
-		this.opfs = deps.opfs === undefined ? defaultOpfs() : deps.opfs;
-		this.indexedDb = deps.indexedDb === undefined ? (globalThis.indexedDB ?? null) : deps.indexedDb;
 		this.digest = deps.digest ?? defaultDigest;
-		this.sched = deps.scheduler ?? DEFAULT_SCHEDULER;
-		this.stallMs = deps.stallMs ?? TIMINGS.assetDownloadStallMs;
-		this.totalMs = deps.totalMs ?? TIMINGS.assetDownloadTotalMs;
-	}
-
-	/** Drop `name`'s download and stop its stall timer; returns the entry if there was one. */
-	private takeDownload(name: string): Download | undefined {
-		const d = this.downloads.get(name);
-		if (!d) return undefined;
-		this.downloads.delete(name);
-		this.sched.clearTimeout(d.timer);
-		this.sched.clearTimeout(d.totalTimer);
-		return d;
+		this.cache = new AssetCache({
+			label: spec.label,
+			opfs: deps.opfs === undefined ? defaultOpfs() : deps.opfs,
+			indexedDb: deps.indexedDb === undefined ? (globalThis.indexedDB ?? null) : deps.indexedDb,
+			db: spec.db,
+		});
+		this.relay = new DownloadRelay({
+			label: spec.label,
+			post: deps.post,
+			request: (name) => spec.request(name),
+			onProgress: deps.onProgress,
+			scheduler: deps.scheduler ?? DEFAULT_SCHEDULER,
+			stallMs: deps.stallMs ?? TIMINGS.assetDownloadStallMs,
+			totalMs: deps.totalMs ?? TIMINGS.assetDownloadTotalMs,
+		});
 	}
 
 	/** Bytes of `name`, verified; concurrent calls for one name share the work. */
 	get(name: string): Promise<Uint8Array> {
-		const running = this.inFlight.get(name);
-		if (running) return running;
-		const p = this.load(name).finally(() => {
-			if (this.inFlight.get(name) === p) this.inFlight.delete(name);
-		});
-		this.inFlight.set(name, p);
-		return p;
+		return this.flights.run(name, (n) => this.load(n));
 	}
 
 	/** Route every relayed chunk of this family here. */
 	handleChunk(msg: AssetChunk): void {
-		const d = this.downloads.get(msg.name);
-		if (!d) {
-			log.debug(`${this.spec.label}: chunk for an asset nobody requested`, { name: msg.name });
-			return;
-		}
-		if ("error" in msg) {
-			this.takeDownload(msg.name);
-			d.reject(new Error(msg.error));
-			return;
-		}
-		let bytes: Uint8Array;
-		try {
-			bytes = base64ToBytes(msg.bytes);
-		} catch (error) {
-			this.takeDownload(msg.name);
-			d.reject(new Error(`${this.spec.label} chunk ${msg.index} undecodable: ${errorMessage(error)}`));
-			return;
-		}
-		d.total = msg.total;
-		// Only a new, non-empty index counts as progress, so a repeated or empty chunk cannot
-		// keep rearming the stall budget forever.
-		const progressed = d.chunks[msg.index] === undefined && bytes.length > 0;
-		if (d.chunks[msg.index] === undefined) d.received++;
-		d.chunks[msg.index] = bytes;
-		if (progressed) this.rearmStall(msg.name, d);
-		this.deps.onProgress?.(msg.name, d.total > 0 ? d.received / d.total : 1);
-		if (d.received < d.total) return;
-		this.takeDownload(msg.name);
-		let length = 0;
-		for (const c of d.chunks) length += c?.length ?? 0;
-		const out = new Uint8Array(length);
-		let at = 0;
-		for (const c of d.chunks) {
-			if (!c) continue;
-			out.set(c, at);
-			at += c.length;
-		}
-		d.resolve(out);
+		this.relay.handleChunk(msg);
 	}
 
 	/** Remove a cached copy (OPFS and IndexedDB). */
-	async delete(name: string): Promise<void> {
-		if (this.opfs) {
-			try {
-				await (await this.opfs()).removeEntry(name);
-			} catch {
-				// not present
-			}
-		}
-		if (this.indexedDb) {
-			try {
-				await withStore(this.indexedDb, this.spec.db, "readwrite", (s) => s.delete(name));
-			} catch {
-				// not present / no db
-			}
-		}
+	delete(name: string): Promise<void> {
+		return this.cache.delete(name);
 	}
 
 	/** Fail every pending download (the port went away). */
 	abortAll(reason: string): void {
-		const pending = [...this.downloads.values()];
-		this.downloads.clear();
-		for (const d of pending) {
-			this.sched.clearTimeout(d.timer);
-			this.sched.clearTimeout(d.totalTimer);
-			d.reject(new Error(reason));
-		}
+		this.relay.abortAll(reason);
 	}
 
 	private async load(name: string): Promise<Uint8Array> {
@@ -307,16 +120,16 @@ export class AssetStore {
 			const bundled = await this.readBundled(name, bundledPath);
 			if (bundled) return bundled;
 		}
-		const cached = await this.readCached(name);
+		const cached = await this.cache.read(name);
 		if (cached) {
 			if (await this.verify(cached, name)) return cached;
 			log.warn(`${this.spec.label}: cached copy failed its checksum; deleting`, { name });
 			await this.delete(name);
 		}
 		for (let attempt = 1; attempt <= DOWNLOAD_ATTEMPTS; attempt++) {
-			const data = await this.download(name);
+			const data = await this.relay.download(name);
 			if (await this.verify(data, name)) {
-				await this.persist(name, data);
+				await this.cache.write(name, data);
 				return data;
 			}
 			log.warn(`${this.spec.label}: download failed its checksum`, { name, attempt });
@@ -344,95 +157,5 @@ export class AssetStore {
 		const expected = this.spec.expectedHash(name);
 		if (!expected) return false;
 		return (await sha256Hex(data, this.digest)).startsWith(expected);
-	}
-
-	private async readCached(name: string): Promise<Uint8Array | undefined> {
-		if (this.opfs) {
-			try {
-				const dir = await this.opfs();
-				const file = await (await dir.getFileHandle(name)).getFile();
-				return new Uint8Array(await file.arrayBuffer());
-			} catch {
-				// not cached in OPFS
-			}
-		}
-		if (this.indexedDb) {
-			try {
-				const value = await withStore<unknown>(this.indexedDb, this.spec.db, "readonly", (s) =>
-					s.get(name)
-				);
-				if (value instanceof Uint8Array) return value;
-				if (value instanceof ArrayBuffer) return new Uint8Array(value);
-			} catch (error) {
-				log.debug(`${this.spec.label}: IndexedDB read failed`, { name, error: errorMessage(error) });
-			}
-		}
-		return undefined;
-	}
-
-	private async persist(name: string, data: Uint8Array): Promise<void> {
-		if (this.opfs) {
-			try {
-				const dir = await this.opfs();
-				const writable = await (await dir.getFileHandle(name, { create: true })).createWritable();
-				await writable.write(data);
-				await writable.close();
-				return;
-			} catch (error) {
-				log.warn(`${this.spec.label}: OPFS write failed; trying IndexedDB`, {
-					name,
-					error: errorMessage(error),
-				});
-			}
-		}
-		if (this.indexedDb) {
-			try {
-				await withStore(this.indexedDb, this.spec.db, "readwrite", (s) => s.put(data, name));
-				return;
-			} catch (error) {
-				log.warn(`${this.spec.label}: IndexedDB write failed`, { name, error: errorMessage(error) });
-			}
-		}
-		log.warn(`${this.spec.label}: asset not persisted; it will be downloaded again next time`, {
-			name,
-		});
-	}
-
-	/** Drop `name`'s download, stop both of its timers and reject it. */
-	private abandon(name: string, d: Download, why: string, detail: Record<string, unknown>): void {
-		if (this.downloads.get(name) !== d) return;
-		this.downloads.delete(name);
-		this.sched.clearTimeout(d.timer);
-		this.sched.clearTimeout(d.totalTimer);
-		log.warn(`${this.spec.label}: ${why}`, { name, received: d.received, total: d.total, ...detail });
-		d.reject(new Error(`${why}: ${name}`));
-	}
-
-	/** (Re)start `name`'s stall budget: no progress within `stallMs` rejects the download. */
-	private rearmStall(name: string, d: Download): void {
-		this.sched.clearTimeout(d.timer);
-		d.timer = this.sched.setTimeout(() => {
-			this.abandon(name, d, ASSET_DOWNLOAD_STALLED, { stallMs: this.stallMs });
-		}, this.stallMs);
-	}
-
-	private download(name: string): Promise<Uint8Array> {
-		return new Promise<Uint8Array>((resolve, reject) => {
-			const d: Download = {
-				chunks: [],
-				received: 0,
-				total: 0,
-				resolve,
-				reject,
-				timer: undefined,
-				totalTimer: undefined,
-			};
-			this.downloads.set(name, d);
-			this.rearmStall(name, d);
-			d.totalTimer = this.sched.setTimeout(() => {
-				this.abandon(name, d, ASSET_DOWNLOAD_TOO_LONG, { totalMs: this.totalMs });
-			}, this.totalMs);
-			this.deps.post(this.spec.request(name));
-		});
 	}
 }
