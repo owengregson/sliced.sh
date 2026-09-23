@@ -7,7 +7,7 @@
  * a new position, disabling highlights, or an explicit clear removes it from the service worker.
  */
 
-import type { ArrowLine, DrawOptions, SiteAdapter } from "@content/adapters/adapter";
+import type { ArrowLine, DrawOptions, SiteAdapter } from "@content/adapters/contract";
 import type { GamePortCommand } from "@core/constants/messages";
 import type { HighlightStyle, Square } from "@typedefs/game";
 

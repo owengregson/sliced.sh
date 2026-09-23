@@ -64,6 +64,20 @@ export function pieceAt(placement: string, sq: Square): string | null {
 	return grid?.[7 - rankOf(sq)]?.[fileOf(sq)] ?? null;
 }
 
+/** The last move implied by two marked squares: the occupied one is the destination. */
+export function lastMoveBetween(
+	placement: string,
+	squares: readonly Square[]
+): { lastMove: { from: Square; to: Square } } | null {
+	if (squares.length !== 2) return null;
+	const [a, b] = squares as [Square, Square];
+	const occA = pieceAt(placement, a) !== null;
+	const occB = pieceAt(placement, b) !== null;
+	if (occB && !occA) return { lastMove: { from: a, to: b } };
+	if (occA && !occB) return { lastMove: { from: b, to: a } };
+	return null;
+}
+
 /** chess.com: `.piece` elements with `[wb][prnbqk]` + `square-XY` classes in any order. */
 export function placementFromDom(board: Element): string | null {
 	const grid = emptyGrid();

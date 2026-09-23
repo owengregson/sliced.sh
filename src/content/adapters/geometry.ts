@@ -6,7 +6,7 @@
 
 import { fileOf, rankOf, squareOf } from "@core/chess/squares";
 import type { Square } from "@typedefs/game";
-import type { Point, Rect } from "./adapter";
+import type { Point, Rect } from "./contract";
 
 interface RectLike {
 	left?: number;
@@ -54,4 +54,27 @@ export function squareRect(sq: Square, rect: RectLike, flipped: boolean): Rect {
 	const x = left + col * s;
 	const y = top + row * s;
 	return { x, y, width: s, height: s, left: x, top: y, right: x + s, bottom: y + s };
+}
+
+/** A viewport rectangle from a `DOMRect` or any `{x|left, y|top, width, height}`. */
+export function toRect(r: {
+	x?: number;
+	y?: number;
+	left?: number;
+	top?: number;
+	width: number;
+	height: number;
+}): Rect {
+	const x = r.x ?? r.left ?? 0;
+	const y = r.y ?? r.top ?? 0;
+	return {
+		x,
+		y,
+		width: r.width,
+		height: r.height,
+		left: x,
+		top: y,
+		right: x + r.width,
+		bottom: y + r.height,
+	};
 }

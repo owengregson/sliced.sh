@@ -1,4 +1,4 @@
-import { BRIDGE_KINDS, type PageBridge } from "@content/adapters/adapter";
+import { BRIDGE_KINDS, type PageBridge } from "@content/adapters/bridge-protocol";
 import type { GamePortCommand } from "@core/constants/messages";
 import type { MoveListRating } from "@core/constants/move-quality";
 import { TIMINGS } from "@core/constants/timings";

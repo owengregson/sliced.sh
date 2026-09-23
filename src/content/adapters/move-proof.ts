@@ -4,7 +4,7 @@ import { positionKey } from "@core/chess/history";
 import { playUci } from "@core/chess/san";
 import { CHESS_START_FEN } from "@core/constants/chess";
 import type { ExpectedMove } from "@core/constants/messages";
-import type { MoveWatch } from "./adapter";
+import type { MoveWatch } from "./contract";
 import { placementOf } from "./dom-fen";
 
 /** `null` keeps compatibility with watches opened before a move and without a source position. */

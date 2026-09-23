@@ -12,7 +12,7 @@
  * (§13.3).
  */
 
-import type { Rect, SiteAdapter } from "@content/adapters/adapter";
+import type { Rect, SiteAdapter } from "@content/adapters/contract";
 import { pieceAt, placementOf } from "@content/adapters/dom-fen";
 import { TIMINGS } from "@core/constants/timings";
 import type { Occupancy } from "@core/motor/types";

@@ -17,7 +17,7 @@
  * still discovered.
  */
 
-import { BRIDGE_KINDS, type BridgeState, type PageBridge } from "@content/adapters/adapter";
+import { BRIDGE_KINDS, type BridgeState, type PageBridge } from "@content/adapters/bridge-protocol";
 import { BOARD_EFFECT_KINDS, type BoardEffect } from "@core/constants/board-effects";
 import { BRIDGE_ORIENTATION, BRIDGE_WIRE as W } from "@core/constants/bridge";
 import { type MoveQualityMark, moveQualityIndex } from "@core/constants/move-quality";
