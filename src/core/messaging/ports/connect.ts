@@ -1,0 +1,145 @@
+/**
+ * The page side of a resilient port (panel, offscreen, ISOLATED content script): connects
+ * immediately, reconnects after a disconnect or a failed `connect()` with exponential backoff
+ * (250 → 4000 ms, doubling, reset once the peer sends a message), and queues `post()` calls
+ * while no port is live so they are delivered in order once one is.
+ */
+
+import { consumeRuntimeLastError, runtimeConnect } from "@core/chrome/runtime";
+import { TIMINGS } from "@core/constants/timings";
+import { log } from "@core/logger";
+import { defaultScheduler } from "@core/util/scheduler";
+
+/** `setTimeout`-compatible scheduler; injectable so backoff is testable without waiting. */
+export interface PortScheduler {
+	setTimeout(fn: () => void, ms: number): unknown;
+	clearTimeout(handle: unknown): void;
+}
+
+export interface ConnectPortOptions<TIn> {
+	onMessage?: (msg: TIn) => void;
+	/** Called after every disconnect (before the reconnect is scheduled). */
+	onDisconnect?: (reason: string | undefined) => void;
+	/**
+	 * Called on every successful `connect()` — the first one and each reconnect —
+	 * with the port already live. Messages queued while disconnected are parked
+	 * for the duration of the hook, so anything posted from here goes out on the
+	 * new port *ahead* of them (e.g. a re-sent `hello`).
+	 */
+	onConnect?: () => void;
+	scheduler?: PortScheduler;
+}
+
+export interface ConnectedPort<TOut> {
+	/** Post now, or queue until the port is (re)connected. No-op after `disconnect()`. */
+	post(msg: TOut): void;
+	/** Close the port, cancel any pending reconnect, drop the queue. */
+	disconnect(): void;
+	/** Resolves once the first connection is established. */
+	ready: Promise<void>;
+}
+
+export function connectPort<TOut, TIn>(
+	name: string,
+	options: ConnectPortOptions<TIn> = {}
+): ConnectedPort<TOut> {
+	const scheduler = options.scheduler ?? defaultScheduler;
+	let port: chrome.runtime.Port | null = null;
+	let closed = false;
+	let delayMs: number = TIMINGS.portReconnectBaseMs;
+	let timer: unknown = null;
+	let queue: TOut[] = [];
+	let resolveReady: () => void = () => {};
+	const ready = new Promise<void>((resolve) => {
+		resolveReady = resolve;
+	});
+
+	function scheduleReconnect(): void {
+		if (closed || timer !== null) return;
+		const wait = delayMs;
+		delayMs = Math.min(delayMs * 2, TIMINGS.portReconnectMaxMs);
+		timer = scheduler.setTimeout(() => {
+			timer = null;
+			connect();
+		}, wait);
+	}
+
+	function flush(): void {
+		const live = port;
+		if (!live || queue.length === 0) return;
+		const pending = queue;
+		queue = [];
+		for (let i = 0; i < pending.length; i += 1) {
+			const msg = pending[i] as TOut;
+			try {
+				live.postMessage(msg);
+			} catch (error) {
+				// Port died before onDisconnect fired: keep this and the rest for the next port.
+				queue = pending.slice(i).concat(queue);
+				log.debug("port: postMessage failed; re-queued", { name, error });
+				return;
+			}
+		}
+	}
+
+	function connect(): void {
+		if (closed) return;
+		let next: chrome.runtime.Port;
+		try {
+			next = runtimeConnect(name);
+		} catch (error) {
+			log.debug("port: connect failed", { name, error });
+			scheduleReconnect();
+			return;
+		}
+		port = next;
+		if (options.onConnect) {
+			const parked = queue;
+			queue = [];
+			options.onConnect(); // its post() calls flush straight onto `next`
+			queue = queue.concat(parked);
+		}
+		next.onMessage.addListener((msg: TIn) => {
+			if (port !== next) return;
+			delayMs = TIMINGS.portReconnectBaseMs; // the peer is alive — a later drop retries promptly
+			options.onMessage?.(msg);
+		});
+		next.onDisconnect.addListener(() => {
+			const reason = consumeRuntimeLastError();
+			if (port !== next) return;
+			port = null;
+			log.debug("port: disconnected", { name, reason: reason ?? null });
+			options.onDisconnect?.(reason);
+			scheduleReconnect();
+		});
+		flush();
+		resolveReady();
+	}
+
+	connect();
+
+	return {
+		ready,
+		post(msg: TOut): void {
+			if (closed) return;
+			queue.push(msg);
+			flush();
+		},
+		disconnect(): void {
+			if (closed) return;
+			closed = true;
+			if (timer !== null) {
+				scheduler.clearTimeout(timer);
+				timer = null;
+			}
+			queue = [];
+			const live = port;
+			port = null;
+			try {
+				live?.disconnect();
+			} catch {
+				// already gone
+			}
+		},
+	};
+}
