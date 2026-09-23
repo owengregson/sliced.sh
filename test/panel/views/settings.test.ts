@@ -241,6 +241,7 @@ describe("settings view · rows", () => {
 			"strength.matchOpponentRating",
 			"strength.personaEloOffset",
 			"strength.useOpeningBook",
+			"strength.useTablebase",
 		]);
 		expect(rowsOf("automation")).toEqual([
 			"enabled",

@@ -8,6 +8,7 @@ import { legalMoves, parseUci, playUci, uciToSan } from "@core/chess/san";
 import { BOOK } from "@core/constants/books";
 import { MAIA, MAIA_INPUT, type MaiaSize } from "@core/constants/maia";
 import { MAIA_CONTEXT_THINK_REF_MS, MAIA_SEARCH, SEARCH_BUDGET } from "@core/constants/search";
+import { TABLEBASE } from "@core/constants/tablebase";
 import { automaticDepthForElo, humanDepth } from "@core/engine/depth-policy";
 import { requestEloForTarget } from "@core/engine/options";
 import type { AnalysisHandle, AnalysisRequest, AnalysisResult } from "@core/engine/types";
@@ -25,7 +26,12 @@ import { selectMove } from "@core/strength/move-selector";
 import { avoidRepetition, repetitionRisk } from "@core/strength/repetition";
 import { maiaSelfElo, type PressureTerms, pressureTerms } from "@core/strength/selection-elo";
 import { usesNativeSelection } from "@core/strength/selection-mode";
+import { decideTablebase } from "@core/strength/tablebase-policy";
 import type { SelectionContext, SelectionState } from "@core/strength/types";
+import { tablebaseChosenMove } from "@core/tablebase/choice";
+import type { TablebasePort } from "@core/tablebase/client";
+import { pieceCount, type TablebaseProbe } from "@core/tablebase/probe";
+import { rankTablebaseMoves } from "@core/tablebase/rank";
 import { budgetController, scheduleAlloc } from "@core/timing/budget";
 import { TIMING_CONSTANTS } from "@core/timing/constants";
 import { pieceCounts, tcClass } from "@core/timing/features";
@@ -648,6 +654,8 @@ export interface RecommendationOutcome {
 	nReasonable: number;
 	/** Whether the chosen move came from the opening book. */
 	fromBook: boolean;
+	/** Whether the chosen move came from the endgame tablebase (rated Book on the board). */
+	fromTablebase?: boolean;
 	budget: SearchBudget;
 	/** `null` when the engine never answered (book-only or a failed search). */
 	analysis: AnalysisResult | null;
@@ -659,6 +667,8 @@ export interface RecommendationPipelineDeps {
 	book: BookPolicy | null;
 	/** Optional Maia policy port; a missing answer uses engine selection. */
 	policy?: PolicyPort;
+	/** Optional endgame tablebase (2026-09-23); absent or unavailable, the engine plays. */
+	tablebase?: TablebasePort | null;
 	now?: () => number;
 }
 
@@ -719,6 +729,7 @@ export class RecommendationPipeline {
 	private readonly timing: TimingModel;
 	private readonly book: BookPolicy | null;
 	private readonly policy: PolicyPort | null;
+	private readonly tablebase: TablebasePort | null;
 	private readonly now: () => number;
 
 	constructor(deps: RecommendationPipelineDeps) {
@@ -726,6 +737,7 @@ export class RecommendationPipeline {
 		this.timing = deps.timing;
 		this.book = deps.book;
 		this.policy = deps.policy ?? null;
+		this.tablebase = deps.tablebase ?? null;
 		this.now = deps.now ?? Date.now;
 	}
 
@@ -832,8 +844,9 @@ export class RecommendationPipeline {
 		const policyQuery = policyInputs && !preInferred ? this.queryPolicy(input, policyInputs) : null;
 
 		try {
-			// Book lookup overlaps the policy and engine work.
+			// Book lookup overlaps the policy and engine work; so does a tablebase probe.
 			const bookPending = this.bookMove(input);
+			const tablebasePending = this.tablebaseProbe(input);
 			// An early policy answer shapes one search over its roots and known engine continuations.
 			// Without one, search broadly and consider extra candidates only if time remains.
 			let policy: PolicyAnswer | null = preInferred;
@@ -993,9 +1006,29 @@ export class RecommendationPipeline {
 				}
 			}
 			const depth = analysis?.final.depth ?? 0;
-			const chosen = this.choose(input, lines, book, analysis, policyResult, maiaExtra, maiaElo, maia);
+			const tablebaseChoice = tablebasePending
+				? await this.tablebaseMove(input, tablebasePending, lines, {
+						waitMs: Math.max(
+							preparationDeadline - this.now(),
+							// Max strength always plays the tables' move: outside a clock race it waits a
+							// little past a quick search for the probe already in flight.
+							isMaxStrength(input.targetElo) && ownMoveClockRace(position) === null
+								? preparationStarted + TABLEBASE.maxStrengthMinWaitMs - this.now()
+								: 0
+						),
+					})
+				: null;
+			if (input.signal?.aborted) return null;
+			const chosen =
+				tablebaseChoice ??
+				this.choose(input, lines, book, analysis, policyResult, maiaExtra, maiaElo, maia);
 			if (!chosen) return null;
-			if (analysis && !analysis.final.complete && chosen.source !== "book") {
+			if (
+				analysis &&
+				!analysis.final.complete &&
+				chosen.source !== "book" &&
+				chosen.source !== "tablebase"
+			) {
 				delete chosen.cpLoss;
 				chosen.quality = {
 					kind: "search",
@@ -1049,6 +1082,7 @@ export class RecommendationPipeline {
 				rec,
 				nReasonable,
 				fromBook: chosen.source === "book",
+				fromTablebase: chosen.source === "tablebase",
 				budget: shaped?.budget ?? budget,
 				analysis,
 			};
@@ -1171,6 +1205,91 @@ export class RecommendationPipeline {
 			log.warn("recommendation: book failed", { error: errorMessage(error) });
 			return null;
 		}
+	}
+
+	/**
+	 * Start a tablebase probe for a ≤ 7-man position when the policy plays the tables' move here
+	 * (`decideTablebase`: always at max strength, occasionally at human ratings, never below the
+	 * floor), or `null`. The draw is made first, so a position the policy would not play from never
+	 * leaves the browser; it consumes the game's rng only when the probability is strictly between
+	 * 0 and 1.
+	 */
+	private tablebaseProbe(
+		input: RecommendationInput
+	): { pending: Promise<TablebaseProbe | null>; p: number } | null {
+		const port = this.tablebase;
+		const fen = input.snapshot.fen;
+		const pieces = pieceCount(fen);
+		if (!port || !input.settings.strength.useTablebase || pieces === null) return null;
+		if (pieces > TABLEBASE.maxPieces) return null;
+		const E = effectiveElo(input.targetElo, input.form);
+		const decision = decideTablebase(input.targetElo, E, pieces, input.rng);
+		if (!decision.use) {
+			if (decision.p > 0)
+				log.debug("recommendation: tablebase not consulted this move", { p: decision.p, pieces });
+			return null;
+		}
+		let pending: Promise<TablebaseProbe | null>;
+		try {
+			pending = port.probe(fen).catch((error: unknown) => {
+				log.debug("recommendation: tablebase probe failed", { error: errorMessage(error) });
+				return null;
+			});
+		} catch (error) {
+			log.debug("recommendation: tablebase probe refused", { error: errorMessage(error) });
+			return null;
+		}
+		return { pending, p: decision.p };
+	}
+
+	/**
+	 * The tables' best move for the position, waiting at most `waitMs` for the probe (0 reads only
+	 * an answer already in hand), or `null` — no answer in time, nothing legal in it, or the
+	 * position moved on. The engine's lines only break ties between moves of equal result.
+	 */
+	private async tablebaseMove(
+		input: RecommendationInput,
+		probe: { pending: Promise<TablebaseProbe | null>; p: number },
+		lines: readonly EvalLine[],
+		options: { waitMs: number }
+	): Promise<ChosenMove | null> {
+		const answer = await new Promise<TablebaseProbe | null>((resolve) => {
+			const finish = (value: TablebaseProbe | null) => {
+				clearTimeout(timer);
+				input.signal?.removeEventListener("abort", onAbort);
+				resolve(value);
+			};
+			const onAbort = () => finish(null);
+			// A zero wait is still a macrotask: an already-settled probe is read before the timer fires.
+			const timer = setTimeout(() => finish(null), Math.max(0, options.waitMs));
+			if (input.signal?.aborted) onAbort();
+			else input.signal?.addEventListener("abort", onAbort, { once: true });
+			probe.pending.then(finish, () => finish(null));
+		});
+		if (!answer) {
+			log.debug("recommendation: no tablebase answer in time, engine plays", {
+				waitMs: Math.round(options.waitMs),
+			});
+			return null;
+		}
+		const fen = input.snapshot.fen;
+		const ranked = rankTablebaseMoves({
+			fen,
+			probe: answer,
+			history: input.history,
+			enginePreference: lines.flatMap((line) => (line.pvUci[0] ? [line.pvUci[0]] : [])),
+		});
+		if (!ranked) return null;
+		const chosen = tablebaseChosenMove(fen, ranked, lines, [
+			`tablebase: ${ranked.outcome} (p=${Number(probe.p.toFixed(3))})`,
+		]);
+		if (chosen)
+			log.debug("recommendation: tablebase move", {
+				uci: chosen.uci,
+				outcome: ranked.outcome,
+				zeroingPlies: ranked.best.zeroingPlies,
+			});
+		return chosen;
 	}
 
 	/** Retry a shallow early result only within the original wall-clock budget. */

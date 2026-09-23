@@ -104,6 +104,7 @@ import {
 } from "@core/strength/premove";
 import { type QualityContext, qualityCohortKey } from "@core/strength/session-quality";
 import type { SelectionContext, SelectionState } from "@core/strength/types";
+import type { TablebasePort } from "@core/tablebase/client";
 import { TIMING_CONSTANTS } from "@core/timing/constants";
 import { tcClass } from "@core/timing/features";
 import { clockRacePolicy } from "@core/timing/opponent-pressure";
@@ -305,6 +306,8 @@ export interface GameSessionDeps {
 	link: Pick<ContentLink, "post" | "request" | "onMessage" | "isConnected">;
 	engine: EngineController | null;
 	book: BookPolicy | null;
+	/** The endgame tablebase (2026-09-23); absent or `null`, the engine plays every endgame. */
+	tablebase?: TablebasePort | null | undefined;
 	/**
 	 * The move-review engine (2026-09-14): the full-network Stockfish every board rating comes from,
 	 * independent of `engine`. Absent or `null`: the board effects still go out, without ratings.
@@ -923,6 +926,7 @@ export class GameSession implements SessionSource {
 			book: this.deps.book,
 			now: this.now,
 			...(policy ? { policy } : {}),
+			...(this.deps.tablebase ? { tablebase: this.deps.tablebase } : {}),
 		});
 	}
 
@@ -2668,6 +2672,7 @@ export class GameSession implements SessionSource {
 				uci: outcome.rec.chosen.uci,
 				ply: snapshot.ply,
 				...(outcome.fromBook ? { inBook: true } : {}),
+				...(outcome.fromTablebase ? { tablebase: true } : {}),
 			});
 		}
 		this.apply("recommended");
@@ -2759,6 +2764,8 @@ export class GameSession implements SessionSource {
 		const engine = this.deps.engine;
 		const myColor = snapshot?.myColor ?? null;
 		if (!snapshot || !engine || myColor === null || rec.fen !== snapshot.fen) return null;
+		// The tablebase's move is already perfect: no search can improve on it (2026-09-23).
+		if (rec.chosen.source === "tablebase") return null;
 		const windowMs = deepSearchWindowMs({
 			nowMs: this.now(),
 			searchStartedAtMs: rec.computedAt,

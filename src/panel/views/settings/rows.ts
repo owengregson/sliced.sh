@@ -226,6 +226,7 @@ export const ROWS: readonly RowSpec[] = [
 		markers: [0],
 	},
 	toggle("strength.useOpeningBook"),
+	toggle("strength.useTablebase"),
 	// automation
 	toggle("enabled"),
 	toggle("automation.resignLostGames"),

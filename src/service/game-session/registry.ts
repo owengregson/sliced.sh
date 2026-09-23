@@ -22,6 +22,7 @@ import type { TimeControlClass } from "@core/motor/types";
 import type { PolicyPort } from "@core/policy/types";
 import { createRng } from "@core/rng";
 import type { BookPolicy } from "@core/strength/book/book-policy";
+import type { TablebasePort } from "@core/tablebase/client";
 import type { TimingLogWriter } from "@core/timing/timing-log";
 import type { DistributionHead } from "@core/timing/types";
 import { errorMessage } from "@core/util/errors";
@@ -57,6 +58,8 @@ export interface SessionRegistryDeps {
 	link: ContentLink;
 	engine: EngineController | null;
 	book: BookPolicy | null;
+	/** The shared endgame tablebase client (2026-09-23); one cache per service worker. */
+	tablebase?: TablebasePort | null | undefined;
 	/** 2026-09-14: the shared move-review engine every session's board ratings come from. */
 	review?: ReviewSearcher | null | undefined;
 	/** Each session owns its inference generation/cache; only the inference transport is shared. */
@@ -347,6 +350,7 @@ export class SessionRegistry implements GameSessionRegistry, SnapshotSources {
 			link: this.deps.link,
 			engine: this.deps.engine,
 			book: this.deps.book,
+			tablebase: this.deps.tablebase ?? null,
 			review: this.deps.review ?? null,
 			head: this.deps.createHead(),
 			debugger: this.deps.debugger,

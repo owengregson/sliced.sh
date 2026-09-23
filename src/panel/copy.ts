@@ -113,6 +113,7 @@ export const COPY = {
 		engineStoppedHint: (stop: string): string =>
 			`${stop}: release pointer. Restart engine after the game.`,
 		noteBook: "Book move",
+		noteTablebase: "Tablebase move",
 		noteSearch: (depth: number): string => `Search depth ${depth}`,
 		notePrediction: "Main line prediction",
 		noteOnly: "Only move",
@@ -127,6 +128,7 @@ export const COPY = {
 			book: "Book",
 			premove: "Premove",
 			maia: "Maia",
+			tablebase: "Tablebase",
 		} satisfies Record<ChosenMove["source"], string>,
 		/** Your move, a recommendation shown, but the hand is not armed: say how to arm it. */
 		noteUnarmed: (key: string): string => `Arm before the game; ${key} toggles auto-play.`,
@@ -626,6 +628,11 @@ export const SETTINGS_COPY = {
 		"strength.useOpeningBook": {
 			label: "Opening book",
 			help: "Plays book moves for the first 8–12 moves.",
+		},
+		"strength.useTablebase": {
+			label: "Endgame tablebase",
+			help:
+				"Asks the Lichess tablebase in endgames of 7 pieces or fewer. Perfect play at max strength, occasional at human ratings.",
 		},
 		"timing.baseSpeed": {
 			label: "Overall pace",

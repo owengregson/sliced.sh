@@ -198,7 +198,16 @@ export interface ChosenMove {
 	to: Square;
 	promotion?: PromoPiece;
 	/** `maia` (2026-09-11): drawn from the Maia-3 human policy over the engine's scored lines. */
-	source: "engine-elo" | "sampled" | "blunder" | "mate" | "book" | "premove" | "maia";
+	source:
+		| "engine-elo"
+		| "sampled"
+		| "blunder"
+		| "mate"
+		| "book"
+		| "premove"
+		| "maia"
+		/** 2026-09-23: the endgame tablebase's move for a ≤ 7-man position (`@core/tablebase`). */
+		| "tablebase";
 	rankInLines: number;
 	/** Raw searched centipawn loss, omitted when the scores are not comparable. */
 	cpLoss?: number;
@@ -214,7 +223,8 @@ export interface ChosenMove {
 			| "depth-mismatch"
 			| "incomplete"
 			| "opponent-rush"
-			| "book";
+			| "book"
+			| "tablebase";
 		depth: number;
 		candidates: number;
 	};

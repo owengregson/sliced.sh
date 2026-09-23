@@ -116,6 +116,15 @@ export function forcedMoveVerdict(): MoveQualityVerdict {
 	};
 }
 
+/**
+ * 2026-09-23: our move came from the endgame tablebase. It is rated Book at once — the tables are
+ * theory, perfect by construction, so no review frame is needed or consulted (the review engine
+ * cannot grade a tablebase move better than the tables did).
+ */
+export function tablebaseMoveVerdict(): MoveQualityVerdict {
+	return { ...forcedMoveVerdict(), quality: "book" };
+}
+
 /** The published bands: Best only at zero loss, a boundary belongs to the more severe band. */
 export function ordinaryMoveQuality(
 	loss: number,

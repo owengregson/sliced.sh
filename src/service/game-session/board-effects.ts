@@ -46,6 +46,7 @@ import {
 	passedBrilliantGates,
 	type ReviewFrame,
 	reviewLines,
+	tablebaseMoveVerdict,
 } from "@core/engine/move-quality";
 import type { AnalysisHandle, AnalysisPriority, AnalysisRequest } from "@core/engine/types";
 import { log } from "@core/logger";
@@ -84,6 +85,8 @@ export interface ClassifiedMove {
 	ply: number;
 	/** `true` when the move is known to come from the opening book; otherwise the books are asked. */
 	inBook?: boolean;
+	/** 2026-09-23: our move came from the endgame tablebase — rated Book without a review. */
+	tablebase?: boolean;
 }
 
 /** Our own planned move, known before it is played (`prepare`). */
@@ -93,6 +96,7 @@ export interface PlannedMove {
 	uci: string;
 	ply: number;
 	inBook?: boolean;
+	tablebase?: boolean;
 }
 
 export interface LandedMove extends ClassifiedMove {
@@ -484,6 +488,7 @@ export class BoardEffectsReporter {
 			uci: planned.uci,
 			ply: planned.ply,
 			...(planned.inBook === undefined ? {} : { inBook: planned.inBook }),
+			...(planned.tablebase === true ? { tablebase: true } : {}),
 		};
 		const key = this.keyOf(move);
 		if (this.prepared?.key !== key) {
@@ -783,6 +788,15 @@ export class BoardEffectsReporter {
 			// step, the moment it lands — also as the only legal move, or with no review frame ready.
 			job.verdict = checkmateVerdict();
 			this.noteMate(job);
+			this.sacrificePlies.delete(job.move.ply);
+			if (job.landed && !this.reporting) this.deliver(job);
+			return;
+		}
+		if (job.move.tablebase === true) {
+			// Our tablebase move (2026-09-23) is theory: Book the moment it lands, no review. Checkmate
+			// above keeps its own chip — the game's final move always sounds the top step.
+			job.verdict = tablebaseMoveVerdict();
+			this.mateNotes.delete(job.move.ply);
 			this.sacrificePlies.delete(job.move.ply);
 			if (job.landed && !this.reporting) this.deliver(job);
 			return;

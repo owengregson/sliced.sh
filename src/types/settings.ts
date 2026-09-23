@@ -39,6 +39,11 @@ export interface Settings {
 		/** Forced: `hybrid`. */
 		selectionMode: "engine-elo" | "persona-sampling" | "hybrid";
 		useOpeningBook: boolean;
+		/**
+		 * 2026-09-23: answer ≤ 7-man positions from the Lichess tablebase API (always at max
+		 * strength, occasionally at human ratings). Off: no position ever leaves the browser.
+		 */
+		useTablebase: boolean;
 		/** Legacy selection scalar. Normalized to 1; target Elo is the accuracy control. */
 		blunderScale: number;
 	};
@@ -237,6 +242,7 @@ export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze<Settings>({
 		persona: "balanced",
 		selectionMode: "hybrid",
 		useOpeningBook: true,
+		useTablebase: true,
 		blunderScale: 1,
 	},
 	timing: {
