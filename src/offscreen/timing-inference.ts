@@ -19,7 +19,6 @@ import { CHESS_START_FEN } from "@core/constants/chess";
 import { LIMITS } from "@core/constants/limits";
 import type { EnginePortCommand, EnginePortMessage } from "@core/constants/messages";
 import { chessMimicBandFile } from "@core/constants/models";
-import { TIMINGS } from "@core/constants/timings";
 import { log } from "@core/logger";
 import {
 	type BandScalers,
@@ -34,7 +33,11 @@ import {
 	tokenizeFen,
 } from "@core/timing/chessmimic-tokeniser";
 import { TIMING_CONSTANTS } from "@core/timing/constants";
+import { FailureBackoff } from "./inference/failure-backoff";
+import { createSessionWithFallback, lazyRuntime } from "./inference/ort-session";
+import { SessionPool } from "./inference/session-pool";
 import type { OrtRuntime, OrtSession, OrtTensor } from "./ort-loader";
+import { errorMessage } from "./shared/errors";
 
 export type TimingCommand = Extract<EnginePortCommand, { kind: "timing" }>;
 export type TimingResultMessage = Extract<EnginePortMessage, { kind: "timing-result" }>;
@@ -80,10 +83,6 @@ export interface TimingInference {
 	dispose(): void;
 }
 
-function errorMessage(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
-}
-
 function validTokens(tokens: unknown, length: number, vocab: number): tokens is number[] {
 	return (
 		Array.isArray(tokens) &&
@@ -107,89 +106,33 @@ export function inputsProblem(inputs: TimingInputs): string | undefined {
 	return undefined;
 }
 
+/** The warm-up query: the start position, no history, the band's centre, untimed clocks. */
+function warmInputs(band: string): TimingInputs {
+	return {
+		band,
+		moveTokens: new Array<number>(CM.recentMoves).fill(PAD_TOKEN),
+		fenTokens: tokenizeFen(CHESS_START_FEN),
+		rating: bandCentre(band),
+		playerClockS: UNTIMED.clockS,
+		opponentClockS: UNTIMED.clockS,
+		incrementS: UNTIMED.incS,
+	};
+}
+
 export function createTimingInference(deps: TimingInferenceDeps): TimingInference {
 	const scalers: Readonly<Record<string, BandScalers>> = deps.scalers ?? CHESSMIMIC_SCALERS;
 	const bands = Object.keys(scalers);
-	const maxSessions = Math.max(1, deps.maxSessions ?? LIMITS.timingSessionsMax);
 	const now = deps.now ?? (() => performance.now());
-	const retryAfterMs = deps.retryAfterMs ?? TIMINGS.timingBandRetryMs;
-	const retryMaxMs = Math.max(retryAfterMs, deps.retryMaxMs ?? TIMINGS.timingBandRetryMaxMs);
-
-	let runtimePromise: Promise<OrtRuntime> | undefined;
-	const sessions = new Map<string, Promise<OrtSession>>();
-	/** Sessions whose load has completed (released synchronously on eviction / dispose). */
-	const ready = new Map<string, OrtSession>();
-	/** Most recently used last. */
-	const lru: string[] = [];
-	/**
-	 * Band → when it last failed to load and how many consecutive failures it has had. A failure
-	 * is treated as transient (a stalled relay, a download the port dropped, a runtime that had
-	 * not warmed up yet), so the band is skipped for a while and then tried again rather than
-	 * disabled for the life of the document. The cooldown doubles per consecutive failure up to
-	 * `retryMaxMs`, so a genuinely broken band settles at one 18 MB re-read every 15 minutes
-	 * instead of one every 30 seconds; a success clears the entry.
-	 */
-	const failures = new Map<string, { at: number; count: number }>();
+	const runtime = lazyRuntime(deps.runtime);
+	const pool = new SessionPool<string>({
+		max: Math.max(1, deps.maxSessions ?? LIMITS.timingSessionsMax),
+		releaseSession: (s) => void s.release().catch(() => {}),
+		onRelease: (band, why) => log.debug("timing-inference: released band session", { band, why }),
+		evictReason: "lru",
+	});
+	/** Bands that failed to load wait out a doubling cooldown before the next attempt. */
+	const failures = new FailureBackoff<string>(now, deps);
 	let disposed = false;
-
-	function cooldownFor(count: number): number {
-		return Math.min(retryMaxMs, retryAfterMs * 2 ** Math.max(0, count - 1));
-	}
-
-	/** True while `band`'s last failure is still inside its (backing-off) retry cooldown. */
-	function inCooldown(band: string): boolean {
-		const f = failures.get(band);
-		if (!f) return false;
-		if (now() - f.at < cooldownFor(f.count)) return true;
-		return false; // due for another attempt; the count stays, so the next wait is longer
-	}
-
-	function runtime(): Promise<OrtRuntime> {
-		if (!runtimePromise) runtimePromise = deps.runtime();
-		return runtimePromise;
-	}
-
-	function touch(band: string): void {
-		const at = lru.indexOf(band);
-		if (at >= 0) lru.splice(at, 1);
-		lru.push(band);
-	}
-
-	/**
-	 * Drop `band`'s session. A session that has finished loading is released here; one still
-	 * loading is left to `sessionFor`'s own settle handler, which sees that `sessions` no longer
-	 * holds its promise and releases it there. Exactly one of the two runs, so `release()` is
-	 * never called twice on the same session (the pre-warm widened that window).
-	 */
-	function release(band: string, why: string): void {
-		sessions.delete(band);
-		const s = ready.get(band);
-		ready.delete(band);
-		if (s) void s.release().catch(() => {});
-		log.debug("timing-inference: released band session", { band, why });
-	}
-
-	function evictBeyondLimit(): void {
-		while (lru.length > maxSessions) {
-			const victim = lru.shift();
-			if (victim === undefined) break;
-			release(victim, "lru");
-		}
-	}
-
-	async function createSession(rt: OrtRuntime, bytes: Uint8Array): Promise<OrtSession> {
-		try {
-			return await rt.createSession(bytes);
-		} catch (error) {
-			if (rt.threads <= 1) throw error;
-			log.warn("timing-inference: threaded session failed; retrying single-threaded", {
-				threads: rt.threads,
-				error: errorMessage(error),
-			});
-			rt.setThreads(1);
-			return rt.createSession(bytes);
-		}
-	}
 
 	function feedsFor(rt: OrtRuntime, band: string, inputs: TimingInputs): Record<string, OrtTensor> {
 		const std = standardiseInputs({ ...inputs, band }, scalers[band]);
@@ -201,23 +144,11 @@ export function createTimingInference(deps: TimingInferenceDeps): TimingInferenc
 		};
 	}
 
-	function warmInputs(band: string): TimingInputs {
-		return {
-			band,
-			moveTokens: new Array<number>(CM.recentMoves).fill(PAD_TOKEN),
-			fenTokens: tokenizeFen(CHESS_START_FEN),
-			rating: bandCentre(band),
-			playerClockS: UNTIMED.clockS,
-			opponentClockS: UNTIMED.clockS,
-			incrementS: UNTIMED.incS,
-		};
-	}
-
 	async function loadSession(band: string): Promise<OrtSession> {
 		const rt = await runtime();
 		const bytes = await deps.store.get(chessMimicBandFile(band));
 		const t0 = now();
-		const session = await createSession(rt, bytes);
+		const session = await createSessionWithFallback(rt, bytes, "timing-inference");
 		const t1 = now();
 		await session.run(feedsFor(rt, band, warmInputs(band)));
 		log.info("timing-inference: band session ready", {
@@ -231,36 +162,26 @@ export function createTimingInference(deps: TimingInferenceDeps): TimingInferenc
 
 	/** The session for `band`, shared while loading; a failure starts the retry cooldown. */
 	function sessionFor(band: string): Promise<OrtSession> {
-		const existing = sessions.get(band);
+		const existing = pool.get(band);
 		if (existing) {
-			touch(band);
+			pool.touch(band);
 			return existing;
 		}
 		const p = loadSession(band);
-		sessions.set(band, p);
-		touch(band);
-		evictBeyondLimit();
-		p.then(
-			(session) => {
-				if (sessions.get(band) === p) {
-					ready.set(band, session);
-					failures.delete(band); // a good load clears the backoff
-				} else void session.release().catch(() => {}); // evicted or disposed while loading
-			},
-			(error: unknown) => {
-				if (sessions.get(band) === p) sessions.delete(band);
-				const at = lru.indexOf(band);
-				if (at >= 0) lru.splice(at, 1);
-				const count = (failures.get(band)?.count ?? 0) + 1;
-				failures.set(band, { at: now(), count });
+		pool.adopt(band, p, {
+			onLoaded: () => failures.clear(band),
+			onFailed: (error) => {
+				const count = failures.fail(band);
 				log.warn("timing-inference: band unavailable; retrying after the cooldown", {
 					band,
 					attempt: count,
-					cooldownMs: cooldownFor(count),
+					cooldownMs: failures.cooldownFor(count),
 					error: errorMessage(error),
 				});
-			}
-		);
+			},
+		});
+		pool.touch(band);
+		pool.evictBeyondLimit();
 		return p;
 	}
 
@@ -276,9 +197,9 @@ export function createTimingInference(deps: TimingInferenceDeps): TimingInferenc
 	 * the residency term is close to dead — that is the intended behaviour, not an oversight.
 	 */
 	function candidates(requested: string, rating: number): string[] {
-		const loaded = (b: string): number => (sessions.has(b) ? 0 : 1);
+		const loaded = (b: string): number => (pool.has(b) ? 0 : 1);
 		return bands
-			.filter((b) => !inCooldown(b))
+			.filter((b) => !failures.inCooldown(b))
 			.sort((a, b) => {
 				if (a === requested) return -1;
 				if (b === requested) return 1;
@@ -337,8 +258,7 @@ export function createTimingInference(deps: TimingInferenceDeps): TimingInferenc
 		dispose() {
 			if (disposed) return;
 			disposed = true;
-			for (const band of [...sessions.keys()]) release(band, "dispose");
-			lru.length = 0;
+			pool.releaseAll("dispose");
 		},
 	};
 }

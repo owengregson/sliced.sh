@@ -16,6 +16,7 @@ import { LIMITS } from "@core/constants/limits";
 import { ORT_DIR, ORT_FILES } from "@core/constants/models";
 import { log } from "@core/logger";
 import type * as Ort from "onnxruntime-web";
+import { cappedThreads } from "./inference/ort-session";
 
 export type OrtTensorType = "int32" | "float32";
 
@@ -51,8 +52,7 @@ type OrtModule = typeof Ort;
 const defaultImport = (url: string): Promise<unknown> => import(url);
 
 export function defaultThreads(hardwareConcurrency: number | undefined): number {
-	const cores = Number.isFinite(hardwareConcurrency) ? (hardwareConcurrency ?? 1) : 1;
-	return Math.max(1, Math.min(LIMITS.timingInferenceThreadsMax, Math.floor(cores)));
+	return cappedThreads(hardwareConcurrency, LIMITS.timingInferenceThreadsMax);
 }
 
 function isOrtModule(mod: unknown): mod is OrtModule {
