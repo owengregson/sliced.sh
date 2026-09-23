@@ -1,10 +1,10 @@
 // Maia source parts join to canonical ONNX bytes; packed releases restore those exact bytes.
 
-import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { packagedModelName } from "../src/core/constants/model-packing";
-import { packModel, verifyPackedModel } from "./model-packing";
+import { sha256Hex } from "./lib/hash";
+import { bundledModelBytes } from "./model-packing";
 
 /** The registry entry the build needs (`MaiaModelFile` minus the provenance). */
 export interface MaiaSourceSpec {
@@ -19,10 +19,6 @@ export interface MaiaSourceSpec {
 export interface MaiaPartLayout {
 	partSuffix: string;
 	partBytes: number;
-}
-
-function digest(data: Uint8Array): string {
-	return createHash("sha256").update(data).digest("hex");
 }
 
 /** `<file>.part<i>`. */
@@ -87,7 +83,7 @@ export function joinMaiaParts(parts: readonly Uint8Array[]): Uint8Array {
 export function verifyMaiaBytes(data: Uint8Array, spec: MaiaSourceSpec): void {
 	if (data.length !== spec.bytes)
 		throw new Error(`${spec.file}: ${data.length} bytes, registry says ${spec.bytes}`);
-	const sha = digest(data);
+	const sha = sha256Hex(data);
 	if (sha !== spec.sha256) throw new Error(`${spec.file}: sha256 ${sha} != registry ${spec.sha256}`);
 }
 
@@ -147,8 +143,9 @@ export async function writeBundledMaia(
 	await mkdir(destDir, { recursive: true });
 	for (const spec of specs) {
 		const data = await readMaiaSource(sourceDir, spec, layout);
-		const bundled = spec.packed ? packModel(data) : data;
-		if (spec.packed) verifyPackedModel(bundled, spec.bytes, spec.sha256);
-		await writeFile(path.join(destDir, packagedModelName(spec.file, spec.packed)), bundled);
+		await writeFile(
+			path.join(destDir, packagedModelName(spec.file, spec.packed)),
+			bundledModelBytes(data, spec)
+		);
 	}
 }

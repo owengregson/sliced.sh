@@ -3,8 +3,9 @@ import { readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { constants, gunzipSync, gzipSync } from "node:zlib";
 import { MODEL_PACKING } from "../src/core/constants/model-packing";
+import { DIST } from "./lib/paths";
 import { verifyPackedModel } from "./model-packing";
-import { type PackagedModel, packagedModels } from "./verify-dist";
+import { type PackagedModel, packagedModels } from "./verify-dist/models";
 
 export interface ModelPackageSaving {
 	path: string;
@@ -51,6 +52,6 @@ export async function optimizeModelPackages(
 }
 
 if (import.meta.main) {
-	const dist = path.resolve(process.argv[2] ?? path.join(import.meta.dir, "..", "dist"));
+	const dist = path.resolve(process.argv[2] ?? DIST);
 	console.log(JSON.stringify(await optimizeModelPackages(dist), null, 2));
 }

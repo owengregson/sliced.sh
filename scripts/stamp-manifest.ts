@@ -9,6 +9,8 @@
 
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
+import { isRecord } from "./lib/json";
+import { ROOT } from "./lib/paths";
 
 export interface StampOptions {
 	dev: boolean;
@@ -18,9 +20,6 @@ export interface StampOptions {
 }
 
 export const DEV_NAME_SUFFIX = " (dev)";
-
-const isRecord = (v: unknown): v is Record<string, unknown> =>
-	typeof v === "object" && v !== null && !Array.isArray(v);
 
 /** Pure form of the stamp: source manifest object in, `dist/manifest.json` object out. */
 export function stampedManifest(source: unknown, options: StampOptions): Record<string, unknown> {
@@ -38,8 +37,7 @@ export function stampedManifest(source: unknown, options: StampOptions): Record<
 
 /** Read `<root>/manifest.json`, stamp it, write `<dist>/manifest.json`. */
 export async function stampManifest(dist: string, options: StampOptions): Promise<void> {
-	const root = path.resolve(import.meta.dir, "..");
-	const source: unknown = await Bun.file(path.join(root, "manifest.json")).json();
+	const source: unknown = await Bun.file(path.join(ROOT, "manifest.json")).json();
 	const stamped = stampedManifest(source, options);
 	await writeFile(path.join(dist, "manifest.json"), `${JSON.stringify(stamped, null, "\t")}\n`);
 }
