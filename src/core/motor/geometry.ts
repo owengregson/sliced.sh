@@ -32,6 +32,26 @@ export function rectCentre(r: Rect): Pt {
 	return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
 }
 
+/** A rect with finite coordinates and a positive area (a square the adapter could not place is not). */
+export function validRect(rect: Rect): boolean {
+	return (
+		Number.isFinite(rect.left) &&
+		Number.isFinite(rect.top) &&
+		Number.isFinite(rect.width) &&
+		Number.isFinite(rect.height) &&
+		rect.width > 0 &&
+		rect.height > 0
+	);
+}
+
+/** The point halfway between two rects' centres (a "relate" look between two squares). */
+export function midpoint(a: Rect, b: Rect): Pt {
+	return {
+		x: (a.left + a.width / 2 + b.left + b.width / 2) / 2,
+		y: (a.top + a.height / 2 + b.top + b.height / 2) / 2,
+	};
+}
+
 export function inRect(p: Pt, r: Rect, pad = 0): boolean {
 	return (
 		p.x >= r.left + pad &&
