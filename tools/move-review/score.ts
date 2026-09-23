@@ -22,267 +22,59 @@
  * the separate constructed controls are reported independently of unconfirmed extra calls.
  * Every new evidence frame pins its dataset, engine binary, full network, and search settings.
  *
- * Nothing here runs in the extension.
+ * The parts live in `score/`: overrides, books, frames, the classification tally and the
+ * report. Nothing here runs in the extension.
  */
 
-import "../human-match/defines";
-import { createHash } from "node:crypto";
+import "../lib/defines";
 import path from "node:path";
-import { BOOKS, THEORY_BOOKS } from "@core/constants/books";
-import { ENGINE_DIR, ENGINE_FILES } from "@core/constants/engine-files";
-import {
-	classifyMoveQuality,
-	DEFAULT_MOVE_QUALITY_TUNING,
-	type MoveQualityTuning,
-	passedBrilliantGates,
-	type ReviewFrame,
-} from "@core/engine/move-quality";
-import { theoryMoves } from "@core/strength/book/book-policy";
-import { loadBook, type PolyglotBook } from "@core/strength/book/polyglot";
-import { Chess } from "chess.js";
-import { ROOT } from "./engine";
-import {
-	assertFrameProvenance,
-	type BenchmarkGame,
-	brilliantPlies,
-	DEFAULT_DATASET,
-	type EvidenceFrame,
-	readFrames,
-} from "./evidence";
+import { BOOKS } from "@core/constants/books";
+import { flagValues, hasFlag } from "../lib/cli";
+import { ROOT } from "../lib/paths";
+import { loadDataset } from "./dataset";
+import { theoryLookup } from "./score/books";
+import { classifyGames } from "./score/classify";
+import { installedWasmSha256, loadFrameSet } from "./score/frames";
+import { printCalls, scoreSummary } from "./score/report";
+import { tuningWith } from "./score/tuning";
 
-function args(name: string): string[] {
-	const values: string[] = [];
-	for (let i = 0; i < process.argv.length; i++)
-		if (process.argv[i] === `--${name}` && process.argv[i + 1] !== undefined)
-			values.push(process.argv[i + 1] as string);
-	return values;
-}
+async function main(argv: readonly string[]): Promise<void> {
+	const frameFiles = flagValues(argv, "frames").flatMap((value) => value.split(","));
+	if (frameFiles.length === 0) throw new Error("--frames <file.jsonl> is required");
+	const tuning = tuningWith(flagValues(argv, "set"));
+	const { games, sha256: datasetSha256 } = await loadDataset(flagValues(argv, "dataset")[0]);
+	const wasmSha256 = await installedWasmSha256();
+	const allowLegacy = hasFlag(argv, "allow-legacy");
+	const set = await loadFrameSet(frameFiles, datasetSha256, wasmSha256, allowLegacy);
+	// `--books-dir <dir>` scores candidate books without replacing the bundled ones.
+	const inBook = await theoryLookup(flagValues(argv, "books-dir")[0] ?? path.join(ROOT, BOOKS.dir));
+	const override = flagValues(argv, "rating")[0];
+	const tally = classifyGames(games, set, {
+		tuning,
+		inBook,
+		forcedRating: override === undefined ? null : override === "none" ? undefined : Number(override),
+	});
 
-const frameFiles = args("frames").flatMap((value) => value.split(","));
-if (frameFiles.length === 0) throw new Error("--frames <file.jsonl> is required");
-
-const tuning: MoveQualityTuning = {
-	classification: { ...DEFAULT_MOVE_QUALITY_TUNING.classification },
-	brilliant: { ...DEFAULT_MOVE_QUALITY_TUNING.brilliant },
-};
-for (const assignment of args("set")) {
-	const [key, value] = assignment.split("=");
-	const [group, field] = (key ?? "").split(".");
-	const target = tuning[group as keyof MoveQualityTuning] as Record<string, number> | undefined;
-	if (!target || field === undefined || !(field in target) || !Number.isFinite(Number(value)))
-		throw new Error(`--set ${assignment}: unknown field or value`);
-	target[field] = Number(value);
-}
-
-const datasetText = await Bun.file(args("dataset")[0] ?? path.join(ROOT, DEFAULT_DATASET)).text();
-const games = JSON.parse(datasetText) as BenchmarkGame[];
-const datasetSha256 = createHash("sha256").update(datasetText).digest("hex");
-const wasmSha256 = createHash("sha256")
-	.update(
-		new Uint8Array(await Bun.file(path.join(ROOT, ENGINE_DIR, ENGINE_FILES.full.wasm)).arrayBuffer())
-	)
-	.digest("hex");
-const frames = new Map<string, EvidenceFrame>();
-const provenance = new Map<string, NonNullable<EvidenceFrame["provenance"]>>();
-const allowLegacy = process.argv.includes("--allow-legacy");
-for (const file of frameFiles)
-	for (const frame of await readFrames(file)) {
-		// Restricted acceptance probes are not position evaluations and never replace them.
-		if (frame.accept !== undefined) continue;
-		const source = frame.provenance;
-		assertFrameProvenance(frame, datasetSha256, wasmSha256, allowLegacy);
-		if (source) provenance.set(JSON.stringify(source), source);
-		frames.set(`${frame.game}:${frame.index}`, frame);
-	}
-
-// `--books-dir <dir>` scores candidate books without replacing the bundled ones.
-const booksDir = args("books-dir")[0] ?? path.join(ROOT, BOOKS.dir);
-const readBook = async (name: string): Promise<PolyglotBook | null> => {
-	const file = Bun.file(path.join(booksDir, name));
-	return (await file.exists()) ? loadBook(new Uint8Array(await file.arrayBuffer())) : null;
-};
-const books = await Promise.all(THEORY_BOOKS.map((name) => readBook(BOOKS[name])));
-// The live review's own rule (`BookPolicy.bookMoves`).
-const inBook = (fen: string, uci: string): boolean =>
-	theoryMoves(...books.map((book) => book?.lookup(fen) ?? [])).includes(uci);
-
-const header = (pgn: string, tag: string): number | undefined => {
-	const value = new RegExp(`\\[${tag} "(\\d+)"\\]`).exec(pgn)?.[1];
-	return value === undefined ? undefined : Number(value);
-};
-
-const frameOf = (game: number, index: number): ReviewFrame | undefined => {
-	const frame = frames.get(`${game}:${index}`);
-	return frame ? { lines: frame.lines, depth: frame.depth, complete: frame.complete } : undefined;
-};
-
-interface Called {
-	game: number;
-	ply: number;
-	san: string;
-	rating: number | undefined;
-	reason?: string;
-	loss?: number;
-	played?: number;
-	alternative?: number;
-	/** `shape:concession` of every offer the gates saw. */
-	offers?: string[];
-}
-
-const distribution: Record<string, number> = {};
-const labelledQualities: Record<string, number> = {};
-const labelledReasons: Record<string, number> = {};
-const missed: Called[] = [];
-const overCalls: Called[] = [];
-const recalledCalls: Called[] = [];
-/** chess.com's other marks (`GreatFind`, `Blunder`, …) next to the classifier's rating. */
-const marks: Array<{ game: number; ply: number; san: string; chesscom: string; ours: string }> = [];
-let labelledTotal = 0;
-let recalled = 0;
-let labelledClassified = 0;
-let otherClassified = 0;
-let unclassified = 0;
-let negativeClassified = 0;
-let falsePositives = 0;
-let missingFrames = 0;
-const negativeCalls: Called[] = [];
-
-for (const [game, entry] of games.entries()) {
-	const replay = new Chess();
-	replay.loadPgn(entry.pgn);
-	const history = replay.history({ verbose: true });
-	// `--rating none|<elo>` grades every mover at that rating instead of the PGN's (what the live
-	// reporter does when the page reports no rating, or the opponent's for both sides).
-	const override = args("rating")[0];
-	const forced = override === undefined ? null : override === "none" ? undefined : Number(override);
-	const ratings =
-		forced === null
-			? { w: header(entry.pgn, "WhiteElo"), b: header(entry.pgn, "BlackElo") }
-			: { w: forced, b: forced };
-	const brilliants = new Set(brilliantPlies(entry));
-	/** 0-based indices whose move passed every brilliant gate (the live reporter's window). */
-	const sacrifices = new Set<number>();
-	labelledTotal += brilliants.size;
-	for (const [index, move] of history.entries()) {
-		const before = frameOf(game, index);
-		if (!before) {
-			missingFrames += 1;
-			continue;
-		}
-		if (frames.get(`${game}:${index}`)?.fen !== move.before)
-			throw new Error(`Position mismatch ${game}:${index}`);
-		const labelled = brilliants.has(index + 1);
-		const uci = move.from + move.to + (move.promotion ?? "");
-		const verdict = classifyMoveQuality(
-			{
-				fen: move.before,
-				uci,
-				before,
-				after: frameOf(game, index + 1),
-				previous: frameOf(game, index - 1),
-				moverRating: ratings[move.color],
-				inBook: inBook(move.before, uci),
-				recentSacrifice: Array.from(
-					{ length: Math.floor(tuning.brilliant.sequencePlies / 2) },
-					(_, k) => index - 2 * (k + 1)
-				).some((earlier) => sacrifices.has(earlier)),
-			},
-			tuning
-		);
-		if (!verdict) {
-			unclassified += 1;
-			continue;
-		}
-		if (passedBrilliantGates(verdict)) sacrifices.add(index);
-		const call: Called = {
-			game,
-			ply: index + 1,
-			san: move.san,
-			rating: ratings[move.color],
-			loss: Number(verdict.loss.toFixed(3)),
-			played: Number(verdict.playedPoints.toFixed(3)),
-			...(verdict.brilliant ? { reason: verdict.brilliant.reason } : {}),
-			...(verdict.brilliant
-				? { offers: verdict.brilliant.offers.map((o) => `${o.shape}:${o.concession}`) }
-				: {}),
-		};
-		distribution[verdict.quality] = (distribution[verdict.quality] ?? 0) + 1;
-		const mark = entry.labels?.[String(index + 1)];
-		if (mark !== undefined && mark !== "Brilliant")
-			marks.push({ game, ply: index + 1, san: move.san, chesscom: mark, ours: verdict.quality });
-		const badged = verdict.brilliant?.brilliant === true && verdict.quality !== "book";
-		if (mark !== undefined && mark !== "Brilliant") {
-			negativeClassified += 1;
-			if (badged) {
-				falsePositives += 1;
-				negativeCalls.push(call);
-			}
-		}
-		if (labelled) {
-			labelledClassified += 1;
-			labelledQualities[verdict.quality] = (labelledQualities[verdict.quality] ?? 0) + 1;
-			const reason = verdict.brilliant?.reason ?? "no-offer";
-			labelledReasons[reason] = (labelledReasons[reason] ?? 0) + 1;
-			if (badged) {
-				recalled += 1;
-				recalledCalls.push(call);
-			} else missed.push(call);
-		} else {
-			otherClassified += 1;
-			if (badged) overCalls.push(call);
-		}
-	}
-}
-
-const summary = {
-	provenance: [...provenance.values()],
-	legacyEvidenceAllowed: allowLegacy,
-	frames: frames.size,
-	labelled: { classified: labelledClassified, brilliant: recalled, of: labelledTotal },
-	labelledQualities,
-	labelledReasons,
-	others: {
-		meaning: "Unpinned moves, NOT verified negatives; extra calls here do not measure precision.",
-		classified: otherClassified,
-		brilliant: overCalls.length,
-		per1000:
-			otherClassified > 0 ? Number(((overCalls.length * 1000) / otherClassified).toFixed(2)) : null,
-	},
-	unclassified,
-	missingFrames,
-	verifiedNegatives: {
-		classified: negativeClassified,
-		falsePositives,
-		trueNegatives: negativeClassified - falsePositives,
-	},
-	distribution,
-	...(marks.length > 0 ? { marks } : {}),
-};
-console.log(JSON.stringify(summary, null, 2));
-if (process.argv.includes("--verbose")) {
-	console.log(
-		"missed:",
-		missed
-			.map(
-				(c) =>
-					`${c.game}/${c.ply} ${c.san} (${c.rating}) ${c.reason ?? "no-offer"} loss=${c.loss} after=${c.played}`
+	const summary = scoreSummary(tally, set, allowLegacy);
+	console.log(JSON.stringify(summary, null, 2));
+	if (hasFlag(argv, "verbose")) printCalls(tally);
+	const jsonOut = flagValues(argv, "json")[0];
+	if (jsonOut)
+		await Bun.write(
+			jsonOut,
+			JSON.stringify(
+				{
+					summary,
+					recalled: tally.recalledCalls,
+					missed: tally.missed,
+					overCalls: tally.overCalls,
+					negativeCalls: tally.negativeCalls,
+					tuning,
+				},
+				null,
+				2
 			)
-			.join("\n  ")
-	);
-	console.log(
-		"over-calls:",
-		overCalls
-			.map((c) => `${c.game}/${c.ply} ${c.san} (${c.rating}) loss=${c.loss} after=${c.played}`)
-			.join("\n  ")
-	);
+		);
 }
-const jsonOut = args("json")[0];
-if (jsonOut)
-	await Bun.write(
-		jsonOut,
-		JSON.stringify(
-			{ summary, recalled: recalledCalls, missed, overCalls, negativeCalls, tuning },
-			null,
-			2
-		)
-	);
+
+await main(process.argv);
