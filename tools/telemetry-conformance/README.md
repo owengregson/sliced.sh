@@ -16,7 +16,8 @@ which needs no generated artefact and no extra step in `bun run check`.)
 
 ## Files
 
-- `ac-model.ts` — the human-shape model of a move's `ac` blob.
+- `ac-model.ts` — the human-shape model of a move's `ac` blob (the public entry; its parts —
+  move context, summary statistics, rules, annotations, text report — are in `ac-model/`).
   - `assertHumanShapedAc(acs, { moves })` — throws `AcConformanceError` listing every §13.2 /
     §9.6a / §8.4a violation. **Every behavioural test that dispatches a move calls this.**
   - `summarizeAc(acs, moves)` / `formatConformanceReport(summary)` — the same statistics as a
