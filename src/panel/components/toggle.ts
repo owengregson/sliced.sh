@@ -11,8 +11,9 @@ import { setOptionalIcon } from "../icons-mount";
 import { playUiSound } from "../sounds";
 import { instantiate, part } from "../template";
 import html from "../views/templates/components/toggle.html?raw";
+import { type ToggleState, toggleLabel, toggleState } from "./toggle/state";
 
-export type ToggleState = "off" | "on" | "arming" | "armed" | "waiting";
+export type { ToggleState } from "./toggle/state";
 
 export interface ToggleOptions {
 	label: string;
@@ -89,11 +90,8 @@ export function createToggle(host: HTMLElement | null, options: ToggleOptions): 
 
 	const interactive = (): boolean => !disabled && !locked;
 
-	function state(): ToggleState {
-		if (holding) return "arming";
-		if (checked) return armedVariant ? (waiting ? "waiting" : "armed") : "on";
-		return "off";
-	}
+	const state = (): ToggleState =>
+		toggleState({ checked, armedVariant, waiting, holding: holding !== null });
 
 	function render(): void {
 		const s = state();
@@ -107,16 +105,7 @@ export function createToggle(host: HTMLElement | null, options: ToggleOptions): 
 		if (disabled || locked) el.setAttribute("aria-disabled", "true");
 		else el.removeAttribute("aria-disabled");
 		lock.hidden = !locked;
-		labelEl.textContent =
-			s === "arming"
-				? COPY.toggle.arming
-				: s === "armed"
-					? COPY.toggle.armed
-					: s === "waiting"
-						? COPY.toggle.waiting
-						: armedVariant && disarmed
-							? COPY.toggle.off
-							: baseLabel;
+		labelEl.textContent = toggleLabel(s, armedVariant, disarmed, baseLabel);
 	}
 
 	function setChecked(next: boolean, emit: boolean): void {

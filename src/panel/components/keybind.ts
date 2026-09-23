@@ -12,59 +12,18 @@ import { registerEscape } from "../keys";
 import { playUiSound } from "../sounds";
 import { instantiate, part } from "../template";
 import html from "../views/templates/components/keybind.html?raw";
+import {
+	formatKeybind,
+	fromEvent,
+	isGlobalCombo,
+	MODIFIER_KEYS,
+	modifierPrefix,
+} from "./keybind/format";
+
+export { formatKeybind, isGlobalCombo } from "./keybind/format";
 
 /** §6.4 step 4: the chip pulses `brand-tint` over `duration.4`. */
 const SAVED_PULSE_MS = TOKENS.motion.durationMs[4];
-
-const MODIFIER_KEYS: ReadonlySet<string> = new Set(["Shift", "Control", "Alt", "Meta"]);
-
-const KEY_NAMES: Readonly<Record<string, string>> = {
-	" ": COPY.keybind.keys.space,
-	Enter: COPY.keybind.keys.enter,
-	Escape: COPY.keybind.keys.escape,
-	Backspace: COPY.keybind.keys.backspace,
-	ArrowUp: COPY.keybind.keys.up,
-	ArrowDown: COPY.keybind.keys.down,
-	ArrowLeft: COPY.keybind.keys.left,
-	ArrowRight: COPY.keybind.keys.right,
-	Tab: COPY.keybind.keys.tab,
-	Delete: COPY.keybind.keys.delete,
-};
-
-function modifierPrefix(
-	kb: Pick<Keybind, "ctrlKey" | "altKey" | "shiftKey" | "metaKey">
-): string[] {
-	const parts: string[] = [];
-	if (kb.ctrlKey) parts.push(COPY.keybind.keys.ctrl);
-	if (kb.altKey) parts.push(COPY.keybind.keys.alt);
-	if (kb.shiftKey) parts.push(COPY.keybind.keys.shift);
-	if (kb.metaKey) parts.push(COPY.keybind.keys.meta);
-	return parts;
-}
-
-/** "Space", "A", "Ctrl+Shift+P" — the key name as printed on a keyboard (§7.1). */
-export function formatKeybind(kb: Keybind | null | undefined): string {
-	if (!kb) return COPY.keybind.notSet;
-	const named = KEY_NAMES[kb.key];
-	const base = named ?? (kb.key.length === 1 ? kb.key.toUpperCase() : kb.key);
-	return [...modifierPrefix(kb), base].join("+");
-}
-
-function fromEvent(event: KeyboardEvent): Keybind {
-	return {
-		key: event.key.length === 1 ? event.key.toLowerCase() : event.key,
-		code: event.code,
-		altKey: event.altKey,
-		ctrlKey: event.ctrlKey,
-		metaKey: event.metaKey,
-		shiftKey: event.shiftKey,
-	};
-}
-
-/** Global (`chrome.commands`) shortcuts need Ctrl or Alt (§6.4 step 3). */
-export function isGlobalCombo(kb: Keybind): boolean {
-	return kb.ctrlKey || kb.altKey;
-}
 
 export type KeybindState = "set" | "empty" | "capturing" | "conflict";
 
