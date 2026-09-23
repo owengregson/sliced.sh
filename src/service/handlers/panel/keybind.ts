@@ -1,7 +1,7 @@
 /** Sidebar shortcuts target the same per-tab session actions as in-page shortcuts. */
 import { MSG } from "@core/constants/messages";
 import type { MessageRouter } from "@core/messaging/router";
-import type { PanelHandlerDeps } from "@service/handlers/panel";
+import type { PanelHandlerDeps } from "@service/handlers/panel/deps";
 
 export function registerPanelKeybindHandler(
 	router: MessageRouter,

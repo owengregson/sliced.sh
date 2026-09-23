@@ -29,12 +29,10 @@ import { LIMITS } from "@core/constants/limits";
 import type { EnginePortCommand, EnginePortMessage } from "@core/constants/messages";
 import { log } from "@core/logger";
 import { bytesToBase64 } from "@core/util/base64";
+import type { EnginePortLike } from "./engine-port";
 
 /** The engine port as seen from the SW (`RemoteEngine` satisfies it). */
-export interface RelayPort {
-	onMessage(cb: (m: EnginePortMessage) => void): () => void;
-	post(cmd: EnginePortCommand): void;
-}
+export type RelayPort = EnginePortLike;
 
 /** One `read()` of a response body stream. */
 export interface RelayStreamReader {

@@ -10,7 +10,7 @@ import { MSG } from "@core/constants/messages";
 import { log } from "@core/logger";
 import type { MessageRouter } from "@core/messaging/router";
 import { getSettings } from "@core/storage/settings-storage";
-import type { PanelHandlerDeps } from "@service/handlers/panel";
+import type { PanelHandlerDeps } from "@service/handlers/panel/deps";
 import type { Recommendation, Square } from "@typedefs/game";
 
 /** The move a preview of `multipv` shows: the chosen move for `null`, else the line's first move. */
