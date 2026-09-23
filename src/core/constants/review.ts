@@ -284,6 +284,13 @@ export const BRILLIANT = {
 	 */
 	standingThreatMinRating: 1_400,
 	/**
+	 * From this mover rating up, a piece left to be taken is no gift when the capture is answered by
+	 * a capture elsewhere that wins it back with check. The owner's 28.Rc1 (…exf4 Rxc2+, 2647) and
+	 * 22…Nf6 (hxg5 Nxg4+ wins the queen, 2647), 2026-09-23. Below it chess.com badges these: the
+	 * benchmark's 14.Ne5 (954, Kxc7 Nxc6+). 0 turns it off.
+	 */
+	checkRecoveryMinRating: 1_400,
+	/**
 	 * Gate 2: a moved piece the engine's line takes, answered at once by a capture that leaves the
 	 * mover this many pawns ahead of the position before the move, won material — a combination,
 	 * not a sacrifice. The owner's 36.Bg5 (2026-09-23, 184245091060, 2647): Bxg5 Rxd7+ wins the

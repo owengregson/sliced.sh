@@ -35,6 +35,11 @@ export interface SacrificeOffer {
 	 * before the offer was accepted (`BRILLIANT.standingThreatMinRating`).
 	 */
 	standing?: boolean;
+	/**
+	 * Taking this piece is answered by a capture elsewhere that wins it back with check
+	 * (`BRILLIANT.checkRecoveryMinRating`).
+	 */
+	checkRecovered?: boolean;
 }
 
 export interface BrilliantPlanInput {
@@ -174,13 +179,15 @@ export function staticExchange(
  * elsewhere. Check the acceptance branch itself: the engine's main PV may decline the offer.
  * Same-square recovery is already counted by exchangeGain. Do not use a capture's face value:
  * the capturing piece may itself be lost. Null means the shared material-search budget ran out.
+ * A checking capture counts only with `checks`: same-square SEE cannot follow the evasion.
  */
 function hasOffSquareRecovery(
 	board: Chess,
 	capture: Move,
 	tuning: BrilliantTuning,
 	budget: { nodes: number },
-	standing?: Chess | null
+	standing?: Chess | null,
+	checks = false
 ): boolean | null {
 	if (standing === null) return false;
 	board.move(capture);
@@ -188,9 +195,7 @@ function hasOffSquareRecovery(
 		const needed = gain(capture);
 		for (const answer of board.moves({ verbose: true })) {
 			if (!answer.captured || answer.to === capture.to || gain(answer) < needed) continue;
-			// A checking capture may only postpone the loss of its own piece: same-square SEE cannot
-			// follow the evasion. It proves a recovery only when no evasion leaves it attacked.
-			if (/[+#]/.test(answer.san) && !checkerSurvives(board, answer)) continue;
+			if (!checks && /[+#]/.test(answer.san)) continue;
 			const recovered = exchangeGain(board, answer, tuning, budget);
 			if (recovered === null) return null;
 			if (recovered < needed) continue;
@@ -206,41 +211,6 @@ function hasOffSquareRecovery(
 			if (already >= needed) return true;
 		}
 		return false;
-	} finally {
-		board.undo();
-	}
-}
-
-/**
- * A checking capture keeps its piece through every evasion: none checks back, and none leaves the
- * checker attacked by a cheaper piece, or by the king while undefended. The mover is to move after
- * the evasion, so an even attacker is answered by a trade or a retreat. Capturing the checker is
- * the same-square exchange `exchangeGain` already priced. The owner's 28.Rc1 (2026-09-23,
- * 184245091060): ...exf4 Rxc2+ wins a rook for the bishop, and no evasion touches c2 for less.
- * The Chessigma 14.Ne5 is not recovered: after Kxc7 Nxc6+ every evasion leaves d7xc6.
- */
-function checkerSurvives(board: Chess, answer: Move): boolean {
-	board.move(answer);
-	try {
-		for (const evasion of board.moves({ verbose: true })) {
-			if (evasion.to === answer.to) continue;
-			board.move(evasion);
-			try {
-				if (board.isCheck()) return false;
-				const defended = board.isAttacked(answer.to, answer.color);
-				for (const square of board.attackers(answer.to, evasion.color)) {
-					const attacker = board.get(square);
-					if (!attacker) continue;
-					if (
-						attacker.type === "k" ? !defended : PIECE_VALUES[attacker.type] < PIECE_VALUES[answer.piece]
-					)
-						return false;
-				}
-			} finally {
-				board.undo();
-			}
-		}
-		return true;
 	} finally {
 		board.undo();
 	}
@@ -324,10 +294,17 @@ function scanOffers(
 			if (pieces - gain(moved) < tuning.minConcession) continue;
 		}
 		const indirect = reply.to !== moved.to;
+		let checkRecovered = false;
 		if (indirect) {
 			const recovered = hasOffSquareRecovery(board, reply, tuning, budget);
 			if (recovered === null) complete = false;
 			if (recovered === true) continue;
+			// Won back only with check: whether that unmakes the gift depends on the mover's rating.
+			if (recovered === false && piecesOnly && tuning.checkRecoveryMinRating > 0) {
+				const byCheck = hasOffSquareRecovery(board, reply, tuning, budget, undefined, true);
+				if (byCheck === null) complete = false;
+				checkRecovered = byCheck === true;
+			}
 		}
 		// The moved piece stays an offer — whether its standing threat unmakes the gift depends on
 		// the mover's rating, which only `evaluateBrilliant` knows.
@@ -352,6 +329,7 @@ function scanOffers(
 			shape,
 			concession,
 			...(standing ? { standing } : {}),
+			...(checkRecovered ? { checkRecovered } : {}),
 		});
 	}
 	return { offers, complete };
@@ -473,12 +451,15 @@ export function evaluateBrilliant(
 	if (plan.offers.length === 0) return verdict("not-sacrifice");
 	if (tuning.movedPieceOffersOnly > 0 && !plan.offers.some(offersMovedPiece))
 		return verdict("not-sacrifice");
-	if (
-		tuning.standingThreatMinRating > 0 &&
-		effectiveRating(evidence.moverRating) >= tuning.standingThreatMinRating &&
-		plan.offers.every((offer) => offer.standing === true)
-	)
-		return verdict("illusion");
+	const rating = effectiveRating(evidence.moverRating);
+	const unmade = (offer: SacrificeOffer): boolean =>
+		(offer.standing === true &&
+			tuning.standingThreatMinRating > 0 &&
+			rating >= tuning.standingThreatMinRating) ||
+		(offer.checkRecovered === true &&
+			tuning.checkRecoveryMinRating > 0 &&
+			rating >= tuning.checkRecoveryMinRating);
+	if (plan.offers.every(unmade)) return verdict("illusion");
 	if (
 		evidence.playedPv &&
 		(regainedAtOnce(plan, evidence.playedPv, tuning) ||

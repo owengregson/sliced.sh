@@ -169,19 +169,41 @@ describe("sacrifice correctness regressions", () => {
 	it("keeps a checking intermediate capture from erasing a genuine tactical sacrifice", () => {
 		// Chessigma #39, 14.Ne5: Kxc7 Nxc6+ recovers a bishop for a moment, but the
 		// knight on c6 is still attacked; SEE cannot account for the intervening check evasion.
+		// The offer stays, flagged: only from `checkRecoveryMinRating` up does the check unmake it.
 		const fen = "2kr1b1r/p1Np1ppp/1pb2n2/8/1nRP1B2/5N2/PP2B1PP/4K2R w K - 1 14";
 		expect(planBrilliant({ fen, uci: "f3e5" })?.offers).toContainEqual({
 			capture: "c8c7",
 			square: "c7",
 			shape: "ignored-threat",
 			concession: 3,
+			checkRecovered: true,
 		});
 	});
-	it("counts a checking recovery that no evasion can attack", () => {
-		// The owner's 28.Rc1 (2026-09-23, 184245091060): ...exf4 Rxc2+ wins a rook for the bishop,
-		// and no evasion attacks c2 with anything cheaper. chess.com does not badge it.
-		const fen = "2k5/p2rb2R/1p1p4/4pp2/1P3B2/P7/2r2PPP/R5K1 w - - 0 28";
-		expect(planBrilliant({ fen, uci: "a1c1" })?.offers).toEqual([]);
+	it("unmakes a gift won back with check, from 1400 up", () => {
+		// The owner's 28.Rc1 (2026-09-23, 184245091060): ...exf4 Rxc2+ wins a rook for the bishop.
+		const rc1 = "2k5/p2rb2R/1p1p4/4pp2/1P3B2/P7/2r2PPP/R5K1 w - - 0 28";
+		expect(planBrilliant({ fen: rc1, uci: "a1c1" })?.offers).toEqual([
+			{
+				capture: "e5f4",
+				square: "f4",
+				shape: "ignored-threat",
+				concession: 3,
+				checkRecovered: true,
+			},
+		]);
+		// The owner's 22...Nf6 (2026-09-23, 184266449184): hxg5 Nxg4+ wins the queen.
+		const nf6 = {
+			fen: "3rr1k1/2pq1ppn/2n1b2p/1p1ppNb1/p3P1QP/P1PPB1N1/1PB2PPK/R3R3 b - - 0 22",
+			uci: "h7f6",
+			...evidence({
+				playedPoints: 0.62,
+				alternatives: [{ uci: "e6f5", points: 0.49 }],
+				moverRating: 2647,
+			}),
+		};
+		expect(classifyBrilliant(nf6).reason).toBe("illusion");
+		// Chess.com is more generous below 1400: the benchmark's 14.Ne5 (954) is Kxc7 Nxc6+.
+		expect(classifyBrilliant({ ...nf6, moverRating: 954 }).brilliant).toBe(true);
 	});
 	it("abstains when proving the off-square recovery exceeds the shared material budget", () => {
 		const fen = "7k/8/8/b7/3p4/4N3/7P/R5K1 w - - 0 1";
