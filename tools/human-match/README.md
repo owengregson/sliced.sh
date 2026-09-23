@@ -7,12 +7,18 @@ Nothing here ships; every script runs `src/` modules under plain `bun` (see `def
 
 | File | What |
 |---|---|
-| `defines.ts` | the bundler's compile-time `define` globals, so `src/` modules load outside `bun test`; **must be the first import** of every entry script here |
-| `engine.ts` | `createRefereeEngine()` — the vendored Stockfish 19 smallnet booted through the offscreen loader under Bun (as `test/integration/engine.test.ts`), one `go` at a time, answering the **last complete MultiPV cycle** as `EvalLine[]` with `pvSan` filled — the collection rule of every `stockfish18-*.json` fixture |
-| `maia.ts` | `createMaiaRunner()` — the shipped Maia-3 ONNX models under the vendored onnxruntime-web wasm backend, `encodeMaiaInputs → session.run → decodeMaiaOutputs`, i.e. the offscreen host's exact path (`test/integration/maia-onnx.test.ts` is the parity proof) |
-| `make-fixture.ts` | writes `test/fixtures/strength/maia-draw.json` (below) |
-| `replay.ts` | the §8.1 harness: corpus rows → referee frames + Maia policies → seeded `selectMove` draws → per-bucket report (markdown + JSON) |
+| `defines.ts` | re-exports `tools/lib/defines.ts` — the bundler's compile-time `define` globals, so `src/` modules load outside `bun test`; **must be the first import** of every entry script here |
+| `engine.ts` | re-exports `createRefereeEngine()` from `tools/lib/engine/referee.ts` — the vendored Stockfish 19 smallnet booted through the offscreen loader under Bun (as `test/integration/engine.test.ts`), one `go` at a time, answering the **last complete MultiPV cycle** as `EvalLine[]` with `pvSan` filled — the collection rule of every `stockfish18-*.json` fixture |
+| `maia.ts` | re-exports `createMaiaRunner()` from `tools/lib/maia.ts` — the shipped Maia-3 ONNX models under the vendored onnxruntime-web wasm backend, `encodeMaiaInputs → session.run → decodeMaiaOutputs`, i.e. the offscreen host's exact path (`test/integration/maia-onnx.test.ts` is the parity proof) |
+| `make-fixture.ts` | writes `test/fixtures/strength/maia-draw.json` (below); stages in `make-fixture/` |
+| `replay.ts` | the §8.1 harness: corpus rows → referee frames + Maia policies → seeded `selectMove` draws → per-bucket report (markdown + JSON); stages in `replay/` |
 | `replay.test.ts` | the `--fixture` smoke run as a test (< 1 s; asserts the report is well-formed, not any value) |
+| `verification-audit.ts` | the paired verifier audit on fresh chess.com games (sampling, capture, laws and report in `verification-audit/`) |
+| `strength-audit-2450.ts` | the cache-only strength proxy over the audit's captures (laws, rows and summary in `strength-audit/`) |
+
+The shared pieces — the define globals, the repository root, the engine runners (Bun referee and
+the Node-hosted review engine), the Maia runner, PGN export parsing, CLI argument helpers and small
+statistics — live in `tools/lib/`.
 
 ## The fixture: `test/fixtures/strength/maia-draw.json`
 
