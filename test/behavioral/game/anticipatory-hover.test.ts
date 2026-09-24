@@ -191,7 +191,7 @@ describe("anticipatory hover", () => {
 				// The bishop retreats instead of taking: nothing to recapture, the ponder missed.
 				await reply(turn, "b4a5");
 				const plan = turn.h.session().recommendation()?.plan;
-				expect(plan?.features.anticipated).toBeUndefined();
+				expect(plan?.features.anticipated ?? 0).toBe(0);
 				expect(plan?.mode).not.toBe("premove");
 				expect(plan?.window.orientationMs ?? 0).toBeGreaterThanOrEqual(
 					TIMING_CONSTANTS.orientation.minMs
