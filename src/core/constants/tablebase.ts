@@ -56,19 +56,32 @@ export const TABLEBASE = {
  * `docs/qa/endgame-tablebases-2026-09-23.md`.
  */
 export const TABLEBASE_HUMAN = {
-	/** Below this effective rating the tablebase is never consulted: the human policy plays. */
+	/**
+	 * Below this effective rating the tablebase is never consulted: the human policy plays. Players
+	 * under 1600 found the fastest winning move 55–62 % of the time and threw the result on 6–7 % of
+	 * the moves where it could be thrown; nothing about that should become perfect.
+	 */
 	floorElo: 1600,
 	/** The probability reaches `maxProb` at this effective rating. */
 	fullElo: 2800,
-	/** The probability at `floorElo`. */
-	floorProb: 0.05,
-	/** The probability from `fullElo` up (the Maia ceiling range). */
-	maxProb: 0.5,
+	/**
+	 * The probability at `floorElo`. Chosen so the tables add about four points to a human rate of
+	 * perfect moves: `≈ 0.04 / (1 − r(E))`, with r ≈ 0.66 measured at 1600–1999 online.
+	 */
+	floorProb: 0.1,
+	/**
+	 * The probability from `fullElo` up to the Maia ceiling: the same four-point budget at r ≈
+	 * 0.73–0.86 (2700+ online blitz / over the board).
+	 */
+	maxProb: 0.3,
 	/**
 	 * Men (kings included) up to which the policy applies at its full probability; above it the
 	 * probability is scaled by `largeScale` — the 6–7-man tables hold wins no human finds.
 	 */
 	simpleMaxPieces: 5,
-	/** The probability multiplier for 6–7-man positions. */
+	/**
+	 * The probability multiplier for 6–7-man positions (no local tables to measure them; the rate of
+	 * result-throwing moves already rises from 3–4 to 5 men at every rating).
+	 */
 	largeScale: 0.5,
 } as const;
