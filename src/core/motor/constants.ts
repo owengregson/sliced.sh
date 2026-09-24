@@ -6,6 +6,7 @@
  * The registry is split by domain under `./constants/`; this file is its single entry point.
  */
 
+export * from "./constants/anticipation";
 export * from "./constants/exploration";
 export * from "./constants/gesture";
 export * from "./constants/modulation";
