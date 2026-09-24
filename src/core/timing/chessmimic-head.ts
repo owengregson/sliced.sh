@@ -14,7 +14,9 @@
  * failure, a malformed reply or an unprepared position the v1 head answers.
  *
  * The parts live under `./chessmimic-head/`: `bands` (band selection), `inputs` (the model
- * inputs), `inference` (the port and its budget) and `head` (the `DistributionHead`).
+ * inputs), `inference` (the port and its budget), `rows` (the per-position cache of inferred
+ * rows: the history-only row and one per timed move) and `head` (the `DistributionHead`, which
+ * decodes a row into a think time).
  */
 
 import type { ChessMimicBand } from "@core/constants/models";
