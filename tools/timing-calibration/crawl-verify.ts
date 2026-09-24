@@ -31,16 +31,13 @@ import { flagValue } from "../lib/cli";
 import { ROOT } from "../lib/paths";
 import { bandOf } from "./common";
 import { loadReplay, simulate } from "./sim";
-import { type CellResult, cellsOf, cellTable, evaluate, headline } from "./verify";
+import { type CellResult, cellsOf, cellTable, evaluate, f2, headline, pct } from "./verify";
 
 const SITUATIONS = ["book", "recapture", "ordinary", "all"];
 
 function medianTable(before: CellResult[], after: CellResult[]): string {
 	const key = (c: CellResult) => `${c.tcGroup}|${c.band}|${c.situation}`;
 	const b = new Map(before.map((c) => [key(c), c]));
-	const f2 = (v: number | undefined) => (v !== undefined && Number.isFinite(v) ? v.toFixed(2) : "–");
-	const pct = (v: number | undefined) =>
-		v !== undefined && Number.isFinite(v) ? `${Math.round(100 * v)}%` : "–";
 	const lines = [
 		"| tc | band | situation | n | median human / before / after (s) | after 95% CI | premove ≤0.2 s human / before / after | < 1 s human / before / after | AUC before / after |",
 		"|---|---|---|---|---|---|---|---|---|",
