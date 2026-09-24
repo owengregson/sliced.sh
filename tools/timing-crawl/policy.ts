@@ -361,3 +361,30 @@ export function shuffle<T>(xs: T[], random: () => number): T[] {
 	}
 	return xs;
 }
+
+export interface VisitYield {
+	/** Kept sides the visit added to the cell it was made for. */
+	gain: number;
+	/** Network requests it cost (cache hits are free). */
+	requests: number;
+}
+
+/**
+ * Park a cell for the rest of the run once its last `window` focused visits added fewer than
+ * `minYield` kept sides per network request between them (a scarce population, or one already
+ * harvested). A cache-only window never parks.
+ */
+export function shouldPark(
+	recent: readonly VisitYield[],
+	window: number,
+	minYield: number
+): boolean {
+	if (recent.length < window) return false;
+	let gain = 0;
+	let requests = 0;
+	for (const v of recent.slice(-window)) {
+		gain += v.gain;
+		requests += v.requests;
+	}
+	return requests > 0 && gain < minYield * requests;
+}

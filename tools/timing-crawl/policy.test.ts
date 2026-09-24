@@ -19,6 +19,7 @@ import {
 	qualifyStored,
 	rankCells,
 	rng,
+	shouldPark,
 	timingGame,
 } from "./policy";
 
@@ -195,5 +196,22 @@ describe("derived moves record", () => {
 		const t = timingGame(g, 24, { w: true, b: true });
 		expect(t.whiteSplit).toBe(splitFor("Alice"));
 		expect(t.blackSplit).toBe(splitFor("bob"));
+	});
+});
+
+describe("parking", () => {
+	it("parks only after a full window yielding under the per-request floor", () => {
+		const poor = Array.from({ length: 20 }, () => ({ gain: 1, requests: 13 }));
+		expect(shouldPark(poor.slice(0, 19), 20, 0.5)).toBe(false);
+		expect(shouldPark(poor, 20, 0.5)).toBe(true);
+		const good = poor.map((v, i) => (i === 3 ? { gain: 200, requests: 4 } : v));
+		expect(shouldPark(good, 20, 0.5)).toBe(false);
+		expect(
+			shouldPark(
+				Array.from({ length: 20 }, () => ({ gain: 0, requests: 0 })),
+				20,
+				0.5
+			)
+		).toBe(false);
 	});
 });

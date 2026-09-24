@@ -8,8 +8,9 @@
  *
  * Options: --target N (kept sides per cell counted as "met", 4000), --cell-cap N (no side is kept
  * in a cell once it holds N, 8000), --goal-games N (250000), --per-player N (150),
- * --per-player-tc N (30), --stall N (focused visits without a gain before a cell is parked for
- * this run, 60), --few-months N (months per visit below --scarce-from, 3), --scarce-from R (2000:
+ * --per-player-tc N (30), --stall N and --min-yield Y (a cell is parked for this run once its
+ * last N focused visits added fewer than Y kept sides per network request; 20, 0.5),
+ * --few-months N (months per visit below --scarce-from, 3), --scarce-from R (2000:
  * players picked for a band ≥ R get every in-window month), --cand-cap N (candidates kept per
  * cell, 5000), --harvest N (opponent sides kept per cell per visit, spread over its months,
  * 250 — so no cell is filled by the opponents of a handful of players), --max-requests N, --report-every S (180), --seed N.
@@ -73,9 +74,11 @@ import {
 	type RawGame,
 	rankCells,
 	rng,
+	shouldPark,
 	shuffle,
 	type TimingGame,
 	timingGame,
+	type VisitYield,
 } from "./policy";
 
 const API = "https://api.chess.com/pub";
@@ -109,6 +112,7 @@ interface Args {
 	perPlayer: number;
 	perPlayerTc: number;
 	stall: number;
+	minYield: number;
 	fewMonths: number;
 	scarceFrom: number;
 	candCap: number;
@@ -127,7 +131,8 @@ function parseArgs(argv: string[]): Args {
 		goalGames: 250_000,
 		perPlayer: 150,
 		perPlayerTc: 30,
-		stall: 60,
+		stall: 20,
+		minYield: 0.5,
 		fewMonths: 3,
 		scarceFrom: 2000,
 		candCap: 5_000,
@@ -143,6 +148,7 @@ function parseArgs(argv: string[]): Args {
 		"--per-player": "perPlayer",
 		"--per-player-tc": "perPlayerTc",
 		"--stall": "stall",
+		"--min-yield": "minYield",
 		"--few-months": "fewMonths",
 		"--scarce-from": "scarceFrom",
 		"--cand-cap": "candCap",
@@ -344,7 +350,7 @@ class Crawl {
 	readonly visited = new Set<string>();
 	readonly candidates = new Map<string, string[]>();
 	readonly inCell = new Map<string, Set<string>>();
-	readonly stall = new Map<string, number>();
+	readonly stall = new Map<string, VisitYield[]>();
 	readonly parked = new Set<string>();
 	readonly random: () => number;
 	readonly paths;
@@ -382,7 +388,7 @@ class Crawl {
 		for (const c of ALL_CELLS) {
 			this.candidates.set(c, []);
 			this.inCell.set(c, new Set());
-			this.stall.set(c, 0);
+			this.stall.set(c, []);
 		}
 	}
 
@@ -818,14 +824,15 @@ async function main(): Promise<void> {
 			const { gains, months } = await crawl.visit(pick.name, pick.cell);
 			crawl.visits++;
 			const focus = gains.get(pick.cell) ?? 0;
-			if (focus > 0) crawl.stall.set(pick.cell, 0);
-			else {
-				const s = (crawl.stall.get(pick.cell) ?? 0) + 1;
-				crawl.stall.set(pick.cell, s);
-				if (s >= args.stall) {
-					crawl.parked.add(pick.cell);
-					log(`parked ${pick.cell} after ${s} fruitless visits (fill ${L.fill(pick.cell)})`);
-				}
+			const recent = crawl.stall.get(pick.cell) ?? [];
+			recent.push({ gain: focus, requests: crawl.http.net - req0 });
+			if (recent.length > args.stall) recent.shift();
+			crawl.stall.set(pick.cell, recent);
+			if (shouldPark(recent, args.stall, args.minYield)) {
+				crawl.parked.add(pick.cell);
+				log(
+					`parked ${pick.cell}: last ${recent.length} focused visits yielded < ${args.minYield} side/request (fill ${L.fill(pick.cell)})`
+				);
 			}
 			let total = 0;
 			for (const n of gains.values()) total += n;
