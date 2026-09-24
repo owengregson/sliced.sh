@@ -13,6 +13,7 @@
 
 import "../lib/defines";
 import path from "node:path";
+import { flagOr } from "../lib/cli";
 import { DATA_DIR } from "./common";
 
 interface Summary {
@@ -26,11 +27,6 @@ interface Summary {
 }
 
 const LOSS = ["epl", "inacc", "mistake", "blunder"] as const;
-
-function arg(argv: string[], name: string, fallback: string): string {
-	const i = argv.indexOf(name);
-	return i >= 0 && argv[i + 1] !== undefined ? (argv[i + 1] as string) : fallback;
-}
 
 export interface CrossCell {
 	key: string;
@@ -84,8 +80,8 @@ export function combine(a: Summary, b: Summary): CrossCell[] {
 async function main(): Promise<void> {
 	const argv = process.argv.slice(2);
 	const dir = path.join(DATA_DIR, "verify");
-	const la = arg(argv, "--a", "crossA");
-	const lb = arg(argv, "--b", "crossB");
+	const la = flagOr(argv, "a", "crossA");
+	const lb = flagOr(argv, "b", "crossB");
 	const a = (await Bun.file(path.join(dir, la, "summary.json")).json()) as Summary;
 	const b = (await Bun.file(path.join(dir, lb, "summary.json")).json()) as Summary;
 	const cells = combine(a, b);
@@ -113,7 +109,7 @@ async function main(): Promise<void> {
 		),
 		"",
 	];
-	const out = arg(argv, "--out", path.join(dir, `crossfit-${la}-${lb}.md`));
+	const out = flagOr(argv, "out", path.join(dir, `crossfit-${la}-${lb}.md`));
 	await Bun.write(out, lines.join("\n"));
 	console.log(lines.join("\n"));
 }

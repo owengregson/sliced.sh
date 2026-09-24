@@ -11,8 +11,10 @@
 import "../lib/defines";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
+import { flagOr } from "../lib/cli";
+import { headId, jsonlLines } from "../lib/jsonl";
 import { DATA_DIR } from "./common";
-import { type CalibrationRow, jsonlLines } from "./frames";
+import type { CalibrationRow } from "./frames";
 
 export const CELLS_DIR = path.join(DATA_DIR, "cells");
 
@@ -20,23 +22,12 @@ export function cellFile(dir: string, tc: string, bucket: number): string {
 	return path.join(dir, `${tc}-${bucket}.jsonl`);
 }
 
-function arg(argv: string[], name: string, fallback: string): string {
-	const i = argv.indexOf(name);
-	return i >= 0 && argv[i + 1] !== undefined ? (argv[i + 1] as string) : fallback;
-}
-
-/** The id at the head of a JSONL record, without parsing the whole line. */
-function headId(line: string): string | null {
-	const m = /^\{"id":("(?:[^"\\]|\\.)*")/.exec(line);
-	return m?.[1] ? (JSON.parse(m[1]) as string) : null;
-}
-
 async function main(): Promise<void> {
 	const argv = process.argv.slice(2);
-	const corpusFile = arg(argv, "--corpus", path.join(DATA_DIR, "corpus.jsonl"));
-	const framesFile = arg(argv, "--frames", path.join(DATA_DIR, "frames.jsonl"));
-	const policiesFile = arg(argv, "--policies", path.join(DATA_DIR, "policies.jsonl"));
-	const outDir = arg(argv, "--out", CELLS_DIR);
+	const corpusFile = flagOr(argv, "corpus", path.join(DATA_DIR, "corpus.jsonl"));
+	const framesFile = flagOr(argv, "frames", path.join(DATA_DIR, "frames.jsonl"));
+	const policiesFile = flagOr(argv, "policies", path.join(DATA_DIR, "policies.jsonl"));
+	const outDir = flagOr(argv, "out", CELLS_DIR);
 	mkdirSync(outDir, { recursive: true });
 
 	const rows = new Map<string, string>();
