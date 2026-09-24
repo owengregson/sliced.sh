@@ -7,34 +7,15 @@
  * `TransientError` so the caller can requeue the player.
  */
 
-import { createHash } from "node:crypto";
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { type CacheEntry, cacheName, encodeCache, readCache } from "../../lib/chesscom-cache";
 import { log } from "./log";
 
 export const API = "https://api.chess.com/pub";
 const USER_AGENT = "sliced-calibration-research/1.0";
 
-interface CacheEntry {
-	url: string;
-	status: number;
-	body: unknown;
-}
-
 export class TransientError extends Error {}
-
-function cacheName(url: string): string {
-	return `${createHash("sha1").update(url).digest("hex")}.json.gz`;
-}
-
-function readCache(file: string): CacheEntry | null {
-	if (!existsSync(file)) return null;
-	try {
-		return JSON.parse(new TextDecoder().decode(Bun.gunzipSync(readFileSync(file)))) as CacheEntry;
-	} catch {
-		return null;
-	}
-}
 
 export class Http {
 	net = 0;
@@ -93,7 +74,7 @@ export class Http {
 			if (!transient) {
 				const entry: CacheEntry = { url, status, body };
 				const tmp = `${ownFile}.tmp`;
-				writeFileSync(tmp, Bun.gzipSync(new TextEncoder().encode(JSON.stringify(entry))));
+				writeFileSync(tmp, encodeCache(entry));
 				renameSync(tmp, ownFile);
 				return status >= 200 && status < 300 ? body : null;
 			}

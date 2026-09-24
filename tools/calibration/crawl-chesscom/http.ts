@@ -4,31 +4,17 @@
  * refetches), transient-error back-off and a request budget.
  */
 
-import { createHash } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import path from "node:path";
+import { type CacheEntry, cacheName, encodeCache, readCache } from "../../lib/chesscom-cache";
 import { PATHS } from "../common";
+
+export { type CacheEntry, readCache };
 
 const USER_AGENT = "sliced-calibration-research/1.0";
 
-export interface CacheEntry {
-	url: string;
-	status: number;
-	body: unknown;
-}
-
 function cachePath(url: string): string {
-	return path.join(PATHS.cache, `${createHash("sha1").update(url).digest("hex")}.json.gz`);
-}
-
-export function readCache(file: string): CacheEntry | null {
-	if (!existsSync(file)) return null;
-	try {
-		const text = new TextDecoder().decode(Bun.gunzipSync(readFileSync(file)));
-		return JSON.parse(text) as CacheEntry;
-	} catch {
-		return null;
-	}
+	return path.join(PATHS.cache, cacheName(url));
 }
 
 export class Http {
@@ -63,7 +49,7 @@ export class Http {
 			const transient = status === 0 || status === 429 || status >= 500;
 			if (!transient) {
 				const entry: CacheEntry = { url, status, body };
-				writeFileSync(file, Bun.gzipSync(new TextEncoder().encode(JSON.stringify(entry))));
+				writeFileSync(file, encodeCache(entry));
 				return body;
 			}
 			if (attempt >= 6 || this.exhausted) {
