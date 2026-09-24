@@ -1,14 +1,11 @@
 /** Live scoreboard, move progress, analysis, and controls. Shortcuts are owned by the shell. */
 
-import { tabsQuery } from "@core/chrome/tabs";
 import type { PanelSnapshot } from "@core/constants/messages";
 import { MSG } from "@core/constants/messages";
 import { TOAST_KEYS } from "@core/constants/toasts";
 import { log } from "@core/logger";
 import type { TypedMessage } from "@core/messaging/typed-messages";
 import { TOKENS } from "@design/tokens.generated";
-import type { Keybind } from "@typedefs/settings";
-import { type BannerHandle, showBanner } from "../components/banner";
 import { formatKeybind } from "../components/keybind";
 import { closePopovers } from "../components/popover";
 import { showToast, type ToastKind } from "../components/toast";
@@ -18,6 +15,7 @@ import type { PanelCommandType } from "../store";
 import { instantiate, part } from "../template";
 import { portToastText } from "../toast-text";
 import type { View, ViewContext } from "../view";
+import { type ActiveTab, trackActiveTab } from "./active-tab";
 import { autoPlayState } from "./auto-play-state";
 import {
 	type CollapseState,
@@ -26,6 +24,7 @@ import {
 	measureLayout,
 	observeLayout,
 } from "./live/collapse";
+import { createDetachedBanner } from "./live/detached-banner";
 import { createEvalSection } from "./live/eval-section";
 import { createLinesSection } from "./live/lines-section";
 import { createMoveSection, moveProgressPhase } from "./live/move-section";
@@ -34,6 +33,8 @@ import { createStrengthCard } from "./live/strength-card";
 import { createTogglesRow } from "./live/toggles-row";
 import liveHtml from "./templates/live.html?raw";
 
+export { matchesKeybind } from "../components/keybind/format";
+
 /** §8.1: compact shows at most two PV rows. */
 const COMPACT_PV_MAX = 2;
 const TOAST_KIND: Readonly<Record<"info" | "warn" | "error", ToastKind>> = {
@@ -41,19 +42,6 @@ const TOAST_KIND: Readonly<Record<"info" | "warn" | "error", ToastKind>> = {
 	warn: "warn",
 	error: "danger",
 };
-
-/** Whether a keydown is the given keybind (code or key, all four modifiers). */
-export function matchesKeybind(event: KeyboardEvent, kb: Keybind): boolean {
-	const keyMatch =
-		(kb.code !== "" && event.code === kb.code) || event.key.toLowerCase() === kb.key.toLowerCase();
-	return (
-		keyMatch &&
-		event.altKey === kb.altKey &&
-		event.ctrlKey === kb.ctrlKey &&
-		event.metaKey === kb.metaKey &&
-		event.shiftKey === kb.shiftKey
-	);
-}
 
 export const liveView: View = {
 	mount(ctx: ViewContext) {
@@ -77,13 +65,12 @@ function mountLive(ctx: ViewContext): () => void {
 	let snapshot: PanelSnapshot | null = ctx.snapshot ?? store.snapshot;
 	const handsOff = false;
 	let disposed = false;
-	let tabId: number | null = null;
+	/** Resolved once the store and port subscriptions are in place. */
+	let activeTab: ActiveTab | null = null;
 	let metrics: LayoutMetrics = measureLayout(app);
 	let collapse: CollapseState = collapseFor(metrics.availablePx, 1);
 	let autoPlayUsed = false;
 	let wasAttached = false;
-	let detachedDismissed = false;
-	let detachedBanner: BannerHandle | null = null;
 
 	// ── dispatch ────────────────────────────────────────────────────────────
 	function send<T extends PanelCommandType>(command: TypedMessage<T>): Promise<boolean> {
@@ -100,6 +87,7 @@ function mountLive(ctx: ViewContext): () => void {
 	function withTab<T extends PanelCommandType>(
 		build: (tabId: number) => TypedMessage<T>
 	): Promise<boolean> {
+		const tabId = activeTab?.id ?? null;
 		if (tabId === null) {
 			log.warn("live: no active tab for the command");
 			return Promise.resolve(false);
@@ -156,41 +144,9 @@ function mountLive(ctx: ViewContext): () => void {
 	}
 
 	// ── detached banner (§4.4, §9.7) ────────────────────────────────────────
-	function applyDetachedBanner(snap: PanelSnapshot): void {
-		if (snap.executor.debuggerAttached) {
-			detachedDismissed = false;
-			detachedBanner?.dismiss();
-			detachedBanner = null;
-			return;
-		}
-		const detached = wasAttached || snap.session.hand === "detached";
-		const wanted = detached && !handsOff && !detachedDismissed;
-		if (wanted && !detachedBanner) {
-			detachedBanner = showBanner(
-				"warn",
-				COPY.banner.detached,
-				[
-					{
-						label: COPY.banner.reattach,
-						onClick: () => {
-							detachedDismissed = true;
-							void withTab((id) => ({ type: MSG.PANEL_REATTACH_DEBUGGER, tabId: id }));
-						},
-					},
-					{
-						label: COPY.banner.dismiss,
-						onClick: () => {
-							detachedDismissed = true;
-						},
-					},
-				],
-				{ key: "detached" }
-			);
-		} else if (!wanted && detachedBanner) {
-			detachedBanner.dismiss();
-			detachedBanner = null;
-		}
-	}
+	const detachedBanner = createDetachedBanner(() => {
+		void withTab((id) => ({ type: MSG.PANEL_REATTACH_DEBUGGER, tabId: id }));
+	});
 
 	// ── layout (§8.2, §4.5) ─────────────────────────────────────────────────
 	function computeCollapse(snap: PanelSnapshot): CollapseState {
@@ -253,7 +209,7 @@ function mountLive(ctx: ViewContext): () => void {
 		toggles.update({ snapshot: snap, handsOff, strengthChip: false });
 		strip.update({ snapshot: snap, autoPlayUsed, wasAttached });
 		stripHost.hidden = false;
-		applyDetachedBanner(snap);
+		detachedBanner.apply(snap, { wasAttached, handsOff });
 	}
 
 	const stopLayout = observeLayout({
@@ -280,13 +236,7 @@ function mountLive(ctx: ViewContext): () => void {
 			showToast(TOAST_KIND[message.level], portToastText(message));
 	});
 
-	tabsQuery({ active: true, currentWindow: true })
-		.then((tabs) => {
-			if (disposed) return;
-			const id = tabs[0]?.id;
-			tabId = typeof id === "number" ? id : null;
-		})
-		.catch((error: unknown) => log.warn("live: tabs.query failed", error));
+	activeTab = trackActiveTab("live", () => disposed);
 
 	container.append(root);
 	render();
@@ -297,8 +247,7 @@ function mountLive(ctx: ViewContext): () => void {
 		unsubscribe();
 		unsubscribePort();
 		stopLayout();
-		detachedBanner?.dismiss();
-		detachedBanner = null;
+		detachedBanner.dispose();
 		closePopovers();
 		evalSection.dispose();
 		moveSection.dispose();
