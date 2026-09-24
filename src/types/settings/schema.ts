@@ -1,0 +1,193 @@
+/** The stored settings shape (§4.4); `normalizeSettings` is what makes stored data fit it. */
+
+import type { FreeTitle } from "@core/constants/free-title";
+
+export type PersonaId = "cautious" | "balanced" | "aggressive" | "blitz";
+export type LogLevel = "silent" | "error" | "warn" | "info" | "debug";
+/** Whose moves carry a move-quality chip: the owner's (`mine`), the opponent's, or both. */
+export type MoveQualityChipSide = "mine" | "theirs" | "both";
+
+export interface Keybind {
+	key: string;
+	code: string;
+	altKey: boolean;
+	ctrlKey: boolean;
+	metaKey: boolean;
+	shiftKey: boolean;
+}
+
+/**
+ * Keys marked **forced** below are decided by the extension (owner, 2026-09-12): the Settings view
+ * shows no control, and `normalizeSettings` overwrites any stored value with
+ * `FORCED_SETTING_VALUES` (`@core/constants/defaults`) on every read. Patches for them are still
+ * accepted by `setSettings` — the normaliser simply wins — so the keys, the types and the code
+ * behind them are unchanged.
+ */
+export interface Settings {
+	enabled: boolean;
+	strength: {
+		targetElo: number;
+		/** V2.1: derives targetElo from the opponent (§13.6). */
+		matchOpponentRating: boolean;
+		personaEloOffset: number;
+		/** Forced: `balanced`. */
+		persona: PersonaId;
+		/** Forced: `hybrid`. */
+		selectionMode: "engine-elo" | "persona-sampling" | "hybrid";
+		useOpeningBook: boolean;
+		/** Legacy selection scalar. Normalized to 1; target Elo is the accuracy control. */
+		blunderScale: number;
+	};
+	timing: {
+		/**
+		 * **Higher is faster** (owner, 2026-09-15: "higher base speed should cause moves to happen
+		 * faster not slower"). A wall-clock multiplier on the *whole* move — the wait the timing
+		 * model plans *and* the hand's own movement — from the position arriving to the piece
+		 * landing. It is deliberately **not** an input to the engine: the search keeps the
+		 * allocation the target rating implies, so the setting never changes move quality
+		 * ("settings shouldnt really be modifying the model's ability to give good moves").
+		 *
+		 * The model and the hand both consume *durations*, so the reciprocal is taken exactly once,
+		 * at `timingSettingsFor` (`src/service/game-session/presets.ts`), which is also where the
+		 * per-time-control gain — the other duration factor — is applied. Stored values from before
+		 * the rename (`timing.speedScale`, higher = slower) migrate as `1 / speedScale` in
+		 * `normalizeSettings`.
+		 */
+		baseSpeed: number;
+		varianceScale: number;
+		premoveTendency: number;
+		longThinkFrequency: number;
+		/** Forced: `true` (off ignored the clock entirely; the clock-free schedule stays in code). */
+		respectBudget: boolean;
+	};
+	execution: {
+		motorSpeed: number;
+		/** Forced: `true`. */
+		keepDebuggerAttached: boolean;
+		verifyMoves: boolean;
+		/** Forced: `false` (the calibration code stays; the row is gone). */
+		calibrateFromMyMouse: boolean;
+		/** Forced: `cdp` (the `native` path stays in code, no longer offered). */
+		backend: "cdp" | "native";
+		/**
+		 * 0..2, multiplies the modelled preview-selection rate (V2.1); **0 is Off** — the former
+		 * `previewSelects` segment folded into the slider (settings layout, 2026-09-13).
+		 */
+		previewSelectScale: number;
+		/**
+		 * How the hand commits a move: `drag` (press, carry, release), `click` (click the piece,
+		 * click the square), or `auto` — a per-move mix, mostly drags (`CLICK_MOVE.autoClickProb`).
+		 * Premoves and holds are always drags. Owner, 2026-09-11 — reversing the 2026-09-10
+		 * drag-only ruling, now as a setting so it is one toggle either way.
+		 */
+		inputMode: "auto" | "drag" | "click";
+	};
+	automation: {
+		/**
+		 * Lets the hand play on its own. Ships **off**: playing moves on a real
+		 * account stays an explicit opt-in (arming also attaches the debugger, §13.4).
+		 */
+		autoMove: boolean;
+		/**
+		 * The armed hand resigns a forced mate against us in at most `RESIGN.maxMateIn` moves
+		 * instead of playing it out (2026-09-12); off plays every position to the end.
+		 */
+		resignLostGames: boolean;
+		autoQueue: boolean;
+		/** Playing-session duration range. An active game always finishes before a break. */
+		autoQueueSessionMinMinutes: number;
+		autoQueueSessionMaxMinutes: number;
+		/** Break duration range between playing sessions, sampled once per break. */
+		autoQueueBreakMinMinutes: number;
+		autoQueueBreakMaxMinutes: number;
+		/**
+		 * A queue step (2026-09-13): after a game against a titled opponent, offer one rematch — or
+		 * accept theirs — before queueing a regular game; an offer not taken within
+		 * `REMATCH.acceptTimeoutMs` is dismissed. Once per opponent per playing session. Ships on;
+		 * inert unless `autoQueue` is on.
+		 */
+		rematchTitled: boolean;
+		/**
+		 * Draws the recommendation on the board. Ships **on** so a fresh install shows
+		 * something; §13.3 rule 4 still holds at runtime — the content script draws
+		 * nothing until the service worker sends `settings`.
+		 */
+		highlightMoves: boolean;
+		highlightStyle: "squares" | "arrows" | "both";
+		/**
+		 * Board effects (owner's brief, 2026-09-13): after every move, either side's, draw what it
+		 * did — threats, checks, forks, discoveries, pins, captures, castles, promotions — as
+		 * directional rays from the destination square. Ships **on**, following `highlightMoves`,
+		 * and like it the content script draws nothing until the service worker sends `settings`
+		 * (§13.3 rule 4). Controls the rays and the capture mark only: the rating chip is
+		 * `moveQualityChips`, independent of this (owner, 2026-09-15).
+		 */
+		boardEffects: boolean;
+		freeTitle: boolean;
+		freeTitleBadge: FreeTitle;
+		/**
+		 * The move-quality chip of the effect layer (settings layout, 2026-09-13): the one board
+		 * element that shows an evaluation, and the only part of the layer that costs engine time.
+		 * Off: the rays still draw; no verdict is searched or sent. Independent of `boardEffects`
+		 * (owner, 2026-09-15): with that off, every landed move still gets its chip, with no rays.
+		 */
+		moveQualityChips: boolean;
+		/**
+		 * "Show ratings for" (owner, 2026-09-15): the chip — and so its sound — only on moves by this
+		 * side. The rays and the capture mark still draw for both, and both sides' positions are
+		 * still reviewed (each frame is half of the other side's verdicts too). Ships `both`, the
+		 * behaviour before the picker. Inert unless `moveQualityChips` is on.
+		 */
+		moveQualityChipsFor: MoveQualityChipSide;
+		/** Play a matching sound when either side's move rating appears. */
+		moveRatingSounds: boolean;
+		/**
+		 * The forced-mate chip's own rising sound (owner, 2026-09-14): one step per move of a forced
+		 * mating sequence, the checkmate included. Off: those chips play nothing. Inert unless
+		 * `moveRatingSounds` is on (and therefore `moveQualityChips`; `boardEffects` does not matter).
+		 */
+		forcedMateSounds: boolean;
+	};
+	keybinds: {
+		playMove: Keybind;
+		toggleAutoMove: Keybind;
+		disable: Keybind;
+		speakMove: Keybind;
+		/** Forced: `false` (Chrome's own shortcuts always work; the page scope is the keybinds'). */
+		global: boolean;
+	};
+	display: {
+		evalBar: boolean;
+		uiSounds: boolean;
+		tts: boolean;
+		ttsVoice: string | null;
+		theme: "dark" | "light" | "system";
+		reducedMotion: "system" | "on" | "off";
+		/**
+		 * Fix D: draw a mirror of the hand's own pointer on the game page, so the owner can see
+		 * where it is. It tracks only what the executor dispatched — never the real mouse — and is
+		 * present only while the hand owns the pointer on that tab.
+		 */
+		virtualCursor: boolean;
+		/** The mirror's motion feedback: the press dip and contour, and the ghost trail behind it. */
+		cursorEffects: boolean;
+	};
+	engine: {
+		threads: number | "auto";
+		hashMb: number;
+		depthCap: number;
+		/**
+		 * "Lines": the minimum number of lines the engine searches *and* the number the Game view
+		 * shows — one knob since 2026-09-13 (the former `display.pvCount` merged into it).
+		 */
+		multiPv: number;
+		/** Forced: `auto` (the network follows the active Elo). */
+		nnue: "small" | "big" | "auto";
+	};
+	advanced: {
+		logLevel: LogLevel;
+		timingLogEnabled: boolean;
+	};
+}
+
+export type Keybinds = Settings["keybinds"];
