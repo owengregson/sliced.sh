@@ -25,7 +25,11 @@ import { maiaSelfElo } from "@core/strength/selection-elo";
 import type { SelectionState } from "@core/strength/types";
 import type { EvalLine } from "@typedefs/engine";
 import type { ChosenMove } from "@typedefs/game";
+import { pinIdentityCalibration } from "../../fakes/maia-calibration";
 import { type CtxOverrides, ctx, flatPrior, line, START } from "./helpers";
+
+// These tests pin mechanics at the advertised rating; the calibration has its own tests.
+pinIdentityCalibration();
 
 const NP = C.neverPlay;
 

@@ -10,6 +10,7 @@
  * - `temperedWeights`: `p^(1/T)` renormalised, after dropping moves under `minProb` (unless that
  *   would drop every move); `T ≤ 0` is argmax (weight 1 on the top move, nothing else). Order is
  *   the caller's.
+ * - `temperPolicy` (2026-09-23): the whole distribution at the calibrated temperature.
  * - `policyEntropy` (H5, 2026-09-13): the model's own uncertainty about the position, normalised
  *   so a coin flip between every legal move is 1 and a forced move is 0.
  * - `klDivergence` (§3.2 meters): how far a final draw distribution sits from the model's.
@@ -93,6 +94,30 @@ export function temperedWeights(
 	}
 	for (const [uci, w] of tempered) out.set(uci, sum > 0 ? w / sum : 1 / tempered.length);
 	return out;
+}
+
+/**
+ * The whole policy at temperature `T`: every legal move's `p^(1/T)`, renormalised and re-sorted,
+ * with nothing dropped (the draw's `minProb` floor still applies afterwards). `T = 1`, or a
+ * non-finite / non-positive `T`, returns the policy unchanged — the calibration never asks for
+ * argmax this way.
+ */
+export function temperPolicy<P extends { moves: Array<[string, number]> }>(
+	policy: P,
+	T: number
+): P {
+	if (T === 1 || !(T > 0) || !Number.isFinite(T) || policy.moves.length === 0) return policy;
+	const power = 1 / T;
+	let sum = 0;
+	const moves: Array<[string, number]> = policy.moves.map(([uci, p]) => {
+		const w = p > 0 ? p ** power : 0;
+		sum += w;
+		return [uci, w];
+	});
+	if (!(sum > 0)) return policy;
+	for (const move of moves) move[1] /= sum;
+	moves.sort((a, b) => b[1] - a[1]);
+	return { ...policy, moves };
 }
 
 /**

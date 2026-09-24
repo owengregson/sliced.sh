@@ -8,15 +8,29 @@
  * same inputs: the opponent-pressure reduction (`pressureTerms`, the arithmetic `selectMove`
  * always did), the mistakes slider as an Elo offset (`sliderEloOffset`, H2) and the pipeline's
  * context penalty (H5's clock and think terms). Pure.
+ *
+ * Since 2026-09-23 the advertised rating first goes through the Maia strength calibration
+ * (`MAIA_CALIBRATION`, per chess.com time class): the context terms move the calibrated
+ * conditioning rating, not the raw target, and the fit that wrote the table ran with them on.
  */
 
 import { sideToMove } from "@core/chess/fen";
 import { isLoneKing } from "@core/chess/material";
 import { MAIA } from "@core/constants/maia";
+import {
+	MAIA_CALIBRATION,
+	type MaiaCalibrationTable,
+	type MaiaCalibrationTimeClass,
+} from "@core/constants/maia-calibration";
 import { maiaConditioningElo } from "@core/policy/maia-size";
 import { clockRacePolicy, opponentClockPressure } from "@core/timing/opponent-pressure";
 import { SELECTION_CONSTANTS as C } from "./constants";
 import { effectiveElo } from "./elo-map";
+import {
+	type MaiaCalibrationPoint,
+	maiaCalibrationFor,
+	maiaCalibrationTimeClass,
+} from "./maia-calibration";
 
 /** The clock facts the pressure terms are a function of. */
 export interface PressureInput {
@@ -75,19 +89,45 @@ export interface MaiaEloInput {
 	contextEloPenalty?: number | undefined;
 	/** H5's selector-side ambiguity penalty, ≥ 0. Default 0. */
 	ambiguityEloPenalty?: number | undefined;
+	/** The game's clocks, for the calibration's time class (unknown → its fallback class). */
+	baseMs?: number | undefined;
+	incrementMs?: number | undefined;
+	/** Calibration override (the harness's sweep); default `MAIA_CALIBRATION`. */
+	calibration?: MaiaCalibrationTable | undefined;
+}
+
+/** The calibration's time class for the input's clocks. */
+export function maiaEloTimeClass(
+	input: Pick<MaiaEloInput, "baseMs" | "incrementMs">
+): MaiaCalibrationTimeClass {
+	return maiaCalibrationTimeClass(input.baseMs, input.incrementMs);
 }
 
 /**
- * The rating Maia is asked about and the rails judge at: the target less every reduction, then
- * the form adjustment, floored at `MAIA.context.eloFloor`. The context terms together never
- * exceed `MAIA.context.maxPenalty`.
+ * The calibration point for the advertised rating: the target less the mistakes slider's offset
+ * (H2 — the slider moves along the calibrated curve, so its span is in chess.com Elo), in the
+ * game's time class.
+ */
+export function maiaCalibrationPoint(
+	input: Pick<MaiaEloInput, "targetElo" | "blunderScale" | "baseMs" | "incrementMs" | "calibration">
+): MaiaCalibrationPoint {
+	return maiaCalibrationFor(
+		input.targetElo - sliderEloOffset(input.blunderScale),
+		maiaEloTimeClass(input),
+		input.calibration ?? MAIA_CALIBRATION
+	);
+}
+
+/**
+ * The rating Maia is asked about and the rails judge at: the calibrated conditioning rating less
+ * every reduction, then the form adjustment, floored at `MAIA.context.eloFloor`. The context terms
+ * together never exceed `MAIA.context.maxPenalty`.
  */
 export function maiaSelfElo(input: MaiaEloInput): number {
 	const context = Math.min(
 		MAIA.context.maxPenalty,
 		Math.max(0, input.contextEloPenalty ?? 0) + Math.max(0, input.ambiguityEloPenalty ?? 0)
 	);
-	const target =
-		input.targetElo - input.pressureReduction - sliderEloOffset(input.blunderScale) - context;
+	const target = maiaCalibrationPoint(input).conditioningElo - input.pressureReduction - context;
 	return maiaConditioningElo(Math.max(MAIA.context.eloFloor, effectiveElo(target, input.form)));
 }

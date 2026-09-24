@@ -134,10 +134,12 @@ export const MAIA = {
 	 */
 	inferenceBudgetMs: 1_500,
 	/**
-	 * Sampling temperature over the legal-move distribution: `p^(1/T)`, renormalised. `1` is the
-	 * model's own distribution — the owner's ruling (2026-09-11): run the models as advertised and
-	 * take the rating they are conditioned on at face value, no cooling and no calibration sweep.
-	 * Since H2 (2026-09-13) nothing scales it: the mistakes knob is an Elo offset (`slider`).
+	 * The draw's own temperature over the survivors: `p^(1/T)`, renormalised. It stays `1`: since
+	 * 2026-09-23 (owner: "the rate of mistakes is too high … calibrate … against actual games") the
+	 * strength is set by the fitted Maia calibration (`MAIA_CALIBRATION`), which chooses both the
+	 * conditioning rating and the temperature the whole answer is reshaped at before the rails and
+	 * the draw (`temperPolicy` in `selectMove`). This supersedes the 2026-09-11 ruling to run the
+	 * model at face value. Since H2 (2026-09-13) the mistakes knob is an Elo offset (`slider`).
 	 */
 	temperature: 1,
 	/**
@@ -227,9 +229,10 @@ export const MAIA = {
 	oppoFallbackSelf: true,
 	/**
 	 * H2 (2026-09-13): the user's mistakes knob (`Settings.strength.blunderScale`, 0–2, default 1)
-	 * is an **Elo offset** on the rating Maia is asked about and the rails judge at, not a
-	 * temperature: `ΔE = eloSpan · (blunderScale − 1)` — slider 0 plays `eloSpan` above the target,
-	 * slider 2 `eloSpan` below. Tempering heats the whole distribution uniformly (a 6× boost of the
+	 * is an **Elo offset** on the advertised rating — applied before the calibration maps it to the
+	 * rating Maia is asked about, so the span is chess.com Elo — not a temperature:
+	 * `ΔE = eloSpan · (blunderScale − 1)` — slider 0 plays `eloSpan` above the target, slider 2
+	 * `eloSpan` below. Tempering heats the whole distribution uniformly (a 6× boost of the
 	 * never-played tail at T = 1.5), which is engine noise, not human error; asking for a lower
 	 * rating moves mass the way the population moves it. `temperature` stays 1.
 	 */

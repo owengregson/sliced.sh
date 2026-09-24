@@ -5,7 +5,11 @@ import { createRng } from "@core/rng";
 import { drawDistribution } from "@core/strength/generate-verify";
 import { maiaSurvivors } from "@core/strength/maia-select";
 import { selectMove } from "@core/strength/move-selector";
+import { pinIdentityCalibration } from "../../fakes/maia-calibration";
 import { ctx, line, START } from "./helpers";
+
+// These tests pin mechanics at the advertised rating; the calibration has its own tests.
+pinIdentityCalibration();
 
 const policy = (moves: Array<[string, number]>): PolicyResult => ({
 	moves,

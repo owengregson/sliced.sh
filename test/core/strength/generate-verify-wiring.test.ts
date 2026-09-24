@@ -19,7 +19,11 @@ import {
 import { createSelectionState, selectMove } from "@core/strength/move-selector";
 import type { EvalLine } from "@typedefs/engine";
 import type { ChosenMove } from "@typedefs/game";
+import { pinIdentityCalibration } from "../../fakes/maia-calibration";
 import { type CtxOverrides, ctx, flatPrior, line, START } from "./helpers";
+
+// These tests pin mechanics at the advertised rating; the calibration has its own tests.
+pinIdentityCalibration();
 
 function policy(moves: Array<[string, number]>): PolicyResult {
 	return { moves, wdl: [0.3, 0.4, 0.3], size: "79m", ms: 42 };

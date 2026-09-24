@@ -43,6 +43,77 @@ export interface ConversionPool {
 	progress: ReadonlyMap<EvalLine, number>;
 }
 
+/** One PV replayed from the root: the first move's progress score (absent when illegal), and whether it reaches a draw. */
+interface LineReplay {
+	score?: number;
+	drawn: boolean;
+}
+
+// The pool is asked of the same root with the same PVs repeatedly (every draw of a recommendation,
+// ready moves, premoves). Keep that root's replays, keyed by the PV prefix the replay reads — the
+// answer is a pure function of the root (and its history) and those moves.
+let replayRoot: string | null = null;
+const replayAnswers = new Map<string, LineReplay | null>();
+function replayCache(
+	fen: string,
+	history: ReturnType<typeof matchingHistory>
+): Map<string, LineReplay | null> {
+	// Keyed by content, not identity: a caller may extend one history object in place.
+	const root = history ? `${fen}|${history.fen}|${history.moves.join(" ")}` : fen;
+	if (root !== replayRoot) {
+		replayRoot = root;
+		replayAnswers.clear();
+	}
+	return replayAnswers;
+}
+
+function replayLine(
+	line: EvalLine,
+	fen: string,
+	history: ReturnType<typeof matchingHistory>,
+	us: "w" | "b",
+	them: "w" | "b",
+	theirMaterial: number,
+	beforeDistance: number
+): LineReplay | null {
+	const board = history ? replayHistory(history) : loadPosition(fen);
+	if (!board) return null;
+	const out: LineReplay = { drawn: false };
+	for (let i = 0; i < Math.min(line.pvUci.length, C.conversion.pvPlies); i++) {
+		const uci = line.pvUci[i];
+		const move = uci ? playUci(board, uci) : null;
+		if (!move) break;
+		if (i === 0) {
+			let score = move.promotion
+				? C.conversion.promotionWeight
+				: move.piece === "p"
+					? C.conversion.pawnWeight
+					: 0;
+			if (theirMaterial === 0) {
+				const kingDistance = distance(
+					board.findPiece({ color: us, type: "k" })[0],
+					board.findPiece({ color: them, type: "k" })[0]
+				);
+				if (move.piece === "k")
+					score += (beforeDistance - kingDistance) * C.conversion.kingApproachWeight;
+				score -= board.moves().length * C.conversion.kingRestrictionWeight;
+			}
+			out.score = score;
+		}
+		if (board.isCheckmate()) break;
+		if (
+			board.isStalemate() ||
+			board.isInsufficientMaterial() ||
+			board.isDrawByFiftyMoves() ||
+			board.isThreefoldRepetition()
+		) {
+			out.drawn = true;
+			break;
+		}
+	}
+	return out;
+}
+
 /** Protect conversion only when a legal, searched continuation retains a substantial advantage. */
 export function conversionPool(
 	lines: readonly EvalLine[],
@@ -69,42 +140,20 @@ export function conversionPool(
 	const progress = new Map<EvalLine, number>();
 	const drawn = new Set<EvalLine>();
 	const legal = new Set<EvalLine>();
+	const replays = replayCache(ctx.fen, history);
 	for (const line of lines) {
-		const board = history ? replayHistory(history) : loadPosition(ctx.fen);
-		if (!board) continue;
-		for (let i = 0; i < Math.min(line.pvUci.length, C.conversion.pvPlies); i++) {
-			const uci = line.pvUci[i];
-			const move = uci ? playUci(board, uci) : null;
-			if (!move) break;
-			if (i === 0) {
-				legal.add(line);
-				let score = move.promotion
-					? C.conversion.promotionWeight
-					: move.piece === "p"
-						? C.conversion.pawnWeight
-						: 0;
-				if (counts[them] === 0) {
-					const kingDistance = distance(
-						board.findPiece({ color: us, type: "k" })[0],
-						board.findPiece({ color: them, type: "k" })[0]
-					);
-					if (move.piece === "k")
-						score += (beforeDistance - kingDistance) * C.conversion.kingApproachWeight;
-					score -= board.moves().length * C.conversion.kingRestrictionWeight;
-				}
-				progress.set(line, score);
-			}
-			if (board.isCheckmate()) break;
-			if (
-				board.isStalemate() ||
-				board.isInsufficientMaterial() ||
-				board.isDrawByFiftyMoves() ||
-				board.isThreefoldRepetition()
-			) {
-				drawn.add(line);
-				break;
-			}
+		const key = line.pvUci.slice(0, C.conversion.pvPlies).join(" ");
+		let replay = replays.get(key);
+		if (replay === undefined) {
+			replay = replayLine(line, ctx.fen, history, us, them, counts[them], beforeDistance);
+			replays.set(key, replay);
 		}
+		if (replay === null) continue;
+		if (replay.score !== undefined) {
+			legal.add(line);
+			progress.set(line, replay.score);
+		}
+		if (replay.drawn) drawn.add(line);
 	}
 	const safe = lines.filter(
 		(line) => legal.has(line) && !drawn.has(line) && searchedCp(line) >= C.conversion.keepCp

@@ -15,7 +15,10 @@ import { createSelectionState, selectMove } from "@core/strength/move-selector";
 import { maiaSelfElo } from "@core/strength/selection-elo";
 import type { SelectionState } from "@core/strength/types";
 import type { EvalLine } from "@typedefs/engine";
+import { pinIdentityCalibration } from "../../fakes/maia-calibration";
 import { type CtxOverrides, ctx, flatPrior, line, START } from "./helpers";
+
+pinIdentityCalibration();
 
 /** Four near-equal opening moves; Maia's ordering deliberately disagrees with the engine's. */
 const FOUR: EvalLine[] = [

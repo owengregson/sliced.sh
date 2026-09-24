@@ -49,6 +49,10 @@ import {
 import type { EvalLine } from "@typedefs/engine";
 import type { ChosenMove, PositionSnapshot } from "@typedefs/game";
 import type { Settings } from "@typedefs/settings";
+import { pinIdentityCalibration } from "../../fakes/maia-calibration";
+
+// These tests pin mechanics at the advertised rating; the calibration has its own tests.
+pinIdentityCalibration();
 
 const START = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 const NOW = 1_700_000_000_000;

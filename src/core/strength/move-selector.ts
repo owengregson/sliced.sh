@@ -8,8 +8,9 @@ import { applyMoves, legalMoves, parseUci, uciToSan } from "@core/chess/san";
 import { GENERATE_VERIFY } from "@core/constants/generate-verify";
 import { MAIA } from "@core/constants/maia";
 import { requestEloForTarget } from "@core/engine/options";
-import { policyEntropy } from "@core/policy/maia-policy";
+import { policyEntropy, temperPolicy } from "@core/policy/maia-policy";
 import { maiaMaxCpLoss, upperVerificationProgress, usesMaia } from "@core/policy/maia-size";
+import type { PolicyResult } from "@core/policy/types";
 import { createRng, type Rng } from "@core/rng";
 import { clamp } from "@core/util/clamp";
 import type { EvalLine } from "@typedefs/engine";
@@ -40,7 +41,13 @@ import { isMaxStrength } from "./max-strength";
 import { heuristicPriorDetailed, type PriorTerm } from "./prior";
 import { compareLines, moveQuality, rankedLines } from "./quality";
 import { avoidRepetition } from "./repetition";
-import { maiaSelfElo, pressureTerms, sliderEloOffset } from "./selection-elo";
+import {
+	maiaCalibrationPoint,
+	maiaEloTimeClass,
+	maiaSelfElo,
+	pressureTerms,
+	sliderEloOffset,
+} from "./selection-elo";
 import { usesNativeSelection } from "./selection-mode";
 import { simplificationFactors } from "./simplification";
 import type { SelectionContext, SelectionState } from "./types";
@@ -424,6 +431,7 @@ export function selectMove(
 	// before the mate guard, so the mate ramp judges at it too.
 	const maiaMode = ctx.maia !== undefined && usesMaia(ctx.targetElo);
 	let maiaE: number | undefined;
+	let maiaPolicy: PolicyResult | undefined;
 	let entropy = 0;
 	if (ctx.maia !== undefined && maiaMode) {
 		entropy = policyEntropy(ctx.maia.moves);
@@ -434,6 +442,9 @@ export function selectMove(
 			blunderScale: ctx.blunderScale,
 			pressureReduction,
 			contextEloPenalty: ctx.contextEloPenalty,
+			baseMs: ctx.baseMs,
+			incrementMs: ctx.incrementMs,
+			calibration: ctx.maiaCalibration,
 		};
 		// H12: an adverse swing since our last move tilts the player with a rating-dependent
 		// probability; judged at the pre-tilt rating so the trigger does not feed itself.
@@ -452,6 +463,14 @@ export function selectMove(
 		}
 		const tiltElo = state.tiltMovesLeft > 0 ? MAIA.tilt.elo : 0;
 		maiaE = maiaSelfElo({ ...eloInput, ambiguityEloPenalty: ambiguityEloPenalty + tiltElo });
+		// The calibrated temperature reshapes the whole answer once, so the rails, verification
+		// and the draw all see the distribution the calibration was fitted with. Entropy (above)
+		// stays the model's own: it measures the position, not the sampling.
+		const calibration = maiaCalibrationPoint(eloInput);
+		maiaPolicy = temperPolicy(ctx.maia, calibration.temperature);
+		rationale.push(
+			`maia calibration: ${maiaEloTimeClass(eloInput)} conditioning ${fmt(calibration.conditioningElo, 0)} temperature ${fmt(calibration.temperature, 3)}`
+		);
 		const slider = sliderEloOffset(ctx.blunderScale);
 		rationale.push(
 			`maia E=${fmt(maiaE, 1)} (pressure −${fmt(pressureReduction, 0)}, slider ${slider > 0 ? "−" : "+"}${fmt(Math.abs(slider), 0)}, context −${fmt(ctx.contextEloPenalty ?? 0, 0)}, ambiguity −${fmt(ambiguityEloPenalty, 0)} [entropy ${fmt(entropy, 2)}]${tiltElo > 0 ? `, tilt −${tiltElo} (${state.tiltMovesLeft} left)` : ""})`
@@ -515,7 +534,7 @@ export function selectMove(
 		return finishPick(toCandidate(best), "engine-elo");
 	}
 	// Maia's mass on what the search scored, before the repetition/conversion guards (§7 D2).
-	const maiaProb = ctx.maia === undefined ? undefined : policyProbabilities(ctx.maia);
+	const maiaProb = maiaPolicy === undefined ? undefined : policyProbabilities(maiaPolicy);
 	let scoredMassBefore = 0;
 	if (maiaProb !== undefined) {
 		const seen = new Set<string>();
@@ -553,7 +572,7 @@ export function selectMove(
 	// population's error rate is in the distribution — so the `b` that would have applied is logged
 	// and nothing else of step 6 runs. `null` (nothing scored with enough mass, or the rails emptied
 	// the set) falls through to the ordinary policy.
-	if (ctx.maia !== undefined && maiaProb !== undefined && maiaE !== undefined) {
+	if (maiaPolicy !== undefined && maiaProb !== undefined && maiaE !== undefined) {
 		const cands = ranked.map((r) => toCandidate(r));
 		const extra = new Set(ctx.maiaExtra ?? []);
 		const getsMated = matedLineFilter(cands, maiaE, rng, rationale);
@@ -610,7 +629,7 @@ export function selectMove(
 					searchedCp(c.line) === bestSearchedCp ? 0 : Math.max(0, bestSearchedCp - searchedCp(c.line)),
 				extra: extra.has(c.uci),
 			})),
-			ctx.maia,
+			maiaPolicy,
 			maiaE,
 			rationale,
 			{ scoredMassBefore }
@@ -705,7 +724,7 @@ export function selectMove(
 					);
 					draw = maiaDrawRecord(
 						set,
-						ctx.maia,
+						maiaPolicy,
 						maiaE,
 						gv.uci,
 						{ klFromMaia: gvKl(q, set.prob), tieBand: 0, practicalBand: 0 },
@@ -717,7 +736,7 @@ export function selectMove(
 				rationale.push("generate-verify: no human-depth frame for this search, plain draw");
 			}
 			if (draw === null)
-				draw = drawMaiaFromSurvivors(set, ctx.maia, maiaE, rng, rationale, {
+				draw = drawMaiaFromSurvivors(set, maiaPolicy, maiaE, rng, rationale, {
 					tieBreak,
 					simplification,
 					...(practical === undefined ? {} : { practical }),
