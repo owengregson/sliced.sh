@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { flagText, flagValue, flagValues, hasFlag, parseFlags } from "./cli";
+import { flagOr, flagText, flagValue, flagValues, hasFlag, parseFlags } from "./cli";
 
 describe("lookup flags", () => {
 	const argv = ["bun", "tool.ts", "--frames", "a.jsonl", "--set", "x=1", "--frames", "b", "--print"];
@@ -8,6 +8,13 @@ describe("lookup flags", () => {
 		expect(flagValue(argv, "frames")).toBe("a.jsonl");
 		expect(flagValue(argv, "print", "fallback")).toBeUndefined();
 		expect(flagValue(argv, "tc", "180")).toBe("180");
+	});
+
+	it("reads a trailing or absent flag as the fallback with flagOr", () => {
+		expect(flagOr(argv, "frames", "x")).toBe("a.jsonl");
+		expect(flagOr(argv, "print", "fallback")).toBe("fallback");
+		expect(flagOr(argv, "tc", "180")).toBe("180");
+		expect(flagOr(["--out", "--in"], "out", "f")).toBe("--in");
 	});
 
 	it("collects every occurrence that has a value, in order", () => {

@@ -1,6 +1,7 @@
 /**
- * tools/calibration/common.ts — shared shapes and constants for the chess.com calibration corpus
- * (`crawl-chesscom.ts` → `build-corpus.ts`). Nothing here runs in the extension.
+ * tools/calibration/common.ts — shared shapes, paths and constants for the chess.com calibration
+ * corpus (`crawl-chesscom.ts` → `build-corpus.ts`) and the harness's data directory. Nothing here
+ * runs in the extension.
  */
 
 import path from "node:path";
@@ -26,6 +27,9 @@ export const PATHS = {
 	corpus: path.join(DATA_DIR, "corpus.jsonl"),
 	corpusSummary: path.join(DATA_DIR, "corpus-summary.json"),
 } as const;
+
+/** `verify.ts` results, one directory per label; `crossfit.ts` reads their summaries. */
+export const VERIFY_DIR = path.join(DATA_DIR, "verify");
 
 export interface GameSide {
 	username: string;

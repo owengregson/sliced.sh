@@ -241,15 +241,17 @@ named steps (`build/steps.ts`), `verify-dist` a registry of independent checks
 / notice stages with pure notice-section renderers. The Python book builders share
 `pgn_games.py` and `polyglot_book.py`. `tools/lib/` holds the research tooling's shared pieces —
 the Stockfish referee and UCI plumbing (`engine/`), the Maia runner, PGN export/split/think-time
-readers (`pgn/`), CLI parsing and statistics — and each tool under `tools/*/` is a thin CLI over
-its own folder of parts; `tools/data/datalib/` is the Python equivalent for the numbered data
-scripts. The think-time tooling follows it too: `timing-crawl/crawl.ts` is a CLI over `crawl/`
-(HTTP cache, store, frontier, visit, loop, report) with its pure rules in `policy/`;
-`timing-calibration/` has one parts folder per entry (`sim/`, `fit/`, `verify/`, `common/`,
-`stats/`, `build-corpus/`, `heads/`, and `timing_corpus/` for the Python corpus builder, see its
-README); `timing-finetune/` keeps its encoder mirror (`cmenc.py`) and network (`model.py`) and
-puts the scripts' shared parts in `ftlib/`. JSONL streaming is `tools/lib/jsonl.ts`, and the
-fit/holdout `split_for` shared by the Python scripts is `tools/data/datalib/splits.py`.
+readers (`pgn/`), CLI parsing, JSONL reading and writing (`jsonl.ts`), the seeded generators
+(`random.ts`) and statistics — and each tool under `tools/*/` is a thin CLI over its own folder of
+parts; `tools/data/datalib/` is the Python equivalent for the numbered data scripts. The Maia
+strength calibration (`tools/calibration/`, whose README maps each entry to its parts) and the
+think-time tooling both follow it: `timing-crawl/crawl.ts` is a CLI over `crawl/` (HTTP cache,
+store, frontier, visit, loop, report) with its pure rules in `policy/`; `timing-calibration/` has
+one parts folder per entry (`sim/`, `fit/`, `verify/`, `common/`, `stats/`, `build-corpus/`,
+`heads/`, and `timing_corpus/` for the Python corpus builder, see its README); `timing-finetune/`
+keeps its encoder mirror (`cmenc.py`) and network (`model.py`) and puts the scripts' shared parts
+in `ftlib/`. The fit/holdout `split_for` shared by the Python scripts is
+`tools/data/datalib/splits.py`.
 
 ---
 

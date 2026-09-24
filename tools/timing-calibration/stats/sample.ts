@@ -3,6 +3,8 @@
  * game-sides and the FNV-1a hash every selection orders by.
  */
 
+import { hash32 } from "../../lib/random";
+
 /**
  * Deterministic per-player cap: at most `cap` game-sides per (player, time class), chosen by a
  * hash of the game id so the same sides are kept on every run.
@@ -29,12 +31,5 @@ export function capSides<T extends { player: string; tc: string; gameId: string 
 	return rows.filter((r) => keep.has(`${r.player}\t${r.tc}\t${r.gameId}`));
 }
 
-/** FNV-1a. */
-export function hash32(s: string): number {
-	let h = 0x811c9dc5;
-	for (let i = 0; i < s.length; i++) {
-		h ^= s.charCodeAt(i);
-		h = Math.imul(h, 0x01000193) >>> 0;
-	}
-	return h;
-}
+/** FNV-1a (`tools/lib/random.ts`). */
+export { hash32 };

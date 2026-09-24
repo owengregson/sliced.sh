@@ -4,9 +4,10 @@
  * Two shapes exist, and each tool keeps the one it was written with (their edge cases differ, and a
  * command line that worked before must mean the same thing now):
  *
- *   - **lookup** (`flagValue` / `flagValues` / `hasFlag`): flags are looked up by name anywhere in
- *     `argv`; the token after a flag is its value, whatever it looks like; unknown flags are
- *     ignored. `flagValue` reads the **first** occurrence, `flagValues` every one.
+ *   - **lookup** (`flagValue` / `flagOr` / `flagValues` / `hasFlag`): flags are looked up by name
+ *     anywhere in `argv`; the token after a flag is its value, whatever it looks like; unknown
+ *     flags are ignored. `flagValue` and `flagOr` read the **first** occurrence, `flagValues` every
+ *     one.
  *   - **strict** (`parseFlags`): `argv` is walked left to right against a declared table; an
  *     undeclared token throws `unknown argument <token>`; a value flag always consumes the next
  *     token; a repeated flag keeps its **last** value. A value flag at the end of `argv` either
@@ -24,6 +25,14 @@ export function flagValue(
 ): string | undefined {
 	const at = argv.indexOf(`--${name}`);
 	return at >= 0 ? argv[at + 1] : fallback;
+}
+
+/**
+ * The token after the first `--<name>`, or `fallback` when the flag is absent **or** has nothing
+ * after it (unlike `flagValue`, a trailing flag reads as the fallback).
+ */
+export function flagOr(argv: readonly string[], name: string, fallback: string): string {
+	return flagValue(argv, name) ?? fallback;
 }
 
 /** The token after every `--<name>` that has one, in order. */

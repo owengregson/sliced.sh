@@ -1,10 +1,12 @@
 /**
- * tools/lib/jsonl.ts — JSON Lines in and out, for the corpora and caches the research tools stream:
- * an async line reader over a `Bun.file` stream, a synchronous chunked reader for files that can
- * be gigabytes (and may end in a torn line), and a buffered writer.
+ * tools/lib/jsonl.ts — JSON Lines in and out, for the corpora and caches the research tools stream
+ * (files can be gigabytes): an async record reader and an async raw-line reader over a `Bun.file`
+ * stream, a synchronous chunked reader (for files that may end in a torn line), a whole-file reader
+ * for small inputs, a buffered writer, and the leading-id peek the calibration joins use to skip a
+ * record without parsing it.
  */
 
-import { closeSync, existsSync, openSync, readSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, readSync } from "node:fs";
 
 /**
  * Read a JSONL file line by line without holding the text twice. Blank lines are skipped; with
@@ -81,4 +83,42 @@ export class JsonlWriter {
 	async close(): Promise<void> {
 		await this.sink.end();
 	}
+}
+
+/** Line-by-line over a (possibly large) JSONL file without holding it as one string. */
+export async function* jsonlLines(file: string): AsyncGenerator<string> {
+	const decoder = new TextDecoder();
+	const reader = Bun.file(file).stream().getReader();
+	let rest = "";
+	for (;;) {
+		const { done, value } = await reader.read();
+		rest += done ? decoder.decode() : decoder.decode(value, { stream: true });
+		let start = 0;
+		let nl = rest.indexOf("\n", start);
+		while (nl >= 0) {
+			const line = rest.slice(start, nl).trim();
+			if (line) yield line;
+			start = nl + 1;
+			nl = rest.indexOf("\n", start);
+		}
+		rest = rest.slice(start);
+		if (done) break;
+	}
+	if (rest.trim()) yield rest.trim();
+}
+
+/** Every record of a small JSONL file (blank lines skipped); throws `missing <file>` when absent. */
+export function readJsonlArray<T>(file: string): T[] {
+	if (!existsSync(file)) throw new Error(`missing ${file}`);
+	const out: T[] = [];
+	for (const line of readFileSync(file, "utf8").split("\n")) {
+		if (line.trim()) out.push(JSON.parse(line) as T);
+	}
+	return out;
+}
+
+/** The `id` of a record that **starts** with `{"id":"…"`, without parsing the line; else null. */
+export function headId(line: string): string | null {
+	const m = /^\{"id":("(?:[^"\\]|\\.)*")/.exec(line);
+	return m?.[1] ? (JSON.parse(m[1]) as string) : null;
 }

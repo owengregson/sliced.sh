@@ -14,8 +14,10 @@
 import "../lib/defines";
 import path from "node:path";
 import { MAIA } from "@core/constants/maia";
+import { flagOr } from "../lib/cli";
+import { jsonlLines } from "../lib/jsonl";
 import { DATA_DIR } from "./common";
-import { type CalibrationRow, jsonlLines } from "./frames";
+import type { CalibrationRow } from "./frames";
 
 export interface GridSpec {
 	step: number;
@@ -48,19 +50,14 @@ export function gridFor(R: number, spec: GridSpec = DEFAULT_GRID, tc?: string): 
 	return out;
 }
 
-function arg(argv: string[], name: string, fallback: string): string {
-	const i = argv.indexOf(name);
-	return i >= 0 && argv[i + 1] !== undefined ? (argv[i + 1] as string) : fallback;
-}
-
 async function main(): Promise<void> {
 	const argv = process.argv.slice(2);
-	const corpus = arg(argv, "--corpus", path.join(DATA_DIR, "corpus.jsonl"));
-	const out = arg(argv, "--out", path.join(DATA_DIR, "requests.jsonl"));
+	const corpus = flagOr(argv, "corpus", path.join(DATA_DIR, "corpus.jsonl"));
+	const out = flagOr(argv, "out", path.join(DATA_DIR, "requests.jsonl"));
 	const spec: GridSpec = {
-		step: Number(arg(argv, "--step", String(DEFAULT_GRID.step))),
-		below: Number(arg(argv, "--below", String(DEFAULT_GRID.below))),
-		above: Number(arg(argv, "--above", String(DEFAULT_GRID.above))),
+		step: Number(flagOr(argv, "step", String(DEFAULT_GRID.step))),
+		below: Number(flagOr(argv, "below", String(DEFAULT_GRID.below))),
+		above: Number(flagOr(argv, "above", String(DEFAULT_GRID.above))),
 	};
 	const writer = Bun.file(out).writer();
 	let rows = 0;
