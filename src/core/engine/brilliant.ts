@@ -64,6 +64,8 @@ export interface BrilliantPlan extends BrilliantPlanInput {
 export interface BrilliantAlternative {
 	uci: string;
 	points: number;
+	/** The same, at the mover's rating (`BRILLIANT.gratuitousRatedWinning`). */
+	ratedPoints?: number | undefined;
 	mate?: number | undefined;
 }
 
@@ -509,19 +511,16 @@ export function evaluateBrilliant(
 	// alternative answers gate 4: a move that sacrifices as well is the same idea with another
 	// piece (`sacrificialAlternativeNotTrivial`). `bestAlternative` above keeps every alternative —
 	// the continuation test below asks a different question.
-	const plainBest =
+	const plain =
 		tuning.sacrificialAlternativeNotTrivial > 0
-			? Math.max(
-					0,
-					...evidence.alternatives
-						.filter((alt) => {
-							const scan = scanOffers(plan.fen, alt.uci, tuning);
-							// An unproved exchange must not erase evidence of an already available win.
-							return !scan.complete || scan.offers.length === 0;
-						})
-						.map((alt) => alt.points)
-				)
-			: bestAlternative;
+			? evidence.alternatives.filter((alt) => {
+					const scan = scanOffers(plan.fen, alt.uci, tuning);
+					// An unproved exchange must not erase evidence of an already available win.
+					return !scan.complete || scan.offers.length === 0;
+				})
+			: evidence.alternatives;
+	const plainBest = Math.max(0, ...plain.map((alt) => alt.points));
+	const ratedPlainBest = Math.max(0, ...plain.map((alt) => alt.ratedPoints ?? 0));
 	// A quiet mating threat in an already won position need not be a sacrifice. Require a
 	// winning non-sacrificing alternative AND prove that every already-attacked piece is
 	// tactically untakeable. New/indirect offers, checks, and genuine moved-piece sacrifices
@@ -555,9 +554,17 @@ export function evaluateBrilliant(
 	const fastestMate = playedMate > 0 && alternativeMates.every((mate) => mate >= playedMate);
 	const fasterMate = playedMate > 0 && alternativeMates.every((mate) => mate > playedMate);
 	// Already winning, and the sacrifice gains nothing on the plain move: a gratuitous one.
+	// The rated test reads "already won" at the mover's rating — +7 is ≈ 0.93 on the reference
+	// curve but ≈ 0.98 at 2655 (the owner's 32…Nxb2, 2026-09-23, 184267516150) — and the gain on
+	// the reference curve, where it is not compressed. A sacrifice worse than the plain move is
+	// the near-best gate's question, not a victory lap (the benchmark's 21.Bf6, 2323).
+	const gain = evidence.playedPoints - plainBest;
 	const gratuitous =
-		plainBest >= tuning.gratuitousWinning &&
-		evidence.playedPoints - plainBest < tuning.gratuitousGain &&
+		((plainBest >= tuning.gratuitousWinning && gain < tuning.gratuitousGain) ||
+			(tuning.gratuitousRatedWinning > 0 &&
+				ratedPlainBest >= tuning.gratuitousRatedWinning &&
+				gain >= 0 &&
+				gain < tuning.gratuitousGain)) &&
 		Math.max(0, ...plan.offers.map((offer) => offer.concession)) <= tuning.gratuitousMaxConcession;
 	if (
 		(plainBest >= tuning.trivialAlternative || gratuitous) &&

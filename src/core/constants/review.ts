@@ -226,6 +226,13 @@ export const BRILLIANT = {
 	 */
 	gratuitousMaxConcession: 2,
 	/**
+	 * The gratuitous test again at the mover's rating: a plain move already at this many rated
+	 * expected points, and the sacrifice gaining less than `gratuitousGain` on it. The owner's
+	 * 32…Nxb2 (2026-09-23, 184267516150, 2655): the plain Nc5 kept +7.00 (0.93 on the reference
+	 * curve, 0.98 at 2655) and the knight for a pawn gained +0.39. 0 turns it off.
+	 */
+	gratuitousRatedWinning: 0.97,
+	/**
 	 * 1 = the near-best gate reads the loss at the mover's rating (our local expected-points model)
 	 * rather than on the reference curve. Deep in a won position the reference curve inflates a
 	 * strong player's loss: 18…Bg4 (brilliant, 2132) is 0.098 behind on it but 0.068 at 2132.

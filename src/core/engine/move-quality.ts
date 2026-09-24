@@ -229,9 +229,18 @@ export function classifyMoveQuality(
 		.filter((line) => line.pvUci[0] !== input.uci)
 		.flatMap((line) => {
 			const points = expectedPoints(line.score);
+			const ratedPoints = expectedPoints(line.score, rating) ?? undefined;
 			return points === null
 				? []
-				: [{ uci: line.pvUci[0] ?? "", points, mate: line.score.mate, depth: line.depth }];
+				: [
+						{
+							uci: line.pvUci[0] ?? "",
+							points,
+							ratedPoints,
+							mate: line.score.mate,
+							depth: line.depth,
+						},
+					];
 		});
 	const specialEvidence =
 		Math.min(best.depth, playedDepth) >= REVIEW.specialDepth &&

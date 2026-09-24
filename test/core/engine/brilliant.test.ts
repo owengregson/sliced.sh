@@ -437,6 +437,37 @@ describe("classifyBrilliant — the gates", () => {
 		).toBe("trivial-win");
 	});
 
+	it("4 — a small gift is gratuitous once the plain move already wins at the mover's rating", () => {
+		// The owner's 32...Nxb2 (2026-09-23, 184267516150, 2655): the plain Nc5 kept +7.00 (0.929 on
+		// the reference curve, 0.979 at 2655); the knight for a pawn gained +0.39.
+		const nxb2 = {
+			fen: "2r3k1/6p1/p3p2p/4B3/npp5/8/1P3PPP/3R2K1 b - - 1 32",
+			uci: "a4b2",
+			...evidence({
+				playedPoints: 0.938,
+				ratedPlayedPoints: 0.983,
+				alternatives: [
+					{ uci: "a4c5", points: 0.929, ratedPoints: 0.979 },
+					{ uci: "a6a5", points: 0.925, ratedPoints: 0.977 },
+				],
+				moverRating: 2655,
+			}),
+		};
+		expect(classifyBrilliant(nxb2).reason).toBe("trivial-win");
+		expect(classifyBrilliant(nxb2, { ...BRILLIANT, gratuitousRatedWinning: 0 }).brilliant).toBe(true);
+		// A sacrifice worse than the plain move is not a victory lap (the benchmark's 21.Bf6, 2323).
+		const worse = {
+			...nxb2,
+			...evidence({
+				playedPoints: 0.9,
+				ratedPlayedPoints: 0.96,
+				alternatives: [{ uci: "a4c5", points: 0.929, ratedPoints: 0.979 }],
+				moverRating: 2655,
+			}),
+		};
+		expect(classifyBrilliant(worse).reason).not.toBe("trivial-win");
+	});
+
 	it("4 — a victory lap needs a plain alternative, not the same sacrifice again", () => {
 		// The owner's 30.Rdxh5+ (2026-09-16, chess.com Brilliant, rated only `best`): both rooks take
 		// the h5 knight, so the runner-up Rhxh5+ is the identical sacrifice at 0.980 expected points.
