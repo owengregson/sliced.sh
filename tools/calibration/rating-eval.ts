@@ -2,8 +2,9 @@
  * tools/calibration/rating-eval.ts — train the intrinsic rating model and measure its accuracy.
  *
  *   bun tools/calibration/rating-eval.ts --extract   # cells → data/calibration/moves.jsonl
- *   bun tools/calibration/rating-eval.ts --train     # fit split → data/calibration/rating-model.json
- *                                                    # + accuracy on held-out humans → rating-eval.md
+ *   bun tools/calibration/rating-eval.ts --train [--train-split fit|holdout|all] [--model-out F]
+ *       # the split's humans → F (default data/calibration/rating-model.json), and its accuracy on
+ *       # the other split's humans → F with `-eval.md` (in-sample when trained on all)
  *
  * Accuracy is measured on the holdout players only, two ways:
  *   - **cell recovery**: each time class × bucket's pooled estimate from its humans' moves against
@@ -30,7 +31,7 @@ import {
 	trainModel,
 } from "./rating-model";
 import { CELLS_DIR } from "./shard";
-import { type CellItem, judgeFor, type PositionShape } from "./sim";
+import { type CellItem, judgeFor, type PositionShape, positionFacts } from "./sim";
 
 export const MOVES_FILE = path.join(DATA_DIR, "moves.jsonl");
 export const MODEL_FILE = path.join(DATA_DIR, "rating-model.json");
@@ -58,6 +59,7 @@ async function extract(): Promise<void> {
 		for await (const line of jsonlLines(path.join(CELLS_DIR, f))) {
 			const it = JSON.parse(line) as CellItem;
 			const judge = judgeFor(it.frame);
+			Object.assign(judge.shape, positionFacts(it.row.fen));
 			const human = judge.outcome(it.row.humanMove);
 			if (human === null) continue;
 			const row = it.row;
@@ -139,7 +141,7 @@ function logP(model: RatingModel, mv: ModelMove, r: number): number {
 	return Math.log(Math.max(1e-12, S(mv.y) - S(mv.y + 1)));
 }
 
-async function trainAndEvaluate(): Promise<void> {
+async function trainAndEvaluate(trainSplit: string, modelOut: string): Promise<void> {
 	const all: HumanMove[] = [];
 	for await (const line of jsonlLines(MOVES_FILE)) all.push(JSON.parse(line) as HumanMove);
 	const models: ModelSet = {};
@@ -150,8 +152,9 @@ async function trainAndEvaluate(): Promise<void> {
 		"",
 	];
 	for (const tc of MAIA_CALIBRATION_TIME_CLASSES) {
-		const fit = all.filter((m) => m.tc === tc && m.split === "fit");
-		const hold = all.filter((m) => m.tc === tc && m.split === "holdout");
+		const fit = all.filter((m) => m.tc === tc && (trainSplit === "all" || m.split === trainSplit));
+		// Evaluated on the players it was not trained on (in-sample when trained on all).
+		const hold = all.filter((m) => m.tc === tc && (trainSplit === "all" || m.split !== trainSplit));
 		const started = performance.now();
 		const model = trainModel(fit.map((m) => ({ ...toModelMove(m), rating: m.rating })));
 		models[tc] = model;
@@ -219,15 +222,20 @@ async function trainAndEvaluate(): Promise<void> {
 			""
 		);
 	}
-	await Bun.write(MODEL_FILE, `${JSON.stringify(models, null, 1)}\n`);
-	await Bun.write(path.join(DATA_DIR, "rating-eval.md"), out.join("\n"));
+	await Bun.write(modelOut, `${JSON.stringify(models, null, 1)}\n`);
+	await Bun.write(modelOut.replace(/\.json$/, "-eval.md"), out.join("\n"));
 	console.log(out.join("\n"));
 }
 
 async function main(): Promise<void> {
 	const argv = process.argv.slice(2);
 	if (argv.includes("--extract")) await extract();
-	if (argv.includes("--train")) await trainAndEvaluate();
+	const opt = (name: string, fallback: string): string => {
+		const i = argv.indexOf(name);
+		return i >= 0 && argv[i + 1] !== undefined ? (argv[i + 1] as string) : fallback;
+	};
+	if (argv.includes("--train"))
+		await trainAndEvaluate(opt("--train-split", "fit"), opt("--model-out", MODEL_FILE));
 }
 
 if (import.meta.main) await main();

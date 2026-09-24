@@ -40,6 +40,9 @@ import { CLOCK_BINS, METRICS, type Metric, type Profile, profiles, zScore } from
 const VERIFY_DIR = path.join(DATA_DIR, "verify");
 
 interface Args {
+	/** The players verified on (never the ones the table and the rating model were fitted on). */
+	split: "fit" | "holdout";
+	model: string;
 	table: string;
 	label: string;
 	chains: number;
@@ -63,6 +66,8 @@ function parseArgs(argv: string[]): Args {
 		worker: false,
 		seed: "verify",
 		reportOnly: false,
+		split: "holdout",
+		model: MODEL_FILE,
 	};
 	for (let i = 0; i < argv.length; i++) {
 		const v = argv[i + 1] ?? "";
@@ -102,6 +107,14 @@ function parseArgs(argv: string[]): Args {
 			case "--worker":
 				args.worker = true;
 				break;
+			case "--split":
+				args.split = v as Args["split"];
+				i++;
+				break;
+			case "--model":
+				args.model = v;
+				i++;
+				break;
 			case "--report":
 				args.reportOnly = true;
 				break;
@@ -140,7 +153,7 @@ async function runWorker(args: Args): Promise<void> {
 	const started = performance.now();
 	const table = await tableFor(args.table);
 	const all = await loadCell(cellFile(args.cells, tc, bucket));
-	const holdout = all.filter((i) => i.row.split === "holdout");
+	const holdout = all.filter((i) => i.row.split === args.split);
 	const games = groupGames(holdout);
 	const rows = simulate(games, { targetElo: bucket, table, chains: args.chains, seed: args.seed });
 	const overall = profiles(rows);
@@ -148,9 +161,9 @@ async function runWorker(args: Args): Promise<void> {
 		bin,
 		...profiles(rows, (r) => r.clockFrac >= lo && r.clockFrac < hi),
 	}));
-	const models = (await Bun.file(MODEL_FILE).json()) as ModelSet;
+	const models = (await Bun.file(args.model).json()) as ModelSet;
 	const model = models[tc];
-	if (!model) throw new Error(`${MODEL_FILE} has no ${tc} model: run rating-eval.ts --train`);
+	if (!model) throw new Error(`${args.model} has no ${tc} model: run rating-eval.ts --train`);
 	const rating = cellRating(rows, model);
 	let selfSum = 0;
 	let selfN = 0;
@@ -324,6 +337,10 @@ async function main(): Promise<void> {
 						args.cells,
 						"--seed",
 						args.seed,
+						"--split",
+						args.split,
+						"--model",
+						args.model,
 					],
 					{ stdout: "inherit", stderr: "inherit" }
 				);

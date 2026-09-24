@@ -21,7 +21,9 @@
  */
 
 import "../lib/defines";
+import { material } from "@core/chess/material";
 import { phase as phaseOf } from "@core/chess/phase";
+import { legalMoves } from "@core/chess/san";
 import type { MaiaCalibrationTable } from "@core/constants/maia-calibration";
 import { humanDepth } from "@core/engine/depth-policy";
 import type { PolicyResult } from "@core/policy/types";
@@ -132,6 +134,16 @@ export interface PositionShape {
 	secondLoss: number;
 	/** `|2·winProb(best) − 1|`: 0 in a balanced position, → 1 in a decided one. */
 	decided: number;
+	/** Material on the board (both sides, pawn units) over the starting 78 — the game phase. */
+	material?: number;
+	/** Legal moves in the position (how much choice the mover has). */
+	legal?: number;
+}
+
+/** The position's own facts for `PositionShape` (from the FEN; the frame supplies the rest). */
+export function positionFacts(fen: string): { material: number; legal: number } {
+	const m = material(fen);
+	return { material: m ? (m.w + m.b) / 78 : 1, legal: legalMoves(fen).length };
 }
 
 export const NEAR_BEST_LOSS = 0.02;
@@ -228,6 +240,7 @@ export function groupGames(items: readonly CellItem[]): Game[] {
 			player: list[0]?.row.player ?? key,
 			items: list.map((item) => {
 				const judge = judgeFor(item.frame);
+				Object.assign(judge.shape, positionFacts(item.row.fen));
 				const entry = {
 					item,
 					judge,

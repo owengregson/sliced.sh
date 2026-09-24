@@ -5,7 +5,8 @@
  * position is — the Regan "intrinsic performance rating" idea, fitted to chess.com players:
  *
  *   class y ∈ 0…11: the referee's best move; else the loss between successive `EDGES`
- *   x = [log(1 + near-best moves), second-best loss, decidedness, clock pressure]   (`PositionShape`)
+ *   x = [log(1 + near-best moves), second-best loss, decidedness, clock pressure, material on the
+ *        board, log legal moves]                                                   (`PositionShape`)
  *   r = (rating − 1800) / 1000
  *   η = w·x + r·(β + v·x)                (error propensity; rating interacts with difficulty)
  *   P(y ≥ k) = σ(η − θ_k), θ_1 < … < θ_11
@@ -31,7 +32,7 @@ export const CLASSES = EDGES.length + 2;
 const THRESHOLDS = CLASSES - 1;
 const R_CENTRE = 1800;
 const R_SCALE = 1000;
-const FEATURES = 4;
+const FEATURES = 6;
 
 export function moveClass(o: MoveOutcome): number {
 	if (o.top1 === 1) return 0;
@@ -45,6 +46,8 @@ export function covariates(shape: PositionShape, clockFrac: number): number[] {
 		Math.min(0.5, shape.secondLoss),
 		shape.decided,
 		1 - Math.max(0, Math.min(1, clockFrac)),
+		shape.material ?? 1,
+		Math.log(Math.max(1, shape.legal ?? 30)) / Math.log(30),
 	];
 }
 

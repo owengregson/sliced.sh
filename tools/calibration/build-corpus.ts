@@ -239,6 +239,14 @@ function readJsonl<T>(file: string): T[] {
 	return out;
 }
 
+/** A contiguous run of `n` rows starting at a position fixed by `key` (all rows when fewer). */
+export function windowOf<T>(rows: readonly T[], n: number, key: string): T[] {
+	if (rows.length <= n) return [...rows];
+	const digest = createHash("sha1").update(`window:${key}`).digest();
+	const start = digest.readUInt32BE(0) % (rows.length - n + 1);
+	return rows.slice(start, start + n);
+}
+
 interface SummaryCell {
 	tc: TimeClass;
 	bucket: number;
@@ -257,6 +265,14 @@ function main(): void {
 	const samplesFile = opt("--samples", PATHS.samples);
 	const outFile = opt("--out", PATHS.corpus);
 	const summaryFile = opt("--summary", PATHS.corpusSummary);
+	// Samples listed in `--full` keep every own move; the rest keep a contiguous window of
+	// `--window` own moves (0 = all), so more games fit the same engine budget — between-game
+	// variation dominates the calibration's uncertainty, so games are worth more than moves.
+	const window = Number(opt("--window", "0"));
+	const fullFile = opt("--full", "");
+	const full = new Set(
+		fullFile ? readJsonl<Sample>(fullFile).map((s) => `${s.uuid}:${s.side}`) : []
+	);
 
 	const games = new Map<string, StoredGame>();
 	for (const g of readJsonl<StoredGame>(gamesFile)) games.set(g.uuid, g);
@@ -275,7 +291,7 @@ function main(): void {
 		}
 		const self = s.side === "w" ? g.white : g.black;
 		const opp = s.side === "w" ? g.black : g.white;
-		const rows = rowsForSample(g.pgn, {
+		const allRows = rowsForSample(g.pgn, {
 			uuid: s.uuid,
 			side: s.side,
 			tc: s.tc,
@@ -285,6 +301,10 @@ function main(): void {
 			oppoElo: opp.rating,
 			timeControl: g.time_control,
 		});
+		const rows =
+			window > 0 && !full.has(`${s.uuid}:${s.side}`)
+				? windowOf(allRows, window, `${s.uuid}:${s.side}`)
+				: allRows;
 		if (rows.length === 0) {
 			unreplayable++;
 			continue;

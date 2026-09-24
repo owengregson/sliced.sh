@@ -58,7 +58,10 @@ interface Args {
 	cell?: string;
 	smooth: boolean;
 	write: boolean;
-	split: "fit" | "holdout";
+	/** The players the table is fitted on (`all` = both splits: the shipped table). */
+	split: "fit" | "holdout" | "all";
+	/** The rating model file (trained on the same players as the fit). */
+	model: string;
 	/** Coarse grid (every other value) then the full grid's neighbours of the best point. */
 	refine: boolean;
 	/** `JOINT.smooth.weight` override for `--smooth` (the weight is chosen on held-out players). */
@@ -88,6 +91,7 @@ function parseArgs(argv: string[]): Args {
 		smooth: false,
 		write: false,
 		split: "fit",
+		model: MODEL_FILE,
 		refine: true,
 		smoothWeight: JOINT.smooth.weight,
 	};
@@ -136,6 +140,14 @@ function parseArgs(argv: string[]): Args {
 			case "--smooth":
 				args.smooth = true;
 				break;
+			case "--split":
+				args.split = v as Args["split"];
+				i++;
+				break;
+			case "--model":
+				args.model = v ?? args.model;
+				i++;
+				break;
 			case "--smooth-weight":
 				args.smoothWeight = Number(v);
 				i++;
@@ -155,11 +167,14 @@ function parseArgs(argv: string[]): Args {
 
 // ── loading ──────────────────────────────────────────────────────────────────────────────────
 
-export async function loadCell(file: string, split?: "fit" | "holdout"): Promise<CellItem[]> {
+export async function loadCell(
+	file: string,
+	split?: "fit" | "holdout" | "all"
+): Promise<CellItem[]> {
 	const items: CellItem[] = [];
 	for await (const line of jsonlLines(file)) {
 		const item = JSON.parse(line) as CellItem;
-		if (split === undefined || item.row.split === split) items.push(item);
+		if (split === undefined || split === "all" || item.row.split === split) items.push(item);
 	}
 	return items;
 }
@@ -201,10 +216,10 @@ async function runWorker(args: Args): Promise<void> {
 	const started = performance.now();
 	const items = await loadCell(cellFile(args.cells, tc as string, bucket), args.split);
 	const games = groupGames(items);
-	const model = existsSync(MODEL_FILE)
-		? ((await Bun.file(MODEL_FILE).json()) as ModelSet)[tc as string]
+	const model = existsSync(args.model)
+		? ((await Bun.file(args.model).json()) as ModelSet)[tc as string]
 		: undefined;
-	if (!model) console.log(`${args.cell}: no rating model (${MODEL_FILE}); the rating term is off`);
+	if (!model) console.log(`${args.cell}: no rating model (${args.model}); the rating term is off`);
 	let human: Profile | undefined;
 	const points: SurfacePoint[] = [];
 	const seen = new Set<string>();
@@ -331,6 +346,10 @@ async function orchestrate(args: Args): Promise<void> {
 		`${args.offsets[0]}:${args.offsets[args.offsets.length - 1]}:${(args.offsets[1] ?? 0) - (args.offsets[0] ?? 0) || 100}`,
 		"--seed",
 		args.seed,
+		"--split",
+		args.split,
+		"--model",
+		args.model,
 		...(args.refine ? [] : ["--full-grid"]),
 	];
 	const started = performance.now();

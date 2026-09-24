@@ -18,14 +18,15 @@ absorbed into the conditioning rating and their shape is checked per clock quart
 | step | script | in → out (under `data/calibration/`, git-ignored) | cost |
 |---|---|---|---|
 | 1 | `crawl-chesscom.ts` | chess.com public API → `games.jsonl`, `samples.jsonl` (≥ 110 sides per time class × bucket 600…3000, ≤ 2 per player) | ≈ 600 requests, resumable (`http-cache/`) |
-| 2 | `build-corpus.ts` | → `corpus.jsonl`: every own move from ply 16 of each sampled side; `split` by player hash (≈ 60 % fit / 40 % holdout) | seconds |
+| 2 | `build-corpus.ts` | → `corpus.jsonl`: own moves from ply 16 of each sampled side (all of them, or a 20-move window with `--window`, which spreads the same cost over more players); `split` by player hash (≈ 60 % fit / 40 % holdout) | seconds |
 | 3 | `requests.ts` | → `requests.jsonl`: per row the Maia self-Elo grid `[R − 900, R + 1000]` step 100 (bullet from `R − 1300`), clamped to the conditioning range | seconds |
 | 4 | `maia-batch.ts` (+ `maia_worker.py`) | → `policies.jsonl`: the shipped Maia-3 79M, native onnxruntime (CPU + CoreML), the shipped encoder/decoder; parity with the wasm path in `maia-parity.ts` | ≈ 330 q/s → ≈ 1.7 h for 2 M queries |
 | 5 | `frames.ts` | → `frames.jsonl`: the vendored Stockfish 19 referee per row, the pipeline's recipe (MultiPV by rating, per-tc movetime, extra `searchmoves` over Maia's favourites across the grid, the human move's own line, every human-depth cycle 2…14) | ≈ 13 rows/s at 9 workers |
 | 6 | `shard.ts` | → `cells/<tc>-<bucket>.jsonl`: row + frame + grid policies joined per cell | seconds |
-| 6b | `rating-eval.ts --extract --train` | → `moves.jsonl`, `rating-model.json` (the intrinsic rating model, fit split), `rating-eval.md` (its accuracy on held-out humans) | seconds |
-| 7 | `fit.ts` | → `fit/cells/*.json` (objective surfaces), `fit/picks.json`; `--write` updates the shipped table | ≈ 10 min at 9 workers |
-| 8 | `verify.ts` | → `verify/<label>/report.md`, `summary.json` — holdout only | ≈ 5 min |
+| 6b | `rating-eval.ts --extract`, `--train [--train-split fit\|holdout\|all] [--model-out F]` | → `moves.jsonl`; the intrinsic rating model trained on one split, and `F-eval.md`, its accuracy on the other split's humans | ≈ 1 min |
+| 7 | `fit.ts [--split fit\|holdout\|all] [--model F] [--out DIR]` | → `DIR/cells/*.json` (objective surfaces), `picks.json`, `table-smooth12.json`; `--write` updates the shipped table | ≈ 1.5 h per split at 4 workers on the v2 corpus |
+| 8 | `verify.ts [--split S] [--model F]` | → `verify/<label>/report.md`, `summary.json` — the named split only (holdout by default) | ≈ 15–30 min |
+| 9 | `crossfit.ts --a LABEL --b LABEL` | → `verify/crossfit-A-B.md`: the two directions pooled, every player once | seconds |
 
 `frames.ts --require-policies` searches only rows whose policies exist, so step 5 can run
 alongside step 4 (re-run it until the Maia run ends; it is resumable).
@@ -36,12 +37,20 @@ bun tools/calibration/requests.ts
 bun tools/calibration/maia-batch.ts --in data/calibration/requests.jsonl --out data/calibration/policies.jsonl
 bun tools/calibration/frames.ts [--require-policies]
 bun tools/calibration/shard.ts
-bun tools/calibration/rating-eval.ts --extract --train
-bun tools/calibration/fit.ts                      # all cells, then the smoothing table
-bun tools/calibration/fit.ts --offsets -1000:1000:100 --only bullet:600,…,bullet:3000   # as shipped
-bun tools/calibration/fit.ts --smooth --write     # re-smooth from saved surfaces and write the table
-bun tools/calibration/verify.ts --table identity  # the behaviour before calibration
-bun tools/calibration/verify.ts                   # the shipped table
+bun tools/calibration/rating-eval.ts --extract
+bun tools/calibration/rating-eval.ts --train --train-split fit --model-out data/calibration/rating-model-fit.json
+bun tools/calibration/rating-eval.ts --train --train-split holdout --model-out data/calibration/rating-model-holdout.json
+bun tools/calibration/rating-eval.ts --train --train-split all --model-out data/calibration/rating-model.json
+tools/calibration/run-crossfit.sh   # the sequence below, per direction, then the final fit
+#   fit.ts --split fit --model …-fit.json --out data/calibration/fit-A --offsets -1000:1000:100 --only bullet:600,…,bullet:3000
+#   fit.ts --split fit --model …-fit.json --out data/calibration/fit-A --only blitz:600,…,rapid:3000
+#   fit.ts --smooth --out data/calibration/fit-A
+#   verify.ts --table data/calibration/fit-A/table-smooth12.json --label crossA --split holdout --model …-fit.json --chains 8
+#   (direction B: swap the splits and the model, label crossB; the identity baseline: --table identity as crossA0/crossB0)
+bun tools/calibration/crossfit.ts --a crossA --b crossB      # the out-of-sample verdict
+bun tools/calibration/crossfit.ts --a crossA0 --b crossB0    # the same for the behaviour before calibration
+# the shipped table: the same fits with --split all --model data/calibration/rating-model.json --out data/calibration/fit, then
+bun tools/calibration/fit.ts --smooth --write --out data/calibration/fit
 ```
 
 Python: `tools/data/.venv` (Python 3.12) with `onnxruntime numpy onnx` for step 4.
@@ -82,12 +91,18 @@ the conditioning capped at `MAIA.conditioningEloMax` (what runs).
 
 Results and the shipped table: `docs/qa/maia-calibration-2026-09-23.md`.
 
-## Verification (holdout players only)
+## Verification (cross-fitted)
+
+Every player is verified once, by a table and a rating model that never saw them: direction A fits
+both on `fit` and verifies on `holdout`, direction B the reverse, and `crossfit.ts` pools the two
+(inverse-variance for each cell's "plays at" gap, `(z_A + z_B)/√2` for the loss metrics). This also
+removes v1's reuse of the holdout for choosing the smoothing weight. The shipped table is fitted on
+all players; the cross-fit is its out-of-sample accuracy.
 
 1. **Error profile** — bot vs humans per cell with 95 % intervals and z, and per clock quartile.
 2. **Intrinsic rating** — `rating-model.ts`, a per-move ordered-logit model of move quality given
    rating and position difficulty (12 classes; near-best moves, only-move gap, decidedness, clock
-   pressure; rating × difficulty interactions), trained on the fit split's humans and knowing
+   pressure, material, legal moves; rating × difficulty interactions), trained on one split's humans and knowing
    nothing about Maia. The bot's and the humans' moves over the same held-out positions each get a
    pooled maximum-likelihood rating; their paired gap (cluster-robust by game) added to the players'
    mean actual rating is the rating the bot plays at. It replaced a per-game ridge regression whose

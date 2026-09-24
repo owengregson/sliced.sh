@@ -12,6 +12,7 @@ import {
 	rowsForSample,
 	splitFor,
 	toUci,
+	windowOf,
 } from "./build-corpus";
 import { bucketFor, parseTimeControl, timeClassFor } from "./common";
 
@@ -151,5 +152,16 @@ describe("common", () => {
 		expect(timeClassFor(180, 0)).toBe("blitz");
 		expect(timeClassFor(300, 5)).toBe("blitz");
 		expect(timeClassFor(600, 0)).toBe("rapid");
+	});
+});
+
+describe("windowOf", () => {
+	it("keeps short games whole and cuts a deterministic contiguous window from long ones", () => {
+		const rows = Array.from({ length: 30 }, (_, i) => i);
+		expect(windowOf(rows.slice(0, 10), 20, "a")).toEqual(rows.slice(0, 10));
+		const w = windowOf(rows, 20, "game:w");
+		expect(w).toHaveLength(20);
+		for (let i = 1; i < w.length; i++) expect(w[i]).toBe((w[i - 1] ?? 0) + 1);
+		expect(windowOf(rows, 20, "game:w")).toEqual(w);
 	});
 });
