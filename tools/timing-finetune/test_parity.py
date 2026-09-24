@@ -28,8 +28,7 @@ import cmenc  # noqa: E402
 import extract  # noqa: E402
 import model as M  # noqa: E402
 
-MAIN = Path("/Users/owengregson/Documents/sliced.sh")
-UPSTREAM = MAIN / "tools" / "data" / "upstream" / "1e4_ai" / "Training" / "tokenizer.py"
+UPSTREAM = cmenc.UPSTREAM_DIR / "1e4_ai" / "Training" / "tokenizer.py"
 FIXTURE = cmenc.ROOT / "test" / "fixtures" / "chessmimic-reference.json"
 BANDS = ["0_1000", "1200_1300", "1500_1600", "1800_1900", "2000_2100", "2200_3500"]
 
@@ -128,7 +127,7 @@ def check_ts(rows: list[dict], scalers: dict) -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--games", default=str(MAIN / "data" / "calibration" / "games.jsonl"))
+    ap.add_argument("--games", default=str(cmenc.ROOT / "data" / "calibration" / "games.jsonl"))
     ap.add_argument("--n", type=int, default=3000)
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--scalers", default=None, help="scalers.json to test (default: the worktree's)")

@@ -22,12 +22,16 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
 ASSETS = ROOT / "assets" / "models" / "chessmimic"
+# The git-ignored upstream clone + checkpoint cache of `tools/data/08_export_chessmimic.py`
+# (a worktree can point at the main checkout's with CHESSMIMIC_UPSTREAM_DIR).
+UPSTREAM_DIR = Path(os.environ.get("CHESSMIMIC_UPSTREAM_DIR", ROOT / "tools" / "data" / "upstream"))
 
 RECENT_MOVES = 12
 FEN_TOKENS = 78

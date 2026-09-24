@@ -14,8 +14,7 @@ import torch.nn.functional as F
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import cmenc  # noqa: E402
 
-MAIN = Path("/Users/owengregson/Documents/sliced.sh")
-CHECKPOINTS = MAIN / "tools" / "data" / "upstream" / "checkpoints"
+CHECKPOINTS = cmenc.UPSTREAM_DIR / "checkpoints"
 D, WIDENING, LAYERS, HEADS = 256, 4, 8, 8
 N_ACTIONS = 1968
 

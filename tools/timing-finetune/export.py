@@ -39,8 +39,9 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(ROOT / "tools" / "data"))
 import model as M  # noqa: E402
 
-MAIN = Path("/Users/owengregson/Documents/sliced.sh")
-UPSTREAM = MAIN / "tools" / "data" / "upstream" / "1e4_ai"
+import cmenc  # noqa: E402
+
+UPSTREAM = cmenc.UPSTREAM_DIR / "1e4_ai"
 FIXTURE = ROOT / "test" / "fixtures" / "chessmimic-reference.json"
 ASSETS = ROOT / "assets" / "models" / "chessmimic"
 REGISTRY = ROOT / "src" / "core" / "constants" / "models.ts"

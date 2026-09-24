@@ -109,6 +109,8 @@ export interface ModelsManifest {
 			weights: string;
 			fixturePositions?: number;
 			maxAbsProbDiffOnnxVsTorch?: number;
+			/** Present when the band's weights were fine-tuned from the upstream checkpoint. */
+			fineTuned?: { script: string; checkpointSha256: string; data: string };
 		}
 	>;
 }

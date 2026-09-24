@@ -44,18 +44,20 @@ def player_hash(pid: int, salt: str) -> float:
 
 
 def cap_sides(ex: dict, idx: np.ndarray, cap: int, games: list[dict]) -> np.ndarray:
+    """Each player's `cap` game-sides with the smallest sha1(uuid:player) — vectorised over the
+    unique (player, game) pairs so memory stays bounded on the crawl."""
     if cap <= 0:
         return idx
-    pl, gm = ex["player"][idx], ex["game"][idx]
-    pairs = {}
-    for p, g in set(zip(pl.tolist(), gm.tolist())):
-        pairs.setdefault(p, []).append((hashlib.sha1(f"{games[g]['uuid']}:{p}".encode()).digest(), g))
-    keep = set()
-    for p, lst in pairs.items():
-        lst.sort()
-        keep.update((p, g) for _, g in lst[:cap])
-    m = np.fromiter(((p, g) in keep for p, g in zip(pl.tolist(), gm.tolist())), bool, len(idx))
-    return idx[m]
+    key = ex["player"][idx].astype(np.int64) << 32 | ex["game"][idx].astype(np.int64)
+    pairs = np.unique(key)
+    pp, gg = (pairs >> 32).astype(np.int64), (pairs & 0xFFFFFFFF).astype(np.int64)
+    h = np.array([hashlib.sha1(f"{games[g]['uuid']}:{p}".encode()).digest() for p, g in zip(pp.tolist(), gg.tolist())], dtype="S20")
+    order = np.lexsort((h, pp))  # by player, then hash
+    sp = pp[order]
+    first = np.r_[0, np.nonzero(np.diff(sp))[0] + 1]
+    rank = np.arange(len(sp)) - np.repeat(first, np.diff(np.r_[first, len(sp)]))
+    kept = pairs[order][rank < cap]
+    return idx[np.isin(key, kept)]
 
 
 def concat(parts: list[dict]) -> dict:

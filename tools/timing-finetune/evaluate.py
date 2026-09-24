@@ -35,6 +35,7 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import cmenc  # noqa: E402
 import model as M  # noqa: E402
+import train  # noqa: E402
 
 TCS = ["bullet", "blitz", "rapid"]
 RATING_BANDS = [(1500, 1799), (1800, 1999), (2000, 2099)] + [(lo, lo + 99) for lo in range(2100, 3000, 100)] + [(3000, 9999)]
@@ -46,24 +47,18 @@ def band_label(lo: int, hi: int) -> str:
     return f"{lo}+" if hi >= 9999 else f"{lo}-{hi}"
 
 
-def select(ex: dict, cap: int, min_rating: float, games: list[dict] | None, split: int = 1) -> np.ndarray:
+def select(ex: dict, cap: int, min_rating: float, games: list[dict], split: int = 1, side_frac: float = 1.0) -> np.ndarray:
     ok = (ex["split"] == split) & (ex["rating"] >= min_rating) & (ex["ply"] >= 2)  # first moves: chess.com's clock does not run normally
     if "kept" in ex:
         ok &= ex["kept"] == 1
-    idx = np.nonzero(ok)[0]
-    if cap <= 0:
+    idx = train.cap_sides(ex, np.nonzero(ok)[0], cap, games)
+    if side_frac >= 1:
         return idx
-    # game-side key = (player, game); keep each player's `cap` sides with the smallest hash.
-    keys = {}
-    for p, g in set(zip(ex["player"][idx].tolist(), ex["game"][idx].tolist())):
-        tag = games[g]["uuid"] if games else str(g)
-        keys.setdefault(p, []).append((hashlib.sha1(f"{tag}:{p}".encode()).digest(), g))
-    keep = set()
-    for p, lst in keys.items():
-        lst.sort()
-        keep.update((p, g) for _, g in lst[:cap])
-    mask = np.fromiter(((p, g) in keep for p, g in zip(ex["player"][idx].tolist(), ex["game"][idx].tolist())), bool, len(idx))
-    return idx[mask]
+    # an independent hash, so the side-fraction subsample is unbiased after the cap
+    key = ex["player"][idx].astype(np.int64) << 32 | ex["game"][idx].astype(np.int64)
+    pairs = np.unique(key)
+    h = np.array([hashlib.sha1(f"frac:{g}:{p}".encode()).digest()[0] for p, g in zip((pairs >> 32).tolist(), (pairs & 0xFFFFFFFF).tolist())])
+    return idx[np.isin(key, pairs[h < side_frac * 256])]
 
 
 def parse_spec(spec: str) -> dict:
@@ -294,13 +289,14 @@ def main() -> int:
     ap.add_argument("--cap", type=int, default=30)
     ap.add_argument("--min-rating", type=float, default=1500)
     ap.add_argument("--boot", type=int, default=500)
+    ap.add_argument("--side-frac", type=float, default=1.0, help="random share of game-sides to score (hash-based, stable)")
     ap.add_argument("--title", default="ChessMimic held-out evaluation")
     ap.add_argument("--labels", action="append", default=[], help="situation labels JSONL (repeatable)")
     args = ap.parse_args()
     ex_path = Path(args.examples)
     ex = M.load_examples(ex_path)
     games = json.loads((ex_path.parent / "games.json").read_text())
-    idx = select(ex, args.cap, args.min_rating, games)
+    idx = select(ex, args.cap, args.min_rating, games, side_frac=args.side_frac)
     print(f"{len(idx):,} held-out moves from {len(np.unique(ex['player'][idx])):,} players", file=sys.stderr)
     specs = [parse_spec(s) for s in args.model]
     results = run_models(ex, idx, specs, cmenc.load_buckets(), cmenc.load_scalers())
