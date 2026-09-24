@@ -23,7 +23,7 @@ import { promote } from "./gestures/promotion";
 import type { HandMotor } from "./motor";
 import { planMoveWindow } from "./move-window";
 import type { Timeline } from "./timeline";
-import { fastTouch } from "./timing";
+import { anticipatedTouch, fastTouch } from "./timing";
 import { planPromotion, planTouch } from "./touch-plan";
 
 /** Skip (never dispatch) when the adapter's occupancy says the piece is no longer on `from`. */
@@ -59,9 +59,11 @@ export async function runSequence(
 
 	// Exploration inside the pre-touch window (§9.3 / §9.3a); the trailing decision
 	// pause is executed by the controller itself so it can absorb the touch budget.
-	const actions = fastTouch(timing)
-		? []
-		: planExploration(hand, planner, plan, timing, w.exploreMs, reply);
+	// An anticipated reply does not browse either: the hand is on the piece and just reacts.
+	const actions =
+		fastTouch(timing) || anticipatedTouch(timing)
+			? []
+			: planExploration(hand, planner, plan, timing, w.exploreMs, reply);
 	let tail = actions[actions.length - 1]?.kind === "rest" ? actions.pop() : undefined;
 	// The coordinate space the exploration was planned in: a preview **presses** a real square,
 	// so its legs need the same reflow guard the committed touch has (below).

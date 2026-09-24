@@ -8,6 +8,7 @@
 import { EXECUTOR } from "@core/constants/cdp";
 import { log } from "@core/logger";
 import {
+	ANTICIPATION,
 	CLICK,
 	FAST_TOUCH,
 	PATH,
@@ -22,7 +23,7 @@ import type { ExecutionPlan, MotorProfile, PathPoint, Pt, Rect } from "@core/mot
 import type { Rng } from "@core/rng";
 import type { TimingPlan } from "@typedefs/timing";
 import type { Rects } from "./geometry";
-import { fastTouch } from "./timing";
+import { anticipatedTouch, fastTouch } from "./timing";
 
 export interface DragTouch {
 	approach: PathPoint[];
@@ -174,10 +175,15 @@ export function planTouch(
 		dragDurationMs: timing.dragDurationMs / speed,
 		window: { ...timing.window, approachMs: timing.window.approachMs / speed },
 	};
+	// An anticipated reply: the hand was already resting on the piece and the answer was
+	// prepared, so its pauses are shorter and it never hesitates mid-carry. The draws stay in the
+	// same order so a plan's stream is the same shape either way.
+	const prepared = anticipatedTouch(timing);
+	const P = ANTICIPATION.touch;
 	const approachRaw = generatePath(cursor, press, rects.from, m, rng);
 	const pressAt = lastPoint(approachRaw, press);
-	const preGrabMs = sampleRange(CLICK.preGrabPauseMs, rng);
-	const grabDelayMs = sampleRange(m.grabDelayMs, rng);
+	const preGrabMs = sampleRange(prepared ? P.preGrabPauseMs : CLICK.preGrabPauseMs, rng);
+	const grabDelayMs = sampleRange(m.grabDelayMs, rng) * (prepared ? P.grabDelayScale : 1);
 	const wobble = grabWobble(pressAt, m, rng);
 	const wobbleEnd = lastPoint(wobble, pressAt);
 	const drop = samplePointInRect(
@@ -187,20 +193,20 @@ export function planTouch(
 		rng
 	);
 	const raw = generatePath(wobbleEnd, drop, rects.to, m, rng);
-	const travel = rescalePath(
-		raw,
-		Math.max(EXECUTOR.minTravelMs, motorTiming.dragDurationMs),
-		m,
-		wobbleEnd
-	);
+	// The anticipated plan's carry (`dragDurationMs`) includes its settle; the drag leg is the rest.
+	const carryMs = prepared
+		? motorTiming.dragDurationMs - (P.releaseSettleMs[0] + P.releaseSettleMs[1]) / 2
+		: motorTiming.dragDurationMs;
+	const travel = rescalePath(raw, Math.max(EXECUTOR.minTravelMs, carryMs), m, wobbleEnd);
 	const travelEnd = lastPoint(travel, drop);
-	const hesitate = rng.chance(m.hesitationProb)
-		? grabWobble(travelEnd, m, rng).map((p) => ({
-				...p,
-				dtMs: sampleRange(PATH.hesitationWobbleDtMs, rng),
-			}))
-		: [];
-	const settleMs = sampleRange(m.releaseSettleMs, rng);
+	const hesitate =
+		rng.chance(m.hesitationProb) && !prepared
+			? grabWobble(travelEnd, m, rng).map((p) => ({
+					...p,
+					dtMs: sampleRange(PATH.hesitationWobbleDtMs, rng),
+				}))
+			: [];
+	const settleMs = sampleRange(prepared ? P.releaseSettleMs : m.releaseSettleMs, rng);
 	const touchMs =
 		preGrabMs + grabDelayMs + pathMs(wobble) + pathMs(travel) + pathMs(hesitate) + settleMs;
 	const fitted = fitApproach(approachRaw, touchMs, motorTiming, m, cursor);

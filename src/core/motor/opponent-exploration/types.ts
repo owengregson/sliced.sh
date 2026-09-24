@@ -35,8 +35,11 @@ export interface OpponentExplorationAction {
 	activity?: ExplorationActivity;
 }
 
-/** The spell a plan is; the caller passes it back as `previousSpell` so spells alternate. */
-export type ExplorationSpell = "first" | "active" | "glance" | "still";
+/**
+ * The spell a plan is; the caller passes it back as `previousSpell` so spells alternate.
+ * `anticipate` is the hover over our answering piece (`../anticipation.ts`).
+ */
+export type ExplorationSpell = "first" | "active" | "glance" | "still" | "anticipate";
 
 export interface OpponentExplorationOptions extends OpponentExplorationCandidates {
 	/** Strict ceiling on the entire spell, including orientation and terminal stillness. */

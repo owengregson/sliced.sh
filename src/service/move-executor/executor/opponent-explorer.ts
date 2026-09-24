@@ -6,7 +6,14 @@
  */
 
 import { log } from "@core/logger";
-import { OPPONENT_EXPLORATION } from "@core/motor/constants";
+import {
+	type AnticipatedReply,
+	anticipateReply,
+	anticipationEngageProb,
+	planAnticipationHover,
+	withinHover,
+} from "@core/motor/anticipation";
+import { ANTICIPATION, OPPONENT_EXPLORATION } from "@core/motor/constants";
 import { sampleRange } from "@core/motor/geometry";
 import {
 	perGameProfile,
@@ -22,6 +29,7 @@ import {
 } from "@core/motor/opponent-exploration";
 import type { RepertoireState } from "@core/motor/repertoire";
 import { plausibleStart } from "@core/motor/sampling";
+import type { Rect } from "@core/motor/types";
 import { createRng } from "@core/rng";
 import { errorMessage } from "@core/util/errors";
 import { isAbortedError, sleep } from "@core/util/scheduler";
@@ -51,6 +59,8 @@ export class OpponentExplorer {
 	private repertoire: RepertoireState | undefined;
 	/** Executions waiting for an aborted bout to wind down; no new bout starts meanwhile. */
 	private waiting = 0;
+	/** The square the hand went to hover over for an anticipated reply this turn, and its rect. */
+	private hover: { square: Square; rect: Rect } | null = null;
 
 	constructor(
 		private readonly ctx: ExecutorContext,
@@ -71,6 +81,19 @@ export class OpponentExplorer {
 		this.task?.ac.abort();
 	}
 
+	/**
+	 * The square of our answering piece the hand is hovering over for an anticipated reply, or
+	 * null. It is read when the opponent's move arrives, and it checks itself: the hand must still
+	 * be resting over that square (`withinHover`), so a hover that never arrived, or that the hand
+	 * has since left, reports nothing.
+	 */
+	hoverSquare(): Square | null {
+		const hover = this.hover;
+		if (!hover) return null;
+		const at = this.ctx.ownership.position(this.ctx.tabId);
+		return at && withinHover(at, hover.rect) ? hover.square : null;
+	}
+
 	/** An execution started waiting for the bout to end (`endWait()` when it has). */
 	beginWait(): void {
 		this.waiting += 1;
@@ -89,6 +112,8 @@ export class OpponentExplorer {
 		const ac = new AbortController();
 		const task: ExplorationTask = { ac, done: Promise.resolve() };
 		this.task = task;
+		// A new opponent turn: last turn's hover is history even if the hand still rests there.
+		this.hover = null;
 		task.done = Promise.resolve()
 			.then(async () => {
 				if (previous) await previous.done;
@@ -105,17 +130,27 @@ export class OpponentExplorer {
 				)
 					return;
 				await this.settle.settle(ac.signal);
-				const rng = createRng(`${x.config.gameSeed}:opponent:${this.seed++}`);
+				const turnSeed = this.seed++;
+				const rng = createRng(`${x.config.gameSeed}:opponent:${turnSeed}`);
+				// Its own stream, so a turn without a hover draws exactly what it drew before.
+				const hoverRng = createRng(`${x.config.gameSeed}:anticipate:${turnSeed}`);
 				const initial = source();
 				if (!initial) return;
 				// Rolled once per turn: some turns get no pondering at all beyond a rest (the hand
 				// keeps still, with its idle tremor, where the post-drop decision left it).
 				const turn = decideOpponentTurn(initial.attention, initial.policy, rng);
+				// Anticipatory hover: one draw per turn, compared against the odds of whatever reply
+				// the ponder's top line anticipates at each spell (lines arrive and change mid-turn).
+				const anticipationDraw = hoverRng.next();
+				const anticipated = (live: OpponentExplorationCandidates): AnticipatedReply | null =>
+					anticipationFor(live, anticipationDraw, x.config.tcClass);
 				await sleep(
 					sampleRange(
-						initial.policy?.lowTime
-							? OPPONENT_EXPLORATION.lowTimeInitialRestMs
-							: OPPONENT_EXPLORATION.initialRestMs,
+						anticipated(initial)
+							? ANTICIPATION.engageDelayMs
+							: initial.policy?.lowTime
+								? OPPONENT_EXPLORATION.lowTimeInitialRestMs
+								: OPPONENT_EXPLORATION.initialRestMs,
 						rng
 					),
 					x.scheduler,
@@ -140,19 +175,37 @@ export class OpponentExplorer {
 						),
 						x.config.motorSpeed
 					);
-					const plan = planOpponentExploration(
-						{
-							geometry,
-							profile,
-							cursor,
-							...candidates,
-							...(previousTarget ? { previousTarget } : {}),
-							...(previousSpell ? { previousSpell } : {}),
-							...(this.repertoire ? { repertoireState: this.repertoire } : {}),
-							quiet: !turn.ponder,
-						},
-						rng
-					);
+					const anticipation = anticipated(candidates);
+					const hover = anticipation
+						? planAnticipationHover(
+								{
+									geometry,
+									profile,
+									cursor,
+									...(previousTarget ? { previousTarget } : {}),
+									...(previousSpell ? { previousSpell } : {}),
+								},
+								anticipation.reply.from,
+								hoverRng
+							)
+						: null;
+					this.hover =
+						hover?.rect && anticipation ? { square: anticipation.reply.from, rect: hover.rect } : null;
+					const plan =
+						hover ??
+						planOpponentExploration(
+							{
+								geometry,
+								profile,
+								cursor,
+								...candidates,
+								...(previousTarget ? { previousTarget } : {}),
+								...(previousSpell ? { previousSpell } : {}),
+								...(this.repertoire ? { repertoireState: this.repertoire } : {}),
+								quiet: !turn.ponder,
+							},
+							rng
+						);
 					const input = new InputCriticalWindow(x.now, x.scheduler, (update) =>
 						x.emit("inputCritical", update)
 					);
@@ -192,7 +245,8 @@ export class OpponentExplorer {
 					}
 					previousTarget = plan.lastTarget ?? undefined;
 					previousSpell = plan.spell;
-					this.repertoire = plan.repertoireState;
+					// A hover is not a repertoire spell: it neither advances nor clears that state.
+					if (plan.spell !== "anticipate") this.repertoire = plan.repertoireState;
 				}
 			})
 			.catch((error: unknown) => {
@@ -203,4 +257,20 @@ export class OpponentExplorer {
 				if (this.task === task) this.task = null;
 			});
 	}
+}
+
+/**
+ * The reply this turn's hand pre-positions for, if any: the ponder's top line, when this turn's
+ * draw falls under that kind's odds. Never while a premove or a hold is armed, because that hand
+ * already has its piece.
+ */
+function anticipationFor(
+	candidates: OpponentExplorationCandidates,
+	draw: number,
+	tcClass: Parameters<typeof anticipationEngageProb>[1]
+): AnticipatedReply | null {
+	const attention = candidates.attention;
+	if (attention?.armed || attention?.repertoire?.premovePending) return null;
+	const reply = anticipateReply(candidates);
+	return reply && draw < anticipationEngageProb(reply.kind, tcClass) ? reply : null;
 }
