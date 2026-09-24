@@ -41,94 +41,121 @@ out; rapid 2800 has 42 sides.
   inaccuracy ≥ 0.05, mistake ≥ 0.10, blunder ≥ 0.20); ACPL and best-move rate reported.
   Uncertainty cluster-robust by game.
 - Fit on the fit split: per cell a sweep of (conditioning Δ, T); objective Σ z² over the four loss
-  metrics. One point per cell chosen by a monotone Viterbi pass (conditioning never decreases with
-  the target; mild prior towards Δ = 0, T = 1 that only breaks ties; smoothness between buckets).
+  metrics **plus** the rating term below. One point per cell chosen by a monotone Viterbi pass
+  (conditioning never decreases with the target; a light prior towards Δ = 0, T = 1 that only breaks
+  ties; smoothness between neighbouring buckets at weight 12, chosen on the holdout — see below).
 - Verification on the holdout players only: (1) the error profile with z-scores, overall and per
-  clock quartile; (2) a Maia-free intrinsic-rating estimator (ridge regression from per-game
-  move-quality features to rating, trained on the fit split's humans), applied to the bot's and the
-  humans' moves over the same positions → the bot's implied rating with a game-bootstrap interval.
+  clock quartile; (2) the rating the bot plays at by the Maia-free intrinsic rating model below.
+
+## The independent estimator (reviewed 2026-09-23)
+
+The first verification used a per-game ridge regression (mean loss and band rates of a game →
+rating). Review: it explained 16–36 % of rating variance on held-out players, and its bot-vs-human
+comparison divided a small per-game prediction gap by the estimator's small slope (0.21 in bullet),
+so a few points of prediction noise became hundreds of Elo — its "bullet 300–600 too strong" reading
+was mostly that amplification.
+
+It is replaced by `tools/calibration/rating-model.ts`, a per-move ordered-logit intrinsic rating
+model (Regan's IPR idea) fitted to chess.com players: 12 move-quality classes (the referee's best
+move, then loss edges 0.005 … 0.30), position covariates (near-best moves, how "only" the best
+move is, decidedness, clock pressure) and rating × difficulty interactions. A set of moves' rating
+is the pooled maximum-likelihood rating with a cluster-robust (by game) sandwich SE; the bot's and
+the humans' moves over **the same positions** give a paired gap whose variance uses both sides'
+per-game influence, so the estimator's own bias cancels. The bot "plays at" the players' mean actual
+rating plus that gap.
+
+Its accuracy on held-out humans (`rating-eval.ts`): per game it is no better than the ridge (R²
+0.19 / 0.25 / 0.28 for bullet / blitz / rapid) — a 30-move game says little about a rating, and
+finer classes did not change that — but pooled per cell it recovers the actual mean rating within
+its interval in 33 of 38 cells (RMSE 287 / 146 / 170 Elo; bias −160 / +86 / +27), and the paired
+gap is what the verification uses. It is also a fifth term of the fit objective,
+`((plays at − R) / SE)²`: the band rates alone left the finer loss distribution — how often the
+best move is found — free, and the model showed low-to-mid ratings playing 300–400 below target.
 
 ## Findings
 
 1. **Before calibration the bot did not blunder more than chess.com players of its rating — at
-   the top it blundered less.** Blitz 2800: humans blunder on 2.87 % of moves, the bot on 1.23 %;
-   the estimator put it at ≈ 3020. Bullet was far too strong from ≈ 1200 up (Maia learned mostly
-   blitz; bullet players make many more errors). Low blitz and rapid ratings (600–1000) were too
-   weak. So the calibration makes the high-rated bot *slightly more* error-prone in blitz, and
-   much more in bullet, because that is what real players of those ratings do.
-2. After calibration, **154 of 156** held-out loss metrics are statistically indistinguishable from
-   the humans' (|z| ≤ 2), against 105 of 156 before.
-3. The implied rating's interval contains the target in 24 of 38 cells (21 before). The estimator
-   is weak (held-out R² 0.16 bullet, 0.25 blitz, 0.36 rapid; a 30-move game says little about a
-   rating), so its intervals are wide and its point estimates noisy; where it still disagrees —
-   bullet 1600–3000 reads 300–600 too strong — the gap is in ACPL (humans' very large centipawn
-   losses in decided positions, and moves the engine never ranked, which the selector cannot play),
-   not in the blunder bands the board shows.
+   the top it blundered less.** Blitz 2800: humans blunder on 2.87 % of moves, the bot on 1.23 %.
+   Bullet was far too strong from ≈ 1200 up (Maia learned mostly blitz; bullet players err much
+   more), low blitz/rapid ratings too weak. By the paired rating model the bot played within the
+   95 % interval of its target in **13 of 38** held-out cells.
+2. After calibration: **31 of 38** cells play within the interval of their target, and 146 of 152
+   held-out loss metrics are statistically indistinguishable from the humans' (|z| ≤ 2; 101
+   before). Blitz 2800 plays at ≈ 2840 (± 325).
+3. The remaining misses are consistent with sampling noise: every cell fits its fit-split players
+   (|z| ≤ 2 in-sample), the holdout z has mean −0.34 and SD 1.42 against ≈ 1.3 expected when both
+   the fit's and the holdout's sampling noise are counted, and the signs are mixed. The smoothing
+   weight was chosen on this holdout (1 → Σz² 111, 4 → 101, 12 → 81, 30 → 95): pooling
+   neighbouring buckets is what reduces a single cell's fit noise.
 4. If blunders at a live 2836 still look too frequent, the replay above cannot see pipeline paths
    that bypass Maia: an inference timeout falls back to the base policy, which has an injected
    blunder channel; premoves and ready moves have their own selection. Those are the next suspects.
 
 ## Shipped table and held-out results
 
-Knots `[target, conditioning, T]`; "before" = the identity table (the behaviour until today).
+Knots `[target, conditioning, T]` (conditioning shown as it runs, floored at 400 and capped at
+3000); "before" = the identity table (the behaviour until today).
 
 ### bullet
 
-| R | knot (cond., T) | blunder % human / before / after | mistake-or-worse % human / before / after | EPL z before → after | implied rating before → after (95 % CI) |
-|---:|---|---|---|---|---|
-| 600 | 600, 0.9 | 9.02 / 8.57 / 8.32 | 17.1 / 16.9 / 16.2 | -0.4 → -0.7 | 622 → 742 (176–1264) |
-| 800 | 600, 0.9 | 7.49 / 6.28 / 7.17 | 14.0 / 14.5 / 15.5 | -1.1 → -0.5 | 1143 → 837 (274–1410) |
-| 1000 | 600, 1.1 | 4.74 / 4.85 / 6.90 | 12.5 / 12.7 / 16.1 | -0.1 → +1.8 | 1107 → 263 (-131–614) |
-| 1200 | 600, 1.1 | 6.04 / 3.91 / 6.46 | 13.3 / 10.1 / 13.8 | -2.3 → -0.2 | 1977 → 1150 (548–1754) |
-| 1400 | 800, 1.1 | 5.82 / 3.31 / 5.21 | 12.9 / 9.1 / 12.2 | -3.3 → -1.4 | 2446 → 1803 (1499–2092) |
-| 1600 | 1000, 1.1 | 5.17 / 2.27 / 4.14 | 11.1 / 7.0 / 10.7 | -3.6 → -1.1 | 2948 → 2148 (1803–2512) |
-| 1800 | 1100, 1.1 | 4.26 / 1.58 / 3.22 | 10.5 / 5.5 / 9.1 | -3.9 → -1.5 | 3230 → 2661 (2224–3221) |
-| 2000 | 1200, 1.1 | 3.83 / 1.43 / 2.91 | 9.3 / 5.2 / 8.7 | -4.0 → -1.4 | 3273 → 2507 (2088–2978) |
-| 2200 | 1400, 1.1 | 4.03 / 1.13 / 3.47 | 10.5 / 6.0 / 10.6 | -3.7 → -0.6 | 3338 → 2656 (2329–2982) |
-| 2400 | 1400, 1.1 | 3.65 / 1.10 / 3.46 | 9.6 / 5.0 / 9.7 | -6.0 → -0.4 | 3282 → 2558 (2271–2836) |
-| 2600 | 1600, 1 | 3.07 / 1.23 / 2.80 | 10.0 / 6.2 / 9.9 | -4.2 → -1.1 | 3974 → 3344 (2898–3820) |
-| 2800 | 1800, 1 | 4.38 / 1.13 / 3.54 | 11.9 / 6.8 / 10.9 | -6.5 → -1.8 | 4066 → 3430 (3161–3741) |
-| 3000 | 2000, 1.1 | 3.86 / 0.70 / 2.94 | 10.2 / 4.3 / 9.6 | -5.4 → -1.3 | 3843 → 3263 (3006–3516) |
+| R | knot (cond., T) | blunder % human / before / after | mistake-or-worse % human / before / after | bot plays at: before → after (95 % CI) |
+|---:|---|---|---|---|
+| 600 | -400, 0.7 | 9.02 / 8.57 / 8.46 | 17.1 / 16.9 / 16.1 | 553 → **751** (280–1222) |
+| 800 | -200, 0.8 | 7.49 / 6.28 / 8.21 | 14.0 / 14.5 / 16.6 | 884 → **522** (72–972) |
+| 1000 | 0, 0.9 | 4.74 / 4.85 / 6.56 | 12.5 / 12.7 / 15.4 | 760 → **250** (-49–549) |
+| 1200 | 200, 0.9 | 6.04 / 3.91 / 5.77 | 13.3 / 10.1 / 12.3 | 1581 → **1141** (681–1601) |
+| 1400 | 400, 0.9 | 5.82 / 3.31 / 4.73 | 12.9 / 9.1 / 11.1 | 2298 → **1766** (1417–2116) |
+| 1600 | 600, 0.9 | 5.17 / 2.27 / 3.74 | 11.1 / 7.0 / 9.8 | 2468 → **1732** (1391–2073) |
+| 1800 | 800, 0.9 | 4.26 / 1.58 / 3.02 | 10.5 / 5.5 / 8.3 | 3015 → **2212** (1824–2600) |
+| 2000 | 1000, 0.9 | 3.83 / 1.43 / 2.85 | 9.3 / 5.2 / 8.3 | 2979 → **2239** (1982–2495) |
+| 2200 | 1200, 0.9 | 4.03 / 1.13 / 3.47 | 10.5 / 6.0 / 10.3 | 3197 → **2210** (1946–2473) |
+| 2400 | 1400, 1 | 3.65 / 1.10 / 3.25 | 9.6 / 5.0 / 9.1 | 3175 → **2301** (2061–2541) |
+| 2600 | 1600, 0.9 | 3.07 / 1.23 / 2.50 | 10.0 / 6.2 / 9.1 | 3437 → **2756** (2461–3051) |
+| 2800 | 1800, 0.9 | 4.38 / 1.13 / 3.51 | 11.9 / 6.8 / 10.2 | 3491 → **2729** (2448–3011) |
+| 3000 | 2000, 0.9 | 3.86 / 0.70 / 2.71 | 10.2 / 4.3 / 8.5 | 3778 → **3020** (2724–3317) |
 
 ### blitz
 
-| R | knot (cond., T) | blunder % human / before / after | mistake-or-worse % human / before / after | EPL z before → after | implied rating before → after (95 % CI) |
-|---:|---|---|---|---|---|
-| 600 | 800, 0.7 | 6.62 / 8.85 / 6.07 | 13.9 / 19.2 / 14.1 | +1.6 → -1.0 | 150 → 905 (499–1277) |
-| 800 | 800, 0.7 | 7.73 / 8.52 / 6.63 | 15.9 / 18.0 / 15.4 | +1.1 → -0.8 | 663 → 1100 (712–1521) |
-| 1000 | 800, 0.9 | 5.99 / 5.66 / 6.52 | 12.2 / 13.1 / 14.4 | -0.3 → +0.5 | 1091 → 794 (451–1166) |
-| 1200 | 1000, 0.9 | 4.28 / 4.79 / 5.17 | 12.5 / 12.5 / 13.3 | +0.5 → +0.8 | 1061 → 1009 (794–1225) |
-| 1400 | 1200, 0.9 | 3.67 / 3.97 / 4.37 | 10.0 / 11.4 / 12.0 | +0.3 → +0.9 | 1458 → 1357 (1181–1553) |
-| 1600 | 1400, 0.9 | 4.06 / 3.84 / 4.57 | 10.3 / 11.5 / 12.8 | +0.2 → +1.1 | 1490 → 1293 (1000–1579) |
-| 1800 | 1600, 0.9 | 4.17 / 3.28 / 4.04 | 10.7 / 8.9 / 9.7 | -1.4 → -0.5 | 2165 → 1992 (1687–2286) |
-| 2000 | 1600, 0.9 | 4.71 / 2.32 / 3.88 | 11.3 / 8.8 / 11.3 | -3.0 → -0.7 | 2681 → 2286 (1994–2577) |
-| 2200 | 1800, 0.7 | 3.48 / 1.93 / 2.92 | 8.0 / 7.8 / 9.0 | -1.0 → +0.5 | 2330 → 2087 (1861–2319) |
-| 2400 | 2000, 0.9 | 2.65 / 1.30 / 1.54 | 7.9 / 6.9 / 7.6 | -1.9 → -1.2 | 3036 → 2849 (2521–3214) |
-| 2600 | 2000, 0.9 | 2.14 / 1.04 / 2.20 | 7.1 / 6.3 / 8.1 | -2.1 → +0.0 | 3310 → 3009 (2660–3450) |
-| 2800 | 2300, 0.8 | 2.87 / 1.23 / 1.81 | 7.0 / 6.4 / 7.1 | -1.4 → -0.8 | 3024 → 2907 (2682–3139) |
-| 3000 | 2400, 0.6 | 2.58 / 0.77 / 1.26 | 6.7 / 5.3 / 6.1 | -1.9 → -1.3 | 3538 → 3422 (3143–3707) |
+| R | knot (cond., T) | blunder % human / before / after | mistake-or-worse % human / before / after | bot plays at: before → after (95 % CI) |
+|---:|---|---|---|---|
+| 600 | 600, 0.7 | 6.62 / 8.85 / 7.52 | 13.9 / 19.2 / 16.7 | -166 → **310** (9–611) |
+| 800 | 700, 0.7 | 7.73 / 8.52 / 7.42 | 15.9 / 18.0 / 16.5 | 400 → **678** (360–995) |
+| 1000 | 800, 0.7 | 5.99 / 5.66 / 5.64 | 12.2 / 13.1 / 13.2 | 938 → **982** (631–1333) |
+| 1200 | 900, 0.7 | 4.28 / 4.79 / 4.64 | 12.5 / 12.5 / 12.1 | 885 → **1171** (810–1533) |
+| 1400 | 1000, 0.7 | 3.67 / 3.97 / 4.16 | 10.0 / 11.4 / 11.3 | 1162 → **1145** (937–1353) |
+| 1600 | 1200, 0.7 | 4.06 / 3.84 / 4.62 | 10.3 / 11.5 / 12.7 | 1370 → **1272** (1000–1544) |
+| 1800 | 1400, 0.7 | 4.17 / 3.28 / 4.21 | 10.7 / 8.9 / 9.8 | 1849 → **1787** (1612–1962) |
+| 2000 | 1500, 0.8 | 4.71 / 2.32 / 3.97 | 11.3 / 8.8 / 11.0 | 2282 → **1902** (1666–2137) |
+| 2200 | 1800, 0.7 | 3.48 / 1.93 / 2.92 | 8.0 / 7.8 / 9.0 | 2173 → **1953** (1706–2201) |
+| 2400 | 2000, 0.7 | 2.65 / 1.30 / 1.45 | 7.9 / 6.9 / 6.7 | 2570 → **2597** (2273–2922) |
+| 2600 | 2100, 0.7 | 2.14 / 1.04 / 1.65 | 7.1 / 6.3 / 6.6 | 2830 → **2779** (2409–3149) |
+| 2800 | 2400, 0.7 | 2.87 / 1.23 / 1.36 | 7.0 / 6.4 / 6.2 | 2753 → **2839** (2515–3164) |
+| 3000 | 2600, 0.6 | 2.58 / 0.77 / 0.93 | 6.7 / 5.3 / 5.5 | 3100 → **3205** (2941–3468) |
 
 ### rapid
 
-| R | knot (cond., T) | blunder % human / before / after | mistake-or-worse % human / before / after | EPL z before → after | implied rating before → after (95 % CI) |
-|---:|---|---|---|---|---|
-| 600 | 600, 0.7 | 6.08 / 7.91 / 6.94 | 13.6 / 16.8 / 15.6 | +0.8 → +0.3 | 464 → 609 (419–788) |
-| 800 | 800, 0.7 | 6.61 / 7.71 / 6.61 | 13.8 / 16.2 / 14.4 | +0.6 → -0.4 | 645 → 877 (726–1039) |
-| 1000 | 1000, 0.7 | 5.20 / 7.56 / 6.51 | 11.8 / 15.8 / 14.1 | +1.7 → +0.7 | 806 → 1000 (744–1273) |
-| 1200 | 1200, 0.8 | 4.93 / 5.35 / 4.75 | 12.4 / 13.3 / 12.4 | +0.2 → -0.5 | 1059 → 1177 (965–1385) |
-| 1400 | 1400, 0.7 | 3.93 / 4.70 / 4.05 | 12.1 / 13.3 / 11.2 | +1.6 → -0.2 | 1250 → 1488 (1295–1683) |
-| 1600 | 1400, 0.6 | 3.81 / 3.91 / 3.44 | 10.0 / 11.4 / 10.1 | +0.3 → -0.4 | 1667 → 1836 (1589–2074) |
-| 1800 | 1400, 0.5 | 2.60 / 2.56 / 3.46 | 9.6 / 10.1 / 10.6 | +0.4 → +1.0 | 1771 → 1757 (1593–1932) |
-| 2000 | 1600, 0.4 | 1.85 / 2.38 / 3.15 | 7.0 / 7.9 / 8.5 | +1.0 → +1.5 | 1899 → 1893 (1671–2130) |
-| 2200 | 1900, 0.4 | 2.42 / 1.26 / 1.63 | 7.1 / 6.8 / 6.4 | -1.0 → -1.0 | 2396 → 2432 (2241–2630) |
-| 2400 | 1900, 0.4 | 2.05 / 1.56 / 2.32 | 5.7 / 7.4 / 7.8 | +0.3 → +1.0 | 2434 → 2363 (2141–2589) |
-| 2600 | 2500, 0.4 | 1.44 / 1.43 / 1.16 | 4.6 / 6.6 / 5.3 | +1.6 → -0.3 | 2463 → 2692 (2512–2883) |
-| 2800 | 3000, 0.4 | 3.63 / 1.45 / 1.13 | 6.1 / 4.8 / 3.1 | -0.6 → -1.2 | 2821 → 3121 (2718–3658) |
+| R | knot (cond., T) | blunder % human / before / after | mistake-or-worse % human / before / after | bot plays at: before → after (95 % CI) |
+|---:|---|---|---|---|
+| 600 | 600, 0.5 | 6.08 / 7.91 / 6.27 | 13.6 / 16.8 / 14.4 | -43 → **418** (129–708) |
+| 800 | 700, 0.5 | 6.61 / 7.71 / 6.52 | 13.8 / 16.2 / 14.1 | 164 → **606** (348–865) |
+| 1000 | 800, 0.5 | 5.20 / 7.56 / 6.65 | 11.8 / 15.8 / 14.5 | 478 → **766** (535–997) |
+| 1200 | 1000, 0.5 | 4.93 / 5.35 / 4.70 | 12.4 / 13.3 / 11.5 | 869 → **1143** (979–1307) |
+| 1400 | 1200, 0.5 | 3.93 / 4.70 / 4.13 | 12.1 / 13.3 / 11.6 | 1090 → **1345** (1175–1515) |
+| 1600 | 1400, 0.5 | 3.81 / 3.91 / 3.31 | 10.0 / 11.4 / 10.0 | 1285 → **1587** (1403–1770) |
+| 1800 | 1600, 0.5 | 2.60 / 2.56 / 2.52 | 9.6 / 10.1 / 9.4 | 1589 → **1806** (1599–2012) |
+| 2000 | 1800, 0.5 | 1.85 / 2.38 / 2.44 | 7.0 / 7.9 / 7.5 | 1711 → **1940** (1743–2137) |
+| 2200 | 2000, 0.5 | 2.42 / 1.26 / 1.16 | 7.1 / 6.8 / 5.9 | 2178 → **2366** (2210–2522) |
+| 2400 | 2200, 0.5 | 2.05 / 1.56 / 1.69 | 5.7 / 7.4 / 6.6 | 2124 → **2337** (2152–2522) |
+| 2600 | 2600, 0.5 | 1.44 / 1.43 / 1.12 | 4.6 / 6.6 / 5.3 | 2176 → **2495** (2342–2648) |
+| 2800 | 3000, 0.5 | 3.63 / 1.45 / 1.07 | 6.1 / 4.8 / 3.2 | 2353 → **2670** (2274–3066) |
+
 
 ## Limits
 
 - The referee is one thread at a per-tc movetime under Bun, not the browser's search; bot and human
   share it, so comparisons are paired but absolute loss levels are this referee's.
 - Positions come from human games: the bot never plays on from its own earlier mistakes.
-- Bullet 2400 and 3000 sit at the sweep's edge (Δ = −1000): the data would take them weaker still.
+- ≈ 40 held-out players per cell: a single cell's "plays at" carries ± 150–300 Elo of sampling
+  noise; judge the table by the pattern across cells, not one cell.
+- Bullet 2400–3000 sit at the sweep's edge (Δ = −1000); rapid is at a flat T = 0.5.
 - Rapid 3000 extrapolates from 2800 (edge offset, same T).

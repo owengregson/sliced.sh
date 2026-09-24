@@ -9,12 +9,12 @@
  *      top-1, bot vs the humans of the same positions, with cluster-robust 95 % intervals and the
  *      standardised difference; also per clock quartile, so the context terms' shape is checked
  *      against how humans actually degrade on the clock;
- *   2. **intrinsic rating**: the Maia-free estimator (`estimator.ts`), trained on the fit split's
- *      humans, applied to the bot's pseudo-games and to the humans' own games over the same
- *      positions; the paired difference over the estimator's slope on held-out humans is the bot's
- *      rating offset, with a game-bootstrap 95 % interval.
+ *   2. **intrinsic rating**: the Maia-free rating model (`rating-model.ts`, trained on the fit
+ *      split's humans by `rating-eval.ts --train`) gives the bot's and the humans' pooled ratings
+ *      over the same positions; the players' mean actual rating plus the paired gap (cluster-robust
+ *      by game) is the rating the bot plays at.
  *
- *   bun tools/calibration/verify.ts [--table shipped|identity] [--label NAME] [--chains 8]
+ *   bun tools/calibration/verify.ts [--table shipped|identity|FILE.json] [--label NAME] [--chains 8]
  *       [--workers 9] [--only blitz:2800,…] [--cells DIR]
  */
 
@@ -28,17 +28,16 @@ import {
 	type MaiaCalibrationTable,
 	type MaiaCalibrationTimeClass,
 } from "@core/constants/maia-calibration";
-import { createRng } from "@core/rng";
 import { maiaCalibrationFor } from "@core/strength/maia-calibration";
 import { DATA_DIR } from "./common";
-import { features, linearFit, type Model, predict, train } from "./estimator";
 import { loadCell } from "./fit";
+import { MODEL_FILE, type ModelSet } from "./rating-eval";
+import { type CellRating, cellRating } from "./rating-model";
 import { CELLS_DIR, cellFile } from "./shard";
-import { groupGames, type MoveOutcome, simulate } from "./sim";
+import { groupGames, simulate } from "./sim";
 import { CLOCK_BINS, METRICS, type Metric, type Profile, profiles, zScore } from "./stats";
 
 const VERIFY_DIR = path.join(DATA_DIR, "verify");
-const BOOTSTRAP = 2000;
 
 interface Args {
 	table: string;
@@ -122,13 +121,6 @@ async function tableFor(spec: string): Promise<MaiaCalibrationTable> {
 
 // ── worker ───────────────────────────────────────────────────────────────────────────────────
 
-interface GameRecord {
-	key: string;
-	rating: number;
-	human: number[] | null;
-	bot: Array<number[] | null>;
-}
-
 interface CellResult {
 	tc: MaiaCalibrationTimeClass;
 	bucket: number;
@@ -136,10 +128,8 @@ interface CellResult {
 	temperature: number;
 	overall: { human: Profile; bot: Profile };
 	clock: Array<{ bin: string; human: Profile; bot: Profile }>;
-	/** Holdout games: human features and each chain's bot features. */
-	games: GameRecord[];
-	/** Fit-split human games (the estimator's training set). */
-	train: Array<{ rating: number; x: number[] }>;
+	/** The intrinsic rating model's paired estimate (null when too few games). */
+	rating: CellRating | null;
 	meanSelfElo: number;
 	seconds: number;
 }
@@ -151,7 +141,6 @@ async function runWorker(args: Args): Promise<void> {
 	const table = await tableFor(args.table);
 	const all = await loadCell(cellFile(args.cells, tc, bucket));
 	const holdout = all.filter((i) => i.row.split === "holdout");
-	const fitHumans = groupGames(all.filter((i) => i.row.split === "fit"));
 	const games = groupGames(holdout);
 	const rows = simulate(games, { targetElo: bucket, table, chains: args.chains, seed: args.seed });
 	const overall = profiles(rows);
@@ -159,27 +148,10 @@ async function runWorker(args: Args): Promise<void> {
 		bin,
 		...profiles(rows, (r) => r.clockFrac >= lo && r.clockFrac < hi),
 	}));
-	const byGame = new Map<string, typeof rows>();
-	for (const r of rows) {
-		const list = byGame.get(r.gameKey) ?? [];
-		list.push(r);
-		byGame.set(r.gameKey, list);
-	}
-	const ratingOf = new Map(games.map((g) => [g.key, g.items[0]?.item.row.selfElo ?? bucket]));
-	const records: GameRecord[] = [];
-	for (const [key, list] of byGame) {
-		const judged = list.filter((r) => r.human !== null);
-		const human = features(judged.map((r) => r.human as MoveOutcome));
-		const bot = Array.from({ length: args.chains }, (_, k) =>
-			features(judged.map((r) => (r.draws[k] as { outcome: MoveOutcome }).outcome))
-		);
-		records.push({ key, rating: ratingOf.get(key) ?? bucket, human, bot });
-	}
-	const trainSet: CellResult["train"] = [];
-	for (const g of fitHumans) {
-		const x = features(g.items.flatMap((i) => (i.human === null ? [] : [i.human])));
-		if (x) trainSet.push({ rating: g.items[0]?.item.row.selfElo ?? bucket, x });
-	}
+	const models = (await Bun.file(MODEL_FILE).json()) as ModelSet;
+	const model = models[tc];
+	if (!model) throw new Error(`${MODEL_FILE} has no ${tc} model: run rating-eval.ts --train`);
+	const rating = cellRating(rows, model);
 	let selfSum = 0;
 	let selfN = 0;
 	for (const r of rows)
@@ -195,8 +167,7 @@ async function runWorker(args: Args): Promise<void> {
 		temperature: point.temperature,
 		overall,
 		clock,
-		games: records,
-		train: trainSet,
+		rating,
 		meanSelfElo: selfN > 0 ? selfSum / selfN : 0,
 		seconds: (performance.now() - started) / 1000,
 	};
@@ -207,87 +178,6 @@ async function runWorker(args: Args): Promise<void> {
 }
 
 // ── report ───────────────────────────────────────────────────────────────────────────────────
-
-interface Rated {
-	tc: MaiaCalibrationTimeClass;
-	bucket: number;
-	implied: number;
-	lo: number;
-	hi: number;
-	games: number;
-	humanPred: number;
-}
-
-function impliedRatings(cells: readonly CellResult[]): {
-	rated: Rated[];
-	models: Record<string, Model & { slope: number; r2: number }>;
-} {
-	const rated: Rated[] = [];
-	const models: Record<string, Model & { slope: number; r2: number }> = {};
-	for (const tc of MAIA_CALIBRATION_TIME_CLASSES) {
-		const own = cells.filter((c) => c.tc === tc);
-		const trainSet = own.flatMap((c) => c.train);
-		if (trainSet.length < 50) continue;
-		const model = train(
-			trainSet.map((t) => t.x),
-			trainSet.map((t) => t.rating)
-		);
-		// The estimator's own slope on held-out humans: E[pred | rating] = a + b·rating.
-		const hx: number[] = [];
-		const hy: number[] = [];
-		for (const c of own)
-			for (const g of c.games)
-				if (g.human) {
-					hx.push(g.rating);
-					hy.push(predict(model, g.human));
-				}
-		const { b } = linearFit(hx, hy);
-		const my = hy.reduce((s, v) => s + v, 0) / Math.max(1, hy.length);
-		const { a } = linearFit(hx, hy);
-		let ssr = 0;
-		let sst = 0;
-		for (let i = 0; i < hx.length; i++) {
-			ssr += ((hy[i] as number) - (a + b * (hx[i] as number))) ** 2;
-			sst += ((hy[i] as number) - my) ** 2;
-		}
-		models[tc] = { ...model, slope: b, r2: sst > 0 ? 1 - ssr / sst : 0 };
-		for (const c of own) {
-			// Paired per game: mean over chains of pred(bot) − pred(human).
-			const diffs: number[] = [];
-			let humanPred = 0;
-			for (const g of c.games) {
-				if (!g.human) continue;
-				const ph = predict(model, g.human);
-				const bots = g.bot.filter((x): x is number[] => x !== null).map((x) => predict(model, x));
-				if (bots.length === 0) continue;
-				diffs.push(bots.reduce((s, v) => s + v, 0) / bots.length - ph);
-				humanPred += ph;
-			}
-			if (diffs.length < 5 || !(b > 0)) continue;
-			const mean = (xs: readonly number[]) => xs.reduce((s, v) => s + v, 0) / xs.length;
-			const rng = createRng(`bootstrap:${tc}:${c.bucket}`);
-			const boots: number[] = [];
-			for (let k = 0; k < BOOTSTRAP; k++) {
-				let s = 0;
-				for (let i = 0; i < diffs.length; i++)
-					s += diffs[Math.floor(rng.next() * diffs.length)] as number;
-				boots.push(s / diffs.length / b);
-			}
-			boots.sort((x, y) => x - y);
-			const humanRating = mean(c.games.filter((g) => g.human).map((g) => g.rating));
-			rated.push({
-				tc,
-				bucket: c.bucket,
-				implied: humanRating + mean(diffs) / b,
-				lo: humanRating + (boots[Math.floor(0.025 * BOOTSTRAP)] as number),
-				hi: humanRating + (boots[Math.floor(0.975 * BOOTSTRAP)] as number),
-				games: diffs.length,
-				humanPred: humanPred / diffs.length,
-			});
-		}
-	}
-	return { rated, models };
-}
 
 function ci(e: { mean: number; se: number }, scale = 1, digits = 2): string {
 	return `${(e.mean * scale).toFixed(digits)} ± ${(1.96 * e.se * scale).toFixed(digits)}`;
@@ -308,7 +198,6 @@ async function report(args: Args): Promise<void> {
 	for (const f of readdirSync(dir).filter((f) => f.endsWith(".json")))
 		cells.push((await Bun.file(path.join(dir, f)).json()) as CellResult);
 	cells.sort((a, b) => (a.tc === b.tc ? a.bucket - b.bucket : a.tc < b.tc ? -1 : 1));
-	const { rated, models } = impliedRatings(cells);
 	const out: string[] = [
 		`# Maia calibration verification — table \`${args.table}\``,
 		"",
@@ -355,21 +244,22 @@ async function report(args: Args): Promise<void> {
 					)
 					.join(" | ")} |`
 			);
-		const m = models[tc];
-		if (m) {
+		out.push(
+			"",
+			`### ${tc} — intrinsic rating (Maia-free, \`rating-model.ts\`)`,
+			"",
+			"Pooled per-move likelihood over the same held-out positions; the bot's rating is the players' mean actual rating plus the paired bot − human gap (the estimator's own bias cancels).",
+			"",
+			"| R | games | humans' estimate | bot's estimate | paired gap ± 1.96 SE | bot plays at | within ±1.96 SE of R |",
+			"|---:|---:|---:|---:|---:|---:|:-:|"
+		);
+		for (const c of own) {
+			const r = c.rating;
+			if (!r) continue;
+			const ok = Math.abs(r.implied - c.bucket) <= 1.96 * r.diffSe;
 			out.push(
-				"",
-				`### ${tc} — intrinsic rating (Maia-free estimator)`,
-				"",
-				`Ridge regression on ${m.trainedOn} fit-split human games; held-out slope ${m.slope.toFixed(3)} (pred per Elo), R² ${m.r2.toFixed(2)}, per-game residual SD ${Math.round(m.residualSd)}.`,
-				"",
-				"| R | games | bot's implied rating | 95 % interval | offset |",
-				"|---:|---:|---:|---|---:|"
+				`| ${c.bucket} | ${r.games} | ${Math.round(r.human.rating)} | ${Math.round(r.bot.rating)} | ${r.diff >= 0 ? "+" : ""}${Math.round(r.diff)} ± ${Math.round(1.96 * r.diffSe)} | ${Math.round(r.implied)} | ${ok ? "✓" : "✗"} |`
 			);
-			for (const r of rated.filter((r) => r.tc === tc))
-				out.push(
-					`| ${r.bucket} | ${r.games} | ${Math.round(r.implied)} | ${Math.round(r.lo)} – ${Math.round(r.hi)} | ${r.implied - r.bucket >= 0 ? "+" : ""}${Math.round(r.implied - r.bucket)} |`
-				);
 		}
 		out.push("");
 	}
@@ -390,10 +280,7 @@ async function report(args: Args): Promise<void> {
 				bot: { blunder: q.bot.blunder, mistake: q.bot.mistake },
 			})),
 		})),
-		implied: rated,
-		estimator: Object.fromEntries(
-			Object.entries(models).map(([tc, m]) => [tc, { slope: m.slope, r2: m.r2, n: m.trainedOn }])
-		),
+		rating: Object.fromEntries(cells.map((c) => [`${c.tc}:${c.bucket}`, c.rating])),
 	};
 	const base = path.join(VERIFY_DIR, args.label);
 	await Bun.write(path.join(base, "report.md"), out.join("\n"));

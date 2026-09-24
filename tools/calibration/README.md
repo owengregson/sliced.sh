@@ -23,6 +23,7 @@ absorbed into the conditioning rating and their shape is checked per clock quart
 | 4 | `maia-batch.ts` (+ `maia_worker.py`) | → `policies.jsonl`: the shipped Maia-3 79M, native onnxruntime (CPU + CoreML), the shipped encoder/decoder; parity with the wasm path in `maia-parity.ts` | ≈ 330 q/s → ≈ 1.7 h for 2 M queries |
 | 5 | `frames.ts` | → `frames.jsonl`: the vendored Stockfish 19 referee per row, the pipeline's recipe (MultiPV by rating, per-tc movetime, extra `searchmoves` over Maia's favourites across the grid, the human move's own line, every human-depth cycle 2…14) | ≈ 13 rows/s at 9 workers |
 | 6 | `shard.ts` | → `cells/<tc>-<bucket>.jsonl`: row + frame + grid policies joined per cell | seconds |
+| 6b | `rating-eval.ts --extract --train` | → `moves.jsonl`, `rating-model.json` (the intrinsic rating model, fit split), `rating-eval.md` (its accuracy on held-out humans) | seconds |
 | 7 | `fit.ts` | → `fit/cells/*.json` (objective surfaces), `fit/picks.json`; `--write` updates the shipped table | ≈ 10 min at 9 workers |
 | 8 | `verify.ts` | → `verify/<label>/report.md`, `summary.json` — holdout only | ≈ 5 min |
 
@@ -35,6 +36,7 @@ bun tools/calibration/requests.ts
 bun tools/calibration/maia-batch.ts --in data/calibration/requests.jsonl --out data/calibration/policies.jsonl
 bun tools/calibration/frames.ts [--require-policies]
 bun tools/calibration/shard.ts
+bun tools/calibration/rating-eval.ts --extract --train
 bun tools/calibration/fit.ts                      # all cells, then the smoothing table
 bun tools/calibration/fit.ts --offsets -1000:1000:100 --only bullet:600,…,bullet:3000   # as shipped
 bun tools/calibration/fit.ts --smooth --write     # re-smooth from saved surfaces and write the table
@@ -59,8 +61,9 @@ the production context. Per-game state follows the game actually played: the pre
 memory and the tilt reference are the human's.
 
 Every uncertainty is cluster-robust by game (`stats.ts`). The fit's objective for a cell is
-`Σ z²` over expected-points loss and the three band rates, `z = (bot − human)/√(SE_h² + SE_b²)`
-— χ²-like, ≈ 4 when indistinguishable.
+`Σ z²` over expected-points loss and the three band rates, `z = (bot − human)/√(SE_h² + SE_b²)`,
+plus the rating term `((plays at − R)/SE)²` from the intrinsic rating model — χ²-like, ≈ 5 when
+indistinguishable.
 
 ## Fitting and smoothing
 
@@ -72,7 +75,9 @@ surface. Conditioning and temperature trade off (both move strength), so a surfa
 equivalent points; `--smooth` picks one evaluated point per cell by a monotone Viterbi pass
 (`JOINT`): objective + a light prior towards Δ = 0, T = 1 (0.25 χ² units per 400 Elo or 0.4 T; it
 only breaks ties) + smoothness between neighbouring buckets, the conditioning never decreasing with
-R. Cells with fewer than 20 fit games are left out. Knots are written as `[R, conditioning, T]`,
+R, at smoothness weight 12 (chosen on the holdout: 1 → Σz² 111, 4 → 101, 12 → 81, 30 → 95;
+`--smooth --smooth-weight W` writes `fit/table-smoothW.json` for `verify.ts --table`). Cells with
+fewer than 20 fit games are left out. Knots are written as `[R, conditioning, T]`,
 the conditioning capped at `MAIA.conditioningEloMax` (what runs).
 
 Results and the shipped table: `docs/qa/maia-calibration-2026-09-23.md`.
@@ -80,10 +85,13 @@ Results and the shipped table: `docs/qa/maia-calibration-2026-09-23.md`.
 ## Verification (holdout players only)
 
 1. **Error profile** — bot vs humans per cell with 95 % intervals and z, and per clock quartile.
-2. **Intrinsic rating** — `estimator.ts`, a ridge regression from per-game move-quality features to
-   the chess.com rating, trained on the fit split's humans and knowing nothing about Maia. Applied
-   to the bot's and the humans' moves over the same held-out positions; the paired difference over
-   the estimator's slope is the bot's rating offset, with a game-bootstrap 95 % interval.
+2. **Intrinsic rating** — `rating-model.ts`, a per-move ordered-logit model of move quality given
+   rating and position difficulty (12 classes; near-best moves, only-move gap, decidedness, clock
+   pressure; rating × difficulty interactions), trained on the fit split's humans and knowing
+   nothing about Maia. The bot's and the humans' moves over the same held-out positions each get a
+   pooled maximum-likelihood rating; their paired gap (cluster-robust by game) added to the players'
+   mean actual rating is the rating the bot plays at. It replaced a per-game ridge regression whose
+   gap-over-slope comparison amplified noise; `rating-eval.md` has its accuracy.
 
 ## Fidelity limits
 

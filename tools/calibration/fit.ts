@@ -5,7 +5,9 @@
  * every human position (`sim.ts`) for each candidate `(conditioning offset Δ, temperature T)` —
  * the table under test is flat at `[R, R + Δ, T]` — and its error profile is compared with the
  * humans' of the same positions (`stats.ts`: expected-points loss and the inaccuracy / mistake /
- * blunder rates, cluster-robust by game). The cell's objective surface is saved.
+ * blunder rates, cluster-robust by game) and, when `rating-eval.ts --train` has written the rating
+ * model, the rating the bot plays at by that Maia-free model (paired with the humans over the same
+ * positions) against the target. The cell's objective surface is saved.
  *
  * The smoothing stage then picks one evaluated point per cell by a monotone Viterbi pass over
  * the buckets (`smoothClass`, `JOINT`): the fit objective, plus a mild prior towards Maia as
@@ -31,6 +33,8 @@ import {
 } from "@core/constants/maia-calibration";
 import { DATA_DIR } from "./common";
 import { jsonlLines } from "./frames";
+import { MODEL_FILE, type ModelSet } from "./rating-eval";
+import { cellRating } from "./rating-model";
 import { CELLS_DIR, cellFile } from "./shard";
 import { type CellItem, groupGames, simulateMany } from "./sim";
 import { FIT_METRICS, objective, type Profile, profiles, zScore } from "./stats";
@@ -57,6 +61,8 @@ interface Args {
 	split: "fit" | "holdout";
 	/** Coarse grid (every other value) then the full grid's neighbours of the best point. */
 	refine: boolean;
+	/** `JOINT.smooth.weight` override for `--smooth` (the weight is chosen on held-out players). */
+	smoothWeight: number;
 }
 
 function range(spec: string): number[] {
@@ -83,6 +89,7 @@ function parseArgs(argv: string[]): Args {
 		write: false,
 		split: "fit",
 		refine: true,
+		smoothWeight: JOINT.smooth.weight,
 	};
 	for (let i = 0; i < argv.length; i++) {
 		const v = argv[i + 1];
@@ -129,6 +136,10 @@ function parseArgs(argv: string[]): Args {
 			case "--smooth":
 				args.smooth = true;
 				break;
+			case "--smooth-weight":
+				args.smoothWeight = Number(v);
+				i++;
+				break;
 			case "--full-grid":
 				args.refine = false;
 				break;
@@ -167,6 +178,8 @@ export interface SurfacePoint {
 	objective: number;
 	bot: Profile;
 	z: Record<string, number>;
+	/** The intrinsic rating model's paired estimate: the rating this point plays at. */
+	rating?: { implied: number; se: number };
 }
 
 export interface CellSurface {
@@ -188,6 +201,10 @@ async function runWorker(args: Args): Promise<void> {
 	const started = performance.now();
 	const items = await loadCell(cellFile(args.cells, tc as string, bucket), args.split);
 	const games = groupGames(items);
+	const model = existsSync(MODEL_FILE)
+		? ((await Bun.file(MODEL_FILE).json()) as ModelSet)[tc as string]
+		: undefined;
+	if (!model) console.log(`${args.cell}: no rating model (${MODEL_FILE}); the rating term is off`);
 	let human: Profile | undefined;
 	const points: SurfacePoint[] = [];
 	const seen = new Set<string>();
@@ -210,7 +227,22 @@ async function runWorker(args: Args): Promise<void> {
 			human ??= p.human;
 			const z: Record<string, number> = {};
 			for (const m of FIT_METRICS) z[m] = zScore(p.human, p.bot, m);
-			points.push({ offset, temperature, objective: objective(p.human, p.bot), bot: p.bot, z });
+			// The fifth term: the rating the bot plays at by the Maia-free rating model (paired over
+			// these positions), against the cell's target.
+			const r = model ? cellRating(results[j] ?? [], model) : null;
+			let obj = objective(p.human, p.bot);
+			if (r && r.diffSe > 0 && Number.isFinite(r.diffSe)) {
+				z.rating = (r.implied - bucket) / r.diffSe;
+				obj += z.rating ** 2;
+			}
+			points.push({
+				offset,
+				temperature,
+				objective: obj,
+				bot: p.bot,
+				z,
+				...(r ? { rating: { implied: r.implied, se: r.diffSe } } : {}),
+			});
 		}
 	};
 	const best = (): SurfacePoint => points.reduce((a, b) => (b.objective < a.objective ? b : a));
@@ -338,7 +370,7 @@ async function orchestrate(args: Args): Promise<void> {
  */
 export const JOINT = {
 	prior: { elo: 400, temperature: 0.4, weight: 0.25 },
-	smooth: { elo: 300, temperature: 0.2, weight: 1 },
+	smooth: { elo: 300, temperature: 0.2, weight: 12 },
 	/** Cells with fewer fit games than this are left out (the edge knots extrapolate over them). */
 	minGames: 20,
 } as const;
@@ -357,7 +389,10 @@ export interface Pick {
  * The cheapest monotone path through the cells' evaluated points (Viterbi over buckets):
  * Σ objective + prior + smoothness, subject to non-decreasing conditioning.
  */
-export function smoothClass(surfaces: readonly CellSurface[]): Pick[] {
+export function smoothClass(
+	surfaces: readonly CellSurface[],
+	smoothWeight: number = JOINT.smooth.weight
+): Pick[] {
 	const cells = surfaces
 		.filter((s) => s.games >= JOINT.minGames)
 		.sort((a, b) => a.bucket - b.bucket);
@@ -372,7 +407,7 @@ export function smoothClass(surfaces: readonly CellSurface[]): Pick[] {
 		if (cb < ca) return Number.POSITIVE_INFINITY;
 		const spacing = b.bucket - a.bucket;
 		return (
-			S.weight *
+			smoothWeight *
 			(((cb - ca - spacing) / S.elo) ** 2 + ((pb.temperature - pa.temperature) / S.temperature) ** 2)
 		);
 	};
@@ -420,6 +455,11 @@ export function smoothClass(surfaces: readonly CellSurface[]): Pick[] {
 	});
 }
 
+/** The conditioning that actually runs: floored and capped as `maiaSelfElo` does. */
+function runConditioning(c: number): number {
+	return Math.max(MAIA.context.eloFloor, Math.min(MAIA.conditioningEloMax, c));
+}
+
 export function tableSource(picks: readonly Pick[]): string {
 	const lines = ["export const MAIA_CALIBRATION: MaiaCalibrationTable = {"];
 	for (const tc of MAIA_CALIBRATION_TIME_CLASSES) {
@@ -429,11 +469,10 @@ export function tableSource(picks: readonly Pick[]): string {
 			continue;
 		}
 		lines.push(`\t${tc}: [`);
-		// A conditioning above the model's cap runs at the cap (`maiaConditioningElo`); write what runs.
+		// A conditioning outside [eloFloor, cap] runs at the bound (`maiaSelfElo` floors every query,
+		// `maiaConditioningElo` caps it); write what runs.
 		for (const p of own)
-			lines.push(
-				`\t\t[${p.bucket}, ${Math.min(p.conditioning, MAIA.conditioningEloMax)}, ${p.temperature}],`
-			);
+			lines.push(`\t\t[${p.bucket}, ${runConditioning(p.conditioning)}, ${p.temperature}],`);
 		lines.push("\t],");
 	}
 	lines.push("};", "");
@@ -447,7 +486,12 @@ async function smooth(args: Args): Promise<void> {
 		surfaces.push((await Bun.file(path.join(dir, f)).json()) as CellSurface);
 	const picks: Pick[] = [];
 	for (const tc of MAIA_CALIBRATION_TIME_CLASSES)
-		picks.push(...smoothClass(surfaces.filter((s) => s.tc === tc)));
+		picks.push(
+			...smoothClass(
+				surfaces.filter((s) => s.tc === tc),
+				args.smoothWeight
+			)
+		);
 	const pct = (v: number) => (100 * v).toFixed(2);
 	console.log(
 		"\n| tc | R | rows | games | Δ | T | obj (min) | EPL h/b | inacc % h/b | mistake % h/b | blunder % h/b |"
@@ -469,6 +513,16 @@ async function smooth(args: Args): Promise<void> {
 		)}\n`
 	);
 	const source = tableSource(picks);
+	const table: Record<string, Array<[number, number, number]>> = {};
+	for (const tc of MAIA_CALIBRATION_TIME_CLASSES)
+		table[tc] = picks
+			.filter((p) => p.tc === tc)
+			.sort((a, b) => a.bucket - b.bucket)
+			.map((p) => [p.bucket, runConditioning(p.conditioning), p.temperature]);
+	await Bun.write(
+		path.join(args.out, `table-smooth${args.smoothWeight}.json`),
+		`${JSON.stringify(table)}\n`
+	);
 	console.log(`\n${source}`);
 	if (args.write) {
 		const text = await Bun.file(CONSTANTS_FILE).text();
