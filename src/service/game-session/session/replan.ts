@@ -45,6 +45,7 @@ export function timingContextFor(core: SessionCore, rec: Recommendation): Timing
 		inputMethod: EXECUTOR.committedTier,
 		autoQueen: true,
 		nowMs: core.now(),
+		priorFen: history.priorFen,
 	};
 }
 

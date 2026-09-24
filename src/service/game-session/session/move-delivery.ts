@@ -12,7 +12,7 @@ import { isMaxStrength } from "@core/strength/max-strength";
 import { type QualityContext, qualityCohortKey } from "@core/strength/session-quality";
 import { errorMessage } from "@core/util/errors";
 import type { MoveContext } from "@service/move-executor";
-import type { PositionSnapshot, Recommendation } from "@typedefs/game";
+import type { PositionSnapshot, Recommendation, Square } from "@typedefs/game";
 import type { RecommendationOutcome } from "../recommendation";
 import { isMyTurnState } from "../transitions";
 import type { BoardMarks } from "./board-marks";
@@ -152,6 +152,9 @@ export class MoveDelivery {
 				moves: core.history.moves,
 				history: core.historyFor(snapshot.fen),
 				expectedOppReply: expected,
+				priorFen: core.history.priorFen,
+				ponderedAnswer: this.ponderedAnswer(),
+				hoverSquare: hoverSquareOf(core.executor),
 				oppThinkMsHistory: core.history.oppThinkMs,
 				myThinkMsHistory: core.history.myThinkMs,
 				selectionState: core.selection,
@@ -414,4 +417,30 @@ export class MoveDelivery {
 		core.notify();
 		await executor.playNow(rec, plan, this.hooks.moveContext(rec));
 	}
+
+	/**
+	 * Our answer to the reply that just arrived, as the analysis made during the opponent's turn
+	 * rated it best: the pre-analysis of the predicted position when it predicted this reply, else
+	 * the ponder's top line when it starts with it. `null` when neither did.
+	 */
+	private ponderedAnswer(): string | null {
+		const core = this.core;
+		const moves = core.history.moves;
+		const last = moves[moves.length - 1];
+		if (last === undefined) return null;
+		const pre = this.parts.prediction.analysis;
+		if (pre && pre.reply === last) return pre.lines[0]?.pvUci[0] ?? null;
+		const prior = core.history.priorFen;
+		const top = prior ? core.ponderer?.latestLines(prior)[0] : undefined;
+		return top?.pvUci[0] === last ? (top.pvUci[1] ?? null) : null;
+	}
+}
+
+/**
+ * Where the idle hand rested when the opponent's move arrived: `MoveExecutor.hoverSquare()` (the
+ * anticipatory hover). Read structurally so an executor without the method answers `null`.
+ */
+function hoverSquareOf(executor: unknown): Square | null {
+	const read = (executor as { hoverSquare?: () => Square | null } | null)?.hoverSquare;
+	return typeof read === "function" ? (read.call(executor) ?? null) : null;
 }

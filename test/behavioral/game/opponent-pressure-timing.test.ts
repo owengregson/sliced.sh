@@ -2,7 +2,11 @@ import { afterEach, expect, it } from "bun:test";
 import { CDP } from "@core/constants/cdp";
 import { clockRacePolicy } from "@core/timing/opponent-pressure";
 import type { ExecutionReport } from "@service/move-executor";
+import { pinIdentityTimingCalibration } from "../../fakes/timing-calibration";
 import { createGameHarness, type GameHarness } from "./harness";
+
+// Mechanics over a fixture head (a constant sample); the calibration has its own tests.
+pinIdentityTimingCalibration();
 
 let h: GameHarness;
 afterEach(async () => h?.dispose());

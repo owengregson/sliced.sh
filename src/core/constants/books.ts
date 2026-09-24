@@ -119,6 +119,15 @@ export const PREMOVE = {
 	 */
 	replyTau: 0.06,
 	replyMinProb: 0.55,
+	/**
+	 * The same gate for a reply that captures, when what it arms is a safe trade, under the
+	 * think-time calibration only (`premovePropensity` supplies it with the calibrated trade rate) (2026-09-24,
+	 * `docs/qa/timing-calibration-2026-09-24.md`). A queued trade is self-invalidating — legal only if
+	 * they take on that square — so the confident-prediction gate only cost premoves: chess.com's
+	 * 2200+ players premove 27–66 % of their obvious recaptures, the bot managed 11–19 %. How often
+	 * such a candidate is then armed is the think-time calibration's (`premove.recapture`).
+	 */
+	tradeReplyMinProb: 0.2,
 	/** Require distinct, sufficiently searched alternatives before interpreting confidence. */
 	replyMinAlternatives: 2,
 	replyMinDepth: 4,

@@ -44,3 +44,12 @@ export const WINDOW = {
 	/** Share of the exploration budget spent on preview selections when the window has one. */
 	previewShare: 0.25,
 } as const;
+
+/**
+ * An anticipated reply (2026-09-24): the idle hand rested on the answering piece
+ * (`TimingContext.hoverSquare`) and the move is that piece's expected answer (the pondered reply
+ * or a recapture). A sampled think up to `maxThinkFactor` × the anticipated execution keeps the
+ * hand on the piece — reaction, grasp, carry (`anticipatedExecution`), the rest spent holding;
+ * a longer one is an ordinary think and the hand leaves to scan.
+ */
+export const ANTICIPATED = { maxThinkFactor: 2 } as const;

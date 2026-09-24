@@ -30,6 +30,23 @@ export const SEARCH_BUDGET = {
 		classical: 1_500,
 		untimed: 1_500,
 	} as Readonly<Record<BudgetTcClass, number>>,
+	/**
+	 * The fast-reply cap (2026-09-24, `docs/qa/timing-calibration-2026-09-24.md`): when the book
+	 * answered with the move it will play, or an obvious recapture is on the board, the own-move
+	 * search ends here at the latest. Its deadline is the earliest the hand can start, so with the
+	 * class budget above a book move or a recapture could never land under ≈ 1 s in blitz, while
+	 * chess.com's 2200+ players make half of them faster than that. The move is still searched
+	 * (lines for the trap check and the panel); a pondered position is a cache hit anyway.
+	 */
+	fastReplyMs: {
+		bullet: 150,
+		blitz: 250,
+		rapid: 400,
+		classical: 1_500,
+		untimed: 1_500,
+	} as Readonly<Record<BudgetTcClass, number>>,
+	/** How long the fast-reply rule waits for the book's answer before the search starts. */
+	fastReplyBookWaitMs: 30,
 	/** §7.5: the search must have finished before we act — an upper bound on the budget. */
 	thinkFraction: 0.6,
 	/** Never spend more than this fraction of the clock we have left on one search. */

@@ -3,9 +3,11 @@ import { afterAll, describe, expect, it } from "bun:test";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { applyMoves } from "@core/chess/san";
+import { BOOK, BOOKS } from "@core/constants/books";
 import { DEFAULT_SETTINGS } from "@core/constants/defaults";
 import { MODELS_DIR } from "@core/constants/models";
 import { createRng } from "@core/rng";
+import { createBookPolicy } from "@core/strength/book/book-policy";
 import { ChessMimicHead } from "@core/timing/chessmimic-head";
 import { TimingModel } from "@core/timing/timing-model";
 import type { TimingContext } from "@core/timing/types";
@@ -33,6 +35,13 @@ const inference = createTimingInference({
 	},
 });
 afterAll(() => inference.dispose());
+/** The bundled theory books (`THEORY_BOOKS`), read from the checkout. */
+const book = createBookPolicy({
+	loadBook: async (name) =>
+		new Uint8Array(await Bun.file(path.join(ROOT, BOOKS.dir, name)).arrayBuffer()),
+	repertoire: async () => null,
+});
+afterAll(() => book.dispose());
 const head = new ChessMimicHead({
 	infer: async (inputs) => {
 		const reply = await inference.handle({ kind: "timing", id: "replay", inputs });
@@ -76,6 +85,7 @@ async function replay(baseSec: number, seed: number): Promise<GameResult[]> {
 		});
 		head.reset();
 		let fen = START_FEN;
+		let priorFen: string | null = null;
 		let left = baseSec * 1000;
 		let opponent = baseSec * 1000;
 		const moves: string[] = [];
@@ -114,8 +124,16 @@ async function replay(baseSec: number, seed: number): Promise<GameResult[]> {
 					inputMethod: "drag",
 					autoQueen: true,
 					nowMs: 1_000_000 + ply * 1000,
+					// What the session supplies (2026-09-24): the position before the opponent's reply
+					// (the calibration's recapture test) and the book flag when the move is theory.
+					priorFen,
+					...((await book.bookMoves?.(fen))?.includes(record.uci) && ply <= BOOK.maxPly
+						? { inBook: true }
+						: {}),
 				};
 				await model.prepare(context);
+				// The session infers the chosen move's timed-move row before planning it.
+				await model.prepareMove(context);
 				const plan = model.planMove(context);
 				const search = ownMoveBudget(
 					{
@@ -158,6 +176,7 @@ async function replay(baseSec: number, seed: number): Promise<GameResult[]> {
 				opponent = next;
 			}
 			moves.push(record.uci);
+			priorFen = fen;
 			const next = applyMoves(fen, [record.uci]);
 			if (!next) throw new Error(`Invalid corpus move ${game.id}:${ply}`);
 			fen = next;
