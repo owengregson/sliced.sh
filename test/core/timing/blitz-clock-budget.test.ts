@@ -15,6 +15,7 @@ import { createTimingInference } from "@offscreen/timing-inference";
 import { timingSettingsFor } from "@service/game-session/presets";
 import { ownMoveBudget } from "@service/game-session/recommendation";
 import type { EvalLine } from "@typedefs/engine";
+import humanClock from "../../fixtures/human-clock-reference.json";
 import corpus from "../../fixtures/timing/pgn-replay.json";
 import { median, START_FEN } from "./helpers";
 
@@ -255,15 +256,25 @@ describe("complete PGN games with native timing and uncached execution cost", ()
 		expect(long).toBeGreaterThanOrEqual(longLow);
 		expect(long).toBeLessThanOrEqual(longHigh);
 	}, 300_000);
-	it("preserves comfortable rapid clocks instead of treating allocation as mandatory spend", async () => {
+	// Until 2026-09-24 this required ≥ 240 s at move 40, a regression guard with no human evidence
+	// behind it, which the upstream top band passed by thinking too fast in rapid. Humans rated
+	// 2300–2499 at 10+0 keep a median of ~143 s after move 40 and only ~25 % keep ≥ 240 s
+	// (`human-clock-reference.json`, generated from the chess.com crawl by
+	// tools/timing-finetune/human_clock_reference.py). The bot must neither hoard nor burn its
+	// clock: its median must sit inside the human interquartile range (docs/models.md §9;
+	// data/timing/finetune/RESULTS.md).
+	it("keeps a human rapid clock at move 40: neither hoarding nor burning time", async () => {
 		const games = await sweep(600);
+		const at40 = atMove(games, 40);
 		report({
 			timeControl: "10+0",
 			games: games.length,
-			at40: atMove(games, 40),
+			at40,
+			human: { median: humanClock.medianS, p25: humanClock.p25S, p75: humanClock.p75S },
 			flags: games.filter((g) => g.flagged).length,
 		});
-		expect(atMove(games, 40)).toBeGreaterThanOrEqual(240);
+		expect(at40).toBeGreaterThanOrEqual(humanClock.p25S);
+		expect(at40).toBeLessThanOrEqual(humanClock.p75S);
 		for (const game of games) expect(game.flagged).toBe(false);
 	}, 300_000);
 });

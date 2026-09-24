@@ -10,8 +10,20 @@ export function renderModelsSection(registry: ModelsRegistry, m: ModelsNotice): 
 		const b = m.manifest.bands[band];
 		if (!b) return "";
 		const diff = probDiff(b.maxAbsProbDiffOnnxVsTorch);
-		return `| ${band.replace("_", "–")} | \`${b.file}\` | \`${b.checkpoint.lfsOid.slice(0, 12)}\` | ${count(b.bytes)} | ${diff} |`;
+		const tuned = b.fineTuned ? " (fine-tuned)" : "";
+		return `| ${band.replace("_", "–")} | \`${b.file}\` | \`${b.checkpoint.lfsOid.slice(0, 12)}\`${tuned} | ${count(b.bytes)} | ${diff} |`;
 	};
+	const tuned = Object.entries(m.manifest.bands).flatMap(([band, b]) =>
+		b.fineTuned
+			? [
+					`The ${band.replace("_", "–")} band's weights were further fine-tuned from the upstream checkpoint
+named in the table (\`${b.fineTuned.script}\`, on ${b.fineTuned.data}); the result is a derivative
+of the upstream weights and is distributed under the same licence and the same non-commercial
+condition.`,
+				]
+			: []
+	);
+	const tunedNote = tuned.length ? `\n${tuned.join("\n\n")}\n` : "";
 	return `## ChessMimic timing model — \`${registry.MODELS_DIR}\`
 
 sliced.sh's human move-timing head is the clock model of **${up.name}** (Thomas Johnson, 2026;
@@ -23,7 +35,7 @@ derived works of those weights (same parameters, stored as float16, opset ${m.ma
 distributed under the same licence; the PolyForm text is reproduced in the upstream \`LICENSE\`.
 The searchless_chess FEN tokeniser ChessMimic builds on is Apache-2.0 (google-deepmind); the
 extension's TypeScript transcription of it lives in \`src/core/timing/chessmimic-tokeniser.ts\`.
-
+${tunedNote}
 Export: \`${m.manifest.export.script}\` (torch ${m.manifest.export.torch}, onnx ${m.manifest.export.onnx},
 onnxruntime ${m.manifest.export.onnxruntime}; details, latency and the reference fixture in \`docs/models.md\`).
 

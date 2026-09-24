@@ -18,7 +18,8 @@ weights. `Training/ClockTrainer.py` defines an 8,950,558-parameter model: eight 
 eight attention blocks, width 256, eight heads and widening factor four. Each source checkpoint
 is 107,535,521 bytes; its Git LFS object ID is checked before export.
 
-The exported bands and their actual fitted rating distributions are:
+The exported bands and their actual fitted rating distributions are (the top band's row is the
+fine-tuned population, §9; upstream's own was 2357.105 ± 126.724):
 
 | Band | Rating mean | Rating std | First clock bucket |
 |---|---:|---:|---|
@@ -27,7 +28,7 @@ The exported bands and their actual fitted rating distributions are:
 | 1500_1600 | 1550.564 | 27.556 | 0–1 s |
 | 1800_1900 | 1849.166 | 27.342 | 0–1 s |
 | 2000_2100 | 2047.534 | 27.518 | 0–1 s |
-| 2200_3500 | 2357.105 | 126.724 | 0–1 s |
+| 2200_3500 (fine-tuned) | 2632.595 | 280.053 | 0–1 s |
 
 The `0_1000` checkpoint now represents novice targets that previously reached the 1200–1300
 model. Band selection first honors a containing training range, then uses the nearest fitted
@@ -73,7 +74,7 @@ Source artifacts under `assets/models/chessmimic/`:
 | `1500_1600.onnx` | 19,247,529 | `09ffcd130d46b3273f2186c38ffcf49aedc5dc17c1499f1bf04714599dd99bc8` |
 | `1800_1900.onnx` | 18,200,481 | `121bc7a7fa7920f9b0cf55dfe642f1e32e33a82dea23831bfbc018fa8d8f6f22` |
 | `2000_2100.onnx` | 18,200,481 | `f50058cdab70d1f21d987faf0c11ed3059d30ad57c6e095cf3472bceb51f3eb9` |
-| `2200_3500.onnx` | 18,200,481 | `5e7d1175e4b44dc180068e6b72782a425953ed76848063e037eafc7d0e4203f7` |
+| `2200_3500.onnx` (fine-tuned, §9) | 18,200,481 | `f799744bbdabbb4f30fcb44a3b1d17d7e04b1de6a449d6fb389297967e556110` |
 
 `models.json` also records source checkpoint hashes, export versions and reference error per
 band. `scalers.json`, `buckets.json` and `vocab.json` provide model-specific preprocessing and
@@ -98,7 +99,7 @@ upstream tokens and torch fp32 probabilities. Export-side measurements:
 | 1500_1600 | 105 | 0.001510 |
 | 1800_1900 | 88 | 0.000802 |
 | 2000_2100 | 75 | 0.000542 |
-| 2200_3500 | 243 | 0.001087 |
+| 2200_3500 (fine-tuned, §9) | 243 | 0.000682 |
 
 The fp16 export now fails before writing its final manifest if any band reaches the runtime's
 unchanged 0.002 tolerance. Tokenizer and scaler tests reproduce every fixture input.
@@ -139,7 +140,10 @@ move forever waiting for a download. Maia remains bundled-only with no remote fa
 ## 7. Reproducing
 
 After changing source model exports, update the source registry, run `bun run vendor:engine`
-and build. These release checks exercise the actual packed files and fail on unreadable or
+and build. `08_export_chessmimic.py` exports the *upstream* checkpoints: re-running it for all
+six bands would replace the fine-tuned `2200_3500` band and its fixture rows with upstream's.
+Pass `--bands` without `2200_3500` there, and re-export the fine-tuned band with
+`tools/timing-finetune/export.py` (§9). These release checks exercise the actual packed files and fail on unreadable or
 incorrect package assets:
 
 ```sh
@@ -313,3 +317,112 @@ The export is deterministic given the checkpoint (TorchScript exporter, opset 17
 folding, `FP16_MIN_ELEMENTS = 1024`): the shipped files were produced by this procedure with
 torch 2.14.0 / onnx 1.22.0 / onnxruntime 1.30.0, and a re-run must reproduce the SHA-256s in the
 registry — if it does not, the registry, `models.json` and this section change together.
+
+## 9. Fine-tuned 2200–3500 band (2026-09-24)
+
+The shipped `2200_3500.onnx` is no longer upstream's checkpoint. It was fine-tuned on public
+chess.com games and it times the move being played, the way upstream trained it.
+
+**The move window.** Upstream's clock data built each record's 12-move window with the timed move
+as the last token and the FEN before it (`Training/cpp_src/clock_converter/clock_game_parser.cpp`,
+"moves_including_current", pinned by its own tests). The extension had fed history only, so the
+window was shifted by one move. `buildInputs(ctx, move)` now puts the timed move last.
+`ChessMimicHead.prepare(ctx, { candidates })` infers the history-only row plus one row per candidate.
+`prepareMove(ctx)` infers `ctx.chosenMove` on a miss. Sampling reads the chosen move's row and falls
+back to the history-only row. The band was trained on a mixed contract (85 % of examples with the
+timed move, 15 % history-only) so the fallback row stays calibrated.
+
+**Data.** The crawl in `data/timing/crawl/` gave 201,909 chess.com bullet, blitz and rapid games with
+a side rated 1800 or higher. Training used `splitFor` fit-split movers rated 2100 and above, first
+moves excluded (chess.com's clock does not run normally on them), at most 60 game-sides per player.
+That is 8.4 M moves, of which a random 2.0 M from 19,043 players were used. Early stopping used 40 k
+moves from 2,084 further fit players held back. The extractor, `tools/timing-finetune/extract.py`,
+labels each move with the clock delta plus increment, which is upstream's label and includes the
+hand. It encodes every input exactly as the extension does: `test_parity.py` checks byte-identical
+float32 inputs against the reference fixture, the pinned upstream tokenizer and `buildInputs` +
+`standardiseInputs` on 3,000 real positions, half of them with the timed move.
+
+**Method.** Start from the upstream fp32 checkpoint and minimise cross-entropy over the runtime's
+bucket mask. Settings: AdamW, learning rate 3e-5 with a 500-step warm-up and cosine decay, batch
+256, one epoch, gradient clip 1. The rating scaler was refitted to the training population:
+2632.6 ± 280.1 instead of upstream's 2357.1 ± 126.7. The rating embedding was re-parameterised
+first, so the refit alone did not change the function; 3000 now sits at z = +1.31, not +5.07. The
+clock scalers, the bucket layout and the band's range are unchanged. Band selection is unchanged
+too: the gap from 2101 to 2199 still selects `2000_2100`. The export (`tools/timing-finetune/export.py`)
+follows `08_export_chessmimic.py`, with fp16 initialisers behind `Cast` and opset 14. Run on the
+upstream checkpoint, it reproduces the previously shipped file byte for byte. The fine-tuned
+file's maximum difference from torch fp32 over its 243 fixture rows is 0.000682. The other bands'
+fixture rows are unchanged.
+
+**Held-out results.** Scored on `splitFor` holdout players only: kept crawl sides, a 15 % random
+sample of game-sides, at most 30 per player. That is 472,225 moves from 6,554 players. CIs are a
+500-draw bootstrap over players, paired. NLL is over the 30 masked buckets, and RPS is the CRPS of
+the bucket CDF. "shipped" is upstream's band as the extension used it (history only), "+move" is
+upstream's band given the timed move, "A" is a history-only fine-tune on the same data, and
+"candidate" is the shipped band with and without the move. Situations are provisional: "book" means
+inside chess.com's named opening line and "recapture" means capturing on the square just captured on.
+
+| tc | rating | situation | moves | NLL shipped | +move | A | **candidate** | candidate, history row | ΔNLL [95 % CI] | RPS shipped → candidate | median s obs / shipped / candidate | 10/50/90 % coverage shipped → candidate |
+|---|---|---|---:|---:|---:|---:|---:|---:|---|---|---|---|
+| all | 2100+ | all | 410,610 | 2.170 | 1.993 | 1.616 | **1.563** | 1.655 | −0.607 [−0.617, −0.595] | 2.086 → 1.365 | 1.3 / 2.4 / 1.4 | .29/.68/.91 → .10/.49/.90 |
+| all | 2200–2999 | all | 343,720 | 2.205 | 2.015 | 1.629 | **1.575** | 1.668 | −0.630 [−0.642, −0.618] | 2.140 → 1.389 | 1.3 / 2.5 / 1.4 | .30/.69/.92 → .10/.49/.90 |
+| all | 3000+ | all | 40,567 | 1.658 | 1.612 | 1.351 | **1.305** | 1.381 | −0.352 [−0.369, −0.336] | 1.290 → 0.968 | 0.9 / 1.4 / 1.0 | .16/.60/.89 → .10/.50/.90 |
+| bullet | 2200–2999 | book | 9,511 | 2.024 | 1.882 | 0.368 | **0.357** | 0.376 | −1.667 [−1.701, −1.629] | 1.304 → 0.111 | 0.4 / 2.2 / 0.6 | .61/.98/1.0 → .10/.51/.91 |
+| bullet | 2200–2999 | recapture | 10,636 | 1.742 | 0.891 | 0.604 | **0.566** | 0.669 | −1.176 [−1.205, −1.144] | 1.041 → 0.211 | 0.3 / 1.8 / 0.6 | .46/.89/1.0 → .09/.50/.91 |
+| bullet | 2200–2999 | other | 88,548 | 1.808 | 1.656 | 0.947 | **0.901** | 0.972 | −0.907 [−0.925, −0.890] | 1.279 → 0.372 | 0.8 / 2.0 / 0.9 | .42/.86/.99 → .10/.50/.91 |
+| blitz | 2200–2999 | book | 14,710 | 1.755 | 1.584 | 1.146 | **1.129** | 1.189 | −0.626 [−0.648, −0.603] | 1.008 → 0.570 | 0.9 / 1.8 / 1.0 | .34/.78/.97 → .11/.53/.91 |
+| blitz | 2200–2999 | recapture | 11,399 | 2.071 | 1.403 | 1.333 | **1.272** | 1.471 | −0.799 [−0.827, −0.771] | 1.493 → 0.809 | 0.9 / 2.4 / 0.9 | .40/.80/.97 → .09/.47/.90 |
+| blitz | 2200–2999 | other | 106,619 | 2.255 | 2.060 | 1.996 | **1.925** | 2.038 | −0.330 [−0.338, −0.322] | 2.045 → 1.624 | 2.0 / 2.9 / 2.0 | .24/.65/.93 → .10/.49/.89 |
+| rapid | 2200–2999 | book | 7,552 | 2.234 | 2.112 | 1.941 | **1.936** | 1.971 | −0.298 [−0.324, −0.271] | 1.794 → 1.637 | 1.6 / 1.9 / 1.9 | .16/.50/.86 → .11/.54/.91 |
+| rapid | 2200–2999 | recapture | 5,479 | 2.471 | 2.208 | 2.073 | **2.021** | 2.189 | −0.450 [−0.487, −0.411] | 2.517 → 2.016 | 1.7 / 2.7 / 1.7 | .26/.64/.89 → .09/.45/.89 |
+| rapid | 2200–2999 | other | 51,775 | 3.131 | 3.073 | 2.713 | **2.650** | 2.745 | −0.481 [−0.496, −0.465] | 4.848 → 3.567 | 5.2 / 3.3 / 4.7 | .11/.37/.71 → .09/.46/.87 |
+
+The candidate's point estimate is better than shipped in every one of the 216 cells (time class ×
+100-Elo band × situation). Its CI crosses zero only for rapid 2800–2899 book, which has 53 moves.
+On the calibration games (105,201 held-out moves, with the calibrator's situation labels) it is
+better in every cell as well: 2100+ NLL 2.302 → 1.690, book 2.031 → 1.260, obvious recapture
+2.123 → 1.301, forced 1.544 → 1.001. As a forgetting check, held-out 1800–2099 movers (the band
+clamps them to 2200) also improve, from 2.556 to 1.929 NLL for 1800–1999, although production
+routes them to other bands. Upstream's band was trained on blitz. It predicted bullet far too slowly
+(98 % of bullet book moves fell at or below its median) and rapid too fast. The candidate's PIT
+histogram is flat: coverage is 10 / 49 / 90 % against 10 / 50 / 90 %.
+
+One replay assertion changed with the band. `blitz-clock-budget.test.ts` used to require at least
+240 s left at move 40 of a 10+0 game (target 2400). That was a regression guard with no human
+evidence behind it, and upstream's band passed it only by thinking too fast in rapid. The
+fine-tuned band finishes move 40 with a median of 210 s. Humans rated 2300–2499 at 10+0 keep a
+median of 142.6 s (IQR 66.9–241.0 s, 7,687 sides from 3,400 players; 25 % keep 240 s or more). The
+test now requires the bot's median to lie in that human IQR, read from
+`test/fixtures/human-clock-reference.json`, which `tools/timing-finetune/human_clock_reference.py`
+generates. The 3+0 assertions are unchanged, and the replay still uses the history-only row. With
+the timed-move row, the 3+0 middle-clock long-think share is 0.017, just under the human
+envelope's 0.029. The timing calibration layer has to meet that envelope when it wires the
+candidates.
+
+Limitations: rapid above 2800 is almost empty in the crawl (a few dozen kept rapid sides at
+2900–2999, none at 3000+). 3000+ bullet and blitz are covered, but 3000–3500 is the top of the data, not beyond it.
+The time-control mix is chess.com's own, which is mostly 1+0, 3+0 and 10+0. The situation labels on
+the crawl are provisional. The history-only fallback row is about 0.09 nats worse than the row with
+the move. Tables: `data/timing/finetune/RESULTS.md` and `eval/*/eval.md` (git-ignored). Code and a
+reproduction recipe: `tools/timing-finetune/`.
+
+**Licence.** The fine-tuned weights are a derivative of the PolyForm Noncommercial 1.0.0 upstream
+weights and carry the same licence and the same non-commercial condition. `models.json` records
+the fine-tune under `bands["2200_3500"].fineTuned`, and `docs/third-party.md` (regenerated by
+`bun run vendor:engine`) says so.
+
+Reproducing, from the repository root with the export venv (§2):
+
+```sh
+PY=tools/data/.venv/bin/python
+$PY tools/timing-finetune/test_parity.py                     # extractor = fixture = upstream = TS
+$PY tools/timing-finetune/extract.py --games data/timing/crawl/games.jsonl --out data/timing/finetune/extract/crawl --min-rating 1800 --workers 3
+$PY tools/timing-finetune/train.py --examples data/timing/finetune/extract/crawl/examples --out data/timing/finetune/runs/crawl-mixed \
+    --contract mixed --p-current 0.85 --refit-rating-scaler --lr 3e-5 --epochs 1 --max-train 2000000 --eval-every 1000 --patience 3 --warmup 500
+$PY tools/timing-finetune/evaluate.py --examples data/timing/finetune/extract/crawl/examples --out data/timing/finetune/eval/final-crawl \
+    --baseline shipped --min-rating 1800 --side-frac 0.15 --model shipped=upstream:2200_3500,band=2200_3500 \
+    --model cand=data/timing/finetune/runs/crawl-mixed/best.ckpt,band=2200_3500,scalers=data/timing/finetune/runs/crawl-mixed/scalers.json,contract=with_current
+$PY tools/timing-finetune/export.py --ckpt data/timing/finetune/runs/crawl-mixed/best.ckpt --scalers data/timing/finetune/runs/crawl-mixed/scalers.json \
+    --train-json data/timing/finetune/runs/crawl-mixed/train.json --out data/timing/finetune/candidates/crawl-mixed --install
+bun run vendor:engine
+```

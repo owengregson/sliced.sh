@@ -129,6 +129,20 @@ export class TimingModel {
 
 	/** Kick off head-side inference for the position (no-op for the v1 head). */
 	prepare(ctx: TimingContext, options?: TimingPreparation): Promise<void> {
+		if (this.skipsInference(ctx)) return Promise.resolve();
+		return this.head.prepare?.(ctx, options) ?? Promise.resolve();
+	}
+
+	/**
+	 * Infer the chosen move's row when `prepare` did not already (call after the move is chosen,
+	 * before `planMove`; no-op for the v1 head and under the same clock-race rule as `prepare`).
+	 */
+	prepareMove(ctx: TimingContext, options?: TimingPreparation): Promise<void> {
+		if (this.skipsInference(ctx)) return Promise.resolve();
+		return this.head.prepareMove?.(ctx, options) ?? Promise.resolve();
+	}
+
+	private skipsInference(ctx: TimingContext): boolean {
 		const race = clockRacePolicy({
 			ownClockMs: ctx.myClockMs,
 			opponentClockMs: ctx.oppClockMs,
@@ -138,8 +152,7 @@ export class TimingModel {
 		});
 		// An opponent's short clock is a reason to play briskly, not to discard
 		// position-conditioned thinking while we can still afford it.
-		if (race && !race.opponentOnly) return Promise.resolve();
-		return this.head.prepare?.(ctx, options) ?? Promise.resolve();
+		return race !== null && !race.opponentOnly;
 	}
 
 	private allocFor(f: Features): number {
@@ -149,6 +162,7 @@ export class TimingModel {
 	planMove(ctx: TimingContext): TimingPlan {
 		const st = this._state;
 		st.fen = ctx.fen;
+		st.move = ctx.chosenMove;
 		st.ply = ctx.ply;
 		const f = computeFeatures(ctx, st);
 		if (st.lastEvalOurPov !== null && f.eval_cp <= st.lastEvalOurPov - C.tilt.dropCp && st.tilt === 0)
