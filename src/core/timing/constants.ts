@@ -4,366 +4,65 @@
  * lives here; the modules under `src/core/timing/` only read it.
  *
  * Elo-dependent parameters are `[p0, p1]` pairs: `p(e) = p0 + p1·elo_z`.
+ *
+ * Each domain lives in its own module under `./constants/`; this object is the one table of
+ * contents the timing modules read.
  */
 
-import { CHESSMIMIC_BANDS } from "@core/constants/models";
-import type { PersonaId } from "@typedefs/settings";
-import type { TcClass } from "./types";
+import { BUDGET, MOVE_BUDGET, RATING_PACE } from "./constants/budget";
+import { CHESSMIMIC } from "./constants/chessmimic";
+import {
+	CAPS,
+	CLOCK_RACE,
+	COMPRESSION,
+	MIN_NORMAL_MS,
+	OPPONENT_PRESSURE,
+	REPLAN,
+} from "./constants/clock";
+import { FAKEOUT, MOTOR, ORIENTATION, WINDOW } from "./constants/execution";
+import { FEATURES, UNTIMED_VIRTUAL } from "./constants/features";
+import { BOT_PACE, BOT_PACE_FLOOR, PERSONA } from "./constants/persona";
+import {
+	BETA,
+	INSTANT,
+	KNOBS,
+	LONG_THINK,
+	PHI,
+	PREMOVE,
+	SIGMA,
+	TILT,
+	V2_MLP,
+} from "./constants/v1-head";
 
-export interface ProfileOffsets {
-	/** Log speed offset (`profile.speed`). */
-	speed: number;
-	/** Premove logit offset (`profile.premove`). */
-	premove: number;
-	/** Impulsiveness offset added to the Beta(2,2) draw. */
-	iota: number;
-}
+export type { ProfileOffsets } from "./constants/persona";
 
 export const TIMING_CONSTANTS = {
-	/** Appendix D §2 feature scalings. */
-	features: {
-		/** `elo_z = (elo − centre) / halfRange`, clamped to ±1. */
-		eloCentre: 1650,
-		eloHalfRange: 850,
-		/** `base_eff = base + incWeight·inc` and the Lichess class thresholds (seconds). */
-		incWeight: 40,
-		bulletMaxBaseEff: 180,
-		blitzMaxBaseEff: 480,
-		rapidMaxBaseEff: 1500,
-		/** `log_clock = ln(max(clockFloorS, clock))`. */
-		clockFloorS: 0.5,
-		clockRatioClamp: 2,
-		/** `ply_sq = (ply / plySqScale)²`. */
-		plySqScale: 40,
-		/** `phase_c = clamp((phaseMaterialFull − npm) / phaseMaterialFull, 0, 1)`. */
-		phaseMaterialFull: 62,
-		/** Lines within this many cp of the best count as reasonable. */
-		nReasonableCp: 40,
-		decisivenessScaleCp: 25,
-		/** `is_forced = n_reasonable == 1 && decisiveness > ln(1 + forcedCp / 25)`. */
-		forcedCp: 150,
-		swingScaleCp: 50,
-		evalAbsScaleCp: 100,
-		evalSignScaleCp: 300,
-		materialScale: 5,
-		/** `opp_pace` window and the `+0.2` offset; disabled below 20 s (Appendix D §4). */
-		oppPaceMoves: 3,
-		oppPaceOffsetS: 0.2,
-		oppPaceClamp: 2,
-		oppPaceMinClockS: 20,
-		/** `budget_used_ratio = 1 − pressure − min(1, ply / (2·N0))`. */
-		expectedMovesN0: 40,
-	},
-	/**
-	 * Clockless games (§8.4b items 1 and 6): ONE virtual context shared by the features, the
-	 * budget bypass and the ChessMimic inputs (a blitz context inside ChessMimic's training
-	 * range). The clock-pressure terms and the budget controller are bypassed, which is what
-	 * "classical conditioning" means here — not a long virtual base.
-	 */
-	untimedVirtual: { clockS: 300, incS: 0 },
-	/** Appendix D §3a.2 budget controller. */
-	budget: {
-		nRemBase: 24,
-		nRemPerPiece: 0.9,
-		nRemPerPawn: 0.5,
-		nRemPerMove: 0.12,
-		nRemMin: 24,
-		nRemMax: 48,
-		openingHorizonPlies: 40,
-		reserveFraction: 0.08,
-		reserveMinS: 2,
-		reserveMaxS: 30,
-		allocMinS: 0.15,
-		allocIncWeight: 0.8,
-		overspendFactor: 0.12,
-		overspendPlyHorizon: 60,
-	},
-	/** Engineering priors, not population estimates. Interpolated continuously from 400–3800. */
-	ratingPace: {
-		// Elo, recognition, complexity contrast, time-management discipline.
-		knots: [
-			[400, 0.12, 0.2, 0.35],
-			[800, 0.22, 0.3, 0.43],
-			[1200, 0.38, 0.43, 0.53],
-			[1600, 0.56, 0.59, 0.65],
-			[2000, 0.74, 0.75, 0.77],
-			[2400, 0.86, 0.89, 0.86],
-			[2800, 0.92, 0.97, 0.91],
-			[3200, 0.94, 1.0, 0.93],
-			[3800, 0.95, 1.0, 0.94],
-		] as ReadonlyArray<readonly [number, number, number, number]>,
-	},
-	moveBudget: {
-		complexityReferenceChoices: 6,
-		swingScale: 2,
-		routineEffort: 0.7,
-		complexityEffort: 0.75,
-		recognitionDiscount: 0.78,
-		minimumEffort: 0.16,
-		maximumEffort: 1.65,
-		minimumShapeMeanS: 0.05,
-		normalBurst: 3,
-		criticalBurst: 6,
-		clockFraction: 0.16,
-		incrementBurst: 2,
-	},
-	/** Post-model opponent-clock policy. Missing/untimed clocks leave both policies neutral. */
-	opponentPressure: {
-		thresholdBaseFraction: 0.12,
-		thresholdMinMs: 8_000,
-		thresholdMaxMs: 30_000,
-		incrementHorizon: 3,
-		ownClockRatioMin: 0.35,
-		maxThinkReduction: 0.45,
-	},
-	/** A fast execution policy after the timing head; searches and the hand share its budget. */
-	clockRace: {
-		opponentThresholdMs: 10_000,
-		ownThresholdMs: 5_000,
-		explorationLowClockMs: 10_000,
-		opponentBaseUrgency: 0.55,
-		ownBaseUrgency: 0.65,
-		incrementHorizon: 3,
-		/**
-		 * Own-clock emergency windows, interpolated by urgency. Raised on 2026-09-11 (owner: "still
-		 * making superhuman speed movements"): the whole move at full urgency is now 150–215 ms, not
-		 * 60–130, and the gesture inside it has its own floor (`FAST_TOUCH.gestureFloorMs`). Kept under
-		 * `TELEMETRY_BANDS.holdTime.minMs` at every own urgency (≥ `ownBaseUrgency`), so a race move
-		 * stays distinguishable from a normal one in the export. The hold system (`SCRAMBLE_HOLD`)
-		 * carries the reaction part of a scramble.
-		 */
-		moveMinMs: [240, 150],
-		moveMaxMs: [305, 215],
-		/** Opponent-only pressure stays brisk without using our own emergency gesture timings. */
-		opponentMoveMinMs: [500, 300],
-		opponentMoveMaxMs: [850, 550],
-		searchMaxMs: [100, 30],
-		remainingClockFraction: 0.25,
-		minimumWindowMs: 60,
-	},
-	/** Appendix D §3a.3 body coefficients (log scale). */
-	beta: {
-		book: [-1.2, -0.4],
-		phaseMid: 0.15,
-		phaseEnd: -0.1,
-		invertedU: 0.25,
-		uCentrePly: 36,
-		uWidth: 1600,
-		cplx: [0.35, 0.15],
-		cplxRefLines: 3,
-		dec: [0.22, 0.06],
-		gap: 0.1,
-		forced: -0.9,
-		recap: -0.8,
-		only: -1.5,
-		ponder: -0.45,
-		swing: 0.3,
-		evalAbs: -0.18,
-		lost: 0.2,
-		lostLoCp: -600,
-		lostHiCp: -120,
-		dead: -0.35,
-		deadCp: -600,
-		won: -0.3,
-		wonCp: 500,
-		check: -0.1,
-		promo: 0.15,
-		legal: 0.1,
-		legalRefMoves: 30,
-		ratio: 0.08,
-	},
-	/** Appendix D §3a.4 residual. */
-	sigma: { base: 0.8, elo: -0.12, phaseMid: 0.1, book: -0.08, min: 0.05 },
-	phi: { base: 0.35, elo: 0.05 },
-	/** Appendix D §3a.3 time-pressure compression. */
-	compression: {
-		clockS: 30,
-		pressure: 0.2,
-		floor: 0.35,
-		panicClockS: 12,
-		panicFloor: 0.15,
-		incFloorIncS: 2,
-		incFloorClockS: 5,
-		incFloor: 0.6,
-	},
-	/** Hard caps: `0.5·C`; `0.15·C` if `C < 30 && inc < 2`; `0.35 s` if `C < 3`. */
-	caps: {
-		fraction: 0.5,
-		lowFraction: 0.15,
-		lowClockS: 30,
-		lowIncS: 2,
-		tinyClockS: 3,
-		tinyCapS: 0.35,
-		/** A binding cap lands in `cap · U(jitterMin, 1)` rather than exactly at the cap (§8.4a). */
-		jitterMin: 0.75,
-	},
-	/** Appendix D §3a.5 premove spike. */
-	premove: {
-		aTc: { bullet: -0.4, blitz: -2, rapid: -3.5, classical: -5, untimed: -5 } as Record<
-			TcClass,
-			number
-		>,
-		recap: 2,
-		book: 1.5,
-		only: 1.5,
-		ponder: 1,
-		clockUnder10: 1.5,
-		clockUnder20: 0.8,
-		clock10S: 10,
-		clock20S: 20,
-		lnNReasonable: -0.6,
-		swingBad: -0.3,
-		eloBullet: 0.6,
-		/** `t_premove ~ U(0, maxS)` plus the site's fixed submit penalty. */
-		maxS: 0.12,
-		penaltyS: 0.1,
-	},
-	/** Appendix D §3a.5 instant reply. */
-	instant: {
-		bTc: { bullet: 0.2, blitz: -0.9, rapid: -1.8, classical: -2.5, untimed: -2.5 } as Record<
-			TcClass,
-			number
-		>,
-		recap: 1.2,
-		forced: 1,
-		ponder: 0.8,
-		book: 1,
-		clockUnder20: 0.8,
-		lnNReasonable: -0.5,
-		iota: 0.5,
-		/**
-		 * §3a.5's `−0.3·decisiveness⁻¹` term (absent from the condensed Appendix A; §3a.5 wins),
-		 * evaluated as `1 / max(decisiveness, floor)` so two equal moves give a finite penalty.
-		 */
-		decisivenessInv: -0.3,
-		decisivenessInvFloor: 0.25,
-		/** `t = t_motor + U(minS, minS + rangeS)`. */
-		minS: 0.05,
-		rangeS: 0.2,
-	},
-	/** Appendix D §3a.5 long-think tail. */
-	longThink: {
-		lambda0: [0.02, 0.008],
-		critExp: 0.9,
-		tauBase: 0.6,
-		tauWeight: 0.4,
-		pMax: 0.12,
-		paretoAlpha: 1.6,
-		paretoXm: 1,
-		paretoShift: 2.5,
-		minClockS: 30,
-		minPressure: 0.15,
-		crit: { lnN: 0.5, swing: 0.4, balanced: 0.3, balancedCp: 150, phaseMid: 0.3, dec: -0.3, max: 2 },
-		capFraction: 0.25,
-		capS: { bullet: 15, blitz: 45, rapid: 120, classical: 120, untimed: 120 } as Record<
-			TcClass,
-			number
-		>,
-	},
-	/** Tilt: 3 moves after an own move that lost ≥ 200 cp. */
-	tilt: { moves: 3, dropCp: 200, bodyIota: 0.35, instantIota: 0.6 },
-	/** Hesitation fake-out (motor), `p = pBase + pElo·(1 − elo_z)`, only when `C > minClockS`. */
-	fakeout: { pBase: 0.02, pElo: 0.015, holdMs: [250, 700], gapMs: [300, 900], minClockS: 20 },
-	/** Appendix D §3a.6 motor model. */
-	motor: {
-		hoverMedianS: 0.22,
-		hoverSigma: 0.35,
-		dragBaseS: 0.09,
-		dragLogS: 0.07,
-		dragSdS: 0.03,
-		dragMinS: 0.08,
-		dragMaxS: 0.6,
-		clickBaseS: 0.12,
-		clickLogS: 0.05,
-		promoS: [0.25, 0.6],
-		/** Floor when `t_total < t_motor` (premove: 0). */
-		minMotorMs: 60,
-	},
-	/** Appendix D §4 persona latents (no `session_mu`, §8.4b item 4). */
-	persona: {
-		sGameSigma: 0.2,
-		iotaBeta: [2, 2],
-		piSigma: 0.5,
-		tauSd: 0.12,
-		mirrorRange: [0.05, 0.3],
-		motorKMean: 1,
-		motorKSd: 0.12,
-		motorKMin: 0.4,
-		/** Beta parameterisation keeps the τ mean strictly inside (0, 1). */
-		tauMeanClamp: [0.05, 0.95],
-		/** Appendix D §4 profiles mapped onto `PersonaId`: slow / normal / fast / blitz-specialist. */
-		profiles: {
-			cautious: { speed: 0.35, premove: -0.5, iota: -0.2 },
-			balanced: { speed: 0, premove: 0, iota: 0 },
-			aggressive: { speed: -0.35, premove: 0.5, iota: 0.2 },
-			blitz: { speed: -0.35, premove: 1, iota: 0.2 },
-		} as Record<PersonaId, ProfileOffsets>,
-	},
-	/** §8.4b item 2 orientation latency. */
-	orientation: { medianMs: 380, sigma: 0.35, swingBad: 0.4, ponderHit: -0.25, minMs: 150 },
-	/** §8.4b item 3 window allocation. */
-	window: {
-		decisionMin: 0.15,
-		decisionMax: 0.4,
-		/** Share of the exploration budget spent on preview selections when the window has one. */
-		previewShare: 0.25,
-	},
-	/** §8.4a guards. */
-	minNormalMs: 250,
-	/** §8.4b item 5: a bot opponent never drags us below this fraction of the model median. */
-	botPaceFloor: 0.6,
-	botPace: { minMoves: 3, maxReplyMs: 1500, maxCv: 0.35 },
-	/** Appendix D §5 re-plan rules. */
-	replan: {
-		clockJumpThresholdMs: 1500,
-		blurReorientS: [0.3, 1.2],
-		blurPauseThresholdS: 2,
-		blurMinClockS: 15,
-		/**
-		 * §8.5 emergency: `myClockMs < emergencyClockMs` → every wait 0, minimal motor. The
-		 * plan-level emergency regime (`boundByCap`) applies when EITHER that holds OR the floors
-		 * (`minNormalMs` for normal/long moves; `orientation.minMs + motor.minMotorMs` for every
-		 * non-premove window) cannot fit under the hard cap (`lo ≥ 1`): then no floor applies, the
-		 * total is `cap · U(jitterMin, 1)` and the phases compress below their floors with the
-		 * motor kept ≥ `minMotorMs`. There is no separate clock threshold for it.
-		 */
-		emergencyClockMs: 1500,
-		observeShiftClamp: 2,
-	},
-	/** §8.4b item 6 ChessMimic head. */
-	chessmimic: {
-		sGameSigma: 0.2,
-		arSigma: 0.2,
-		arPhi: 0.35,
-		temperature: 1,
-		inferenceBudgetMs: 100,
-		bands: CHESSMIMIC_BANDS,
-		recentMoves: 12,
-		fenTokens: 78,
-		sequenceLength: 92,
-		moveVocabSize: 1968,
-		nBuckets: 30,
-		/**
-		 * The open [40, ∞) bucket's empirical table (`buckets.json`) covers ≈ 75 % of its mass
-		 * (40–59 s); the rest is drawn as 60 s + Exp(mean) with upstream's blitz tail mean
-		 * (`clock_bucket_utils.py` `tail_means["blitz"]`).
-		 */
-		openBucketTailMeanS: 30,
-		/**
-		 * Max |Δ probability| allowed between the fp16-weight ONNX bands and the torch fp32
-		 * reference (`test/fixtures/chessmimic-reference.json`). Measured 1.46e-3 over all
-		 * 1 000 reference positions under the vendored onnxruntime-web wasm backend (and
-		 * 1.458e-3 in Python onnxruntime at export time). The one partial-fp32 layout that
-		 * reaches < 1e-3 costs +2.1 MB per band for a 5 % margin, so the export stays all-fp16
-		 * and the bound is 2e-3 (measurements in docs/models.md).
-		 */
-		fixtureProbTolerance: 2e-3,
-		/** The top 4 buckets (≥ 26 s, §3b.1) or `t > longMedianMultiple·median` label the sample `long`. */
-		longBucketFrom: 26,
-		longMedianMultiple: 6,
-	},
-	/** Appendix D §7: v2 MLP head (not shipped; kept for the knob table). */
-	v2Mlp: { arSigma: 0.35, temperature: 1 },
-	/** `Settings.timing.premoveTendency` ∈ [0,1] maps to the ±2 logit knob (Appendix D §7 knob 5). */
-	knobs: { premoveNeutral: 0.5, premoveLogitSpan: 4 },
+	features: FEATURES,
+	untimedVirtual: UNTIMED_VIRTUAL,
+	budget: BUDGET,
+	ratingPace: RATING_PACE,
+	moveBudget: MOVE_BUDGET,
+	opponentPressure: OPPONENT_PRESSURE,
+	clockRace: CLOCK_RACE,
+	beta: BETA,
+	sigma: SIGMA,
+	phi: PHI,
+	compression: COMPRESSION,
+	caps: CAPS,
+	premove: PREMOVE,
+	instant: INSTANT,
+	longThink: LONG_THINK,
+	tilt: TILT,
+	fakeout: FAKEOUT,
+	motor: MOTOR,
+	persona: PERSONA,
+	orientation: ORIENTATION,
+	window: WINDOW,
+	minNormalMs: MIN_NORMAL_MS,
+	botPaceFloor: BOT_PACE_FLOOR,
+	botPace: BOT_PACE,
+	replan: REPLAN,
+	chessmimic: CHESSMIMIC,
+	v2Mlp: V2_MLP,
+	knobs: KNOBS,
 } as const;

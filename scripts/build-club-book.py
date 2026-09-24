@@ -16,9 +16,10 @@ the rating of BOTH players, the first `--max-ply` plies of every game are counte
 a position reached 5 000 times is not theory). `weight` is the move's frequency scaled to fit 16
 bits per position; `learn` is 0. Keys are the standard Polyglot Zobrist hash
 (`chess.polyglot.zobrist_hash`), castling is encoded king-takes-rook as the format requires, and
-entries are written sorted by key. Next to the book a `<book>.build.json` manifest records the
-inputs (with their SHA-256), flags, game counts and the book's SHA-256; `scripts/vendor-engine.ts`
-renders `docs/third-party.md` from those manifests.
+entries are written sorted by key (the format and manifest I/O are `scripts/polyglot_book.py`).
+Next to the book a `<book>.build.json` manifest records the inputs (with their SHA-256), flags,
+game counts and the book's SHA-256; `scripts/vendor-engine.ts` renders `docs/third-party.md` from
+those manifests.
 
 Scale (2026-09-15): tens of millions of games do not fit a Python dict of counters, so counting is
 external. `--jobs` worker processes replay games and append raw `(key, move)` records to one of
@@ -40,152 +41,25 @@ After building, re-run `bun run vendor:engine` to refresh `docs/third-party.md`.
 from __future__ import annotations
 
 import argparse
-import hashlib
-import io
 import json
 import multiprocessing as mp
 import os
-import re
 import shutil
-import struct
 import sys
 import tempfile
 import time
-import zipfile
 from pathlib import Path
-from typing import IO, Iterator
+from typing import Iterator
 
 import chess
 import chess.polyglot
+from pgn_games import games, open_input, san_tokens, wanted
+from polyglot_book import ENTRY, MAX_WEIGHT, encode_move, sha256_file, write_manifest
 
-ENTRY = struct.Struct(">QHHI")
-MAX_WEIGHT = 0xFFFF
 BUCKET_BITS = 6
 BUCKETS = 1 << BUCKET_BITS
-RESULTS = {"1-0", "0-1", "1/2-1/2", "*"}
-COMMENT_RE = re.compile(r"\{[^}]*\}")
 FLUSH_RECORDS = 2_000_000
 BATCH_GAMES = 5_000
-
-
-# ── reading ──────────────────────────────────────────────────────────────────
-
-
-def open_input(path: Path) -> Iterator[IO[str]]:
-    """Text handles for every PGN in `path` (.pgn, .pgn.zst, .zip)."""
-    name = path.name.lower()
-    if name.endswith(".zst"):
-        import zstandard
-
-        with path.open("rb") as raw:
-            reader = zstandard.ZstdDecompressor().stream_reader(raw, read_across_frames=True)
-            yield io.TextIOWrapper(reader, encoding="utf-8", errors="replace")
-    elif name.endswith(".zip"):
-        with zipfile.ZipFile(path) as zf:
-            for member in zf.namelist():
-                if member.lower().endswith(".pgn"):
-                    with zf.open(member) as raw:
-                        yield io.TextIOWrapper(raw, encoding="utf-8", errors="replace")
-    else:
-        with path.open("r", encoding="utf-8", errors="replace") as fh:
-            yield fh
-
-
-def games(fh: IO[str]) -> Iterator[tuple[dict[str, str], str]]:
-    """(headers, movetext) per game of a PGN stream, without building python-chess game trees.
-
-    A truncated compressed download ends in a decompression error; everything before the last
-    complete game has been yielded by then, so the stream simply ends there.
-    """
-    headers: dict[str, str] = {}
-    movetext: list[str] = []
-    try:
-        for line in fh:
-            line = line.strip()
-            if line.startswith("[") and line.endswith("]") and not movetext:
-                key, _, rest = line[1:-1].partition(" ")
-                headers[key] = rest.strip().strip('"')
-            elif line:
-                movetext.append(line)
-            elif movetext:
-                yield headers, " ".join(movetext)
-                headers, movetext = {}, []
-    except Exception as error:  # zstandard.ZstdError on a truncated frame
-        print(f"  input ended early: {error}", file=sys.stderr)
-        return
-    if headers and movetext:
-        yield headers, " ".join(movetext)
-
-
-def rating(headers: dict[str, str], key: str) -> int | None:
-    value = headers.get(key, "")
-    return int(value) if value.isdigit() else None
-
-
-def is_bullet(headers: dict[str, str]) -> bool:
-    event = headers.get("Event", "").lower()
-    if "bullet" in event:
-        return True
-    tc = headers.get("TimeControl", "")
-    if "+" in tc:
-        base, inc = tc.split("+", 1)
-        if base.isdigit() and inc.isdigit():
-            return int(base) + 40 * int(inc) < 180
-    return False
-
-
-def wanted(headers: dict[str, str], flt: dict) -> bool:
-    if headers.get("Variant", "Standard").lower() not in ("standard", ""):
-        return False
-    if headers.get("FEN") or headers.get("SetUp") == "1":
-        return False
-    white = rating(headers, "WhiteElo")
-    black = rating(headers, "BlackElo")
-    if white is None or black is None:
-        if not flt["allow_unrated"]:
-            return False
-    else:
-        if min(white, black) < flt["min_elo"] or max(white, black) > flt["max_elo"]:
-            return False
-    if not flt["keep_bullet"] and is_bullet(headers):
-        return False
-    return True
-
-
-def san_tokens(movetext: str, max_ply: int) -> list[str]:
-    """The first `max_ply` SAN tokens of `movetext` (comments, NAGs, move numbers, results dropped)."""
-    text = COMMENT_RE.sub(" ", movetext)
-    if "(" in text:
-        return []  # variations never occur in Lichess exports; skip rather than mis-parse
-    out: list[str] = []
-    for raw in text.split():
-        if raw in RESULTS or raw.startswith("$"):
-            continue
-        token = raw.rsplit(".", 1)[-1] if "." in raw else raw
-        if not token or token[0].isdigit():
-            continue
-        out.append(token.rstrip("!?"))
-        if len(out) >= max_ply:
-            break
-    return out
-
-
-def encode_move(board: chess.Board, move: chess.Move) -> int:
-    """Polyglot 16-bit move: castling stored as king-takes-rook."""
-    to_square = move.to_square
-    if board.is_castling(move):
-        rank = chess.square_rank(move.from_square)
-        to_square = chess.square(7 if chess.square_file(move.to_square) > 4 else 0, rank)
-    promo = 0
-    if move.promotion:
-        promo = {chess.KNIGHT: 1, chess.BISHOP: 2, chess.ROOK: 3, chess.QUEEN: 4}[move.promotion]
-    return (
-        chess.square_file(to_square)
-        | (chess.square_rank(to_square) << 3)
-        | (chess.square_file(move.from_square) << 6)
-        | (chess.square_rank(move.from_square) << 9)
-        | (promo << 12)
-    )
 
 
 # ── counting ─────────────────────────────────────────────────────────────────
@@ -338,14 +212,6 @@ def write_book(k, m, w, output: Path) -> None:
     entries.tofile(output)
 
 
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as fh:
-        for chunk in iter(lambda: fh.read(1 << 20), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def count_inputs(args: argparse.Namespace, flt: dict, started: float):
     """Read, replay and count every input: `(keys, moves, counts, totals, read, kept, positions)`."""
     import threading
@@ -484,8 +350,7 @@ def main() -> int:
         "bytes": size,
         "sha256": sha256_file(args.output),
     }
-    manifest_path = args.output.with_name(args.output.name + ".build.json")
-    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    manifest_path = write_manifest(args.output, manifest)
     print(f"wrote {args.output} ({len(k):,} entries, {size:,} bytes, min-count {min_count}) in {time.time() - started:.0f}s", file=sys.stderr)
     print(f"wrote {manifest_path}", file=sys.stderr)
     return 0

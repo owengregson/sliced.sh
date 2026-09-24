@@ -14,49 +14,12 @@
 import { BRIDGE_WIRE as W } from "@core/constants/bridge";
 import { HIGHLIGHT_MOTION as M } from "@core/constants/timings";
 import { type Expression, js, type Statement } from "@pagescript";
+import { arrowGeometry, arrowStubLength } from "./arrow-shape/geometry";
+import { outlineRoutines, shadowStatements } from "./arrow-shape/outline";
+import { add, callm as call, id, mul, n, s, text as string, sub } from "./parts/ast";
+import { setAttr as attr, svgEl as svg } from "./parts/svg";
 
-/** The silhouette at scale 1, in board units (1 = one square). `shadowOpacity` is not a length. */
-const A = {
-	shaftHalfWidth: 0.105,
-	headHalfWidth: 0.3,
-	headLength: 0.43,
-	cornerRadius: 0.04,
-	startInset: 0.25,
-	tailRadius: 0.1,
-	tipRadius: 0.055,
-	shadowOffset: 0.026,
-	shadowBlur: 0.018,
-	shadowOpacity: 0.18,
-	fadeLength: 0.9,
-} as const;
-
-export type ArrowGeometry = Record<Exclude<keyof typeof A, "shadowOpacity">, number>;
-
-/**
- * Every length of the silhouette multiplied by `scale`, rounded to six decimals so the emitted
- * numbers stay short. At scale 1 every value is exactly `A`'s.
- */
-export function arrowGeometry(scale = 1): ArrowGeometry {
-	const at = (v: number): number => Number((v * scale).toFixed(6));
-	return {
-		shaftHalfWidth: at(A.shaftHalfWidth),
-		headHalfWidth: at(A.headHalfWidth),
-		headLength: at(A.headLength),
-		cornerRadius: at(A.cornerRadius),
-		startInset: at(A.startInset),
-		tailRadius: at(A.tailRadius),
-		tipRadius: at(A.tipRadius),
-		shadowOffset: at(A.shadowOffset),
-		shadowBlur: at(A.shadowBlur),
-		fadeLength: at(A.fadeLength),
-	};
-}
-
-/** The stub the draw animation grows from: the head, the tail cap and one corner, at `scale`. */
-export function arrowStubLength(scale = 1): number {
-	const g = arrowGeometry(scale);
-	return g.headLength + g.tailRadius + g.cornerRadius;
-}
+export { type ArrowGeometry, arrowGeometry, arrowStubLength } from "./arrow-shape/geometry";
 
 export interface ArrowShapeOptions {
 	/** The overlay's per-build class: scopes the gradient and filter ids. */
@@ -92,20 +55,6 @@ export interface ArrowShapeOptions {
 	dotGapRatio?: number;
 }
 
-const id = js.id;
-const n = js.num;
-const s = js.str;
-const add = (a: Expression, b: Expression) => js.op(a, "+", b);
-const sub = (a: Expression, b: Expression) => js.op(a, "-", b);
-const mul = (a: Expression, b: Expression) => js.op(a, "*", b);
-const call = (el: Expression, method: string, ...args: Expression[]) =>
-	js.call(js.member(el, method), ...args);
-const svg = (tag: string) =>
-	call(id("document"), "createElementNS", s("http://www.w3.org/2000/svg"), s(tag));
-const attr = (el: Expression, name: string, value: Expression): Statement =>
-	js.expr(call(el, "setAttribute", s(name), value));
-const string = (value: Expression) => js.call(id("String"), value);
-
 export function arrowShapeStatements(p: ArrowShapeOptions): Statement[] {
 	const prefix = p.prefix ?? "ov";
 	const cell = id(p.cell ?? "ovCell");
@@ -119,90 +68,11 @@ export function arrowShapeStatements(p: ArrowShapeOptions): Statement[] {
 	const serialName = `${prefix}ArrowSerial`;
 	const dotted = p.dotGapRatio !== undefined;
 	const half = S.shaftHalfWidth;
-	const head = S.headHalfWidth;
-	const r = S.cornerRadius;
-	const h = sub(id("length"), n(S.headLength));
-	// The head — from the shaft's last corner at `h − r` round the tip and back — is one run of
-	// path text shared by the full silhouette and the head-only path, so the two agree exactly.
-	const headText = [
-		`,${-half} `,
-		`,${-half - r} V ${-head + r} Q `,
-		`,${-head} `,
-		`,${-head + r} L `,
-		`,${-r} Q `,
-		`,0 `,
-		`,${r} L `,
-		`,${head - r} Q `,
-		`,${head} `,
-		`,${head - r} V ${half + r} Q `,
-		`,${half} `,
-	];
-	const headPoints = (): Expression[] => [
-		sub(h, n(r)),
-		h,
-		h,
-		h,
-		add(h, n(r)),
-		sub(id("length"), n(S.tipRadius)),
-		add(id("length"), n(S.tipRadius)),
-		sub(id("length"), n(S.tipRadius)),
-		add(h, n(r)),
-		h,
-		h,
-		h,
-		sub(h, n(r)),
-	];
-	const path = js.const_(
-		pathName,
-		js.arrow(
-			["length"],
-			[
-				js.ret(
-					js.tpl(
-						[
-							`M ${S.tailRadius},${-half} H `,
-							` Q `,
-							...headText,
-							`,${half} H ${S.tailRadius} Q 0,${half} 0,0 Q 0,${-half} ${S.tailRadius},${-half} Z`,
-						],
-						...headPoints()
-					)
-				),
-			]
-		)
-	);
-	// The head alone, closed straight across its base at `h − r`: the dotted shaft's round cap ends
-	// under it.
-	const headPath = js.const_(
-		headPathName,
-		js.arrow(
-			["length"],
-			[js.ret(js.tpl([`M `, `,${-half} Q `, ...headText, `,${half} Z`], ...headPoints()))]
-		)
-	);
-	const gradient = js.const_(
-		gradientName,
-		js.arrow(
-			["name", "color", "length"],
-			[
-				js.const_("gradient", svg("linearGradient")),
-				attr(id("gradient"), "id", id("name")),
-				attr(id("gradient"), "gradientUnits", s("userSpaceOnUse")),
-				attr(id("gradient"), "x1", s("0")),
-				attr(id("gradient"), "y1", s("0")),
-				attr(id("gradient"), "x2", string(id("length"))),
-				attr(id("gradient"), "y2", s("0")),
-				js.forOf("entry", js.arr(js.arr(n(0), n(0)), js.arr(n(0.35), n(0.45)), js.arr(n(1), n(1))), [
-					js.const_("stop", svg("stop")),
-					attr(id("stop"), "offset", string(js.member(id("entry"), n(0)))),
-					attr(id("stop"), "stop-color", id("color")),
-					attr(id("stop"), "stop-opacity", string(js.member(id("entry"), n(1)))),
-					js.expr(call(id("gradient"), "appendChild", id("stop"))),
-				]),
-				js.ret(id("gradient")),
-			]
-		)
-	);
+	const { path, headPath, gradient } = outlineRoutines(S, {
+		path: pathName,
+		headPath: headPathName,
+		gradient: gradientName,
+	});
 	// The runtime size multiplier (`sizeArg`): the path is built at `length / k` and the shape drawn
 	// under `scale(k)`, so the tip stays put and the body scales about the start.
 	const k = id("k");
@@ -273,26 +143,7 @@ export function arrowShapeStatements(p: ArrowShapeOptions): Statement[] {
 						js.call(id(gradientName), id("name"), id("color"), id("fadeLength"))
 					)
 				),
-				// A soft screen-down shadow adds depth without tracing the perimeter.
-				// Rotate its local offset against the arrow so lighting stays consistent.
-				js.const_("shadowName", add(id("name"), s("s"))),
-				js.const_("shadowFilter", svg("filter")),
-				attr(id("shadowFilter"), "id", id("shadowName")),
-				attr(id("shadowFilter"), "filterUnits", s("userSpaceOnUse")),
-				attr(id("shadowFilter"), "x", s("-0.15")),
-				attr(id("shadowFilter"), "y", s("-0.45")),
-				attr(id("shadowFilter"), "width", string(add(id("length"), n(0.3)))),
-				attr(id("shadowFilter"), "height", s("0.9")),
-				attr(id("shadowFilter"), "color-interpolation-filters", s("sRGB")),
-				js.const_("shadow", svg("feDropShadow")),
-				attr(id("shadow"), "dx", string(mul(js.op(id("dy"), "/", id("distance")), n(S.shadowOffset)))),
-				attr(id("shadow"), "dy", string(mul(js.op(id("dx"), "/", id("distance")), n(S.shadowOffset)))),
-				attr(id("shadow"), "stdDeviation", s(String(S.shadowBlur))),
-				attr(id("shadow"), "flood-color", js.or(js.member(p.colors, "edge"), id("color"))),
-				attr(id("shadow"), "flood-opacity", s(String(A.shadowOpacity))),
-				js.expr(call(id("shadowFilter"), "appendChild", id("shadow"))),
-				js.expr(call(id("defs"), "appendChild", id("shadowFilter"))),
-				attr(id("group"), "filter", js.tpl(["url(#", ")"], id("shadowName"))),
+				...shadowStatements(S, p.colors),
 				js.expr(call(id("group"), "appendChild", id("defs"))),
 				js.const_("shape", svg("path")),
 				js.const_("full", fullPath),

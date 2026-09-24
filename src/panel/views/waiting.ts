@@ -14,7 +14,6 @@
  * execution live in Settings (Task 25); only the link is here.
  */
 
-import { tabsQuery } from "@core/chrome/tabs";
 import type { PanelSnapshot } from "@core/constants/messages";
 import { MSG } from "@core/constants/messages";
 import { UI_TIMINGS } from "@core/constants/ui";
@@ -27,11 +26,13 @@ import { createPill } from "../components/pill";
 import { attachTooltip } from "../components/popover";
 import { createToggle, type ToggleUpdate } from "../components/toggle";
 import { COPY } from "../copy";
-import { formatCountdown, formatSeconds } from "../format";
+import { formatSeconds } from "../format";
 import { instantiate, part } from "../template";
 import type { View } from "../view";
+import { activeTabId } from "./active-tab";
 import { autoPlayState } from "./auto-play-state";
 import html from "./templates/waiting.html?raw";
+import { autoplayHint, waitingStatus } from "./waiting/status";
 
 export interface WaitingViewOptions {
 	/** The game tab to arm, resolved at arm time (default: the active tab of the current window). */
@@ -43,11 +44,6 @@ let debuggerBannerShown = false;
 
 export function resetWaitingSession(): void {
 	debuggerBannerShown = false;
-}
-
-async function activeTabId(): Promise<number | null> {
-	const tabs = await tabsQuery({ active: true, currentWindow: true });
-	return tabs[0]?.id ?? null;
 }
 
 function engineText(snapshot: PanelSnapshot): string {
@@ -163,41 +159,11 @@ export function createWaitingView(options: WaitingViewOptions = {}): View {
 			function renderStatus(): void {
 				const snapshot = currentSnapshot;
 				if (!snapshot) return;
-				const assistantOff = !snapshot.settings.enabled;
-				const reading = snapshot.session.state === "idle";
-				const queue =
-					!assistantOff && snapshot.settings.automation.autoQueue
-						? snapshot.session.autoQueue
-						: undefined;
-				const remaining = queue ? queue.dueAt - Date.now() : 0;
-				// The rematch step (2026-09-13) counts down to the ordinary queue click, in seconds.
-				const rematching = queue?.status === "rematch" && remaining > 0;
-				const counting =
-					rematching ||
-					((queue?.status === "waiting" || queue?.status === "break") &&
-						queue.attempts === 0 &&
-						remaining > 0);
-				dot.dataset.state = assistantOff || reading || queue ? "warn" : "ok";
+				const { text: nextText, counting, warn } = waitingStatus(snapshot, Date.now());
+				dot.dataset.state = warn ? "warn" : "ok";
 				// The visible timer updates every second without announcing every tick.
 				status.setAttribute("role", counting ? "timer" : "status");
 				status.setAttribute("aria-live", counting ? "off" : "polite");
-				const nextText = assistantOff
-					? COPY.move.disabled
-					: queue
-						? rematching
-							? COPY.waiting.queueRematch(String(Math.ceil(remaining / 1000)))
-							: counting
-								? queue.status === "break"
-									? COPY.waiting.queueBreak(formatCountdown(remaining))
-									: COPY.waiting.queueDelay(formatCountdown(remaining))
-								: queue.status === "searching"
-									? COPY.waiting.queueSearching
-									: queue.status === "retrying"
-										? COPY.waiting.queueRetrying
-										: COPY.waiting.queueStarting
-						: reading
-							? COPY.waiting.reading
-							: COPY.waiting.watching;
 				if (statusText.textContent !== nextText) statusText.textContent = nextText;
 				if (counting && queueTimer === null) {
 					queueTimer = setInterval(renderStatus, UI_TIMINGS.ariaCountdownStepMs);
@@ -209,10 +175,6 @@ export function createWaitingView(options: WaitingViewOptions = {}): View {
 				const site = snapshot.site ?? snapshot.session.site;
 				meta.hidden = site === null;
 				if (site) meta.textContent = COPY.waiting.meta(engineText(snapshot));
-				// §4.4: with the master switch off this tab is not being watched and nothing can be
-				// armed (the service worker refuses), so the view says so instead of offering a
-				// control that snaps back.
-				const assistantOff = !snapshot.settings.enabled;
 				renderStatus();
 
 				const opponent = snapshot.opponent;
@@ -229,15 +191,11 @@ export function createWaitingView(options: WaitingViewOptions = {}): View {
 				// Patch only what differs from the toggle's own state: a snapshot that agrees with it
 				// must not touch the component (an update would cancel a hold in progress).
 				const auto = autoPlayState(snapshot);
-				const armed = snapshot.autoMove.armed;
-				const locked = assistantOff && !auto.checked;
-				const hint = assistantOff
-					? COPY.waiting.autoplayOff
-					: auto.waiting
-						? COPY.toggle.waitingHint
-						: armed
-							? COPY.waiting.preArmed
-							: COPY.waiting.autoplayTooltip;
+				// §4.4: with the master switch off this tab is not being watched and nothing can be
+				// armed (the service worker refuses), so the view says so instead of offering a
+				// control that snaps back.
+				const locked = !snapshot.settings.enabled && !auto.checked;
+				const hint = autoplayHint(snapshot, auto);
 				const patch: ToggleUpdate = {};
 				if (toggle.checked !== auto.checked) patch.checked = auto.checked;
 				if ((toggle.state === "waiting") !== auto.waiting) patch.waiting = auto.waiting;

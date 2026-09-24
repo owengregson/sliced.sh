@@ -1,7 +1,7 @@
 /**
  * Board-effect relay (owner's brief, 2026-09-13). The service worker decides what the move that
  * just landed did and how good it was; this forwards the batch to the MAIN-world bridge, which
- * owns the element — nothing in this world inserts DOM (`AdapterBase.draw`: "no DOM insertion from
+ * owns the element — nothing in this world inserts DOM (`Markings.draw`: "no DOM insertion from
  * the adapter", §13.3).
  *
  * It is deliberately not part of `Highlights`: the two layers have separate elements, separate
@@ -12,7 +12,7 @@
  * draws from screen coordinates and has no other way to know which way round the board is.
  */
 
-import { BRIDGE_KINDS, type PageBridge } from "@content/adapters/adapter";
+import { BRIDGE_KINDS, type PageBridge } from "@content/adapters/bridge-protocol";
 import { runtimeSendMessage } from "@core/chrome/runtime";
 import type { BoardEffect } from "@core/constants/board-effects";
 import { type GamePortCommand, MSG } from "@core/constants/messages";

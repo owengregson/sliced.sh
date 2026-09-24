@@ -13,7 +13,9 @@ import { createWriteStream } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import archiver from "archiver";
-import { walkFiles } from "./verify-dist.ts";
+import { walkFiles } from "./lib/fs";
+import { RELEASE_DIR } from "./lib/paths";
+import { bulletList } from "./lib/report";
 
 export interface PackageResult {
 	/** Absolute path of the written zip. */
@@ -36,7 +38,7 @@ export function missingEntries(onDisk: readonly string[], archived: readonly str
 export async function packageDist(
 	dist: string,
 	version: string,
-	outDir = path.resolve(import.meta.dir, "..", "release")
+	outDir = RELEASE_DIR
 ): Promise<PackageResult> {
 	await mkdir(outDir, { recursive: true });
 	const file = path.join(outDir, releaseZipName(version));
@@ -66,7 +68,7 @@ export async function packageDist(
 	const missing = missingEntries(walkFiles(dist), entries);
 	if (missing.length > 0)
 		throw new Error(
-			`package: ${missing.length} file(s) in ${dist} did not reach the archive\n  - ${missing.join("\n  - ")}`
+			`package: ${missing.length} file(s) in ${dist} did not reach the archive${bulletList(missing)}`
 		);
 
 	const shown = path.relative(process.cwd(), file);

@@ -100,7 +100,7 @@ describe("game session: the time control arrives after the game started (§4.3)"
 	}, 120_000);
 
 	it("re-profiles from a reading the own-hand guard drops, so the clock is not deferred a ply", async () => {
-		// §4.3's republish is a **one-shot**: `AdapterBase.apply` records `lastTimeControl` before it
+		// §4.3's republish is a **one-shot**: `SnapshotPublisher.apply` records `lastTimeControl` before it
 		// decides to publish, the adapter has no position poll, and `scheduleTimeControlProbe` stops
 		// once a time control has been seen — so a reading that is dropped is never re-offered. The
 		// re-ask runs on a 1 s timer and the hand's action takes seconds, so the republish lands

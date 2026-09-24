@@ -25,7 +25,7 @@ import { newId } from "@core/util/ids";
 import type { EvalLine } from "@typedefs/engine";
 import type { ChosenMove, Recommendation } from "@typedefs/game";
 import type { TimingPlan } from "@typedefs/timing";
-import { mergeLines } from "./recommendation";
+import { mergeLines } from "./recommendation/lines";
 import { searchResultBeforeDeadline } from "./search-deadline";
 
 export interface DeepSearchWindowInput {

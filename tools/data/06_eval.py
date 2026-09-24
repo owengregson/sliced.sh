@@ -24,6 +24,8 @@ import math
 import sys
 from collections import defaultdict
 
+from datalib.lichess import tc_class as tc_class_of
+
 CLOCK_BUCKETS = [(120, math.inf, ">120"), (60, 120, "60–120"), (30, 60, "30–60"), (10, 30, "10–30"), (0, 10, "<10")]
 
 
@@ -34,8 +36,7 @@ def load(path: str) -> list[dict]:
 
 def tc_class(tc: str) -> str:
     base, inc = (int(x) for x in tc.split("+"))
-    eff = base + 40 * inc
-    return "bullet" if eff < 180 else "blitz" if eff < 480 else "rapid" if eff < 1500 else "classical"
+    return tc_class_of(base, inc)
 
 
 def clock_bucket(c: float) -> str:

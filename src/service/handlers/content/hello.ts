@@ -12,15 +12,9 @@
 import { MSG } from "@core/constants/messages";
 import { log } from "@core/logger";
 import type { MessageRouter } from "@core/messaging/router";
-import type { Settings } from "@typedefs/settings";
+import type { ContentHandlerDeps } from "@service/handlers/content/deps";
 
-export interface ContentHandlerDeps {
-	getSettings(): Settings;
-	/** The session on `tabId`, if one is open. */
-	session(tabId: number): { onKeybind(action: string): Promise<void> } | null;
-	/** Opens (or returns) the session for a tab whose content script is connected. */
-	ensure?: ((tabId: number) => void) | undefined;
-}
+export type { ContentHandlerDeps } from "@service/handlers/content/deps";
 
 export function registerContentHelloHandler(
 	router: MessageRouter,

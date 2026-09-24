@@ -202,6 +202,45 @@ phantom.ac endpoint as the default implementation. The stored state keeps both t
 state. **The gate is currently forced open** (`LICENSE_FORCE_VALID = !__SL_LICENSE_ENFORCE__`,
 and `build.config.json` sets `licenseEnforce: false`).
 
+### 4.9 Module structure
+
+Every subsystem follows one layout rule: **`foo.ts` is the public entry and `foo/` holds its
+parts.** The entry either owns a thin orchestrator (a class that decides *when*) or only
+re-exports; the parts own state, mechanics and pure rules, each with a small interface and its
+own dispose. Callers import the entry — the part paths are an implementation detail — so a
+subsystem can be re-cut without touching its importers.
+
+| Entry | Parts | Shape |
+|---|---|---|
+| `service/game-session/session.ts` | `session/` | `GameSession` is the public face; `parts.ts` builds and wires the collaborators, `lifecycle.ts` starts and finishes games, `page-events.ts` and `position-arrival.ts` take what the content script sends, `assistant-switch.ts` the settings edges. `SessionCore` holds the shared per-game state and the common queries (may act, colour hold, target Elo, clocks, state machine). Collaborators own one concern each — position feed, move delivery, premove decision, queued premove, scramble hold, prediction, hand arming, resign flow, lobby hold, time control and re-plan, Maia warm-up, board marks, effects feed, executor binding, move recorder — and read `SessionCore` fields live, never a copy, because each game replaces them. `position-rules.ts` is the pure half. |
+| `service/game-session/recommendation.ts` | `recommendation/` | `RecommendationPipeline.run()` is nine named stages: context → timing → policy → book → analysis → candidates → selection → plan → assembly. Budget, Maia-search and own-move rating rules are pure modules (`budget.ts`, `maia-search.ts`, `own-move.ts`). |
+| `service/game-session/board-effects.ts` | `board-effects/` | `BoardEffectsReporter` keeps the job lifecycle; `ReviewSearchLoop` owns the review engine's search/pre-emption/back-off, `VerdictClassifier` the classification, `ClassificationQueue` the one-verdict-per-turn pacing, `reviewWants` the urgency rule. |
+| `service/move-executor/index.ts` | `executor/` | `MoveExecutor` facade over an explicit execution state machine (`execution-slots.ts`: pending, running, parked, fast-forward), `MoveDispatcher`, the opponent-turn explorer, move planning and timing fit. |
+| `service/move-executor/hand-controller.ts` | `hand/`, `hand/gestures/` | `HandController` sequences a move; `HandMotor` owns every gated travel/press/release primitive; gestures (commit, escape, exploration, line preview, promotion, post-drop rest) are separate planners; the move window is a pure function. |
+| `service/engine-controller.ts`, `review-engine.ts` | `engine-controller/`, `review-engine/`, `analysis/handles.ts` | Both engines share one set of queued-analysis handles; cache policy and the routed-queue `supersedes` rule are pure. |
+| `service/panel-broadcaster.ts`, `auto-queue.ts`, `content-link.ts`, … | same-named dirs | Snapshot assembly is pure (`assembleSnapshot`), transport and throttling separate; the auto-queue state machine is separate from its entry/record codec; request bookkeeping (`PendingRequests`) separate from the port. |
+| `core/strength/move-selector.ts` | `selector/`, `selector/strategies/` | `selectMove` is a pipeline over one `SelectionFrame`: prepare lines → resolve the Maia rating → mate guard → the first strategy that decides (full strength, Maia draw, native, sampled). Stage order is RNG draw order. The heuristic prior is a rule table (`prior/rules.ts`). |
+| `core/engine/uci-client.ts` | `uci-client/` | `UciEngine` coordinator; a pending search is composed of `LiveLines`, `FrameCapture`, `UpdateBuilder`, `UpdateCoalescer`; `SearchQueue`, `ReadyWaiters`, `AppliedOptions` own their protocols. |
+| `core/timing/timing-model.ts` | `timing-model/` | `planMove` = `normaliseSample` → `guardPremove` → `composeThink` → `assemblePlan`; one `replan` function per reason. The v1/ChessMimic heads implement one `DistributionHead` strategy. |
+| `core/motor/opponent-exploration.ts`, `exploration.ts` | same-named dirs | `SpellTimeline` owns pointer position and spell budget; activities are functions over a shared scene; `ActionSequence` replaces duplicated closures. |
+| `content/index.ts` | `content/boot/` | Composition root wiring the game feed, command router, responders, control reads and input shield. |
+| `content/adapters/adapter.ts`, `chesscom.ts` | `adapters/base/`, `adapters/chesscom/` | `contract.ts` is the `SiteAdapter` interface; `AdapterBase` composes `SnapshotPublisher` (the single snapshot path), `ColourAuthority`, `TimeControlProbe`, `GameIdentity`, observers; chess.com readers are pure functions over a `PositionSources` record. |
+| `offscreen/engine-host.ts`, `asset-store.ts` | same-named dirs, `inference/`, `shared/` | Host lifecycle, reboot back-off, info coalescing and the port router are separate; both ONNX hosts share `SessionPool`/`FailureBackoff`/`RunGuard`; the OPFS + IndexedDB store is one abstraction. |
+| `page/*.ts` | `page/parts/`, same-named dirs | Program definitions built from shared AST fragments (`ast`, `svg`, `motion`, `layer`); the emitted programs are byte-identical to the pre-split ones. |
+| `panel/copy.ts`, `panel/views/*.ts`, `panel/shell.ts` | `copy/`, `views/<view>/`, `shell/` | `COPY` is assembled from per-domain string modules (still one source, C5); each view section is a `create…Section(el)` with `render`/`dispose`. |
+| `types/game.ts`, `types/settings.ts` | `types/game/`, `types/settings/` | Type registries split by domain behind the same entries. |
+
+**Tooling** follows the same rule. `scripts/lib/` holds the build's shared pieces (paths,
+hashing, fs, JSON, defines, CLI parsing, reporting, downloads); `build.ts` is an ordered list of
+named steps (`build/steps.ts`), `verify-dist` a registry of independent checks
+(`verify-dist/checks.ts`), `check-constants` a registry of rules, `vendor-engine` fetch / verify
+/ notice stages with pure notice-section renderers. The Python book builders share
+`pgn_games.py` and `polyglot_book.py`. `tools/lib/` holds the research tooling's shared pieces —
+the Stockfish referee and UCI plumbing (`engine/`), the Maia runner, PGN export/split/think-time
+readers (`pgn/`), CLI parsing and statistics — and each tool under `tools/*/` is a thin CLI over
+its own folder of parts; `tools/data/datalib/` is the Python equivalent for the numbered data
+scripts.
+
 ---
 
 ## 5. Cross-cutting rules
@@ -221,7 +260,7 @@ and `build.config.json` sets `licenseEnforce: false`).
 
 ## 6. Build and distribution (§11, §12)
 
-`scripts/build.ts` runs eleven steps in order: clean → gen-tokens → gen-icons → gen-pagescript →
+`scripts/build.ts` runs its named steps (`scripts/build/steps.ts`) in order: clean → gen-tokens → gen-icons → gen-pagescript →
 check-constants → check-css → typecheck → bundle → copy → stamp manifest → verify-dist →
 package. Four bundles come out (`service-worker.js`, `offscreen.js`, `panel.js` as ESM,
 `content.js` as an IIFE) plus the generated MAIN-world programs, with `__SL_VERSION__`,

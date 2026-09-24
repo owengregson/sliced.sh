@@ -8,12 +8,12 @@
  */
 
 import type { MessageRouter } from "@core/messaging/router";
-import type { ContentHandlerDeps } from "@service/handlers/content/hello";
+import type { ContentHandlerDeps } from "@service/handlers/content/deps";
 import { registerContentHelloHandler } from "@service/handlers/content/hello";
 import { registerContentKeybindHandler } from "@service/handlers/content/keybind";
 
 export { probeRealCursor } from "@service/handlers/content/cursor";
-export type { ContentHandlerDeps } from "@service/handlers/content/hello";
+export type { ContentHandlerDeps } from "@service/handlers/content/deps";
 
 export function registerContentHandlers(router: MessageRouter, deps: ContentHandlerDeps): void {
 	registerContentHelloHandler(router, deps);

@@ -98,7 +98,8 @@ recordings retain their original bytes. The owner explicitly authorized exchangi
 and mistake recordings under their semantic filenames on 2026-09-16; preserve that assignment.
 Only registered sound files are packaged. Product name `sliced.sh`, short name `sliced`, accent
 `#ffa71f`, dark-first. All user-facing strings live once in
-`src/panel/copy.ts` — never a literal in a view.
+`src/panel/copy.ts` (assembled from the per-domain modules in `src/panel/copy/`) — never a
+literal in a view.
 
 **C6 — every `chrome.*` call goes through `src/core/chrome/*`.** Promise wrappers that check
 `chrome.runtime.lastError`, so core modules run against the simulator in `test/sim/` instead of
@@ -236,8 +237,14 @@ src/pagescript/  the AST, builders and emitter behind C2
 src/design/      Lattice tokens and the icon registry
 css/             the only stylesheets; tokens.css is generated
 assets/          engine, models, fonts, sounds, images, vendored Font Awesome + onnxruntime
-scripts/         build pipeline and lints
+scripts/         build pipeline and lints; scripts/lib/ shared helpers, one folder of parts per script
 test/            unit, behavioural (simulator), integration; test/sim is the fake Chrome
-tools/           data pipeline, telemetry conformance, one-off dev utilities
+tools/           data pipeline, telemetry conformance, research CLIs; tools/lib/ shared engine,
+                 Maia, PGN, CLI and stats libraries; tools/data/datalib/ for the Python scripts
 docs/            architecture, development, QA, third-party notices, model notes
 ```
+
+Module rule: `foo.ts` is a subsystem's public entry and `foo/` holds its parts (e.g.
+`game-session/session.ts` + `session/`, `recommendation.ts` + `recommendation/`,
+`move-executor/hand-controller.ts` + `hand/`, `strength/move-selector.ts` + `selector/`). Import
+the entry from outside the subsystem; `docs/ARCHITECTURE.md` §4.9 maps every entry to its parts.

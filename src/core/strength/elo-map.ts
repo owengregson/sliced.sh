@@ -7,6 +7,7 @@ import { LIMITS } from "@core/constants/limits";
 import { clamp } from "@core/util/clamp";
 import type { Eval } from "@typedefs/engine";
 import { SELECTION_CONSTANTS as C } from "./constants";
+import { interpolateKnots } from "./knots";
 
 /** `UCI_Elo` for a target: clamped to the engine's supported range (§7.1). */
 export function engineEloFor(targetElo: number): number {
@@ -49,22 +50,7 @@ export function betaFor(E: number): number {
 
 /** §7.2 step 6: base blunder rate b0(E) — flat outside the table, linear between knots. */
 export function b0For(E: number): number {
-	const knots = C.blunder.b0;
-	const first = knots[0];
-	const last = knots[knots.length - 1];
-	if (first === undefined || last === undefined) return 0;
-	if (E <= first[0]) return first[1];
-	if (E >= last[0]) return last[1];
-	for (let i = 1; i < knots.length; i++) {
-		const lo = knots[i - 1];
-		const hi = knots[i];
-		if (lo === undefined || hi === undefined) continue;
-		if (E <= hi[0]) {
-			const t = (E - lo[0]) / (hi[0] - lo[0]);
-			return lo[1] + t * (hi[1] - lo[1]);
-		}
-	}
-	return last[1];
+	return interpolateKnots(E, C.blunder.b0, 0);
 }
 
 /** Linear ramp between two (Elo, value) points, flat outside. */

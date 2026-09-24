@@ -15,18 +15,16 @@
  * into the SW's `TimingModel` is the integration task's (the head selection Task 16 left there).
  */
 
-import type { EnginePortCommand, EnginePortMessage } from "@core/constants/messages";
 import { log } from "@core/logger";
 import type { ChessMimicInputs, InferPort, InferResult } from "@core/timing/chessmimic-head";
 import { TIMING_CONSTANTS } from "@core/timing/constants";
 import type { TimingPreparation } from "@core/timing/types";
 import { DEFAULT_SCHEDULER, type TimerScheduler } from "@core/util/scheduler";
+import type { EnginePortLike } from "./engine-port";
+import { createQueryTable } from "./query-table";
 
 /** The engine port as seen from the SW (`RemoteEngine` satisfies it). */
-export interface TimingRelayPort {
-	onMessage(cb: (m: EnginePortMessage) => void): () => void;
-	post(cmd: EnginePortCommand): void;
-}
+export type TimingRelayPort = EnginePortLike;
 
 export interface TimingInferPort {
 	infer: InferPort;
@@ -46,67 +44,42 @@ export interface TimingInferPortOptions {
 
 const ID_PREFIX = "t";
 
-interface PendingQuery {
-	resolve: (r: InferResult | null) => void;
-	timer: unknown;
-	cleanup: () => void;
-}
-
 export function createTimingInferPort(
 	port: TimingRelayPort,
 	options: TimingInferPortOptions = {}
 ): TimingInferPort {
-	const sched = options.scheduler ?? DEFAULT_SCHEDULER;
 	const budgetMs = options.budgetMs ?? TIMING_CONSTANTS.chessmimic.inferenceBudgetMs;
-	const pending = new Map<string, PendingQuery>();
+	const queries = createQueryTable<InferResult>(options.scheduler ?? DEFAULT_SCHEDULER);
 	let seq = 0;
 	let disposed = false;
 
-	/** Remove `id` from the map and stop its expiry; returns the waiter if it was still there. */
-	function take(id: string): PendingQuery | undefined {
-		const q = pending.get(id);
-		if (!q) return undefined;
-		pending.delete(id);
-		sched.clearTimeout(q.timer);
-		q.cleanup();
-		return q;
-	}
-
 	const off = port.onMessage((m) => {
 		if (m.kind !== "timing-result") return;
-		const q = take(m.id);
-		if (!q) return;
+		const resolve = queries.take(m.id);
+		if (!resolve) return;
 		if (!m.probs) {
 			log.debug("timing-infer: host answered without probabilities", { id: m.id, error: m.error });
-			q.resolve(null);
+			resolve(null);
 			return;
 		}
 		const result: InferResult = { probs: m.probs, band: m.band ?? "" };
 		if (m.ms !== undefined) result.ms = m.ms;
-		q.resolve(result);
+		resolve(result);
 	});
 	return {
 		infer(inputs: ChessMimicInputs, preparation?: TimingPreparation): Promise<InferResult | null> {
 			if (disposed || preparation?.signal?.aborted) return Promise.resolve(null);
 			const id = `${ID_PREFIX}${++seq}`;
 			const expiresMs = preparation?.budgetMs ?? budgetMs;
-			return new Promise((resolve) => {
-				const abort = () => take(id)?.resolve(null);
-				const timer = sched.setTimeout(() => {
-					if (!take(id)) return;
-					log.debug("timing-infer: query expired unanswered", { id, budgetMs: expiresMs });
-					resolve(null);
-				}, expiresMs);
-				pending.set(id, {
-					resolve,
-					timer,
-					cleanup: () => preparation?.signal?.removeEventListener("abort", abort),
-				});
-				preparation?.signal?.addEventListener("abort", abort, { once: true });
-				port.post({ kind: "timing", id, inputs });
-			});
+			return queries.ask(
+				id,
+				expiresMs,
+				preparation?.signal,
+				() => log.debug("timing-infer: query expired unanswered", { id, budgetMs: expiresMs }),
+				() => port.post({ kind: "timing", id, inputs })
+			);
 		},
-		pendingCount: () => pending.size,
+		pendingCount: () => queries.size(),
 		warm(band) {
 			if (disposed) return;
 			port.post({ kind: "timing-warm", band });
@@ -115,13 +88,7 @@ export function createTimingInferPort(
 			if (disposed) return;
 			disposed = true;
 			off();
-			const waiting = [...pending.values()];
-			pending.clear();
-			for (const q of waiting) {
-				sched.clearTimeout(q.timer);
-				q.cleanup();
-				q.resolve(null);
-			}
+			queries.settleAll();
 		},
 	};
 }

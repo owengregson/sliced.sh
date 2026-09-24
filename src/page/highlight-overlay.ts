@@ -21,27 +21,18 @@ import { HIGHLIGHT_MOTION } from "@core/constants/timings";
 import { defineProgram, type Expression, js, type Statement } from "@pagescript";
 import { arrowShapeStatements } from "./arrow-shape";
 import { defineHandle, definePost, KINDS, listen, orEmpty, post } from "./bridge-common";
-
-const SVG_NS = "http://www.w3.org/2000/svg";
-const doc = js.id("document");
+import { add, n, text } from "./parts/ast";
+import { fadeOutLayer, hostLadder, layerEnsure, layerFind, squareCell } from "./parts/layer";
+import { canAnimate } from "./parts/motion";
+import { setAttr, svgEl } from "./parts/svg";
 
 export const OVERLAY = {
 	draw: "ovDraw",
 	clear: "ovClear",
 } as const;
 
-const n = js.num;
-const num = (v: Expression): Expression => js.call(js.id("String"), v);
-const add = (a: Expression, b: Expression): Expression => js.op(a, "+", b);
-const sub = (a: Expression, b: Expression): Expression => js.op(a, "-", b);
-
-function setAttr(el: Expression, name: string, value: Expression): Statement {
-	return js.expr(js.call(js.member(el, "setAttribute"), js.str(name), value));
-}
-
-function createSvg(tag: string): Expression {
-	return js.call(js.member(doc, "createElementNS"), js.str(SVG_NS), js.str(tag));
-}
+const OVERLAY_STYLE =
+	"position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;z-index:3";
 
 export interface OverlayParams {
 	/** Selector ladder (json array) locating the host element. */
@@ -61,8 +52,6 @@ export interface OverlayParams {
  */
 export function overlayStatements(p: OverlayParams): Statement[] {
 	const el = js.id("el");
-	const host = js.id("host");
-	const sq = js.id("sq");
 	const black = js.id("black");
 	const q = js.id("q");
 	const animations = js.id("ovAnimations");
@@ -93,70 +82,10 @@ export function overlayStatements(p: OverlayParams): Statement[] {
 		)
 	);
 
-	const ovHost = js.const_(
-		"ovHost",
-		js.arrow(
-			[],
-			[
-				js.forOf("s", p.hosts, [
-					js.const_("el", js.call(js.member(doc, "querySelector"), js.id("s"))),
-					js.if_(el, [js.ret(el)]),
-				]),
-				js.ret(js.nil()),
-			]
-		)
-	);
-	const ovFind = js.const_(
-		"ovFind",
-		js.arrow(
-			[],
-			[
-				js.const_("host", js.call(js.id("ovHost"))),
-				js.if_(js.not(host), [js.ret(js.nil())]),
-				js.ret(js.call(js.member(host, "querySelector"), js.op(js.str("."), "+", p.cls))),
-			]
-		)
-	);
-	const ovEnsure = js.const_(
-		"ovEnsure",
-		js.arrow(
-			[],
-			[
-				js.let_("el", js.call(js.id("ovFind"))),
-				js.if_(el, [js.ret(el)]),
-				js.const_("host", js.call(js.id("ovHost"))),
-				js.if_(js.not(host), [js.ret(js.nil())]),
-				js.assign(el, createSvg("svg")),
-				setAttr(el, "viewBox", js.str("0 0 8 8")),
-				setAttr(el, "class", p.cls),
-				setAttr(
-					el,
-					"style",
-					js.str("position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;z-index:3")
-				),
-				js.expr(js.call(js.member(host, "appendChild"), el)),
-				js.ret(el),
-			]
-		)
-	);
-	// [col, row] of a square on screen: files a..h → 0..7, ranks 1..8 → 0..7
-	const ovCell = js.const_(
-		"ovCell",
-		js.arrow(
-			["sq", "black"],
-			[
-				js.const_("f", sub(js.call(js.member(sq, "charCodeAt"), n(0)), n(97))),
-				js.const_("r", sub(js.call(js.member(sq, "charCodeAt"), n(1)), n(49))),
-				js.ret(
-					js.cond(
-						black,
-						js.arr(sub(n(7), js.id("f")), js.id("r")),
-						js.arr(js.id("f"), sub(n(7), js.id("r")))
-					)
-				),
-			]
-		)
-	);
+	const ovHost = hostLadder("ovHost", p.hosts, "s");
+	const ovFind = layerFind("ovFind", "ovHost", p.cls);
+	const ovEnsure = layerEnsure("ovEnsure", { find: "ovFind", host: "ovHost" }, p.cls, OVERLAY_STYLE);
+	const ovCell = squareCell("ovCell");
 	const c = js.id("c");
 	const rc = js.id("rc");
 	const h = js.id("h");
@@ -186,24 +115,7 @@ export function overlayStatements(p: OverlayParams): Statement[] {
 				js.assign(js.id("ovLastElement"), el),
 				js.assign(js.id("ovLastMark"), js.id("mark")),
 				js.expr(js.call(js.id("ovStop"))),
-				js.const_(
-					"motion",
-					js.and(
-						js.op(js.typeof_(js.member(el, "animate")), "===", js.str("function")),
-						js.not(
-							js.and(
-								js.member(js.id("window"), "matchMedia"),
-								js.member(
-									js.call(
-										js.member(js.id("window"), "matchMedia"),
-										js.str(HIGHLIGHT_MOTION.reducedMotionQuery)
-									),
-									"matches"
-								)
-							)
-						)
-					)
-				),
+				js.const_("motion", canAnimate(el, js.str(HIGHLIGHT_MOTION.reducedMotionQuery))),
 				js.while_(js.member(el, "firstChild"), [
 					js.expr(js.call(js.member(el, "removeChild"), js.member(el, "firstChild"))),
 				]),
@@ -212,9 +124,9 @@ export function overlayStatements(p: OverlayParams): Statement[] {
 				js.let_("n", n(0)),
 				js.forOf("h", orEmpty(js.member(q, W.highlights)), [
 					js.const_("c", js.call(js.id("ovCell"), js.member(h, W.square), black)),
-					js.const_("rc", createSvg("rect")),
-					setAttr(rc, "x", num(cell(0))),
-					setAttr(rc, "y", num(cell(1))),
+					js.const_("rc", svgEl("rect")),
+					setAttr(rc, "x", text(cell(0))),
+					setAttr(rc, "y", text(cell(1))),
 					setAttr(rc, "width", js.str("1")),
 					setAttr(rc, "height", js.str("1")),
 					setAttr(
@@ -266,7 +178,6 @@ export function overlayStatements(p: OverlayParams): Statement[] {
 	// gets a fresh overlay and the fading one cannot be mistaken for it — its running animations
 	// are left to finish (dropping them from `ovAnimations` so a later draw's `ovStop` does not
 	// snap them), and a fade to transparent removes it when done. Without motion it is removed.
-	const out = js.id("out");
 	const ovClear = js.const_(
 		OVERLAY.clear,
 		js.arrow(
@@ -275,55 +186,7 @@ export function overlayStatements(p: OverlayParams): Statement[] {
 				js.assign(animations, js.arr()),
 				js.assign(js.id("ovLastMark"), js.nil()),
 				js.assign(js.id("ovLastElement"), js.nil()),
-				js.const_("el", js.call(js.id("ovFind"))),
-				js.if_(el, [
-					js.expr(
-						js.call(js.member(el, "setAttribute"), js.str("class"), js.op(p.cls, "+", js.str("-out")))
-					),
-					js.const_(
-						"motion",
-						js.and(
-							js.op(js.typeof_(js.member(el, "animate")), "===", js.str("function")),
-							js.not(
-								js.and(
-									js.member(js.id("window"), "matchMedia"),
-									js.member(
-										js.call(
-											js.member(js.id("window"), "matchMedia"),
-											js.str(HIGHLIGHT_MOTION.reducedMotionQuery)
-										),
-										"matches"
-									)
-								)
-							)
-						)
-					),
-					js.if_(
-						js.id("motion"),
-						[
-							js.const_(
-								"out",
-								js.call(
-									js.member(el, "animate"),
-									js.arr(js.obj({ opacity: n(1) }), js.obj({ opacity: n(0) })),
-									js.obj({
-										duration: n(HIGHLIGHT_MOTION.clearFadeMs),
-										easing: js.str("ease-out"),
-										fill: js.str("forwards"),
-									})
-								)
-							),
-							js.expr(
-								js.call(
-									js.member(out, "finished", "then"),
-									js.arrow([], [js.expr(js.call(js.member(el, "remove")))]),
-									js.arrow([], [js.expr(js.call(js.member(el, "remove")))])
-								)
-							),
-						],
-						[js.expr(js.call(js.member(el, "remove")))]
-					),
-				]),
+				...fadeOutLayer("ovFind", p.cls),
 			]
 		)
 	);

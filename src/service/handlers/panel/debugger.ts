@@ -10,7 +10,7 @@ import { PANEL_COMMAND_ERRORS } from "@core/constants/cdp";
 import { MSG } from "@core/constants/messages";
 import { TOAST_KEYS } from "@core/constants/toasts";
 import type { MessageRouter } from "@core/messaging/router";
-import { mayAct, type PanelHandlerDeps } from "@service/handlers/panel";
+import { mayAct, type PanelHandlerDeps } from "@service/handlers/panel/deps";
 
 export function registerDebuggerHandlers(
 	router: MessageRouter,

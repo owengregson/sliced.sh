@@ -25,17 +25,11 @@ export class NewGameInput {
 		try {
 			return (
 				(await this.input.run<{ status: NewGameInputStatus }>(tabId, signal, async (gesture) => {
-					let reply = await this.read(tabId, gameId, control, gesture.signal);
-					if (reply.status !== "ready") return { status: reply.status };
-					await gesture.attach();
-					// Attaching the debugger can move the control by adding its infobar.
-					reply = await this.read(tabId, gameId, control, gesture.signal);
-					if (reply.status !== "ready") return { status: reply.status };
-					const { target } = reply;
-					const clicked = await gesture.click(target, (point) =>
-						this.read(tabId, gameId, control, gesture.signal, target.targetId, point)
+					const click = await gesture.attachAndClick((targetId, point) =>
+						this.read(tabId, gameId, control, gesture.signal, targetId, point)
 					);
-					return { status: clicked ? "started" : "not-ready" };
+					if (click.status === "clicked") return { status: "started" };
+					return { status: click.status === "missed" ? "not-ready" : click.status };
 				})) ?? { status: "not-ready" }
 			);
 		} catch {

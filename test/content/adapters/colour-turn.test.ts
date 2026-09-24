@@ -5,7 +5,7 @@
 //
 // Two distinct defects of the same class, both on the live WebGL board:
 //
-//  1. A colour *correction* was silently dropped. `AdapterBase.apply` republished an unmoved
+//  1. A colour *correction* was silently dropped. `SnapshotPublisher.apply` republished an unmoved
 //     position only when the colour went `null → known`, and its dedupe key is
 //     `placement|sideToMove` — which at ply 0 is the same string for every reading. So the first
 //     reading that answered "white" (the live page's clocks before the board is turned round, a

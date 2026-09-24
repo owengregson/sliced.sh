@@ -6,16 +6,27 @@
  * Scrub sounds come from a per-slider detent scheduler (`createDetentScheduler`); a `readout`
  * shows the numeric value under the thumb while the slider changes and fades
  * `UI_TIMINGS.sliderReadoutFadeMs` after the last change. A strength slider in its hot range
- * launches its warm sweeps itself (`launchSweep`), so no change of cadence ever re-times a sweep
- * that is already crossing.
+ * launches its warm sweeps itself (`slider/sweeps.ts`), so no change of cadence ever re-times a
+ * sweep that is already crossing. The arithmetic lives in `slider/model.ts`; this file wires the
+ * DOM, pointer and keyboard.
  */
 
 import { STRENGTH_UI, UI_TIMINGS } from "@core/constants/ui";
 import { clamp } from "@core/util/clamp";
-import { TOKENS } from "@design/tokens.generated";
 import { createDetentScheduler, playSliderSound } from "../sounds";
 import { instantiate, part } from "../template";
 import html from "../views/templates/components/slider.html?raw";
+import {
+	fitValue,
+	keyTarget,
+	type SliderRange,
+	snapValue,
+	strengthEnergy,
+	strengthTicks,
+	percentOf as trackPercent,
+} from "./slider/model";
+import { createReadout } from "./slider/readout";
+import { createSweepLauncher } from "./slider/sweeps";
 
 export interface SliderThreshold {
 	value: number;
@@ -82,9 +93,6 @@ export interface SliderHandle {
 	dispose(): void;
 }
 
-/** The two keyframe names a sweep alternates between (`css/views/live-progress.css`). */
-const SWEEP_NAMES = ["a", "b"] as const;
-
 export function createSlider(host: HTMLElement | null, options: SliderOptions): SliderHandle {
 	const el = instantiate(html);
 	const track = part(el, ".sl-slider__track");
@@ -128,109 +136,29 @@ export function createSlider(host: HTMLElement | null, options: SliderOptions): 
 	let tickRange = "";
 	/** Hot-range energy, 0 at `STRENGTH_UI.glowElo` → 1 at the maximum. */
 	let energy = 0;
-	let sweepTimer: ReturnType<typeof setTimeout> | null = null;
-	let sweepIndex = 0;
 	const sounds = createDetentScheduler({ min, max, step: options.step });
-	const readout = options.readout ?? null;
-	let readoutTimer: ReturnType<typeof setTimeout> | null = null;
-	if (readout) {
-		el.classList.add("sl-slider--has-readout");
-		readoutEl.hidden = false;
-	}
-
-	function hideReadout(): void {
-		if (readoutTimer !== null) {
-			clearTimeout(readoutTimer);
-			readoutTimer = null;
-		}
-		el.classList.remove("sl-slider--readout");
-	}
-
-	/** Show the numeric readout for this change and (re)start its fade-out timer. */
-	function showReadout(): void {
-		if (!readout) return;
-		if (readoutTimer !== null) clearTimeout(readoutTimer);
-		readoutEl.textContent = readout(value);
-		el.classList.add("sl-slider--readout");
-		readoutTimer = setTimeout(() => {
-			readoutTimer = null;
-			el.classList.remove("sl-slider--readout");
-		}, UI_TIMINGS.sliderReadoutFadeMs);
-	}
-
-	/**
-	 * The wait before the next warm sweep, from the energy at this moment. Each sweep is one CSS
-	 * crossing of a fixed `strength-sweep` duration; only the wait between launches follows the
-	 * energy. The sweeps take turns, so the per-sweep period (`sweepTravelWidths + gap` widths at
-	 * the fixed speed) is shared between them.
-	 *
-	 * This is the fix for the owner's 2026-09-15 report ("the animation timeskips when I let go of
-	 * the slider knob"): the cadence used to be the running CSS animation's *duration*, written on
-	 * release, and a running animation keeps its start time and re-maps elapsed time onto a new
-	 * duration — so every sweep jumped. Now a crossing in flight is never re-timed; a new cadence
-	 * takes effect at the next launch.
-	 */
-	function sweepDelayMs(): number {
-		const gap = STRENGTH_UI.flowGapMax - (STRENGTH_UI.flowGapMax - STRENGTH_UI.flowGapMin) * energy;
-		const travel = STRENGTH_UI.sweepTravelWidths;
-		return (
-			(TOKENS.motion.durationMs["strength-sweep"] * (travel + gap)) /
-			(travel * Math.max(1, sweeps.length))
-		);
-	}
-
-	/** Restart the next sweep's crossing (switching its keyframe name restarts it without a reflow). */
-	function launchSweep(): void {
-		const sweep = sweeps[sweepIndex % Math.max(1, sweeps.length)];
-		sweepIndex += 1;
-		if (sweep)
-			sweep.dataset.sweep = sweep.dataset.sweep === SWEEP_NAMES[0] ? SWEEP_NAMES[1] : SWEEP_NAMES[0];
-		sweepTimer = setTimeout(launchSweep, sweepDelayMs());
-	}
-
-	/** Sweeps run while the strength slider is hot and enabled; leaving stops launching new ones. */
-	function syncSweeps(running: boolean): void {
-		if (running && sweeps.length > 0) {
-			if (sweepTimer === null) launchSweep();
-		} else if (sweepTimer !== null) {
-			clearTimeout(sweepTimer);
-			sweepTimer = null;
-		}
-	}
+	const readout = createReadout(el, readoutEl, options.readout ?? null);
+	const sweepLauncher = createSweepLauncher(sweeps, () => energy);
 
 	if (options.ariaLabel) thumb.setAttribute("aria-label", options.ariaLabel);
 
-	function snap(raw: number): number {
-		const stepped = Math.round((raw - min) / options.step) * options.step + min;
-		const decimals = (String(options.step).split(".")[1] ?? "").length;
-		return clamp(Number(stepped.toFixed(decimals)), min, max);
-	}
-
-	/** A value as the slider holds it: snapped to the step, or clamped only for an exact reading. */
-	const fit = (raw: number, asGiven: boolean): number =>
-		asGiven ? clamp(raw, min, max) : snap(raw);
-
-	/** Track position of `at`, clamped to the range. */
-	const percentOf = (at: number): string =>
-		`${(max > min ? clamp((at - min) / (max - min), 0, 1) * 100 : 0).toFixed(3)}%`;
+	const range = (): SliderRange => ({ min, max, step: options.step });
+	const snap = (raw: number): number => snapValue(raw, range());
+	const fit = (raw: number, asGiven: boolean): number => fitValue(raw, asGiven, range());
+	const percentOf = (at: number): string => trackPercent(at, min, max);
 
 	function render(): void {
 		const pct = max > min ? ((value - min) / (max - min)) * 100 : 0;
-		const range = `${min}:${max}`;
+		const rangeKey = `${min}:${max}`;
 		for (const marker of markerEls) marker.el.style.left = percentOf(marker.value);
-		if (options.strength && range !== tickRange) {
-			tickRange = range;
+		if (options.strength && rangeKey !== tickRange) {
+			tickRange = rangeKey;
 			ticks.replaceChildren();
-			for (
-				let mark = Math.ceil(min / STRENGTH_UI.sliderTickStep) * STRENGTH_UI.sliderTickStep;
-				mark <= max;
-				mark += STRENGTH_UI.sliderTickStep
-			) {
-				if (mark < min) continue;
+			for (const mark of strengthTicks(min, max)) {
 				const tick = document.createElement("span");
 				tick.className = "sl-slider__tick";
-				tick.style.left = `${(((mark - min) / (max - min)) * 100).toFixed(3)}%`;
-				tick.dataset.value = String(mark);
+				tick.style.left = mark.left;
+				tick.dataset.value = String(mark.value);
 				ticks.append(tick);
 			}
 		}
@@ -243,10 +171,7 @@ export function createSlider(host: HTMLElement | null, options: SliderOptions): 
 		el.classList.toggle("sl-slider--strength", options.strength === true);
 		el.classList.toggle("sl-slider--hot", hot);
 		el.style.setProperty("--sl-slider-heat", String(clamp(pct / 100, 0, 1)));
-		energy =
-			max > STRENGTH_UI.glowElo
-				? clamp((value - STRENGTH_UI.glowElo) / (max - STRENGTH_UI.glowElo), 0, 1)
-				: 0;
+		energy = strengthEnergy(value, max);
 		el.style.setProperty("--sl-slider-energy", String(energy));
 		thumb.style.left = `${pct.toFixed(3)}%`;
 		thumb.setAttribute("aria-valuemin", String(min));
@@ -265,7 +190,7 @@ export function createSlider(host: HTMLElement | null, options: SliderOptions): 
 		thumb.setAttribute("tabindex", disabled ? "-1" : "0");
 		if (disabled) thumb.setAttribute("aria-disabled", "true");
 		else thumb.removeAttribute("aria-disabled");
-		syncSweeps(hot && !disabled);
+		sweepLauncher.sync(hot && !disabled);
 	}
 
 	/**
@@ -279,7 +204,7 @@ export function createSlider(host: HTMLElement | null, options: SliderOptions): 
 		exact = false;
 		render();
 		if (changed) {
-			showReadout();
+			readout.show(value);
 			const tick = source === "pointer" ? sounds.move(value) : sounds.key(value);
 			if (tick) playSliderSound(tick);
 		}
@@ -288,31 +213,7 @@ export function createSlider(host: HTMLElement | null, options: SliderOptions): 
 
 	const onKeyDown = (event: KeyboardEvent): void => {
 		if (disabled) return;
-		const coarse = options.step * UI_TIMINGS.sliderCoarseMultiplier;
-		const fine = event.shiftKey ? coarse : options.step;
-		let next: number | null = null;
-		switch (event.key) {
-			case "ArrowRight":
-			case "ArrowUp":
-				next = value + fine;
-				break;
-			case "ArrowLeft":
-			case "ArrowDown":
-				next = value - fine;
-				break;
-			case "PageUp":
-				next = value + coarse;
-				break;
-			case "PageDown":
-				next = value - coarse;
-				break;
-			case "Home":
-				next = min;
-				break;
-			case "End":
-				next = max;
-				break;
-		}
+		const next = keyTarget(event.key, event.shiftKey, value, range());
 		if (next === null) return;
 		event.preventDefault();
 		set(next, true, "keyboard");
@@ -389,7 +290,7 @@ export function createSlider(host: HTMLElement | null, options: SliderOptions): 
 				dragging = null;
 				el.classList.remove("sl-slider--active");
 				sounds.release(value);
-				hideReadout();
+				readout.hide();
 			}
 			// While the pointer owns the thumb, an external value is ignored: the settings view
 			// re-applies the *stored* value on every store snapshot, and one snapshot behind the live
@@ -409,8 +310,8 @@ export function createSlider(host: HTMLElement | null, options: SliderOptions): 
 			render();
 		},
 		dispose() {
-			hideReadout();
-			syncSweeps(false);
+			readout.hide();
+			sweepLauncher.sync(false);
 			thumb.removeEventListener("keydown", onKeyDown);
 			track.removeEventListener("pointerdown", onPointerDown);
 			track.removeEventListener("pointermove", onPointerMove);

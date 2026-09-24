@@ -1,16 +1,9 @@
 import { runtimeGetURL } from "@core/chrome/runtime";
 import { MSG } from "@core/constants/messages";
-import { MOVE_QUALITY } from "@core/constants/move-quality";
-import {
-	FORCED_MATE_SOUNDS,
-	type ForcedMateSoundQuality,
-	MOVE_RATING_PLAYBACK,
-	MOVE_RATING_SOUNDS,
-	type MoveRatingSoundQuality,
-	SOUNDS_DIR,
-} from "@core/constants/sounds";
+import { SOUNDS_DIR } from "@core/constants/sounds";
 import { log } from "@core/logger";
 import { installMessageRouter } from "@core/messaging/router";
+import { clipFor, PRELOADED_CLIPS } from "./move-rating-sounds/clips";
 
 export interface MoveRatingAudio {
 	preload?: string;
@@ -37,43 +30,6 @@ interface Voice {
 	stop(): void;
 }
 
-interface Clip {
-	filename: string;
-	volume: number;
-	playbackRate: number;
-	preservesPitch: boolean;
-}
-
-const FORCED_MATE_QUALITY: ForcedMateSoundQuality = "mate";
-
-/** The clip a request names, or `null` for anything this player does not own. */
-function clipFor(quality: unknown, mateSemitones: unknown): Clip | null {
-	if (typeof quality !== "string") return null;
-	if (quality === FORCED_MATE_QUALITY) {
-		if (
-			typeof mateSemitones !== "number" ||
-			!Number.isFinite(mateSemitones) ||
-			mateSemitones < MOVE_QUALITY.mateMinSemitones ||
-			mateSemitones > MOVE_QUALITY.mateTopSemitones
-		)
-			return null;
-		return {
-			filename: FORCED_MATE_SOUNDS.file,
-			volume: MOVE_RATING_PLAYBACK.volume * FORCED_MATE_SOUNDS.volumeScale,
-			// The panel's own pitch system (its slider ticks): resampled, pitch and speed together.
-			playbackRate: 2 ** (mateSemitones / FORCED_MATE_SOUNDS.semitonesPerOctave),
-			preservesPitch: false,
-		};
-	}
-	if (!Object.hasOwn(MOVE_RATING_SOUNDS, quality)) return null;
-	return {
-		filename: MOVE_RATING_SOUNDS[quality as MoveRatingSoundQuality],
-		volume: MOVE_RATING_PLAYBACK.volume,
-		playbackRate: MOVE_RATING_PLAYBACK.playbackRate,
-		preservesPitch: true,
-	};
-}
-
 function pause(source: MoveRatingAudio): void {
 	try {
 		source.pause();
@@ -96,7 +52,7 @@ export function createMoveRatingSoundPlayer(
 	};
 	// Six short clips (the five ratings and the one forced-mate clip; roughly 110 KB together);
 	// warm them without playing anything, so a sound lands with its chip.
-	for (const filename of [...Object.values(MOVE_RATING_SOUNDS), FORCED_MATE_SOUNDS.file]) {
+	for (const filename of PRELOADED_CLIPS) {
 		try {
 			primed.set(filename, makeAudio(filename));
 		} catch (error) {

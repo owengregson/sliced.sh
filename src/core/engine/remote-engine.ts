@@ -31,6 +31,9 @@ import { log } from "@core/logger";
 import { type ConnectedPort, connectPort, type PortScheduler } from "@core/messaging/ports";
 import { DEFAULT_SCHEDULER } from "@core/util/scheduler";
 import type { EngineStatus, EngineVariant } from "@typedefs/engine";
+import { waitForConfiguration } from "./remote-engine/configuration-wait";
+import { Listeners } from "./remote-engine/listeners";
+import { RestartWaiters } from "./remote-engine/restart-waiters";
 import type { EngineTransport } from "./types";
 
 export interface RemoteEngineOptions {
@@ -58,14 +61,6 @@ export interface RemoteEngineOptions {
 	warmPolicy?: MaiaSize;
 }
 
-interface RestartWaiter {
-	resolve: () => void;
-	reject: (error: Error) => void;
-	timer: unknown;
-	/** Set once a non-`ready` status has been seen since the restart was posted. */
-	armed: boolean;
-}
-
 function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
@@ -77,7 +72,6 @@ export class RemoteEngine implements EngineTransport {
 	private readonly ensureHost: () => Promise<void>;
 	private readonly portName: typeof PORT_NAMES.engine | typeof PORT_NAMES.reviewEngine;
 	private readonly scheduler: PortScheduler;
-	private readonly readyTimeoutMs: number;
 	private port: ConnectedPort<EnginePortCommand> | undefined;
 	/** Commands issued before the port exists, flushed in order once it does. */
 	private queue: EnginePortCommand[] = [];
@@ -91,17 +85,20 @@ export class RemoteEngine implements EngineTransport {
 	private synced = false;
 	private last: EngineStatus | undefined;
 	private disposed = false;
-	private readonly lineCbs = new Set<(line: string) => void>();
-	private readonly statusCbs = new Set<(s: EngineStatus) => void>();
-	private readonly messageCbs = new Set<(m: EnginePortMessage) => void>();
-	private restartWaiters: RestartWaiter[] = [];
+	private readonly lineCbs = new Listeners<string>();
+	private readonly statusCbs = new Listeners<EngineStatus>();
+	private readonly messageCbs = new Listeners<EnginePortMessage>();
+	private readonly restartWaiters: RestartWaiters;
 	private readonly configurationCancels = new Set<() => void>();
 
 	constructor(opts: RemoteEngineOptions = {}) {
 		this.portName = opts.portName ?? PORT_NAMES.engine;
 		this.ensureHost = opts.ensureHost ?? (() => Promise.resolve());
 		this.scheduler = opts.scheduler ?? DEFAULT_SCHEDULER;
-		this.readyTimeoutMs = opts.readyTimeoutMs ?? TIMINGS.engineReadyTimeoutMs;
+		this.restartWaiters = new RestartWaiters(
+			this.scheduler,
+			opts.readyTimeoutMs ?? TIMINGS.engineReadyTimeoutMs
+		);
 		if (opts.variant !== undefined) this.variant = opts.variant;
 		if (opts.threads !== undefined) this.threads = opts.threads;
 		if (opts.warmTiming !== undefined) this.warmTiming = opts.warmTiming;
@@ -119,34 +116,23 @@ export class RemoteEngine implements EngineTransport {
 	}
 
 	onLine(cb: (line: string) => void): () => void {
-		this.lineCbs.add(cb);
-		return () => this.lineCbs.delete(cb);
+		return this.lineCbs.add(cb);
 	}
 
 	onStatus(cb: (s: EngineStatus) => void): () => void {
-		this.statusCbs.add(cb);
-		return () => this.statusCbs.delete(cb);
+		return this.statusCbs.add(cb);
 	}
 
 	restart(): Promise<void> {
 		if (this.disposed) return Promise.reject(new Error("remote-engine: disposed"));
-		return new Promise<void>((resolve, reject) => {
-			const waiter: RestartWaiter = { resolve, reject, timer: undefined, armed: false };
-			waiter.timer = this.scheduler.setTimeout(() => {
-				this.restartWaiters = this.restartWaiters.filter((w) => w !== waiter);
-				reject(new Error("remote-engine: timed out waiting for the engine to become ready"));
-			}, this.readyTimeoutMs);
-			this.restartWaiters.push(waiter);
-			this.post({ kind: "restart" });
-		});
+		return this.restartWaiters.wait(() => this.post({ kind: "restart" }));
 	}
 
 	// ── extras used by the SW handlers / bootstrap ───────────────────────
 
 	/** Every message from the host (lines and statuses included). */
 	onMessage(cb: (m: EnginePortMessage) => void): () => void {
-		this.messageCbs.add(cb);
-		return () => this.messageCbs.delete(cb);
+		return this.messageCbs.add(cb);
 	}
 
 	/** Post any command; never throws (queued until the port exists, then by the port until it is live). */
@@ -180,38 +166,16 @@ export class RemoteEngine implements EngineTransport {
 			this.configure(variant, threads);
 			return Promise.resolve();
 		}
-		return new Promise<void>((resolve, reject) => {
-			let transitioned = false;
-			let off = (): void => {};
-			const finish = (error?: Error): void => {
-				off();
-				this.configurationCancels.delete(cancel);
-				this.scheduler.clearTimeout(timer);
-				signal?.removeEventListener("abort", cancel);
-				if (error) reject(error);
-				else resolve();
-			};
-			const cancel = (): void => finish(new Error("engine configuration cancelled"));
-			this.configurationCancels.add(cancel);
-			const timer = this.scheduler.setTimeout(
-				() => finish(new Error("network download did not finish")),
-				TIMINGS.assetDownloadTotalMs
-			);
-			off = this.onMessage((message) => {
-				if (message.kind !== "status") return;
-				// The host may answer a `full` request with the small-net build after the full build
-				// crashed twice (`fallbackFrom`): that is the engine this configuration gets.
-				const { variant: running, fallbackFrom } = message.status;
-				if (running !== variant && fallbackFrom !== variant) return;
-				const { state, error } = message.status;
-				if (state === "booting" || state === "loading-nnue") transitioned = true;
-				if (state === "ready") finish();
-				else if (state === "crashed" && transitioned)
-					finish(new Error(error ?? "engine network failed to load"));
-			});
-			signal?.addEventListener("abort", cancel, { once: true });
-			this.configure(variant, threads);
-		});
+		return waitForConfiguration(
+			{
+				scheduler: this.scheduler,
+				onMessage: (cb) => this.onMessage(cb),
+				cancels: this.configurationCancels,
+			},
+			variant,
+			signal,
+			() => this.configure(variant, threads)
+		);
 	}
 
 	/** Task 34: opt the offscreen document into (or out of) pre-warming the timing head. */
@@ -249,12 +213,7 @@ export class RemoteEngine implements EngineTransport {
 		if (this.disposed) return;
 		this.disposed = true;
 		for (const cancel of [...this.configurationCancels]) cancel();
-		const waiters = this.restartWaiters;
-		this.restartWaiters = [];
-		for (const w of waiters) {
-			this.scheduler.clearTimeout(w.timer);
-			w.reject(new Error("remote-engine: disposed"));
-		}
+		this.restartWaiters.rejectAll(new Error("remote-engine: disposed"));
 		this.queue = [];
 		this.port?.disconnect();
 		this.port = undefined;
@@ -322,7 +281,7 @@ export class RemoteEngine implements EngineTransport {
 		if (this.disposed || !m || typeof m !== "object") return;
 		switch (m.kind) {
 			case "line":
-				for (const cb of [...this.lineCbs]) cb(m.line);
+				this.lineCbs.emit(m.line);
 				break;
 			case "status":
 				this.onStatusMessage(m.status);
@@ -330,7 +289,7 @@ export class RemoteEngine implements EngineTransport {
 			default:
 				break;
 		}
-		for (const cb of [...this.messageCbs]) cb(m);
+		this.messageCbs.emit(m);
 	}
 
 	private onStatusMessage(status: EngineStatus): void {
@@ -341,16 +300,7 @@ export class RemoteEngine implements EngineTransport {
 			if (status.state === "searching") this.post({ kind: "uci", line: "stop" });
 			this.resolveReady();
 		}
-		if (status.state !== "ready") {
-			for (const w of this.restartWaiters) w.armed = true;
-		} else {
-			const done = this.restartWaiters.filter((w) => w.armed);
-			this.restartWaiters = this.restartWaiters.filter((w) => !w.armed);
-			for (const w of done) {
-				this.scheduler.clearTimeout(w.timer);
-				w.resolve();
-			}
-		}
-		for (const cb of [...this.statusCbs]) cb(status);
+		this.restartWaiters.observe(status.state);
+		this.statusCbs.emit(status);
 	}
 }

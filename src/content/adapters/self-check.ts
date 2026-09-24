@@ -4,7 +4,7 @@
  * `ProbeReport` and log `adapter.selectorMiss` for required concerns.
  */
 
-import type { ProbeMatch, Rect, SelfCheckResult } from "./adapter";
+import type { ProbeMatch, Rect, SelfCheckResult } from "./contract";
 import { pointToSquare, squareToPoint } from "./geometry";
 import { queryFirst } from "./query";
 

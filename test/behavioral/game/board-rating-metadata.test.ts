@@ -22,7 +22,7 @@ const reporter = (): BoardEffectsReporter =>
 
 /** Real game-port arrivals, split as when exact board/ply precedes bridge or move-list metadata.
  * ChessComAdapter.read selects its FEN separately from replay/bridgeLastMove; a later clock
- * reading republishes the snapshot through AdapterBase.apply even when placement is unchanged.
+ * reading republishes the snapshot through SnapshotPublisher.apply even when placement is unchanged.
  */
 function position(withLast: boolean, over: Partial<PositionSnapshot> = {}): PositionSnapshot {
 	const last = h.site.board.lastMove();

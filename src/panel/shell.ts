@@ -12,6 +12,9 @@
  * view switch is disabled, the update banner is suspended and the top-ranked hands-off banner
  * explains why. The shell never calls `focus()`, `alert()` or `autofocus`. The `aria-live`
  * regions `announce()` writes into (`a11y.ts`) are mounted last in the shell.
+ *
+ * This file is the composition root; the top bar controls, the focus lock and the update banner
+ * live in `shell/`.
  */
 
 import { chromeLocalGet, onStorageChanged } from "@core/chrome/storage";
@@ -21,15 +24,16 @@ import { log } from "@core/logger";
 import { mountLiveRegions } from "./a11y";
 import { installActionHandlers } from "./actions";
 import { type BannerHandle, clearBanners, mountBannerSlot, showBanner } from "./components/banner";
-import { createPill, type PillHandle, type PillVariant } from "./components/pill";
 import { closePopovers, mountOverlayLayer } from "./components/popover";
-import { createSegment, type SegmentHandle } from "./components/segment";
 import { clearToasts, mountToastLayer } from "./components/toast";
 import { COPY } from "./copy";
 import { mountIcons } from "./icons-mount";
 import { installPanelKeybinds } from "./keybinds";
 import { resetEscapeHandlers, viewSwitchIndex } from "./keys";
-import { isHandsOff, isLiveGame, PanelRouter } from "./router";
+import { isHandsOff, PanelRouter } from "./router";
+import { createFocusLock } from "./shell/focus-lock";
+import { createTopbar } from "./shell/topbar";
+import { createUpdateBanner } from "./shell/update-banner";
 import { playUiSound, setUiSoundsEnabled } from "./sounds";
 import type { PanelStore } from "./store";
 import { instantiate, part } from "./template";
@@ -68,44 +72,6 @@ export interface PanelShell {
 
 const VIEWS_WITHOUT_TOPBAR: ReadonlySet<ViewName> = new Set(["login"]);
 
-/** Everything a keyboard could activate inside the content while hands-off (§13.4). */
-const FOCUSABLE_SELECTOR =
-	'a[href], button, input, select, textarea, [tabindex], [role="switch"], [role="slider"], [role="tab"]';
-const ACTIVATION_KEYS: ReadonlySet<string> = new Set([
-	"Enter",
-	" ",
-	"ArrowUp",
-	"ArrowDown",
-	"ArrowLeft",
-	"ArrowRight",
-	"Home",
-	"End",
-	"PageUp",
-	"PageDown",
-]);
-
-interface SavedFocusable {
-	ariaDisabled: string | null;
-	tabindex: string | null;
-}
-
-function enginePill(snapshot: PanelSnapshot): { variant: PillVariant; text: string } {
-	const { engine } = snapshot;
-	switch (engine.state) {
-		case "searching":
-			return {
-				variant: "thinking",
-				text: COPY.engine.thinking(snapshot.recommendation?.depth ?? 0),
-			};
-		case "ready":
-			return { variant: "idle", text: COPY.engine.idle };
-		case "crashed":
-			return { variant: "danger", text: COPY.engine.stopped };
-		default:
-			return { variant: "idle", text: COPY.engine.loading };
-	}
-}
-
 export function bootShell(root: HTMLElement, options: ShellOptions): PanelShell {
 	const store = options.store;
 	const doc = root.ownerDocument;
@@ -130,8 +96,12 @@ export function bootShell(root: HTMLElement, options: ShellOptions): PanelShell 
 	let handsOff = false;
 	let disposed = false;
 	let handsOffBanner: BannerHandle | null = null;
-	let updateBanner: BannerHandle | null = null;
-	const version = options.version ?? __SL_VERSION__;
+	const updateBanner = createUpdateBanner({
+		ui,
+		snapshot: () => snapshot,
+		version: options.version ?? __SL_VERSION__,
+		onUpdate: options.onUpdate,
+	});
 
 	const theme = createThemeController(
 		body,
@@ -142,25 +112,18 @@ export function bootShell(root: HTMLElement, options: ShellOptions): PanelShell 
 	const unmountBanners = mountBannerSlot(bannerSlot);
 	const unmountLive = mountLiveRegions(liveHost); // §7.4 `announce()` target
 
-	const pill: PillHandle = createPill(statusHost, {
-		variant: "idle",
-		icon: "status.idle",
-		text: COPY.engine.loading,
-	});
-	const viewSwitch: SegmentHandle<PanelTab> = createSegment<PanelTab>(switchHost, {
-		items: [
-			{ id: "game", label: COPY.nav.game, icon: "nav.game" },
-			{ id: "settings", label: COPY.nav.settings, icon: "nav.settings" },
-			{ id: "engine", label: COPY.nav.engine, icon: "nav.engine" },
-		],
-		value: ui.tab,
-		ariaLabel: COPY.nav.viewSwitch,
-		onChange: (tab) => {
+	const topbarControls = createTopbar(statusHost, switchHost, {
+		tab: ui.tab,
+		onSelect: (tab) => {
 			playUiSound("navigate");
 			setTab(tab);
 		},
 	});
+	const viewSwitch = topbarControls.viewSwitch;
 	mountIcons(root);
+
+	// ── hands-off (§13.4): pointer (CSS), keyboard (capture guard) and AT (aria/tabindex) ──
+	const focusLock = createFocusLock(content);
 
 	const router = new PanelRouter(
 		content,
@@ -175,7 +138,7 @@ export function bootShell(root: HTMLElement, options: ShellOptions): PanelShell 
 				});
 				clearToasts(); // §3.3: the toast queue is cleared on view change
 				closePopovers();
-				lockFocusables(); // a view mounted while hands-off starts disabled
+				focusLock.lockNew(); // a view mounted while hands-off starts disabled
 			},
 		}
 	);
@@ -185,94 +148,22 @@ export function bootShell(root: HTMLElement, options: ShellOptions): PanelShell 
 		router.resolve(snapshot, ui).catch((error: unknown) => log.warn("shell: resolve failed", error));
 	}
 
-	// ── hands-off (§13.4): pointer (CSS), keyboard (capture guard) and AT (aria/tabindex) ──
-	const lockedFocusables = new Map<Element, SavedFocusable>();
-	let focusObserver: MutationObserver | null = null;
-
-	function lockFocusables(): void {
-		if (!handsOff) return;
-		for (const el of content.querySelectorAll(FOCUSABLE_SELECTOR)) {
-			if (lockedFocusables.has(el)) continue;
-			lockedFocusables.set(el, {
-				ariaDisabled: el.getAttribute("aria-disabled"),
-				tabindex: el.getAttribute("tabindex"),
-			});
-			el.setAttribute("aria-disabled", "true");
-			el.setAttribute("tabindex", "-1");
-		}
-	}
-
-	function unlockFocusables(): void {
-		for (const [el, saved] of lockedFocusables) {
-			if (saved.ariaDisabled === null) el.removeAttribute("aria-disabled");
-			else el.setAttribute("aria-disabled", saved.ariaDisabled);
-			if (saved.tabindex === null) el.removeAttribute("tabindex");
-			else el.setAttribute("tabindex", saved.tabindex);
-		}
-		lockedFocusables.clear();
-	}
-
-	const keyboardGuard = (event: KeyboardEvent): void => {
-		if (!handsOff || !ACTIVATION_KEYS.has(event.key)) return;
-		event.preventDefault();
-		event.stopImmediatePropagation();
-	};
-	content.addEventListener("keydown", keyboardGuard, true);
-	content.addEventListener("keyup", keyboardGuard, true);
-	// A control added after the lock (before the observer delivers) is locked the moment it is
-	// focused, so Tab + Enter can never activate it.
-	const focusGuard = (): void => lockFocusables();
-	content.addEventListener("focusin", focusGuard, true);
-
 	function applyHandsOff(next: boolean): void {
 		if (handsOff === next) return;
 		handsOff = next;
 		root.classList.toggle("sl-hands-off", next);
 		viewSwitch.update({ disabled: next });
 		if (next) {
-			content.setAttribute("aria-disabled", "true");
-			lockFocusables();
-			if (typeof MutationObserver === "function") {
-				focusObserver = new MutationObserver(() => lockFocusables());
-				focusObserver.observe(content, { childList: true, subtree: true });
-			}
+			focusLock.engage();
 			closePopovers(); // an open popover (e.g. a confirm) must not act mid-game
 			// The hands-off banner outranks every other banner; the update banner is suspended.
-			updateBanner?.dismiss();
-			updateBanner = null;
+			updateBanner.suspend();
 			handsOffBanner = showBanner("hands-off", COPY.banner.handsOff, [], { key: "hands-off" });
 		} else {
-			content.removeAttribute("aria-disabled");
-			focusObserver?.disconnect();
-			focusObserver = null;
-			unlockFocusables();
+			focusLock.release();
 			handsOffBanner?.dismiss();
 			handsOffBanner = null;
-			applyUpdateBanner();
-		}
-	}
-
-	function applyUpdateBanner(): void {
-		const wanted = ui.updateAvailable && ui.updateDismissed && !(snapshot && isLiveGame(snapshot));
-		if (wanted && !updateBanner) {
-			updateBanner = showBanner(
-				"info",
-				COPY.banner.update(version),
-				[
-					{
-						label: COPY.banner.updateAction,
-						onClick: () => {
-							if (snapshot && isLiveGame(snapshot)) return; // Defer extension reload until the game ends.
-							options.onUpdate?.();
-						},
-						keepOpen: true,
-					},
-				],
-				{ key: "update" }
-			);
-		} else if (!wanted && updateBanner) {
-			updateBanner.dismiss();
-			updateBanner = null;
+			updateBanner.apply();
 		}
 	}
 
@@ -285,7 +176,7 @@ export function bootShell(root: HTMLElement, options: ShellOptions): PanelShell 
 
 	function dismissUpdate(): void {
 		ui.updateDismissed = true;
-		applyUpdateBanner();
+		updateBanner.apply();
 		reresolve();
 	}
 
@@ -293,19 +184,9 @@ export function bootShell(root: HTMLElement, options: ShellOptions): PanelShell 
 		snapshot = next;
 		theme.apply(next.settings.display);
 		setUiSoundsEnabled(next.settings.display.uiSounds);
-		const p = enginePill(next);
-		pill.update({
-			variant: p.variant,
-			icon:
-				p.variant === "thinking"
-					? "status.thinking"
-					: p.variant === "danger"
-						? "status.detached"
-						: "status.idle",
-			text: p.text,
-		});
+		topbarControls.renderEngine(next);
 		applyHandsOff(isHandsOff(next));
-		applyUpdateBanner();
+		updateBanner.apply();
 		reresolve();
 	}
 
@@ -336,7 +217,7 @@ export function bootShell(root: HTMLElement, options: ShellOptions): PanelShell 
 		.then((flag) => {
 			if (disposed) return;
 			ui.updateAvailable = flag === true;
-			applyUpdateBanner();
+			updateBanner.apply();
 			reresolve();
 		})
 		.catch((error: unknown) => log.debug("shell: updateAvailable read failed", error));
@@ -345,7 +226,7 @@ export function bootShell(root: HTMLElement, options: ShellOptions): PanelShell 
 		if (!change) return;
 		ui.updateAvailable = change.newValue === true;
 		if (!ui.updateAvailable) ui.updateDismissed = false;
-		applyUpdateBanner();
+		updateBanner.apply();
 		reresolve();
 	});
 
@@ -370,15 +251,9 @@ export function bootShell(root: HTMLElement, options: ShellOptions): PanelShell 
 			uninstallActions();
 			uninstallKeybinds();
 			doc.removeEventListener("keydown", onKeyDown);
-			content.removeEventListener("keydown", keyboardGuard, true);
-			content.removeEventListener("keyup", keyboardGuard, true);
-			content.removeEventListener("focusin", focusGuard, true);
-			focusObserver?.disconnect();
-			focusObserver = null;
-			lockedFocusables.clear();
+			focusLock.dispose();
 			router.dispose();
-			viewSwitch.dispose();
-			pill.dispose();
+			topbarControls.dispose();
 			clearBanners();
 			unmountBanners();
 			unmountToasts();
