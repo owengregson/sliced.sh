@@ -72,6 +72,7 @@ export function normalizeSettings(raw: unknown): Settings {
 			persona: F.strength.persona,
 			selectionMode: F.strength.selectionMode,
 			useOpeningBook: bool(strength.useOpeningBook, D.strength.useOpeningBook),
+			useTablebase: bool(strength.useTablebase, D.strength.useTablebase),
 			// Retire the hidden second rating offset, including values from older installs.
 			blunderScale: D.strength.blunderScale,
 		},

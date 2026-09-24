@@ -85,6 +85,7 @@ export function noteFor(snapshot: PanelSnapshot, state: MoveCardData["state"]): 
 		return COPY.move.noteUnarmed(formatKeybind(snapshot.settings.keybinds.toggleAutoMove));
 	const { chosen, eval: score } = snapshot.recommendation;
 	if (chosen.source === "book") return COPY.move.noteBook;
+	if (chosen.source === "tablebase") return COPY.move.noteTablebase;
 	if (score.mate !== undefined && score.mate > 0) return COPY.move.noteMate(score.mate);
 	if (snapshot.recommendation.lines.length === 1) return COPY.move.noteOnly;
 	return COPY.move.noteSearch(snapshot.recommendation.depth);

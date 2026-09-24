@@ -105,6 +105,11 @@ export const SETTINGS_COPY = {
 			label: "Opening book",
 			help: "Plays book moves for the first 8–12 moves.",
 		},
+		"strength.useTablebase": {
+			label: "Endgame tablebase",
+			help:
+				"Asks the Lichess tablebase in endgames of 7 pieces or fewer. Perfect play at max strength, occasional at human ratings.",
+		},
 		"timing.baseSpeed": {
 			label: "Overall pace",
 			help:

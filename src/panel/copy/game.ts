@@ -28,6 +28,7 @@ export const MOVE_COPY = {
 	engineStoppedHint: (stop: string): string =>
 		`${stop}: release pointer. Restart engine after the game.`,
 	noteBook: "Book move",
+	noteTablebase: "Tablebase move",
 	noteSearch: (depth: number): string => `Search depth ${depth}`,
 	notePrediction: "Main line prediction",
 	noteOnly: "Only move",
@@ -42,6 +43,7 @@ export const MOVE_COPY = {
 		book: "Book",
 		premove: "Premove",
 		maia: "Maia",
+		tablebase: "Tablebase",
 	} satisfies Record<ChosenMove["source"], string>,
 	/** Your move, a recommendation shown, but the hand is not armed: say how to arm it. */
 	noteUnarmed: (key: string): string => `Arm before the game; ${key} toggles auto-play.`,

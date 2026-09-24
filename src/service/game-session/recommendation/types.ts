@@ -7,6 +7,7 @@ import type { PolicyPort, PolicyResult } from "@core/policy/types";
 import type { Rng } from "@core/rng";
 import type { BookPolicy } from "@core/strength/book/book-policy";
 import type { SelectionState } from "@core/strength/types";
+import type { TablebasePort } from "@core/tablebase/client";
 import type { TimingModel } from "@core/timing/timing-model";
 import type { PositionSnapshot, Recommendation } from "@typedefs/game";
 import type { PersonaId, Settings } from "@typedefs/settings";
@@ -71,6 +72,8 @@ export interface RecommendationOutcome {
 	nReasonable: number;
 	/** Whether the chosen move came from the opening book. */
 	fromBook: boolean;
+	/** Whether the chosen move came from the endgame tablebase (rated Book on the board). */
+	fromTablebase?: boolean;
 	budget: SearchBudget;
 	/** `null` when the engine never answered (book-only or a failed search). */
 	analysis: AnalysisResult | null;
@@ -82,6 +85,8 @@ export interface RecommendationPipelineDeps {
 	book: BookPolicy | null;
 	/** Optional Maia policy port; a missing answer uses engine selection. */
 	policy?: PolicyPort;
+	/** Optional endgame tablebase (2026-09-23); absent or unavailable, the engine plays. */
+	tablebase?: TablebasePort | null;
 	now?: () => number;
 }
 

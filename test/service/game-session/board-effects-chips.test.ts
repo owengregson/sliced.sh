@@ -1171,3 +1171,62 @@ it("reviews missed real moves before speculative replies once the live position 
 	expect(h.open([...moves, "b8c6"])).toBeUndefined();
 	h.r.dispose();
 });
+
+describe("BoardEffectsReporter · tablebase move", () => {
+	const KRK = "8/8/8/4k3/8/8/2K5/7R w - - 0 1";
+	const krkMove = (uci: string): LandedMove => ({
+		beforeFen: KRK,
+		historyFen: KRK,
+		historyMoves: [],
+		uci,
+		ply: 0,
+		mine: true,
+	});
+
+	it("rates our tablebase move Book the moment it lands, with no review frame", async () => {
+		const { r, effects } = setup();
+		r.prepare({
+			beforeFen: KRK,
+			history: { fen: KRK, moves: [] },
+			uci: "c2c3",
+			ply: 0,
+			tablebase: true,
+		});
+		r.report({ moves: [krkMove("c2c3")] });
+		await settle();
+		const chips = effects().filter((e) => e.quality !== undefined);
+		expect(chips).toHaveLength(1);
+		expect(chips[0]?.quality).toEqual({ square: "c3", quality: "book" });
+		r.dispose();
+	});
+
+	it("leaves the same move without the flag to the review", async () => {
+		const { r, effects } = setup();
+		r.prepare({ beforeFen: KRK, history: { fen: KRK, moves: [] }, uci: "c2c3", ply: 0 });
+		r.report({ moves: [krkMove("c2c3")] });
+		await settle();
+		expect(effects().filter((e) => e.quality !== undefined)).toHaveLength(0);
+		r.dispose();
+	});
+
+	it("keeps the mate chip for a tablebase move that checkmates", async () => {
+		const mateFen = "k7/8/1K6/8/8/8/8/7R w - - 0 1";
+		const { r, effects } = setup();
+		r.prepare({
+			beforeFen: mateFen,
+			history: { fen: mateFen, moves: [] },
+			uci: "h1h8",
+			ply: 0,
+			tablebase: true,
+		});
+		r.report({
+			moves: [
+				{ beforeFen: mateFen, historyFen: mateFen, historyMoves: [], uci: "h1h8", ply: 0, mine: true },
+			],
+		});
+		await settle();
+		const chips = effects().filter((e) => e.quality !== undefined);
+		expect(chips[0]?.quality?.quality).toBe("mate");
+		r.dispose();
+	});
+});

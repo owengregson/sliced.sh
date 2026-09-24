@@ -21,6 +21,7 @@ import { log } from "@core/logger";
 import type { MessageRouter } from "@core/messaging/router";
 import { getSettings, onSettingsChanged } from "@core/storage/settings-storage";
 import { createBookPolicy } from "@core/strength/book/book-policy";
+import { TablebaseClient } from "@core/tablebase/client";
 import { ChessMimicHead, selectBand } from "@core/timing/chessmimic-head";
 import { TimingLogWriter } from "@core/timing/timing-log";
 import { V1ParametricHead } from "@core/timing/v1-head";
@@ -101,6 +102,8 @@ export function createGameStack(options: GameStackOptions): GameStack {
 	const policyPort = createPolicyInferPort(transport);
 
 	const book = createBookPolicy();
+	// 2026-09-23: ≤ 7-man positions from the Lichess tablebase API, fetched by this worker only.
+	const tablebase = new TablebaseClient();
 
 	const synchronizePolicyWarmup = policyWarmup({
 		liveTargets: () =>
@@ -118,6 +121,7 @@ export function createGameStack(options: GameStackOptions): GameStack {
 		engine: controller,
 		review: reviewEngine,
 		book,
+		tablebase,
 		createHead: () =>
 			new ChessMimicHead({ infer: inferPort.infer, fallback: new V1ParametricHead() }),
 		debugger: debuggerManager,

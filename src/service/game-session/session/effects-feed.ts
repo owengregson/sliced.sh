@@ -85,7 +85,13 @@ export class EffectsFeed {
 	 * never feed a rating: they are strength-limited, shaped or shallow. `settings` is the caller's
 	 * reading — the pipeline decides on the settings its search started with.
 	 */
-	preparePlanned(snapshot: PositionSnapshot, uci: string, settings: Settings, inBook = false): void {
+	preparePlanned(
+		snapshot: PositionSnapshot,
+		uci: string,
+		settings: Settings,
+		inBook = false,
+		tablebase = false
+	): void {
 		if (!this.core.mayAct() || !settings.automation.moveQualityChips) return;
 		this.reporter.prepare({
 			beforeFen: snapshot.fen,
@@ -93,6 +99,7 @@ export class EffectsFeed {
 			uci,
 			ply: snapshot.ply,
 			...(inBook ? { inBook: true } : {}),
+			...(tablebase ? { tablebase: true } : {}),
 		});
 	}
 

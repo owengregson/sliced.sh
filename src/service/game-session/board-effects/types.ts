@@ -35,6 +35,8 @@ export interface ClassifiedMove {
 	ply: number;
 	/** `true` when the move is known to come from the opening book; otherwise the books are asked. */
 	inBook?: boolean;
+	/** 2026-09-23: our move came from the endgame tablebase — rated Book without a review. */
+	tablebase?: boolean;
 }
 
 /** Our own planned move, known before it is played (`prepare`). */
@@ -44,6 +46,7 @@ export interface PlannedMove {
 	uci: string;
 	ply: number;
 	inBook?: boolean;
+	tablebase?: boolean;
 }
 
 export interface LandedMove extends ClassifiedMove {

@@ -190,7 +190,13 @@ export class MoveDelivery {
 		core.recNReasonable = outcome.nReasonable;
 		// Board effects (2026-09-14): open our planned move's rating now, so the review engine
 		// searches the position it will produce while the hand waits out the think time.
-		this.parts.effects.preparePlanned(snapshot, outcome.rec.chosen.uci, settings, outcome.fromBook);
+		this.parts.effects.preparePlanned(
+			snapshot,
+			outcome.rec.chosen.uci,
+			settings,
+			outcome.fromBook,
+			outcome.fromTablebase === true
+		);
 		core.apply("recommended");
 		this.parts.marks.highlight(outcome.rec);
 		core.notify();

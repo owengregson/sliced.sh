@@ -10,6 +10,7 @@ import {
 	forcedMoveVerdict,
 	type MoveQualityVerdict,
 	passedBrilliantGates,
+	tablebaseMoveVerdict,
 } from "@core/engine/move-quality";
 import type { Square } from "@typedefs/game";
 
@@ -47,9 +48,9 @@ export class VerdictClassifier {
 	constructor(private readonly deps: VerdictClassifierDeps) {}
 
 	/**
-	 * Classify an open job. Board-known outcomes (checkmate, the only legal move) are cheap and
-	 * always decided; a verdict from frames can run the costly sacrifice scans, so it is
-	 * `deferred` unless `admitted`.
+	 * Classify an open job. Board-known outcomes (checkmate, our tablebase move, the only legal
+	 * move) are cheap and always decided; a verdict from frames can run the costly sacrifice scans,
+	 * so it is `deferred` unless `admitted`.
 	 */
 	classify(job: VerdictJob, admitted: boolean): ClassifyOutcome {
 		if (job.checkmate) {
@@ -57,6 +58,14 @@ export class VerdictClassifier {
 			// step, the moment it lands — also as the only legal move, or with no review frame ready.
 			job.verdict = checkmateVerdict();
 			this.noteMate(job);
+			this.sacrificePlies.delete(job.move.ply);
+			return "decided";
+		}
+		if (job.move.tablebase === true) {
+			// Our tablebase move (2026-09-23) is theory: Book the moment it lands, no review. Checkmate
+			// above keeps its own chip — the game's final move always sounds the top step.
+			job.verdict = tablebaseMoveVerdict();
+			this.mateNotes.delete(job.move.ply);
 			this.sacrificePlies.delete(job.move.ply);
 			return "decided";
 		}

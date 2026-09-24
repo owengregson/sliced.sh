@@ -6,6 +6,7 @@
 import type { TimeControlClass } from "@core/motor/types";
 import type { PolicyPort } from "@core/policy/types";
 import type { BookPolicy } from "@core/strength/book/book-policy";
+import type { TablebasePort } from "@core/tablebase/client";
 import type { TimingLogWriter } from "@core/timing/timing-log";
 import type { TimingModel } from "@core/timing/timing-model";
 import type { DistributionHead } from "@core/timing/types";
@@ -41,6 +42,8 @@ export interface GameSessionDeps {
 	link: Pick<ContentLink, "post" | "request" | "onMessage" | "isConnected">;
 	engine: EngineController | null;
 	book: BookPolicy | null;
+	/** The endgame tablebase (2026-09-23); absent or `null`, the engine plays every endgame. */
+	tablebase?: TablebasePort | null | undefined;
 	/**
 	 * The move-review engine (2026-09-14): the full-network Stockfish every board rating comes from,
 	 * independent of `engine`. Absent or `null`: the board effects still go out, without ratings.

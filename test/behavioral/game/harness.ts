@@ -15,6 +15,7 @@ import { installMessageRouter, type MessageRouter } from "@core/messaging/router
 import type { PolicyPort } from "@core/policy/types";
 import type { SettingsPatch } from "@core/storage/settings-storage";
 import { getSettings, onSettingsChanged, setSettings } from "@core/storage/settings-storage";
+import type { TablebasePort } from "@core/tablebase/client";
 import { TimingLogWriter } from "@core/timing/timing-log";
 import type { DistributionHead } from "@core/timing/types";
 import { V1ParametricHead } from "@core/timing/v1-head";
@@ -68,6 +69,8 @@ export interface GameHarnessOptions {
 	head?: DistributionHead;
 	/** 2026-09-11: the Maia-3 policy port the pipeline queries (none by default: engine policy). */
 	policy?: PolicyPort;
+	/** 2026-09-23: the endgame tablebase the pipeline probes (none by default: engine endgames). */
+	tablebase?: TablebasePort;
 	/** 2026-09-11: observe the session's `warmPolicy(targetElo)` calls. */
 	warmPolicy?: (targetElo: number) => void;
 	/** Skip `hello` + `gameStarted` + the first position (a test that drives them itself). */
@@ -280,6 +283,7 @@ export async function createGameHarness(options: GameHarnessOptions = {}): Promi
 				engineHasPendingOptions: () => controller.status().pendingOptions,
 				observeExecutor: (id, executor) => broadcaster.observeExecutor(id, executor),
 				policy: options.policy,
+				tablebase: options.tablebase ?? null,
 				warmPolicy: options.warmPolicy,
 				now: sim.now,
 				scheduler: defaultScheduler,

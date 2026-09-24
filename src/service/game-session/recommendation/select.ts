@@ -199,14 +199,20 @@ export function chooseMove(
 
 /**
  * An incomplete search cannot measure the chosen move's loss: drop the sample and mark the
- * quality ineligible (a book move keeps its own).
+ * quality ineligible (a book or tablebase move keeps its own).
  */
 export function markIncompleteSearch(
 	chosen: ChosenMove,
 	analysis: AnalysisResult | null,
 	candidates: number
 ): void {
-	if (!analysis || analysis.final.complete || chosen.source === "book") return;
+	if (
+		!analysis ||
+		analysis.final.complete ||
+		chosen.source === "book" ||
+		chosen.source === "tablebase"
+	)
+		return;
 	delete chosen.cpLoss;
 	chosen.quality = {
 		kind: "search",

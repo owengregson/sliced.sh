@@ -246,6 +246,7 @@ export class BoardEffectsReporter {
 			uci: planned.uci,
 			ply: planned.ply,
 			...(planned.inBook === undefined ? {} : { inBook: planned.inBook }),
+			...(planned.tablebase === true ? { tablebase: true } : {}),
 		};
 		const key = moveKey(move);
 		if (this.prepared?.key !== key) {

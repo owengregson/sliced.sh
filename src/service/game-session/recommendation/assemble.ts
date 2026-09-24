@@ -55,6 +55,7 @@ export function assembleOutcome(
 		rec,
 		nReasonable,
 		fromBook: chosen.source === "book",
+		fromTablebase: chosen.source === "tablebase",
 		budget: parts.budget,
 		analysis,
 	};

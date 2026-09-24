@@ -47,6 +47,7 @@ export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze<Settings>({
 		persona: "balanced",
 		selectionMode: "hybrid",
 		useOpeningBook: true,
+		useTablebase: true,
 		blunderScale: 1,
 	},
 	timing: {

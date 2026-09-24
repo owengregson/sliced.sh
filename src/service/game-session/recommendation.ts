@@ -6,10 +6,11 @@
  *   1. context      — clocks, Maia mode, search budget, Maia rating, the shared deadline
  *   2. timing       — bounded timing inference, overlapping everything up to selection
  *   3. policy       — a held Maia answer, or a query in flight
- *   4. book         — the opening book's answer, overlapping the search
+ *   4. book         — the opening book's answer and any tablebase probe, overlapping the search
  *   5. analysis     — the anchor, Maia-shaped or broad search, and the shallow retry
  *   6. candidates   — the final policy wait, then an extra referee search for unscored moves
- *   7. selection    — book guards, then the selector (or a legal fallback)
+ *   7. selection    — the endgame tablebase (≤ 7 men), else book guards, then the selector
+ *                     (or a legal fallback)
  *   8. plan         — the timing plan for the chosen move, charged with preparation spent
  *   9. assembly     — the `Recommendation` and the outcome the session acts on
  *
@@ -20,6 +21,7 @@
 import { MAIA } from "@core/constants/maia";
 import type { PolicyPort } from "@core/policy/types";
 import type { BookPolicy } from "@core/strength/book/book-policy";
+import type { TablebasePort } from "@core/tablebase/client";
 import { TIMING_CONSTANTS } from "@core/timing/constants";
 import type { TimingModel } from "@core/timing/timing-model";
 
@@ -30,6 +32,7 @@ import { ownMoveContext, PreparationWindow } from "./recommendation/context";
 import { noteShortHistory, PolicyStage } from "./recommendation/policy";
 import { PipelineSearcher } from "./recommendation/search";
 import { chooseMove, markIncompleteSearch } from "./recommendation/select";
+import { tablebaseMove, tablebaseProbe, tablebaseWaitMs } from "./recommendation/tablebase";
 import { planChosenMove, TimingInference, timingContext } from "./recommendation/timing";
 import type {
 	RecommendationInput,
@@ -83,12 +86,14 @@ export class RecommendationPipeline {
 	private readonly book: BookPolicy | null;
 	private readonly policy: PolicyStage;
 	private readonly searcher: PipelineSearcher;
+	private readonly tablebase: TablebasePort | null;
 	private readonly now: () => number;
 
 	constructor(deps: RecommendationPipelineDeps) {
 		const policy: PolicyPort | null = deps.policy ?? null;
 		this.timing = deps.timing;
 		this.book = deps.book;
+		this.tablebase = deps.tablebase ?? null;
 		this.now = deps.now ?? Date.now;
 		this.policy = new PolicyStage(policy, this.now);
 		this.searcher = new PipelineSearcher(deps.engine, this.now);
@@ -113,8 +118,9 @@ export class RecommendationPipeline {
 		const policyQuery = policyStart.query;
 
 		try {
-			// Book lookup overlaps the policy and engine work.
+			// Book lookup overlaps the policy and engine work; so does a tablebase probe.
 			const bookPending = bookMove(this.book, input);
+			const tablebasePending = tablebaseProbe(this.tablebase, input);
 			let acquired: Awaited<ReturnType<typeof acquireAnalysis>>;
 			try {
 				acquired = await acquireAnalysis(
@@ -157,16 +163,24 @@ export class RecommendationPipeline {
 			);
 			if (!candidates) return null;
 			const { lines, maiaExtra } = candidates;
-			const chosen = chooseMove(
-				input,
-				lines,
-				opening.book,
-				analysis,
-				policyResult,
-				maiaExtra,
-				own.maiaElo,
-				own.maia
-			);
+			const tablebaseChoice = tablebasePending
+				? await tablebaseMove(input, tablebasePending, lines, {
+						waitMs: tablebaseWaitMs(input, own, window, this.now()),
+					})
+				: null;
+			if (input.signal?.aborted) return null;
+			const chosen =
+				tablebaseChoice ??
+				chooseMove(
+					input,
+					lines,
+					opening.book,
+					analysis,
+					policyResult,
+					maiaExtra,
+					own.maiaElo,
+					own.maia
+				);
 			if (!chosen) return null;
 			markIncompleteSearch(chosen, analysis, lines.length);
 

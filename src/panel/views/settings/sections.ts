@@ -66,6 +66,7 @@ export const SECTIONS: readonly SectionSpec[] = [
 		"strength.matchOpponentRating",
 		"strength.personaEloOffset",
 		"strength.useOpeningBook",
+		"strength.useTablebase",
 	]),
 	// Session behavior; auto-play itself is controlled only from Game.
 	section("automation", [

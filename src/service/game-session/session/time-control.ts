@@ -76,6 +76,7 @@ export class TimeControlProfile {
 			book: deps.book,
 			now: this.core.now,
 			...(policy ? { policy } : {}),
+			...(deps.tablebase ? { tablebase: deps.tablebase } : {}),
 		});
 	}
 

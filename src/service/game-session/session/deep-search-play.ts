@@ -129,6 +129,8 @@ export class DeepSearchPlay {
 		const engine = core.deps.engine;
 		const myColor = snapshot?.myColor ?? null;
 		if (!snapshot || !engine || myColor === null || rec.fen !== snapshot.fen) return null;
+		// The tablebase's move is already perfect: no search can improve on it (2026-09-23).
+		if (rec.chosen.source === "tablebase") return null;
 		const windowMs = deepSearchWindowMs({
 			nowMs: core.now(),
 			searchStartedAtMs: rec.computedAt,
