@@ -8,8 +8,7 @@
 import { log } from "@core/logger";
 import {
 	type AnticipatedReply,
-	anticipateReply,
-	anticipationEngageProb,
+	engagedAnticipation,
 	planAnticipationHover,
 	withinHover,
 } from "@core/motor/anticipation";
@@ -143,7 +142,7 @@ export class OpponentExplorer {
 				// the ponder's top line anticipates at each spell (lines arrive and change mid-turn).
 				const anticipationDraw = hoverRng.next();
 				const anticipated = (live: OpponentExplorationCandidates): AnticipatedReply | null =>
-					anticipationFor(live, anticipationDraw, x.config.tcClass);
+					engagedAnticipation(live, anticipationDraw, x.config.tcClass);
 				await sleep(
 					sampleRange(
 						anticipated(initial)
@@ -257,20 +256,4 @@ export class OpponentExplorer {
 				if (this.task === task) this.task = null;
 			});
 	}
-}
-
-/**
- * The reply this turn's hand pre-positions for, if any: the ponder's top line, when this turn's
- * draw falls under that kind's odds. Never while a premove or a hold is armed, because that hand
- * already has its piece.
- */
-function anticipationFor(
-	candidates: OpponentExplorationCandidates,
-	draw: number,
-	tcClass: Parameters<typeof anticipationEngageProb>[1]
-): AnticipatedReply | null {
-	const attention = candidates.attention;
-	if (attention?.armed || attention?.repertoire?.premovePending) return null;
-	const reply = anticipateReply(candidates);
-	return reply && draw < anticipationEngageProb(reply.kind, tcClass) ? reply : null;
 }

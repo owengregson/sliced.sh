@@ -1,5 +1,6 @@
 /** Predicting the opponent's reply from a short MultiPV search. */
 
+import { classifyMove } from "@core/chess/move-classify";
 import { PREMOVE } from "@core/constants/books";
 import type { EvalLine } from "@typedefs/engine";
 import { cpEffective, winProb } from "../elo-map";
@@ -53,4 +54,21 @@ export function plausibleScore(candidate: EvalLine, best: EvalLine): boolean {
 	}
 	if (candidate.score.mate !== undefined) return candidate.score.mate > 0;
 	return (best.score.cp ?? 0) - (candidate.score.cp ?? 0) <= PREMOVE.replyMaxCpLoss;
+}
+
+/**
+ * The prediction confidence a reply needs before its answer is searched. Under the think-time
+ * calibration (`tradeReplyMinProb`, fitted with the trade propensity) a capture may arm a safe
+ * trade on a weaker prediction: a queued trade is legal only if they take on that square
+ * (`isQueueableCandidate`), so it cannot fire on any other reply. Every other reply still needs
+ * `PREMOVE.replyMinProb`, and a non-trade answer is held to it again after the search.
+ */
+export function replyMinProb(
+	afterMove: string,
+	reply: string,
+	tradeReplyMinProb: number | undefined
+): number {
+	return tradeReplyMinProb !== undefined && classifyMove(afterMove, reply)?.isCapture === true
+		? tradeReplyMinProb
+		: PREMOVE.replyMinProb;
 }

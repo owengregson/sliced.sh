@@ -7,30 +7,38 @@
  * through `prepare()`.
  *
  * The class orchestrates the per-game state; the stages live under `./timing-model/`:
- * `normalise` (head sample → budgeted duration), `compose` (clock policies, motor, cap),
- * `assemble` (window phases and diagnostics) and `replan` (Appendix D §5).
+ * `normalise` (head sample → budgeted duration), `calibrate` (the fitted think-time shift),
+ * `compose` (clock policies, motor, cap), `assemble` (window phases and diagnostics) and `replan`
+ * (Appendix D §5); `state` owns the per-game state and how a plan and an observation update it,
+ * `inference-gate` when the head's inference is skipped.
  */
 
-import { isLoneKing } from "@core/chess/material";
 import {
 	TIMING_CALIBRATION,
 	type TimingCalibrationTable,
 } from "@core/constants/timing-calibration";
 import type { Rng } from "@core/rng";
-import { clamp } from "@core/util/clamp";
 import { budgetController, scheduleAlloc } from "./budget";
 import { TIMING_CONSTANTS } from "./constants";
 import { computeFeatures, isBotPace } from "./features";
 import { createMoveBudget } from "./move-budget";
-import { clockRacePolicy } from "./opponent-pressure";
 import { samplePersona } from "./persona-latents";
 import { buildTimingLogEntry } from "./timing-log/entry";
 import { assemblePlan } from "./timing-model/assemble";
 import { calibrateSample } from "./timing-model/calibrate";
 import { composeThink } from "./timing-model/compose";
+import { skipsInference } from "./timing-model/inference-gate";
 import { guardPremove, normaliseSample } from "./timing-model/normalise";
 import { type ReplanHost, replan } from "./timing-model/replan";
-import { adoptHistory, freshState, knobsFromSettings } from "./timing-model/state";
+import {
+	adoptHistory,
+	armTilt,
+	beginMove,
+	freshState,
+	knobsFromSettings,
+	observeThink,
+	recordPlan,
+} from "./timing-model/state";
 
 import type {
 	DistributionHead,
@@ -138,7 +146,7 @@ export class TimingModel {
 
 	/** Kick off head-side inference for the position (no-op for the v1 head). */
 	prepare(ctx: TimingContext, options?: TimingPreparation): Promise<void> {
-		if (this.skipsInference(ctx)) return Promise.resolve();
+		if (skipsInference(ctx)) return Promise.resolve();
 		return this.head.prepare?.(ctx, options) ?? Promise.resolve();
 	}
 
@@ -147,21 +155,8 @@ export class TimingModel {
 	 * before `planMove`; no-op for the v1 head and under the same clock-race rule as `prepare`).
 	 */
 	prepareMove(ctx: TimingContext, options?: TimingPreparation): Promise<void> {
-		if (this.skipsInference(ctx)) return Promise.resolve();
+		if (skipsInference(ctx)) return Promise.resolve();
 		return this.head.prepareMove?.(ctx, options) ?? Promise.resolve();
-	}
-
-	private skipsInference(ctx: TimingContext): boolean {
-		const race = clockRacePolicy({
-			ownClockMs: ctx.myClockMs,
-			opponentClockMs: ctx.oppClockMs,
-			baseMs: ctx.baseSec * 1000,
-			incrementMs: ctx.incSec * 1000,
-			loneKing: isLoneKing(ctx.fen, ctx.myColor),
-		});
-		// An opponent's short clock is a reason to play briskly, not to discard
-		// position-conditioned thinking while we can still afford it.
-		return race !== null && !race.opponentOnly;
 	}
 
 	private allocFor(f: Features): number {
@@ -170,12 +165,9 @@ export class TimingModel {
 
 	planMove(ctx: TimingContext): TimingPlan {
 		const st = this._state;
-		st.fen = ctx.fen;
-		st.move = ctx.chosenMove;
-		st.ply = ctx.ply;
+		beginMove(st, ctx);
 		const f = computeFeatures(ctx, st);
-		if (st.lastEvalOurPov !== null && f.eval_cp <= st.lastEvalOurPov - C.tilt.dropCp && st.tilt === 0)
-			st.tilt = C.tilt.moves;
+		armTilt(st, f);
 		const alloc = this.allocFor(f);
 		const budget = createMoveBudget(
 			f,
@@ -242,10 +234,7 @@ export class TimingModel {
 			rng: this.rng,
 			calibration: { shift: calibrated.shift, situationIndex: calibrated.situationIndex },
 		});
-		st.plannedMs.push(plan.thinkMs);
-		st.lastPlan = plan;
-		st.lastEvalOurPov = f.eval_cp;
-		st.oppThinkMs = [...ctx.oppThinkMsHistory];
+		recordPlan(st, plan, f, ctx);
 		this.logPlan(ctx, plan, f, alloc, normalised.comp, sample.terms ?? []);
 		return plan;
 	}
@@ -307,24 +296,7 @@ export class TimingModel {
 		const st = this._state;
 		const gameId = this.meta?.gameId ?? st.gameId;
 		if (observation && observation.gameId !== gameId) return;
-		st.myThinkMs.push(actualThinkMs);
-		if (st.tilt > 0) st.tilt--;
-		if (
-			observation?.adaptPace !== false &&
-			(plan.mode === "normal" || plan.mode === "long") &&
-			actualThinkMs > 0 &&
-			plan.thinkMs > 0
-		) {
-			const shift = clamp(
-				Math.log(actualThinkMs / plan.thinkMs),
-				-C.replan.observeShiftClamp,
-				C.replan.observeShiftClamp
-			);
-			st.eps += shift;
-			const bodyMs = plan.features.bodyMedianMs;
-			if (bodyMs !== undefined && bodyMs > 0)
-				st.paceResiduals.push(Math.log(actualThinkMs) - Math.log(bodyMs));
-		}
+		observeThink(st, actualThinkMs, plan, observation?.adaptPace !== false);
 		const entry = this.entries.get(`${gameId}:${observation?.ply ?? st.ply}`);
 		if (entry) {
 			entry.actualMs = actualThinkMs;
