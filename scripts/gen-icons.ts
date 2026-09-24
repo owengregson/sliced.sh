@@ -7,8 +7,8 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { ICON_STYLE_CLASSES, ICONS } from "../src/design/icons";
-
-const ROOT = path.resolve(import.meta.dir, "..");
+import { ROOT } from "./lib/paths";
+import { failOnFindings } from "./lib/report";
 export const FONTAWESOME_CSS = path.join(
 	ROOT,
 	"assets",
@@ -49,14 +49,11 @@ export function findMissingIcons(css: string, icons: Record<string, string>): Mi
 
 export function verifyIcons(cssPath: string = FONTAWESOME_CSS): void {
 	const css = readFileSync(cssPath, "utf8");
-	const missing = findMissingIcons(css, ICONS);
-	if (missing.length) {
-		for (const m of missing)
-			console.error(
-				`icon "${m.name}": class "${m.token}" not found in ${path.relative(ROOT, cssPath)}`
-			);
-		throw new Error(`${missing.length} unknown icon class(es)`);
-	}
+	failOnFindings(
+		findMissingIcons(css, ICONS),
+		(m) => `icon "${m.name}": class "${m.token}" not found in ${path.relative(ROOT, cssPath)}`,
+		(n) => `${n} unknown icon class(es)`
+	);
 }
 
 if (import.meta.main) {

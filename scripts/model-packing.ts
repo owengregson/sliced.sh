@@ -41,3 +41,13 @@ export function verifyPackedModel(data: Uint8Array, bytes: number, sha256: strin
 	}
 	if (hash.digest("hex") !== sha256) throw new Error("packed model checksum mismatch");
 }
+
+/** The bytes a model ships as: packed, and verified to restore `spec`, when the registry says so. */
+export function bundledModelBytes(
+	data: Uint8Array,
+	spec: { bytes: number; sha256: string; packed?: boolean }
+): Uint8Array {
+	const bundled = spec.packed ? packModel(data) : data;
+	if (spec.packed) verifyPackedModel(bundled, spec.bytes, spec.sha256);
+	return bundled;
+}

@@ -8,8 +8,8 @@ opening per row as `eco`, `name` and the line's `pgn`. Every (position, move) al
 line becomes one 16-byte Polyglot entry `{key, move, weight, learn}`, for both sides' moves; the
 weight is the number of named lines that play that move from that position (capped at 65535), so
 a main line outweighs a single sideline. Keys, move encoding and entry layout are exactly
-`scripts/build-club-book.py`'s (`encode_move` and `ENTRY` are imported from there). Next to the book a `<book>.build.json`
-manifest records the source, each input's SHA-256, the counts and the book's SHA-256;
+`scripts/build-club-book.py`'s (both import `encode_move` and `ENTRY` from `scripts/polyglot_book.py`).
+Next to the book a `<book>.build.json` manifest records the source, each input's SHA-256, the counts and the book's SHA-256;
 `scripts/vendor-engine.ts` renders `docs/third-party.md` from it.
 
 The shipped book was built with exactly this invocation (inputs are the unmodified files from
@@ -26,9 +26,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import hashlib
-import importlib.util
-import json
 import re
 import sys
 from collections import Counter, defaultdict
@@ -36,24 +33,10 @@ from pathlib import Path
 
 import chess
 import chess.polyglot
+from polyglot_book import ENTRY, MAX_WEIGHT, encode_move, sha256_file, write_manifest
 
 SOURCE = "https://github.com/lichess-org/chess-openings"
-MAX_WEIGHT = 0xFFFF
 MOVE_NUMBER = re.compile(r"^\d+\.+$|^\d+\.")
-
-
-def club_book_module():
-    """`scripts/build-club-book.py`, whose file name is not importable as a module name."""
-    path = Path(__file__).with_name("build-club-book.py")
-    spec = importlib.util.spec_from_file_location("build_club_book", path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"cannot load {path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-CLUB = club_book_module()
 
 
 def san_moves(pgn: str) -> list[str]:
@@ -85,7 +68,7 @@ def main() -> int:
                     for san in moves:
                         move = board.parse_san(san)
                         key = chess.polyglot.zobrist_hash(board)
-                        counts[key][CLUB.encode_move(board, move)] += 1
+                        counts[key][encode_move(board, move)] += 1
                         board.push(move)
                 except ValueError as error:
                     skipped += 1
@@ -99,25 +82,24 @@ def main() -> int:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with args.output.open("wb") as out:
         for key, move, weight in entries:
-            out.write(CLUB.ENTRY.pack(key, move, weight, 0))
-    size = len(entries) * CLUB.ENTRY.size
+            out.write(ENTRY.pack(key, move, weight, 0))
+    size = len(entries) * ENTRY.size
     manifest = {
         "book": args.output.name,
         "kind": "theory",
         "script": "scripts/build-theory-book.py",
         "source": SOURCE,
         "inputs": [p.name for p in args.input],
-        "input_sha256": {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in args.input},
+        "input_sha256": {p.name: sha256_file(p) for p in args.input},
         "lines": lines,
         "skipped_lines": skipped,
         "max_plies": max_plies,
         "positions": len(counts),
         "entries": len(entries),
         "bytes": size,
-        "sha256": hashlib.sha256(args.output.read_bytes()).hexdigest(),
+        "sha256": sha256_file(args.output),
     }
-    manifest_path = args.output.with_name(args.output.name + ".build.json")
-    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    manifest_path = write_manifest(args.output, manifest)
     print(f"wrote {args.output} ({len(entries)} entries from {lines} named lines, {size} bytes)", file=sys.stderr)
     print(f"wrote {manifest_path}", file=sys.stderr)
     return 1 if skipped else 0
