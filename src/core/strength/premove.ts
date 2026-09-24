@@ -28,8 +28,13 @@ import { conversionPool } from "./conversion";
 import { cpEffective, winProb } from "./elo-map";
 import { isMaxStrength } from "./max-strength";
 import { maiaPremoveGate } from "./premove/gate";
-import { plausibleScore, predictionLines, replyProbability } from "./premove/prediction";
-import { isPremoveSpeed, premoveProbability, tradePremoveProbability } from "./premove/propensity";
+import {
+	plausibleScore,
+	predictionLines,
+	replyMinProb,
+	replyProbability,
+} from "./premove/prediction";
+import { attemptPropensities, isPremoveSpeed, keepsSafeTrade } from "./premove/propensity";
 import {
 	hasTradeOffer,
 	isQueueableCandidate,
@@ -99,9 +104,7 @@ export async function premoveCandidate(
 	const ordinaryAllowed = isPremoveSpeed(ctx.timeControl) || race !== null;
 	if (!ordinaryAllowed && !(ctx.timeControl && ctx.timeControl.baseMs > 0)) return null;
 	if (!ordinaryAllowed && !hasTradeOffer(afterMove)) return null;
-	const ordinaryP = ctx.propensity?.ordinary ?? premoveProbability(ctx.targetElo, ctx.piP);
-	const tradeP = ctx.propensity?.trade ?? tradePremoveProbability(ctx.targetElo, ctx.piP);
-	const p = Math.max(ordinaryP, tradeP);
+	const { ordinaryP, tradeP, p } = attemptPropensities(ctx);
 	if (p <= 0 || !ctx.rng.chance(p)) return null;
 	const legalReplies = legalMoves(afterMove);
 	if (ctx.ponder !== undefined && !legalReplies.includes(ctx.ponder)) return null;
@@ -128,16 +131,8 @@ export async function premoveCandidate(
 		const reply = prediction.pvUci[0];
 		if (!reply || !plausibleScore(prediction, bestPrediction)) continue;
 		const pReply = replyProbability(reply, opponentLines);
-		// Under the think-time calibration a capture may arm a safe trade on a weaker prediction: a
-		// queued trade is legal only if they take on that square (`isQueueableCandidate`), so it
-		// cannot fire on any other reply. Every other candidate still needs `replyMinProb`
-		// (`premoveAfterReply`).
-		const tradeMin = ctx.propensity?.tradeReplyMinProb;
-		const minProb =
-			tradeMin !== undefined && classifyMove(afterMove, reply)?.isCapture === true
-				? tradeMin
-				: PREMOVE.replyMinProb;
-		if (pReply < minProb) continue;
+		// A capture may arm a safe trade on the calibration's weaker prediction gate.
+		if (pReply < replyMinProb(afterMove, reply, ctx.propensity?.tradeReplyMinProb)) continue;
 		const candidate = await premoveAfterReply(ctx, deps, gates, reply, pReply, primaryReply);
 		if (candidate) return candidate;
 	}
@@ -224,10 +219,8 @@ async function premoveAfterReply(
 	// the move — the only legal move, or a recapture every legal reply leaves a safe exchange —
 	// never a clear-best quiet move read off a 120 ms search (`loss2nd`).
 	if (isMaxStrength(ctx.targetElo) && !safeTrade && reason !== "only-move") return null;
-	// The attempt was drawn at the larger propensity: a safe trade whose own is smaller (a calibrated
-	// rate below the ordinary one) is thinned to it. The strength propensities never take this branch
-	// (the trade rate is the larger), so their random stream is unchanged.
-	if (safeTrade && tradeP < p && !ctx.rng.chance(tradeP / p)) return null;
+	// A safe trade is thinned from the attempt's larger propensity to its own.
+	if (safeTrade && !keepsSafeTrade(tradeP, p, ctx.rng)) return null;
 	if (
 		!safeTrade &&
 		(!ordinaryAllowed ||
