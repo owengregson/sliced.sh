@@ -25,3 +25,6 @@ assets/models/maia3/maia3-79m.onnx
 /*.mhtml
 # Chessigma's Brilliant Benchmark dataset, read by tools/move-review
 /chessigma-brilliant-benchmark.json
+
+# Calibration corpora, caches and reports (tools/calibration); regenerated, never committed
+/data/

@@ -13,7 +13,24 @@ import { playUci } from "./san";
  * it without any recapture — net of whatever `uci` itself captured. `false` for an illegal move or
  * an unreadable position (the caller checks legality first; this only answers the value question).
  */
+// The selector asks this of every candidate of one root, often more than once per position (the
+// hang rail, ready moves, premoves). Keep that root's answers, the way `isImmediateMate` keeps its
+// mates; the answer is a pure function of the position and the move.
+let hangsFen: string | null = null;
+const hangsAnswers = new Map<string, boolean>();
 export function hangsOutright(fen: string, uci: string): boolean {
+	if (fen !== hangsFen) {
+		hangsFen = fen;
+		hangsAnswers.clear();
+	}
+	const known = hangsAnswers.get(uci);
+	if (known !== undefined) return known;
+	const answer = hangsOutrightUncached(fen, uci);
+	hangsAnswers.set(uci, answer);
+	return answer;
+}
+
+function hangsOutrightUncached(fen: string, uci: string): boolean {
 	const board = loadPosition(fen);
 	if (!board) return false;
 	const move = playUci(board, uci);

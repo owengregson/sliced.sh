@@ -5,6 +5,7 @@
  */
 
 import { classifyMove } from "@core/chess/move-classify";
+import type { PolicyResult } from "@core/policy/types";
 import type { EvalLine } from "@typedefs/engine";
 import type { ChosenMove } from "@typedefs/game";
 import { SELECTION_CONSTANTS as C } from "../constants";
@@ -53,7 +54,12 @@ export interface SelectionInput {
 export interface MaiaRating {
 	/** `maiaSelfElo` with the ambiguity (and any tilt) term; undefined outside Maia mode. */
 	maiaE: number | undefined;
-	/** The policy's normalised entropy (0 outside Maia mode). */
+	/**
+	 * The policy at the calibrated temperature (`MAIA_CALIBRATION`, 2026-09-23): what the rails,
+	 * verification and the draw read in place of `ctx.maia`. Undefined outside Maia mode.
+	 */
+	policy: PolicyResult | undefined;
+	/** The policy's normalised entropy (0 outside Maia mode) — the model's own, not the tempered. */
 	entropy: number;
 }
 

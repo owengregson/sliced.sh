@@ -2,6 +2,13 @@
  * The endgame tablebase's part (2026-09-23): a probe for a ≤ 7-man position that overlaps the
  * search, and the tables' best move read from it before selection. When it answers in time with
  * a legal move, that move replaces the selector's; otherwise the engine plays as before.
+ *
+ * Ordering against the Maia calibration (`MAIA_CALIBRATION`): the tablebase decision comes first
+ * and sits outside the selector. `decideTablebase` judges the advertised rating (target and form,
+ * no calibration) because its policy was measured against human ratings directly; the calibration
+ * lives inside `selectMove`'s Maia branch and only shapes a move the tables did not supply. When
+ * the tables answer, `selectMove` is not called at all, so none of its draws (tilt, rails, Maia
+ * draw) consume the game's rng on that move (`docs/qa/endgame-tablebases-2026-09-23.md`).
  */
 
 import { TABLEBASE } from "@core/constants/tablebase";

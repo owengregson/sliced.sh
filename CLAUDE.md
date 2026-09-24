@@ -169,6 +169,22 @@ brilliant instead. Book coverage is measured, not guessed — against the deepes
 re-measure both before rebuilding a book (`scripts/build-club-book.py` counts tens of millions of
 games in parallel; `--save-counts`/`--from-counts` re-thresholds without re-reading).
 
+**Maia's strength is a fitted calibration, not the slider value.** Through `MAIA.eloMax` the
+advertised rating (target less the mistakes slider's offset) goes through `MAIA_CALIBRATION`
+(`src/core/constants/maia-calibration.ts`, per chess.com time class): the rating Maia is
+conditioned at and the temperature its answer is reshaped at, fitted so the bot's inaccuracy /
+mistake / blunder rates match real chess.com players of that rating, end to end through
+`selectMove` with the context terms on. Anything that changes what the Maia branch plays (rails,
+context penalties, verification, the referee recipe) invalidates the fit: re-run
+`tools/calibration/` (`fit.ts` then `verify.ts`) and update `docs/qa/maia-calibration-2026-09-23.md`
+rather than hand-editing knots. Selector-mechanics tests pin the identity table
+(`test/fakes/maia-calibration.ts`); the calibration's own tests are
+`test/core/strength/maia-calibration.test.ts`. In the selector the calibration lives in
+`selector/maia-rating.ts` (the rating and the tempered `MaiaRating.policy`, which
+`strategies/maia-draw.ts` reads instead of `ctx.maia`). The endgame tablebase
+(`recommendation/tablebase.ts`) decides before the selector on the advertised rating, not the
+calibrated one; when its move is played the Maia branch never runs.
+
 **Offscreen documents have no `chrome.storage`.** Every setting the engine host needs arrives
 over the port as a `configure` message; anything it must persist goes to OPFS, with IndexedDB
 (`NNUE_DB`, `MODEL_DB`) as the fallback. Do not reach for `chrome.storage` in `src/offscreen/**`.

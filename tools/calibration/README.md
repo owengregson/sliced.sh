@@ -1,0 +1,97 @@
+# tools/calibration — fitting Maia to chess.com ratings
+
+The Maia strength calibration (`src/core/constants/maia-calibration.ts`) says, for each chess.com
+time class and advertised rating, **which rating Maia-3 is conditioned at** and **at what
+temperature its distribution is sampled**, so that the bot's inaccuracy / mistake / blunder rates
+match real chess.com players of that rating in that time class. This directory is the harness
+that measures it, fits it and verifies it. Nothing here ships; every script runs the shipped
+`src/` modules under plain `bun` (`../lib/defines.ts` first).
+
+Why a calibration is needed at all: Maia-3 learned Lichess ratings, and sampling its whole
+distribution at T = 1 plays the model's uncertainty as well as the population's; the pipeline's
+context terms (clock, think, ambiguity, tilt, opponent pressure) then move the query further. The
+fit runs **end to end through `selectMove` with those terms on**, so their average effect is
+absorbed into the conditioning rating and their shape is checked per clock quartile.
+
+## Pipeline
+
+| step | script | in → out (under `data/calibration/`, git-ignored) | cost |
+|---|---|---|---|
+| 1 | `crawl-chesscom.ts` | chess.com public API → `games.jsonl`, `samples.jsonl` (≥ 110 sides per time class × bucket 600…3000, ≤ 2 per player) | ≈ 600 requests, resumable (`http-cache/`) |
+| 2 | `build-corpus.ts` | → `corpus.jsonl`: every own move from ply 16 of each sampled side; `split` by player hash (≈ 60 % fit / 40 % holdout) | seconds |
+| 3 | `requests.ts` | → `requests.jsonl`: per row the Maia self-Elo grid `[R − 900, R + 1000]` step 100 (bullet from `R − 1300`), clamped to the conditioning range | seconds |
+| 4 | `maia-batch.ts` (+ `maia_worker.py`) | → `policies.jsonl`: the shipped Maia-3 79M, native onnxruntime (CPU + CoreML), the shipped encoder/decoder; parity with the wasm path in `maia-parity.ts` | ≈ 330 q/s → ≈ 1.7 h for 2 M queries |
+| 5 | `frames.ts` | → `frames.jsonl`: the vendored Stockfish 19 referee per row, the pipeline's recipe (MultiPV by rating, per-tc movetime, extra `searchmoves` over Maia's favourites across the grid, the human move's own line, every human-depth cycle 2…14) | ≈ 13 rows/s at 9 workers |
+| 6 | `shard.ts` | → `cells/<tc>-<bucket>.jsonl`: row + frame + grid policies joined per cell | seconds |
+| 7 | `fit.ts` | → `fit/cells/*.json` (objective surfaces), `fit/picks.json`; `--write` updates the shipped table | ≈ 10 min at 9 workers |
+| 8 | `verify.ts` | → `verify/<label>/report.md`, `summary.json` — holdout only | ≈ 5 min |
+
+`frames.ts --require-policies` searches only rows whose policies exist, so step 5 can run
+alongside step 4 (re-run it until the Maia run ends; it is resumable).
+
+```
+bun tools/calibration/crawl-chesscom.ts && bun tools/calibration/build-corpus.ts
+bun tools/calibration/requests.ts
+bun tools/calibration/maia-batch.ts --in data/calibration/requests.jsonl --out data/calibration/policies.jsonl
+bun tools/calibration/frames.ts [--require-policies]
+bun tools/calibration/shard.ts
+bun tools/calibration/fit.ts                      # all cells, then the smoothing table
+bun tools/calibration/fit.ts --offsets -1000:1000:100 --only bullet:600,…,bullet:3000   # as shipped
+bun tools/calibration/fit.ts --smooth --write     # re-smooth from saved surfaces and write the table
+bun tools/calibration/verify.ts --table identity  # the behaviour before calibration
+bun tools/calibration/verify.ts                   # the shipped table
+```
+
+Python: `tools/data/.venv` (Python 3.12) with `onnxruntime numpy onnx` for step 4.
+
+## What is measured
+
+Per move, against the referee's best line of the same frame (`sim.ts judgeFor`): expected-points
+loss on `winProb(cpEffective)`, and whether it reaches the board ratings' published bands
+(`MOVE_CLASSIFICATION`: inaccuracy 0.05, mistake 0.10, blunder 0.20); also ACPL (capped 1000) and
+the referee-best rate. The bot and the human are judged by the same frame at the same position.
+
+`sim.ts` replays each sampled (game, side) in ply order with `--chains` independent chains, the
+way the service worker plays an own move: `ownMoveMaiaElo` (timing persona `tau` sampled per game,
+form 0 as the session holds it) → Maia at that rating from the grid (log-linear interpolation;
+mean TV error 0.0025 at step 100) → the human-depth frame `humanDepth(selfElo)` → `selectMove` with
+the production context. Per-game state follows the game actually played: the previous-own-moves
+memory and the tilt reference are the human's.
+
+Every uncertainty is cluster-robust by game (`stats.ts`). The fit's objective for a cell is
+`Σ z²` over expected-points loss and the three band rates, `z = (bot − human)/√(SE_h² + SE_b²)`
+— χ²-like, ≈ 4 when indistinguishable.
+
+## Fitting and smoothing
+
+`fit.ts` sweeps a flat table `[R, R + Δ, T]` per cell on the fit split — Δ −600…+1000 (bullet
+−1000…+1000) step 100, T 0.3…1.8 step 0.1; a coarse pass on every other value, then the best
+point's neighbours until it stops moving; all candidate tables of a pass run row-major in one
+`simulateMany`, sharing the selector's per-root caches and common random numbers — and saves the
+surface. Conditioning and temperature trade off (both move strength), so a surface has a valley of
+equivalent points; `--smooth` picks one evaluated point per cell by a monotone Viterbi pass
+(`JOINT`): objective + a light prior towards Δ = 0, T = 1 (0.25 χ² units per 400 Elo or 0.4 T; it
+only breaks ties) + smoothness between neighbouring buckets, the conditioning never decreasing with
+R. Cells with fewer than 20 fit games are left out. Knots are written as `[R, conditioning, T]`,
+the conditioning capped at `MAIA.conditioningEloMax` (what runs).
+
+Results and the shipped table: `docs/qa/maia-calibration-2026-09-23.md`.
+
+## Verification (holdout players only)
+
+1. **Error profile** — bot vs humans per cell with 95 % intervals and z, and per clock quartile.
+2. **Intrinsic rating** — `estimator.ts`, a ridge regression from per-game move-quality features to
+   the chess.com rating, trained on the fit split's humans and knowing nothing about Maia. Applied
+   to the bot's and the humans' moves over the same held-out positions; the paired difference over
+   the estimator's slope is the bot's rating offset, with a game-bootstrap 95 % interval.
+
+## Fidelity limits
+
+- The referee is one thread, 32 MB, plain-SIMD under Bun: depths differ from a browser's.
+- The production shaped search (Maia's favourites + known best in one search) is approximated by
+  the broad MultiPV search plus an extra `searchmoves` pass.
+- No position history reaches the selector (repetition guards see only the FEN).
+- Positions come from human play, so the bot never plays on from its own earlier mistakes; the
+  opening (ply < 16) is excluded because the product plays book moves there.
+- Maia at ratings between grid points is interpolated; above `MAIA.conditioningEloMax` it is
+  clamped exactly as the pipeline clamps it.

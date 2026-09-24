@@ -12,6 +12,10 @@ import {
 	type RecommendationInput,
 	RecommendationPipeline,
 } from "@service/game-session/recommendation";
+import { pinIdentityCalibration } from "../../fakes/maia-calibration";
+
+// These tests pin mechanics at the advertised rating; the calibration has its own tests.
+pinIdentityCalibration();
 
 const FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 const TARGET = 3000;

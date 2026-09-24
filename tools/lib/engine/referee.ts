@@ -19,7 +19,8 @@ import { compareLines } from "@core/strength/quality";
 import { bootEngine, type StockfishFactory } from "@offscreen/stockfish-loader";
 import type { EvalLine } from "@typedefs/engine";
 import { ROOT } from "../paths";
-import type { RefereeEngine, RefereeOptions, SearchFrame, SearchSpec } from "./types";
+import { cycleTracker } from "./cycle-tracker";
+import type { RawLine, RefereeEngine, RefereeOptions, SearchFrame, SearchSpec } from "./types";
 import { evalScoreOf, goCommand, LineHub, positionCommand } from "./uci";
 
 // Route `log.*` from the loaders to this process's console (there is no service worker here).
@@ -27,27 +28,23 @@ __setLogSinkOutsideServiceWorker(true);
 setLogSink(printLog);
 setLogLevel("warn");
 
-interface RawLine {
-	multipv: number;
-	depth: number;
-	score: EvalLine["score"];
-	pv: string[];
-	wdl?: [number, number, number];
-}
-
 /**
- * The loader's `getUrl` for a variant. `full` maps the registry's relaxed-SIMD module names onto
- * the npm package's plain-SIMD `sf_19` program, which Bun's JavaScriptCore accepts.
+ * The loader's `getUrl`. Bun's JavaScriptCore rejects every relaxed-SIMD wasm
+ * (`test/integration/engine-under-bun.ts`), so both variants run the npm package's plain-SIMD
+ * program of the same Stockfish 19 sources and nets: the registry's module names map onto it, and
+ * the wasm the plain glue asks its `locateFile` for (by its own name) comes from the same place.
  */
-function engineUrl(variant: RefereeOptions["variant"]): (p: string) => string {
-	const plainFull: Readonly<Record<string, string>> = {
+function engineUrl(): (p: string) => string {
+	const plainPrograms: Readonly<Record<string, string>> = {
+		[ENGINE_FILES.smallnet.js]: "sf_19_smallnet.js",
+		[ENGINE_FILES.smallnet.wasm]: "sf_19_smallnet.wasm",
+		"sf_19_smallnet.wasm": "sf_19_smallnet.wasm",
 		[ENGINE_FILES.full.js]: "sf_19.js",
 		[ENGINE_FILES.full.wasm]: "sf_19.wasm",
-		// The plain glue asks locateFile for its own name, not the registry's relaxed-SIMD name.
 		"sf_19.wasm": "sf_19.wasm",
 	};
 	return (p) => {
-		const plain = variant === "full" ? plainFull[path.basename(p)] : undefined;
+		const plain = plainPrograms[path.basename(p)];
 		return plain === undefined
 			? pathToFileURL(path.join(ROOT, p)).href
 			: pathToFileURL(path.join(ROOT, "node_modules", "@lichess-org", "stockfish-web", plain)).href;
@@ -91,8 +88,8 @@ export async function createRefereeEngine(options: RefereeOptions = {}): Promise
 	const variant = options.variant ?? "smallnet";
 	const sf = await bootEngine(variant, {
 		crossOriginIsolated: true,
-		getUrl: engineUrl(variant),
-		...(variant === "full" ? { wasmValidate: () => true } : {}),
+		getUrl: engineUrl(),
+		wasmValidate: () => true,
 		importModule: (url) => import(url) as Promise<{ default: StockfishFactory }>,
 		nnueStore: { get: readNetwork },
 		listen: listeners.dispatch,
@@ -155,6 +152,8 @@ export async function createRefereeEngine(options: RefereeOptions = {}): Promise
 			cycle.set(info.multipv, raw);
 		};
 		listeners.add(collect);
+		const tracker = spec.captureDepths?.length || spec.strictCycles ? cycleTracker(spec) : undefined;
+		if (tracker) listeners.add(tracker.listen);
 		const started = performance.now();
 		send(goCommand(spec));
 		let bestLine: string;
@@ -165,14 +164,21 @@ export async function createRefereeEngine(options: RefereeOptions = {}): Promise
 			);
 		} finally {
 			listeners.delete(collect);
+			if (tracker) listeners.delete(tracker.listen);
 		}
 		const elapsedMs = performance.now() - started;
 		const expected = spec.searchmoves?.length
 			? Math.min(spec.multiPv, spec.searchmoves.length)
 			: spec.multiPv;
-		const { depth: chosenDepth, complete } = chooseCycle(byDepth, expected);
-		const cycle = byDepth.get(chosenDepth) ?? new Map<number, RawLine>();
-		const lines: EvalLine[] = [...cycle.values()]
+		let { depth: chosenDepth, complete } = chooseCycle(byDepth, expected);
+		let raws: RawLine[] = [...(byDepth.get(chosenDepth) ?? new Map<number, RawLine>()).values()];
+		const strict = spec.strictCycles ? tracker?.final() : undefined;
+		if (strict) {
+			raws = strict.lines;
+			chosenDepth = strict.depth;
+			complete = strict.complete;
+		}
+		const lines: EvalLine[] = raws
 			.map((raw) => {
 				const line: EvalLine = {
 					multipv: raw.multipv,
@@ -187,7 +193,15 @@ export async function createRefereeEngine(options: RefereeOptions = {}): Promise
 			.sort((a, b) => compareLines(a, b) || a.multipv - b.multipv)
 			.map((line, i) => ({ ...line, multipv: i + 1 }));
 		const bestmove = parseBestmove(bestLine)?.bestmove ?? null;
-		return { lines, bestmove, depth: Math.max(0, chosenDepth), complete, elapsedMs };
+		const frame: SearchFrame = {
+			lines,
+			bestmove,
+			depth: Math.max(0, chosenDepth),
+			complete,
+			elapsedMs,
+		};
+		if (tracker) frame.byDepth = tracker.captures;
+		return frame;
 	};
 
 	return {

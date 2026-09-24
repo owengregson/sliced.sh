@@ -38,8 +38,8 @@ import {
  */
 export function selectMaiaDraw(frame: SelectionFrame): ChosenMove | null {
 	const { ctx, rationale, usable, conversion, baselineE } = frame;
-	const { maiaE, entropy } = frame.maia;
-	const policy = ctx.maia;
+	// The calibrated (tempered) policy, not `ctx.maia`: see `resolveMaiaRating`.
+	const { maiaE, entropy, policy } = frame.maia;
 	if (policy === undefined || maiaE === undefined) return null;
 	const { rng, state } = ctx;
 	const NP = C.neverPlay;

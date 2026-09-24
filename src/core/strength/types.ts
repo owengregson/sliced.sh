@@ -5,6 +5,7 @@
 
 import type { PositionHistory } from "@core/chess/history";
 import type { Phase } from "@core/chess/phase";
+import type { MaiaCalibrationTable } from "@core/constants/maia-calibration";
 import type { PolicyResult } from "@core/policy/types";
 import type { Rng } from "@core/rng";
 import type { EvalLine } from "@typedefs/engine";
@@ -86,6 +87,11 @@ export interface SelectionContext {
 	 * judge at one rating. The ambiguity term (Maia's own entropy) is added inside the selector.
 	 */
 	contextEloPenalty?: number;
+	/**
+	 * Maia strength calibration override (the calibration harness's sweep). Absent = the shipped
+	 * `MAIA_CALIBRATION`; the pipeline never sets it.
+	 */
+	maiaCalibration?: MaiaCalibrationTable;
 	rng: Rng;
 	state: SelectionState;
 }

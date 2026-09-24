@@ -8,6 +8,7 @@ import { loadPosition } from "@core/chess/fen";
 import { isLoneKing } from "@core/chess/material";
 import { legalMoves } from "@core/chess/san";
 import { MAIA } from "@core/constants/maia";
+import type { MaiaCalibrationTable } from "@core/constants/maia-calibration";
 import { MAIA_CONTEXT_THINK_REF_MS, SEARCH_BUDGET } from "@core/constants/search";
 import { humanDepth } from "@core/engine/depth-policy";
 import { maiaSelfElo, type PressureTerms, pressureTerms } from "@core/strength/selection-elo";
@@ -118,10 +119,15 @@ export interface MaiaEloContext {
 }
 
 /**
- * Derive the Maia query rating from opponent pressure, the mistakes setting and clock/think
- * context. Predicted-position analysis and the selector share these terms and feature depth.
+ * Derive the Maia query rating from the calibration, opponent pressure, the mistakes setting and
+ * clock/think context. Predicted-position analysis and the selector share these terms and feature
+ * depth. `calibration` overrides the shipped table (the calibration harness only).
  */
-export function ownMoveMaiaElo(input: OwnMoveBudgetInput, settings: Settings): MaiaEloContext {
+export function ownMoveMaiaElo(
+	input: OwnMoveBudgetInput,
+	settings: Settings,
+	calibration?: MaiaCalibrationTable
+): MaiaEloContext {
 	const plan = ownMovePlan(input, settings);
 	const baseMs = plan.baseSec * MS_PER_S;
 	const pressure = pressureTerms({
@@ -148,6 +154,10 @@ export function ownMoveMaiaElo(input: OwnMoveBudgetInput, settings: Settings): M
 		blunderScale: settings.strength.blunderScale,
 		pressureReduction: pressure.pressureReduction,
 		contextEloPenalty: context.penalty,
+		// The selector reads the same clocks from its context, so both land in one time class.
+		baseMs,
+		incrementMs: plan.incSec * MS_PER_S,
+		calibration,
 	});
 	return { selfElo, contextEloPenalty: context.penalty, context, pressure };
 }

@@ -9,6 +9,7 @@ import "../lib/defines";
 
 export { createRefereeEngine } from "../lib/engine/referee";
 export type {
+	CapturedCycle,
 	RefereeEngine,
 	RefereeOptions,
 	SearchFrame,
