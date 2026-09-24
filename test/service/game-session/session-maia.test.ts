@@ -81,6 +81,12 @@ function tapPipeline(harness: GameHarness): RecommendationInput[] {
 	return inputs;
 }
 
+/** The session's core and its collaborators (`SessionParts`), for reaching into private state. */
+const internals = (harness: GameHarness): object => {
+	const session = harness.session() as unknown as { core: object; parts: object };
+	return { core: session.core, ...session.parts };
+};
+
 const formOf = (harness: GameHarness): number =>
 	(harness.session() as unknown as { core: { form: { value: number } } }).core.form.value;
 const tauOf = (harness: GameHarness): number =>
@@ -158,7 +164,7 @@ describe("H7.3 — the predicted position is pre-inferred on the opponent's cloc
 		policy.release();
 		expect(await h.until(() => inputs.length === 1, 5_000)).toBe(true);
 		expect(inputs[0]?.policyAnswer).toBeUndefined();
-		const session = h.session() as unknown as { prediction: { policy: unknown } };
+		const session = internals(h) as unknown as { prediction: { policy: unknown } };
 		expect(session.prediction.policy).toBeNull();
 	}, 60_000);
 });
@@ -272,7 +278,7 @@ describe("H8 — the premove gate when the answer lands after the arm", () => {
 		});
 		type Arm = { reply: string; chosen: ChosenMove; fen: string; reason: string };
 		const session = (
-			h.session() as unknown as {
+			internals(h) as unknown as {
 				arming: {
 					armed: Arm | null;
 					gateWithPolicy(reply: string, predicted: string, result: PolicyResult): void;
@@ -337,7 +343,7 @@ describe("active policy eligibility and stale work", () => {
 		await h.advance(1000);
 		expect(policy.calls).toHaveLength(count);
 		expect(warmTargets).toEqual([MAIA.eloMax, 3300]);
-		const state = h.session() as unknown as {
+		const state = internals(h) as unknown as {
 			prediction: { policy: unknown };
 			maia: { commitment: { size: string | null } };
 		};
@@ -361,7 +367,7 @@ describe("active policy eligibility and stale work", () => {
 		expect(policy.signals[0]?.aborted).toBe(true);
 		policy.release();
 		await h.advance(50);
-		const state = h.session() as unknown as {
+		const state = internals(h) as unknown as {
 			prediction: { policy: { identity: string } | null };
 		};
 		if (state.prediction.policy) expect(state.prediction.policy.identity).toContain("2900");
@@ -384,7 +390,7 @@ describe("active policy eligibility and stale work", () => {
 		expect(await h.until(() => policy.calls.length > 0, 5000)).toBe(true);
 		expect(policy.calls.at(-1)?.size).toBe("79m");
 		expect(warmed).toEqual([3300, 2800]);
-		const state = h.session() as unknown as { maia: { commitment: { size: string | null } } };
+		const state = internals(h) as unknown as { maia: { commitment: { size: string | null } } };
 		expect(state.maia.commitment.size).toBe("79m");
 	});
 });
@@ -409,7 +415,7 @@ describe("prepared holds preserve routing boundaries", () => {
 				bestmove: string | null;
 				comparison?: AnalysisUpdate;
 			};
-			const state = h.session() as unknown as {
+			const state = internals(h) as unknown as {
 				core: { snapshot: PositionSnapshot };
 				prediction: {
 					analysis: Prepared | null;
