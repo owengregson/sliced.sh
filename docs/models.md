@@ -404,7 +404,8 @@ Limitations: rapid above 2800 is almost empty in the crawl (a few dozen kept rap
 The time-control mix is chess.com's own, which is mostly 1+0, 3+0 and 10+0. The situation labels on
 the crawl are provisional. The history-only fallback row is about 0.09 nats worse than the row with
 the move. Tables: `data/timing/finetune/RESULTS.md` and `eval/*/eval.md` (git-ignored). Code and a
-reproduction recipe: `tools/timing-finetune/`.
+reproduction recipe: `tools/timing-finetune/` (the scripts are thin CLIs; their shared parts —
+PGN reading, example encoding, move selection, metrics, cells and the report — are in `ftlib/`).
 
 **Licence.** The fine-tuned weights are a derivative of the PolyForm Noncommercial 1.0.0 upstream
 weights and carry the same licence and the same non-commercial condition. `models.json` records
