@@ -20,26 +20,19 @@
  *
  * The output is `verify/cap-check.md`. Maia's own answer is not replayed. A policy that arrives
  * after a capped deadline is the one unmeasured channel, noted in the report.
+ *
+ * Parts: `cap-check/items.ts` (the capped positions and their budgets).
  */
 
 import "../lib/defines";
 import path from "node:path";
-import { DEFAULT_SETTINGS } from "@core/constants/defaults";
 import { SEARCH_BUDGET } from "@core/constants/search";
-import { TABLEBASE } from "@core/constants/tablebase";
 import { isTrap, lineFacts } from "@core/strength/book/book-policy";
-import { isMaxStrength } from "@core/strength/max-strength";
-import { pieceCount } from "@core/tablebase/probe";
-import { tcClass } from "@core/timing/features";
-import {
-	maiaPlaysOpening,
-	maiaSearchMode,
-	ownMoveBudget,
-} from "@service/game-session/recommendation";
 import type { EvalLine } from "@typedefs/engine";
 import { flagValue } from "../lib/cli";
 import { createRefereeEngine } from "../lib/engine/referee";
-import { PATHS, wideBandOf } from "./common";
+import { cappedItems } from "./cap-check/items";
+import { PATHS } from "./common";
 import { loadReplay } from "./sim";
 import { hash32 } from "./stats";
 
@@ -55,61 +48,7 @@ async function main(): Promise<void> {
 	const perCell = Number(flagValue(argv, "per-cell", "30"));
 	const speed = Number(flagValue(argv, "speed", "3"));
 	const data = await loadReplay();
-	type Item = {
-		cell: string;
-		kind: "book" | "recapture";
-		fen: string;
-		moves: string[];
-		move: string;
-		rating: number;
-		full: number;
-		cap: number;
-		multiPv: number;
-		depth: number;
-	};
-	const byCell = new Map<string, Item[]>();
-	for (const side of data.sides) {
-		for (const rr of side.rows) {
-			const r = rr.row;
-			if (isMaxStrength(r.rating) || (pieceCount(r.fen) ?? 0) <= TABLEBASE.maxPieces) continue;
-			const book = r.inBook && !maiaPlaysOpening({ targetElo: r.rating, form: 0 });
-			const kind = book ? "book" : rr.recaptureDecided ? "recapture" : null;
-			if (!kind) continue;
-			const cls = tcClass(r.baseMs / 1000, r.incMs / 1000);
-			const budget = ownMoveBudget(
-				{
-					fen: r.fen,
-					ply: r.ply,
-					myClockMs: r.clockMs,
-					oppClockMs: r.oppClockMs,
-					timeControl: { baseMs: r.baseMs, incMs: r.incMs },
-					tau: 0.5,
-					budgetUsedRatio: r.baseMs > 0 ? Math.max(0, 1 - r.clockMs / r.baseMs) : 0,
-					targetElo: r.rating,
-					form: 0,
-					maia: maiaSearchMode({ targetElo: r.rating, policy: true, clockRace: false }),
-				},
-				DEFAULT_SETTINGS
-			);
-			const cap = Math.min(budget.movetimeMs, SEARCH_BUDGET.fastReplyMs[cls]);
-			if (cap >= budget.movetimeMs) continue;
-			const cell = `${r.tc}|${wideBandOf(r.rating)}|${kind}`;
-			const list = byCell.get(cell) ?? [];
-			list.push({
-				cell,
-				kind,
-				fen: side.game.fens[0] as string,
-				moves: side.game.ucis.slice(0, r.ply),
-				move: kind === "book" ? r.move : (rr.pondered ?? r.move),
-				rating: r.rating,
-				full: budget.movetimeMs,
-				cap,
-				multiPv: budget.multiPv,
-				depth: budget.depthCap,
-			});
-			byCell.set(cell, list);
-		}
-	}
+	const byCell = cappedItems(data);
 	const engine = await createRefereeEngine({ newGameEachSearch: true, hashMb: 32 });
 	const out: string[] = [
 		"# fast-reply cap: does the move change?",

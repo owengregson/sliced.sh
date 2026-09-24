@@ -18,7 +18,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import importlib.util
 import json
 import random
@@ -37,9 +36,9 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(ROOT / "tools" / "data"))
-import model as M  # noqa: E402
-
 import cmenc  # noqa: E402
+import model as M  # noqa: E402
+from datalib.hashing import sha256_bytes as sha256  # noqa: E402
 
 UPSTREAM = cmenc.UPSTREAM_DIR / "1e4_ai"
 FIXTURE = ROOT / "test" / "fixtures" / "chessmimic-reference.json"
@@ -53,10 +52,6 @@ def load_08():
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
-
-
-def sha256(b: bytes) -> str:
-    return hashlib.sha256(b).hexdigest()
 
 
 def main() -> int:

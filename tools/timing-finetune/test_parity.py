@@ -25,8 +25,9 @@ import numpy as np
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import cmenc  # noqa: E402
-import extract  # noqa: E402
 import model as M  # noqa: E402
+from ftlib.pgn import parse_time_control  # noqa: E402
+from ftlib.rows import game_rows  # noqa: E402
 
 UPSTREAM = cmenc.UPSTREAM_DIR / "1e4_ai" / "Training" / "tokenizer.py"
 FIXTURE = cmenc.ROOT / "test" / "fixtures" / "chessmimic-reference.json"
@@ -70,11 +71,11 @@ def sample_positions(games: Path, n: int, seed: int) -> list[dict]:
     rng.shuffle(lines)
     out: list[dict] = []
     for line in lines:
-        r = extract.game_rows(line, 0, keep_text=True)
+        r = game_rows(line, 0, keep_text=True)
         if r is None:
             continue
         g, tc, rows = r
-        base = extract.parse_time_control(g["time_control"])[0]
+        base = parse_time_control(g["time_control"])[0]
         for row in rng.sample(rows, min(4, len(rows))):
             ids, cur, rating, pc, oc, inc, think, ply, user, book, recap, legal, kept, fen, history, uci = row
             out.append({"fen": fen, "moves": history, "rating": rating, "playerClockS": pc, "opponentClockS": oc, "incrementS": inc, "baseSec": base, "ids": ids, "uci": uci})

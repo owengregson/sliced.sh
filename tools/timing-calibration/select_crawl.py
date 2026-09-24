@@ -18,13 +18,12 @@ import hashlib
 import json
 import os
 import re
+import sys
 from collections import defaultdict
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-
-
-def split_for(player: str) -> str:
-    return "fit" if hashlib.sha1(f"calib:{player.lower()}".encode()).digest()[0] < 154 else "holdout"
+sys.path.insert(0, os.path.join(ROOT, "tools", "data"))
+from datalib.splits import split_for  # noqa: E402
 
 
 def main() -> None:

@@ -8,7 +8,7 @@ Mirrors, line for line:
   - `src/core/timing/chessmimic-head/bands.ts` (`selectBand`: containing range, then nearest
     fitted rating mean),
   - `src/core/timing/chessmimic-buckets.ts` (`bucketIndexOf`, `bucketMask`),
-  - `tools/calibration/build-corpus.ts` (`splitFor`).
+  - `tools/calibration/build-corpus.ts` (`splitFor`, shared as `tools/data/datalib/splits.py`).
 
 The production inference contract (`chessmimic-head/inputs.ts`) is: the FEN of the position to
 move from (en-passant square printed after every double push, as the board adapters do) and the
@@ -19,15 +19,17 @@ for comparison only.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 import os
+import sys
 from pathlib import Path
 
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "tools" / "data"))
+from datalib.splits import split_for  # noqa: E402, F401 — re-exported as `cmenc.split_for`
 ASSETS = ROOT / "assets" / "models" / "chessmimic"
 # The git-ignored upstream clone + checkpoint cache of `tools/data/08_export_chessmimic.py`
 # (a worktree can point at the main checkout's with CHESSMIMIC_UPSTREAM_DIR).
@@ -187,7 +189,3 @@ def bucket_mask(player_s, inc_s, e: np.ndarray) -> np.ndarray:
     m[:, 0] = True
     return m
 
-
-def split_for(player: str) -> str:
-    first = hashlib.sha1(f"calib:{player.lower()}".encode()).digest()[0]
-    return "fit" if first < 154 else "holdout"

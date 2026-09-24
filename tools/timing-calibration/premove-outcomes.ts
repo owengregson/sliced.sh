@@ -21,29 +21,21 @@
  * It writes `verify/premove-outcomes.md`: per time class × band, entered premoves per 100 opponent
  * turns, the executed and dropped shares, and on executed ones whether the opponent captured with
  * the predicted piece or another one (the recapture is then still the proven-safe exchange).
+ *
+ * Parts: `premove-outcomes/arm.ts` (the safe trade the session would arm).
  */
 
 import "../lib/defines";
 import path from "node:path";
-import { classifyMove } from "@core/chess/move-classify";
 import { applyMoves, legalMoves } from "@core/chess/san";
 import { PREMOVE } from "@core/constants/books";
 import { createRng } from "@core/rng";
-import { isQueueableCandidate } from "@core/strength/premove";
-import {
-	plausibleScore,
-	predictionLines,
-	replyProbability,
-} from "@core/strength/premove/prediction";
-import {
-	calibrationTimeClass,
-	isObviousRecapture,
-	premovePropensity,
-} from "@core/timing/calibration";
+import { calibrationTimeClass, premovePropensity } from "@core/timing/calibration";
 import { samplePersona } from "@core/timing/persona-latents";
 import { flagValue } from "../lib/cli";
 import { PATHS, wideBandOf } from "./common";
 import { loadFrames, toEvalLines } from "./frames";
+import { safeTradeArm } from "./premove-outcomes/arm";
 import { LATENCY, loadReplay } from "./sim";
 import { loadTable } from "./verify";
 
@@ -79,31 +71,7 @@ async function main(): Promise<void> {
 				c.turns++;
 				if (trade === undefined) continue;
 				const afterMove = g.fens[t - 1] as string;
-				const lines = toEvalLines(f.plies[t - 1] ?? [], f.depth);
-				const ranked = predictionLines(lines, legalMoves(afterMove));
-				const best = ranked[0];
-				if (!best) continue;
-				let armed: { reply: string; premove: string } | null = null;
-				for (const line of ranked) {
-					const reply = line.pvUci[0];
-					if (!reply || !plausibleScore(line, best)) continue;
-					const p = replyProbability(reply, ranked);
-					const capture = classifyMove(afterMove, reply)?.isCapture === true;
-					if (!capture || p < PREMOVE.tradeReplyMinProb) continue;
-					const next = applyMoves(afterMove, [reply]);
-					if (!next) continue;
-					const square = reply.slice(2, 4);
-					const q = legalMoves(next).find(
-						(m) =>
-							m.slice(2, 4) === square &&
-							isObviousRecapture(afterMove, reply, next, m) &&
-							isQueueableCandidate(afterMove, { reply, premove: m, reason: "recapture" })
-					);
-					if (q) {
-						armed = { reply, premove: q };
-						break;
-					}
-				}
+				const armed = safeTradeArm(afterMove, toEvalLines(f.plies[t - 1] ?? [], f.depth));
 				if (!armed || !rng.chance(trade)) continue;
 				const delay =
 					PREMOVE.tradeQueueDelayMinMs +

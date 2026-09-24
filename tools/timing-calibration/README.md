@@ -72,6 +72,24 @@ Then set `SL_HEADS_TAG=T` for every later step. The shipped table is fitted this
 fine-tuned 2200–3500 band (`heads.cand.jsonl`); the "before" runs use the band on main
 (`heads.jsonl`, `identity@shipped`).
 
+## Layout
+
+Each script above is a thin CLI (or, for `common.ts`, `stats.ts` and `sim.ts`, a library entry)
+over a folder of parts with the same name. Import the entry, not the parts, from outside.
+
+| entry | parts |
+|---|---|
+| `common.ts` | `common/paths.ts` (the data directory, `SL_TIMING_CALIB_DIR`), `common/corpus.ts` (corpus, label and row shapes, `rowsOf`), `common/bands.ts` (bands, tc groups, thresholds); the JSONL reader and writer are `tools/lib/jsonl.ts` |
+| `stats.ts` | `stats/summary.ts` (quantiles, shares, cluster bootstrap), `stats/distance.ts` (CRPS, KS, AUC, `compare`), `stats/sample.ts` (per-player cap, hash) |
+| `build-corpus.ts` | `build-corpus/books.ts` (the book questions), `build-corpus/labels.ts` (one game to its record and label rows) |
+| `build_corpus.py` | `timing_corpus/` (`books.py`, `pgn.py`, `labels.py`); `split_for` is `tools/data/datalib/splits.py`, shared with `select_crawl.py` and the finetuner |
+| `heads.ts` | `heads/requests.ts` (the row context, request and result shapes) |
+| `sim.ts` | `sim/replay-data.ts` (`loadReplay`, the per-row facts cache), `sim/premove-facts.ts`, `sim/chain.ts` (one chain: the armed premove, then the planned move), `sim/latency.ts`, `sim/types.ts` |
+| `fit.ts` | `fit/stages.ts`, `fit/cells.ts` (a replay per cell, the objective), `fit/table.ts` (premove and shift tables, the literal), `fit/smoothing.ts` |
+| `verify.ts` | `verify/cells.ts` (cells, comparison, headline, table specs), `verify/tables.ts` (the markdown tables), shared by `crossfit.ts`, `flags.ts`, `crawl-verify.ts` and `premove-outcomes.ts` |
+| `cap-check.ts` | `cap-check/items.ts` (the capped positions and their budgets) |
+| `premove-outcomes.ts` | `premove-outcomes/arm.ts` (the safe trade the session would arm) |
+
 ## The replay (`sim.ts`)
 
 Each selected side is replayed in ply order by 4 chains, one bot game each. The bot is set to the
@@ -96,7 +114,7 @@ chain's game id. It sees the recorded positions, clocks, and the opponent's move
    planned. `observe` feeds the release back.
 
 Recorded = `ceil(release / 100 ms)·100 ms`. With `ownClock` (the closed loop, `flags.ts`) the bot
-plays on its own clock, and a chain that runs out is a flag. The latency constants are in `sim.ts` `LATENCY`. The
+plays on its own clock, and a chain that runs out is a flag. The latency constants are `LATENCY` in `sim/latency.ts`. The
 hand's numbers come from the `hover` executor simulation (60 seeds at 2700). Transport (30 ms)
 and preparation overheads are assumptions. No browser measured them.
 
