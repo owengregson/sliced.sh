@@ -14,7 +14,7 @@
 import "../lib/defines";
 import path from "node:path";
 import { flagOr } from "../lib/cli";
-import { DATA_DIR } from "./common";
+import { VERIFY_DIR } from "./common";
 
 interface Summary {
 	cells: Array<{
@@ -79,7 +79,7 @@ export function combine(a: Summary, b: Summary): CrossCell[] {
 
 async function main(): Promise<void> {
 	const argv = process.argv.slice(2);
-	const dir = path.join(DATA_DIR, "verify");
+	const dir = VERIFY_DIR;
 	const la = flagOr(argv, "a", "crossA");
 	const lb = flagOr(argv, "b", "crossB");
 	const a = (await Bun.file(path.join(dir, la, "summary.json")).json()) as Summary;
