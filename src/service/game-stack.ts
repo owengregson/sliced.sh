@@ -8,15 +8,15 @@
  * registry.
  *
  * Kept out of `service-worker.ts` so the entry point stays a listener list and
- * the whole stack can be built in a test against the simulator.
+ * the whole stack can be built in a test against the simulator. The parts are built in
+ * `game-stack/`: `engine-stack.ts`, `hand-stack.ts`, `settings-snapshot.ts` and
+ * `policy-warmup.ts`.
  */
 
 import { tabsQuery } from "@core/chrome/tabs";
-import { DEFAULT_SETTINGS } from "@core/constants/defaults";
-import { AnalysisCache } from "@core/engine/analysis-cache";
 import type { OptionsEnv } from "@core/engine/options";
-import { RemoteEngine } from "@core/engine/remote-engine";
-import { UciEngine } from "@core/engine/uci-client";
+import type { RemoteEngine } from "@core/engine/remote-engine";
+import type { UciEngine } from "@core/engine/uci-client";
 import { log } from "@core/logger";
 import type { MessageRouter } from "@core/messaging/router";
 import { getSettings, onSettingsChanged } from "@core/storage/settings-storage";
@@ -25,22 +25,20 @@ import { ChessMimicHead, selectBand } from "@core/timing/chessmimic-head";
 import { TimingLogWriter } from "@core/timing/timing-log";
 import { V1ParametricHead } from "@core/timing/v1-head";
 import { errorMessage } from "@core/util/errors";
-import { BoardWatch } from "@service/board-watch";
 import type { ServiceSystems } from "@service/bootstrap";
-import { ContentLink } from "@service/content-link";
-import { DebuggerManager } from "@service/debugger-manager";
-import { EngineController } from "@service/engine-controller";
-import { FocusGate } from "@service/focus-gate";
+import type { ContentLink } from "@service/content-link";
+import type { EngineController } from "@service/engine-controller";
 import { SessionRegistry } from "@service/game-session";
-import { maiaSizeForGame } from "@service/game-session/maia-session";
-import { HandOwnership } from "@service/hand-ownership";
+import { createEngineStack, defaultEnv } from "@service/game-stack/engine-stack";
+import { createHandStack } from "@service/game-stack/hand-stack";
+import { policyWarmup } from "@service/game-stack/policy-warmup";
+import { SettingsSnapshot } from "@service/game-stack/settings-snapshot";
 import { registerContentHandlers } from "@service/handlers/content";
 import { registerEngineHandlers } from "@service/handlers/engine";
 import { createPolicyInferPort } from "@service/handlers/engine/policy-infer";
 import { createTimingInferPort } from "@service/handlers/engine/timing-infer";
-import { ensureOffscreen } from "@service/offscreen-manager";
 import type { PanelBroadcaster } from "@service/panel-broadcaster";
-import { ReviewEngine, reviewThreads } from "@service/review-engine";
+import type { ReviewEngine } from "@service/review-engine";
 import { speak } from "@service/tts";
 import type { Settings } from "@typedefs/settings";
 
@@ -70,12 +68,16 @@ export interface GameStackOptions {
 	env?: OptionsEnv;
 }
 
-function defaultEnv(): OptionsEnv {
-	const concurrency =
-		typeof navigator === "object" && typeof navigator.hardwareConcurrency === "number"
-			? navigator.hardwareConcurrency
-			: 1;
-	return { hardwareConcurrency: concurrency, sab: typeof SharedArrayBuffer === "function" };
+/** The active tab of the last-focused window, or `null` when there is none or the query failed. */
+async function activeTabId(): Promise<number | null> {
+	try {
+		const tabs = await tabsQuery({ active: true, lastFocusedWindow: true });
+		const id = tabs[0]?.id;
+		return typeof id === "number" ? id : null;
+	} catch (error) {
+		log.debug("game-stack: active tab query failed", { error: errorMessage(error) });
+		return null;
+	}
 }
 
 /**
@@ -87,45 +89,12 @@ function defaultEnv(): OptionsEnv {
 export function createGameStack(options: GameStackOptions): GameStack {
 	const { systems, router, broadcaster } = options;
 	// Settings are read once and kept fresh; every consumer takes the snapshot synchronously.
-	// `settingsRead` is the part that matters for §4.4: until the first `chrome.storage.local` read
-	// answers, `settings` is a placeholder and nothing may act on it in either direction.
-	let settings: Settings = DEFAULT_SETTINGS;
-	let settingsRead = false;
-	const readSettings = (): Settings => settings;
-	const settingsKnown = (): boolean => settingsRead;
+	const settings = new SettingsSnapshot();
 
-	const transport = new RemoteEngine({
-		ensureHost: ensureOffscreen,
-		// §8.4b item 6 / Task 34: the ChessMimic head is the shipped timing head (V2.5), so the
-		// offscreen document is asked to pre-load its default band with the first `configure`.
-		// `setWarmTiming` after that first `configure` has no effect until a reconnect.
-		warmTiming: true,
-	});
-	const engine = new UciEngine(transport);
-	// 2026-09-14: board ratings run on their own full-network engine, never on `engine`.
-	const reviewEngine = new ReviewEngine({
-		ensureHost: ensureOffscreen,
-		threads: reviewThreads(globalThis.navigator?.hardwareConcurrency),
-	});
-	const cache = new AnalysisCache();
-	const controller = new EngineController(engine, {
-		getSettings,
-		onSettingsChanged,
-		env: options.env ?? defaultEnv(),
-		cache,
-		getLoadedVariant: () => transport.status().variant,
-		configureVariant: (variant, threads, signal) =>
-			transport.configureAndWait(variant, threads, signal),
-	});
-
-	const link = new ContentLink();
-	const debuggerManager = new DebuggerManager({ keepalive: systems.keepalive });
-	const focus = new FocusGate(link, {
-		isFocusMaintained: (tabId) => debuggerManager.isFocusMaintained(tabId),
-	});
-	const ownership = new HandOwnership(link);
-	// §9.5: the board's viewport rect per tab, as the content script reports it.
-	const board = new BoardWatch(link);
+	const { transport, engine, reviewEngine, controller } = createEngineStack(
+		options.env ?? defaultEnv()
+	);
+	const { link, debuggerManager, focus, ownership, board } = createHandStack(systems.keepalive);
 	const timingLog = new TimingLogWriter(undefined, (entry) => broadcaster.timingEntry(entry));
 
 	const inferPort = createTimingInferPort(transport);
@@ -133,7 +102,18 @@ export function createGameStack(options: GameStackOptions): GameStack {
 
 	const book = createBookPolicy();
 
-	const registry = new SessionRegistry({
+	const synchronizePolicyWarmup = policyWarmup({
+		liveTargets: () =>
+			registry
+				.all()
+				.filter((session) => session.isLive())
+				.map((session) => session.targetElo()),
+		enabled: () => settings.get().enabled,
+		transport,
+		policy: policyPort,
+	});
+
+	const registry: SessionRegistry = new SessionRegistry({
 		link,
 		engine: controller,
 		review: reviewEngine,
@@ -146,51 +126,22 @@ export function createGameStack(options: GameStackOptions): GameStack {
 		board,
 		keepalive: systems.keepalive,
 		timingLog,
-		getSettings: readSettings,
-		settingsKnown,
+		getSettings: settings.get,
+		settingsKnown: settings.known,
 		notify: () => broadcaster.notify(),
 		speak,
 		license: () => systems.license.getState(),
 		engineStatus: () => transport.status(),
-		activeTabId: async () => {
-			try {
-				const tabs = await tabsQuery({ active: true, lastFocusedWindow: true });
-				const id = tabs[0]?.id;
-				return typeof id === "number" ? id : null;
-			} catch (error) {
-				log.debug("game-stack: active tab query failed", { error: errorMessage(error) });
-				return null;
-			}
-		},
+		activeTabId,
 		warmTiming: (targetElo) => inferPort.warm(selectBand(targetElo)),
 		policy: policyPort,
-		// The size the game plays at is also what a *recreated* offscreen document must pre-load:
-		// `configure` is re-sent on every reconnect and carries `warmPolicy`, so without this a
-		// document torn down mid-game would come back warming only the default size while the
-		// session's dedupe still believed the right one was resident.
 		warmPolicy: (targetElo) => synchronizePolicyWarmup(targetElo),
 		engineHasPendingOptions: () => controller.status().pendingOptions,
 		observeExecutor: (tabId, executor) => broadcaster.observeExecutor(tabId, executor),
 	});
 
-	function synchronizePolicyWarmup(targetElo: number): void {
-		const targets = [
-			targetElo,
-			...registry
-				.all()
-				.filter((session) => session.isLive())
-				.map((session) => session.targetElo()),
-		];
-		const size = settings.enabled
-			? (targets.map(maiaSizeForGame).find((candidate) => candidate !== null) ?? undefined)
-			: undefined;
-		const previous = transport.warmPolicySize();
-		transport.setWarmPolicy(size);
-		if (size !== undefined && previous !== size) policyPort.warm(size);
-	}
-
 	registerContentHandlers(router, {
-		getSettings: readSettings,
+		getSettings: settings.get,
 		session: (tabId) => registry.sessionFor(tabId),
 		ensure: (tabId) => void registry.ensure(tabId),
 	});
@@ -200,8 +151,7 @@ export function createGameStack(options: GameStackOptions): GameStack {
 	// engine with `pendingOptions` must not be starved by a running ponder (Task 13), so every
 	// session's `go infinite` is stopped when one is waiting.
 	const applySettings = (next: Settings): void => {
-		settings = next;
-		settingsRead = true;
+		settings.update(next);
 		// The registry owns the whole reaction (content re-push + the `pendingOptions` stop), so
 		// this path and any harness driving the registry directly cannot drift apart.
 		//
@@ -216,7 +166,7 @@ export function createGameStack(options: GameStackOptions): GameStack {
 		// two switches are independent), so the rays alone never keep it booted.
 		if (!next.enabled || !next.automation.moveQualityChips) reviewEngine.release();
 		const active = registry.all().find((session) => session.isLive());
-		synchronizePolicyWarmup(active?.targetElo() ?? settings.strength.targetElo);
+		synchronizePolicyWarmup(active?.targetElo() ?? settings.get().strength.targetElo);
 	};
 	const offSettings = onSettingsChanged(applySettings);
 	void getSettings().then(applySettings, (error: unknown) =>
@@ -237,8 +187,8 @@ export function createGameStack(options: GameStackOptions): GameStack {
 		reviewEngine,
 		registry,
 		timingLog,
-		getSettings: readSettings,
-		settingsKnown,
+		getSettings: settings.get,
+		settingsKnown: settings.known,
 		dispose(): void {
 			offSettings();
 			detachEngineHandlers();
