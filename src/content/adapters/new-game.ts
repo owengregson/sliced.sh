@@ -1,5 +1,5 @@
 /** Conservative discovery of restart controls; queue state is observed before any activation. */
-import type { NewGameMode } from "./adapter";
+import type { NewGameMode } from "./contract";
 import { queryAllSafe } from "./query";
 import { SELECTORS as S } from "./selectors";
 

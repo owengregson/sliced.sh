@@ -13,7 +13,7 @@
  */
 
 import type { Color } from "@typedefs/game";
-import type { ClockReading } from "./adapter";
+import type { ClockReading } from "./contract";
 import { queryAllSafe, queryFirst, querySafe } from "./query";
 import { SELECTORS } from "./selectors";
 

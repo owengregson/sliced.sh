@@ -2,7 +2,7 @@
  * Pointer-mirror relay (Fix D, §13.3 rule 4). The `cursorTo` / `cursorHide`
  * port commands carry points the service worker's hand has already dispatched;
  * this module forwards each one to the MAIN-world bridge, which owns the
- * element — nothing in this world inserts DOM (`AdapterBase.draw`: "no DOM
+ * element — nothing in this world inserts DOM (`Markings.draw`: "no DOM
  * insertion from the adapter").
  *
  * It deliberately reads no pointer event of its own. A point the hand dispatched
@@ -37,7 +37,7 @@
  *     took the pointer back); no known real position skips it.
  */
 
-import { BRIDGE_KINDS, type PageBridge } from "@content/adapters/adapter";
+import { BRIDGE_KINDS, type PageBridge } from "@content/adapters/bridge-protocol";
 import { POINTER_CONTROL, type PreparedPointer } from "@core/constants/cdp";
 import { CURSOR_UNLOCK } from "@core/constants/cursor";
 import type { GamePortCommand } from "@core/constants/messages";
