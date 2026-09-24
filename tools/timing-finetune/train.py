@@ -18,12 +18,14 @@ to the band's own range, so ratings below the band only shape the slope.
 Loss: cross-entropy over the runtime's bucket mask (`bucketMask`: buckets whose lower edge is
 within player clock + increment), optionally + `--l2sp` · ‖θ − θ₀‖² (L2-SP toward the upstream
 weights, the forgetting guard).
+
+Parts (`ftlib/`): `sides.py` (the extracts and the fit/validation moves), `finetune.py` (the
+scaler refit, the example tensors, the contract window, the masked loss).
 """
 from __future__ import annotations
 
 import argparse
 import copy
-import hashlib
 import json
 import math
 import sys
@@ -32,50 +34,12 @@ from pathlib import Path
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import cmenc  # noqa: E402
 import model as M  # noqa: E402
-
-
-def player_hash(pid: int, salt: str) -> float:
-    return hashlib.sha1(f"{salt}:{pid}".encode()).digest()[0] / 256
-
-
-def cap_sides(ex: dict, idx: np.ndarray, cap: int, games: list[dict]) -> np.ndarray:
-    """Each player's `cap` game-sides with the smallest sha1(uuid:player) — vectorised over the
-    unique (player, game) pairs so memory stays bounded on the crawl."""
-    if cap <= 0:
-        return idx
-    key = ex["player"][idx].astype(np.int64) << 32 | ex["game"][idx].astype(np.int64)
-    pairs = np.unique(key)
-    pp, gg = (pairs >> 32).astype(np.int64), (pairs & 0xFFFFFFFF).astype(np.int64)
-    h = np.array([hashlib.sha1(f"{games[g]['uuid']}:{p}".encode()).digest() for p, g in zip(pp.tolist(), gg.tolist())], dtype="S20")
-    order = np.lexsort((h, pp))  # by player, then hash
-    sp = pp[order]
-    first = np.r_[0, np.nonzero(np.diff(sp))[0] + 1]
-    rank = np.arange(len(sp)) - np.repeat(first, np.diff(np.r_[first, len(sp)]))
-    kept = pairs[order][rank < cap]
-    return idx[np.isin(key, kept)]
-
-
-def concat(parts: list[dict]) -> dict:
-    """Concatenate example sets; player/game ids are offset so they stay distinct."""
-    if len(parts) == 1:
-        return parts[0]
-    out = {k: [] for k in parts[0]}
-    goff = poff = 0
-    for p in parts:
-        for k, v in p.items():
-            if k == "game":
-                v = v + goff
-            elif k == "player":
-                v = v + poff
-            out[k].append(v)
-        goff += int(p["game"].max()) + 1
-        poff += int(p["player"].max()) + 1
-    return {k: np.concatenate(v) for k, v in out.items()}
+from ftlib.finetune import contract_mask, example_tensors, loss_of, refit_rating_scaler, with_ids  # noqa: E402
+from ftlib.sides import fit_moves, load_extracts  # noqa: E402
 
 
 def main() -> int:
@@ -108,31 +72,8 @@ def main() -> int:
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
 
-    parts, games = [], []
-    for p in args.examples:
-        ex_p = M.load_examples(Path(p))
-        g = json.loads((Path(p).parent / "games.json").read_text())
-        # player ids are per extract; map them by name so a player spanning extracts is one player
-        parts.append(ex_p)
-        games.append(g)
-    # game-side capping needs uuids: build a joint games list aligned with concat's offsets
-    joint_games: list[dict] = []
-    for ex_p, g in zip(parts, games):
-        joint_games.extend(g[: int(ex_p["game"].max()) + 1])
-    ex = concat(parts)
-
-    fit = (ex["split"] == 0) & (ex["rating"] >= args.min_rating) & (ex["ply"] >= 2)  # chess.com's first-move clock does not run normally
-    if args.kept_only and "kept" in ex:
-        fit &= ex["kept"] == 1
-    fit = np.nonzero(fit)[0]
-    fit = cap_sides(ex, fit, args.cap, joint_games)
-    is_val = np.array([player_hash(int(p), "val") < args.val_frac for p in ex["player"][fit]])
-    tr, va = fit[~is_val], fit[is_val]
-    sub = np.random.default_rng(1)
-    if args.max_train and len(tr) > args.max_train:
-        tr = np.sort(sub.choice(tr, args.max_train, replace=False))
-    if args.max_val and len(va) > args.max_val:
-        va = np.sort(sub.choice(va, args.max_val, replace=False))
+    ex, joint_games = load_extracts(args.examples)
+    tr, va = fit_moves(ex, joint_games, args)
     print(f"train {len(tr):,} moves / {len(np.unique(ex['player'][tr])):,} players; val {len(va):,} / {len(np.unique(ex['player'][va])):,}", flush=True)
 
     band = args.band
@@ -141,51 +82,15 @@ def main() -> int:
     dev = M.device()
     net = (M.load(args.init) if args.init else M.upstream(band))
     if args.refit_rating_scaler:
-        r = np.minimum(ex["rating"][tr].astype(np.float64), cmenc.band_range(band)[1])
-        m_new, s_new = float(r.mean()), float(r.std())
-        m_old, s_old = s_band["rating"]["mean"], s_band["rating"]["std"]
-        with torch.no_grad():
-            W = net.rating_embedding.weight.clone()  # [D, 1]
-            net.rating_embedding.bias.add_((W[:, 0] * (m_new - m_old) / s_old))
-            net.rating_embedding.weight.mul_(s_new / s_old)
-        s_band["rating"] = {"mean": m_new, "std": s_new}
-        print(f"rating scaler {m_old:.1f}±{s_old:.1f} → {m_new:.1f}±{s_new:.1f}", flush=True)
+        refit_rating_scaler(net, s_band, ex["rating"][tr], band)
     scal = dict(scalers)
     scal[band] = s_band
     net = net.to(dev)
     theta0 = [p.detach().clone() for p in net.parameters()] if args.l2sp > 0 else None
     e = cmenc.edges(cmenc.load_buckets(), band)
     clamp = (args.min_rating, cmenc.band_range(band)[1])
-
-    def tensors(idx):
-        # History windows are stored; the timed move is shifted in on the device (`with_ids`).
-        ids, sr, cf = M.model_inputs(ex, idx, band, scal, "history", clamp, np.int16)  # tokens < 1968; widened on device
-        cur = np.asarray(ex["cur"][idx]).astype(np.int16)
-        y = cmenc.bucket_index(ex["think"][idx], e)
-        mask = cmenc.bucket_mask(ex["pclock"][idx], ex["inc"][idx], e)
-        return (torch.from_numpy(ids), torch.from_numpy(sr), torch.from_numpy(cf), torch.from_numpy(y.astype(np.int64)), torch.from_numpy(mask), torch.from_numpy(cur))
-
-    K = cmenc.RECENT_MOVES
-
-    def with_ids(ids, cur, current):
-        """`current` (bool [B]): replace the window by the last 11 history moves + the timed move."""
-        ids = ids.int()
-        shifted = torch.cat([ids[:, 1:K], cur.int().unsqueeze(1), ids[:, K:]], dim=1)
-        return torch.where(current.unsqueeze(1), shifted, ids)
-
-    def contract_mask(n, generator=None):
-        if args.contract == "history":
-            return torch.zeros(n, dtype=torch.bool)
-        if args.contract == "with_current":
-            return torch.ones(n, dtype=torch.bool)
-        return torch.rand(n, generator=generator) < args.p_current
-
-    TR = tensors(tr)
-    VA = tensors(va)
-
-    def loss_of(logits, y, mask):
-        logits = logits.float().masked_fill(~mask, -1e9)
-        return F.cross_entropy(logits, y, reduction="none")
+    TR = example_tensors(ex, tr, band, scal, clamp, e)
+    VA = example_tensors(ex, va, band, scal, clamp, e)
 
     @torch.no_grad()
     def val_nll(current: bool) -> float:
@@ -230,7 +135,7 @@ def main() -> int:
         for i in range(0, len(tr), args.batch):
             sel = perm[i : i + args.batch]
             b = [t[sel].to(dev) for t in TR]
-            flag = contract_mask(len(sel)).to(dev)
+            flag = contract_mask(args.contract, args.p_current, len(sel)).to(dev)
             loss = loss_of(net(with_ids(b[0], b[5], flag), b[1], b[2]), b[3], b[4]).mean()
             if theta0 is not None:
                 loss = loss + args.l2sp * sum(((p - p0) ** 2).sum() for p, p0 in zip(net.parameters(), theta0))

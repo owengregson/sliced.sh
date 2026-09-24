@@ -23,7 +23,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import cmenc  # noqa: E402
-import extract  # noqa: E402
+from ftlib.pgn import parse_game  # noqa: E402
 
 CONTROL = "600"
 RATING = (2300, 2500)  # [lo, hi)
@@ -47,7 +47,7 @@ def main() -> int:
             read += 1
             if f'"time_control":"{CONTROL}"' not in line:
                 continue
-            parsed = extract.parse_game(line)
+            parsed = parse_game(line)
             if parsed is None:
                 continue
             g, tc, base, inc, sans, clocks = parsed

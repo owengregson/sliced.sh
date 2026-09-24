@@ -20,264 +20,28 @@ situation (all / book / recapture / other). Metrics per move:
         (premove-tick) share, overall and within bucket 0
   median of the cell's pooled predictive distribution vs the observed median (s)
 CIs: 95 % percentile bootstrap over players (cluster-robust); model differences are paired.
+
+Parts (`ftlib/`): `sides.py` (the held-out selection), `models.py` (model specs and runs),
+`metrics.py` (per-move scores, bootstrap), `cells.py` (cells and labels), `report.py` (rows and
+markdown).
 """
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import sys
 from pathlib import Path
 
 import numpy as np
-import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import cmenc  # noqa: E402
 import model as M  # noqa: E402
-import train  # noqa: E402
-
-TCS = ["bullet", "blitz", "rapid"]
-RATING_BANDS = [(1500, 1799), (1800, 1999), (2000, 2099)] + [(lo, lo + 99) for lo in range(2100, 3000, 100)] + [(3000, 9999)]
-SITUATIONS = ["all", "book", "recapture", "other", "forced"]
-BANDS = ["0_1000", "1200_1300", "1500_1600", "1800_1900", "2000_2100", "2200_3500"]
-
-
-def band_label(lo: int, hi: int) -> str:
-    return f"{lo}+" if hi >= 9999 else f"{lo}-{hi}"
-
-
-def select(ex: dict, cap: int, min_rating: float, games: list[dict], split: int = 1, side_frac: float = 1.0) -> np.ndarray:
-    ok = (ex["split"] == split) & (ex["rating"] >= min_rating) & (ex["ply"] >= 2)  # first moves: chess.com's clock does not run normally
-    if "kept" in ex:
-        ok &= ex["kept"] == 1
-    idx = train.cap_sides(ex, np.nonzero(ok)[0], cap, games)
-    if side_frac >= 1:
-        return idx
-    # an independent hash, so the side-fraction subsample is unbiased after the cap
-    key = ex["player"][idx].astype(np.int64) << 32 | ex["game"][idx].astype(np.int64)
-    pairs = np.unique(key)
-    h = np.array([hashlib.sha1(f"frac:{g}:{p}".encode()).digest()[0] for p, g in zip((pairs >> 32).tolist(), (pairs & 0xFFFFFFFF).tolist())])
-    return idx[np.isin(key, pairs[h < side_frac * 256])]
-
-
-def parse_spec(spec: str) -> dict:
-    name, _, rest = spec.partition("=")
-    parts = rest.split(",")
-    d = {"name": name, "src": parts[0], "contract": "history", "band": None, "scalers": None}
-    for p in parts[1:]:
-        k, _, v = p.partition("=")
-        d[k] = v
-    return d
-
-
-def metrics_for(probs: np.ndarray, think: np.ndarray, e: np.ndarray, rng: np.random.Generator) -> dict:
-    y = cmenc.bucket_index(think, e)
-    n = len(y)
-    py = probs[np.arange(n), y]
-    cdf = np.cumsum(probs, 1)
-    below = cdf[np.arange(n), y] - py
-    step = (np.arange(cmenc.N_BUCKETS)[None, :] >= y[:, None]).astype(np.float64)
-    return {
-        "nll": -np.log(np.maximum(py, 1e-12)),
-        "rps": ((cdf - step) ** 2).sum(1),
-        "pit": below + rng.random(n) * py,
-        "b0": probs[:, 0],
-        "obs_b0": (y == 0).astype(np.float64),
-        "obs_pre": (think <= 0.2).astype(np.float64),
-    }
-
-
-def pooled_median(probs: np.ndarray, e: np.ndarray) -> float:
-    p = probs.mean(0)
-    c = np.cumsum(p)
-    k = int(np.searchsorted(c, 0.5))
-    lo = e[k]
-    hi = e[k + 1] if np.isfinite(e[k + 1]) else lo + 20.0
-    prev = c[k - 1] if k > 0 else 0.0
-    return float(lo + (hi - lo) * (0.5 - prev) / max(p[k], 1e-12))
-
-
-def run_models(ex: dict, idx: np.ndarray, specs: list[dict], buckets: dict, default_scalers: dict, bs: int = 1024) -> dict:
-    dev = M.device()
-    out = {}
-    rng = np.random.default_rng(12345)
-    for sp in specs:
-        scal = cmenc.load_scalers(Path(sp["scalers"])) if sp.get("scalers") else default_scalers
-        if sp["src"] == "routed":
-            # production band selection per rating
-            probs = np.empty((len(idx), cmenc.N_BUCKETS))
-            bands = np.array([cmenc.select_band(float(r), BANDS, scal) for r in ex["rating"][idx]])
-            thinkbuckets = np.empty(len(idx), dtype=np.int64)
-            for b in np.unique(bands):
-                sel = np.nonzero(bands == b)[0]
-                mdl = M.upstream(b).to(dev)
-                ids, sr, cf = M.model_inputs(ex, idx[sel], b, scal, sp["contract"])
-                e = cmenc.edges(buckets, b)
-                probs[sel] = M.predict(mdl, ids, sr, cf, e, ex["pclock"][idx[sel]], ex["inc"][idx[sel]], bs)
-                thinkbuckets[sel] = cmenc.bucket_index(ex["think"][idx[sel]], e)
-                del mdl
-            # all non-novice bands share the 1-second layout; the metrics use the 2200 edges
-            e = cmenc.edges(buckets, "2200_3500")
-        else:
-            band = sp["band"]
-            mdl = (M.upstream(sp["src"].split(":", 1)[1]) if sp["src"].startswith("upstream:") else M.load(sp["src"])).to(dev)
-            e = cmenc.edges(buckets, band)
-            ids, sr, cf = M.model_inputs(ex, idx, band, scal, sp["contract"])
-            probs = M.predict(mdl, ids, sr, cf, e, ex["pclock"][idx], ex["inc"][idx], bs)
-            del mdl
-        torch.mps.empty_cache() if torch.backends.mps.is_available() else None
-        m = metrics_for(probs, ex["think"][idx], e, rng)
-        m["probs"] = probs.astype(np.float32)
-        out[sp["name"]] = (m, e)
-        print(f"  {sp['name']}: NLL {m['nll'].mean():.4f}  RPS {m['rps'].mean():.4f}", file=sys.stderr)
-    return out
-
-
-def load_labels(paths: list[str], ex: dict, idx: np.ndarray, games: list[dict]) -> np.ndarray | None:
-    """The calibration subagent's situation labels (`data/timing/calib/labels*.jsonl`, keyed by
-    game uuid + ply) → a per-move code: 0 other(ordinary) 1 book 2 obvious recapture 3 forced
-    4 check/other-labelled, −1 unlabelled. Book takes precedence, then obvious recapture."""
-    if not paths:
-        return None
-    want = {games[g]["uuid"] for g in np.unique(ex["game"][idx]).tolist()}
-    lab: dict[tuple[str, int], int] = {}
-    for p in paths:
-        with open(p, encoding="utf-8", errors="replace") as fh:
-            for line in fh:
-                if line[11:47] not in want:
-                    continue
-                try:
-                    d = json.loads(line)
-                except ValueError:
-                    continue
-                sit = d.get("situation")
-                code = 1 if sit == "book" else 2 if d.get("obviousRecapture") else 3 if sit == "forced" else 0 if sit == "ordinary" else 4
-                lab[(d["gameId"], int(d["ply"]))] = code
-    uu = [games[g]["uuid"] for g in ex["game"][idx].tolist()]
-    codes = np.fromiter((lab.get((u, int(p)), -1) for u, p in zip(uu, ex["ply"][idx].tolist())), np.int8, len(idx))
-    print(f"labels: {int((codes >= 0).sum()):,}/{len(idx):,} moves labelled", file=sys.stderr)
-    return codes
-
-
-def cells(ex: dict, idx: np.ndarray, labels: np.ndarray | None = None) -> list[tuple[str, str, str, np.ndarray]]:
-    tc = ex["tc"][idx]
-    r = ex["rating"][idx]
-    if labels is not None:
-        sit = {
-            "all": np.ones(len(idx), bool),
-            "book": labels == 1,
-            "recapture": labels == 2,
-            "other": labels == 0,
-            "forced": labels == 3,
-        }
-    else:
-        book = ex["book"][idx]
-        recap = ex["recap"][idx]
-        sit = {
-            "all": np.ones(len(idx), bool),
-            "book": book == 1,
-            "recapture": (recap == 1) & (book != 1),
-            "other": (book == 0) & (recap == 0),
-        }
-    tcsel = {"any": np.ones(len(idx), bool)} | {t: tc == i for i, t in enumerate(TCS)}
-    rsel = {band_label(lo, hi): (r >= lo) & (r <= hi) for lo, hi in RATING_BANDS}
-    rsel["2100+"] = r >= 2100
-    rsel["2200-2999"] = (r >= 2200) & (r < 3000)
-    out = []
-    for t, tm in tcsel.items():
-        for rb, rm in rsel.items():
-            for s in sit:
-                m = tm & rm & sit[s]
-                if m.sum() > 0:
-                    out.append((t, rb, s, np.nonzero(m)[0]))
-    return out
-
-
-def bootstrap(players: np.ndarray, values: dict[str, np.ndarray], B: int, rng) -> dict[str, tuple[float, float, float]]:
-    uniq, inv = np.unique(players, return_inverse=True)
-    cnt = np.bincount(inv, minlength=len(uniq)).astype(np.float64)
-    W = rng.multinomial(len(uniq), np.full(len(uniq), 1 / len(uniq)), size=B).astype(np.float64)
-    res = {}
-    for k, v in values.items():
-        s = np.bincount(inv, weights=v, minlength=len(uniq))
-        boots = (W @ s) / np.maximum(W @ cnt, 1e-12)
-        res[k] = (float(s.sum() / cnt.sum()), float(np.percentile(boots, 2.5)), float(np.percentile(boots, 97.5)))
-    return res
-
-
-def summarise(ex: dict, idx: np.ndarray, results: dict, B: int, baseline: str | None, labels: np.ndarray | None = None) -> list[dict]:
-    rng = np.random.default_rng(2026)
-    rows = []
-    names = list(results)
-    for t, rb, s, sub in cells(ex, idx, labels):
-        players = ex["player"][idx][sub]
-        think = ex["think"][idx][sub]
-        row = {"tc": t, "rating": rb, "situation": s, "n": int(len(sub)), "players": int(len(np.unique(players))),
-               "obs_median_s": float(np.median(think)), "obs_b0": float((results[names[0]][0]["obs_b0"][sub]).mean()),
-               "obs_pre": float((think <= 0.2).mean()),
-               "obs_pre_within_b0": float((think[think < 1] <= 0.2).mean()) if (think < 1).any() else None, "models": {}}
-        vals = {}
-        for nm in names:
-            m, e = results[nm]
-            for k in ("nll", "rps"):
-                vals[f"{nm}:{k}"] = m[k][sub]
-            if baseline and nm != baseline:
-                for k in ("nll", "rps"):
-                    vals[f"{nm}-{baseline}:{k}"] = m[k][sub] - results[baseline][0][k][sub]
-        seed_state = rng.bit_generator.state
-        bs = bootstrap(players, vals, B, rng) if len(np.unique(players)) > 1 else {k: (float(v.mean()), float("nan"), float("nan")) for k, v in vals.items()}
-        rng.bit_generator.state = seed_state
-        for nm in names:
-            m, e = results[nm]
-            pit = m["pit"][sub]
-            row["models"][nm] = {
-                "nll": bs[f"{nm}:nll"], "rps": bs[f"{nm}:rps"],
-                "cov10": float((pit <= 0.1).mean()), "cov50": float((pit <= 0.5).mean()), "cov90": float((pit <= 0.9).mean()),
-                "pred_b0": float(m["b0"][sub].mean()), "pred_median_s": pooled_median(m["probs"][sub].astype(np.float64), e),
-            }
-            if baseline and nm != baseline:
-                row["models"][nm]["d_nll"] = bs[f"{nm}-{baseline}:nll"]
-                row["models"][nm]["d_rps"] = bs[f"{nm}-{baseline}:rps"]
-        rows.append(row)
-    return rows
-
-
-def pit_hist(results: dict, sub: np.ndarray) -> dict:
-    return {nm: np.histogram(m["pit"][sub], bins=10, range=(0, 1))[0].tolist() for nm, (m, _) in results.items()}
-
-
-def fmt_ci(t) -> str:
-    v, lo, hi = t
-    return f"{v:.3f} [{lo:.3f}, {hi:.3f}]" if np.isfinite(lo) else f"{v:.3f}"
-
-
-def markdown(rows: list[dict], names: list[str], baseline: str | None, title: str) -> str:
-    out = [f"# {title}", ""]
-    for s in SITUATIONS:
-        out += [f"## situation: {s}", ""]
-        hdr = "| tc | rating | n | players | obs med s | obs b0 | obs ≤0.2s (in b0) |"
-        sep = "|---|---|---:|---:|---:|---:|---:|"
-        for nm in names:
-            hdr += f" {nm} NLL | {nm} RPS | {nm} med s | {nm} b0 | {nm} cov10/50/90 |"
-            sep += "---:|---:|---:|---:|---|"
-            if baseline and nm != baseline:
-                hdr += f" Δ{nm} NLL | Δ{nm} RPS |"
-                sep += "---:|---:|"
-        out += [hdr, sep]
-        for r in rows:
-            if r["situation"] != s:
-                continue
-            pre_in = "–" if r["obs_pre_within_b0"] is None else f"{r['obs_pre_within_b0']:.2f}"
-            line = f"| {r['tc']} | {r['rating']} | {r['n']} | {r['players']} | {r['obs_median_s']:.1f} | {r['obs_b0']:.3f} | {r['obs_pre']:.3f} ({pre_in}) |"
-            for nm in names:
-                m = r["models"][nm]
-                line += f" {fmt_ci(m['nll'])} | {fmt_ci(m['rps'])} | {m['pred_median_s']:.1f} | {m['pred_b0']:.3f} | {m['cov10']:.2f}/{m['cov50']:.2f}/{m['cov90']:.2f} |"
-                if baseline and nm != baseline:
-                    line += f" {fmt_ci(m['d_nll'])} | {fmt_ci(m['d_rps'])} |"
-            out.append(line)
-        out.append("")
-    return "\n".join(out)
+from ftlib.cells import load_labels  # noqa: E402
+from ftlib.metrics import pit_hist  # noqa: E402
+from ftlib.models import parse_spec, run_models  # noqa: E402
+from ftlib.report import markdown, summarise  # noqa: E402
+from ftlib.sides import select  # noqa: E402
 
 
 def main() -> int:
