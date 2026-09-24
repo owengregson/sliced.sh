@@ -11,7 +11,7 @@
  * --per-player-tc N (30), --stall N (focused visits without a gain before a cell is parked for
  * this run, 60), --few-months N (months per visit below --scarce-from, 3), --scarce-from R (2000:
  * players picked for a band ≥ R get every in-window month), --cand-cap N (candidates kept per
- * cell, 20000), --harvest N (opponent sides kept per cell per visit, spread over its months,
+ * cell, 5000), --harvest N (opponent sides kept per cell per visit, spread over its months,
  * 250 — so no cell is filled by the opponents of a handful of players), --max-requests N, --report-every S (180), --seed N.
  *
  * Network: strictly serial, `sliced-calibration-research/1.0`, exponential backoff on 429 / 5xx /
@@ -130,7 +130,7 @@ function parseArgs(argv: string[]): Args {
 		stall: 60,
 		fewMonths: 3,
 		scarceFrom: 2000,
-		candCap: 20_000,
+		candCap: 5_000,
 		harvest: 250,
 		maxRequests: Number.POSITIVE_INFINITY,
 		reportEvery: 180,
@@ -202,21 +202,31 @@ function dropTornTail(file: string): void {
 	}
 }
 
+/** Parsed lines of a JSONL file, read in 8 MB chunks (the file can be gigabytes). */
 function* jsonLines<T>(file: string): Generator<T> {
 	if (!existsSync(file)) return;
-	const text = readFileSync(file, "utf8");
-	let start = 0;
-	while (start < text.length) {
-		let end = text.indexOf("\n", start);
-		if (end < 0) end = text.length;
-		const line = text.slice(start, end);
-		start = end + 1;
-		if (!line.trim()) continue;
-		try {
-			yield JSON.parse(line) as T;
-		} catch {
-			// a torn line; skipped
+	const fd = openSync(file, "r");
+	const buf = Buffer.alloc(8 << 20);
+	const decoder = new TextDecoder();
+	let carry = "";
+	try {
+		for (;;) {
+			const n = readSync(fd, buf, 0, buf.length, null);
+			const text = carry + (n > 0 ? decoder.decode(buf.subarray(0, n), { stream: true }) : "");
+			const lines = text.split("\n");
+			carry = n > 0 ? (lines.pop() ?? "") : "";
+			for (const line of lines) {
+				if (!line.trim()) continue;
+				try {
+					yield JSON.parse(line) as T;
+				} catch {
+					// a torn line; skipped
+				}
+			}
+			if (n <= 0) break;
 		}
+	} finally {
+		closeSync(fd);
 	}
 }
 
@@ -832,6 +842,8 @@ async function main(): Promise<void> {
 			}
 			throw err;
 		}
+		// Month archives parse to tens of MB; return the garbage now so the footprint stays flat.
+		Bun.gc(true);
 		const now = Date.now();
 		if (now - lastSave > 60_000) {
 			crawl.save();
