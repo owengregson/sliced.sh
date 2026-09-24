@@ -133,8 +133,26 @@ const meta: GameMeta = {
 	gameId: "calib",
 };
 
+/**
+ * A learned head stand-in: clock-labelled samples (`includesExecution`), log-normal around 2 s.
+ * The table is fitted on, and applied to, the learned head's samples only.
+ */
+function learnedHead(): DistributionHead {
+	return {
+		id: "chessmimic",
+		sample: (_f, _p, _st, rng) => ({
+			tSec: 2 * Math.exp(rng.normal(0, 0.6)),
+			mode: "normal",
+			includesExecution: true,
+			why: [],
+		}),
+		median: () => 2,
+		mean: () => 2 * Math.exp(0.18),
+	};
+}
+
 function plan(t: TimingCalibrationTable, over: Parameters<typeof ctx>[0] = {}, seed = "c") {
-	const m = new TimingModel(new V1ParametricHead(), MODEL_TIMING, createRng(seed), {
+	const m = new TimingModel(learnedHead(), MODEL_TIMING, createRng(seed), {
 		calibration: t,
 	});
 	m.startGame({ ...meta, gameId: seed });
@@ -229,5 +247,18 @@ describe("the calibration stage of planMove", () => {
 		expect(
 			plan(faster, { myClockMs: 5_000, oppClockMs: 120_000 }, "fade").features.calibrationShift
 		).toBeCloseTo(-0.5, 9);
+	});
+	it("leaves the parametric fallback's samples alone (the table was fitted on the learned head)", () => {
+		const shifted = table({ ordinary: [1, 1] }, null, 0);
+		for (let i = 0; i < 10; i++) {
+			const run = (t: TimingCalibrationTable) => {
+				const m = new TimingModel(new V1ParametricHead(), MODEL_TIMING, createRng(`v1-${i}`), {
+					calibration: t,
+				});
+				m.startGame({ ...meta, gameId: `v1-${i}` });
+				return m.planMove(ctx({ targetElo: 2600 }));
+			};
+			expect(run(shifted).thinkMs).toBe(run(TIMING_CALIBRATION_IDENTITY).thinkMs);
+		}
 	});
 });

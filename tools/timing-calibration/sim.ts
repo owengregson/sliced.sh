@@ -449,8 +449,9 @@ function chainStepper(
 			const armed =
 				p > 0 &&
 				rng.chance(p) &&
-				(facts.safeTrade ||
-					(premoveSpeed && ordinaryP > 0 && facts.primary && rng.chance(ordinaryP / p)));
+				(facts.safeTrade
+					? tradeP >= p || rng.chance(tradeP / p)
+					: premoveSpeed && ordinaryP > 0 && facts.primary && rng.chance(ordinaryP / p));
 			if (armed) {
 				const race = clockRacePolicy({
 					ownClockMs: r.clockMs,

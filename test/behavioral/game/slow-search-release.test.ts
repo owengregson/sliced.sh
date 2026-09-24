@@ -5,7 +5,11 @@ import { TimingModel } from "@core/timing/timing-model";
 import type { TimingPlan } from "@core/timing/types";
 import type { ExecutionReport } from "@service/move-executor";
 import type { PositionSnapshot } from "@typedefs/game";
+import { pinIdentityTimingCalibration } from "../../fakes/timing-calibration";
 import { createGameHarness, type GameHarness } from "./harness";
+
+// Mechanics over a fixture head (a constant 0.8 s sample); the calibration has its own tests.
+pinIdentityTimingCalibration();
 
 let h: GameHarness | undefined;
 let restore: () => void;

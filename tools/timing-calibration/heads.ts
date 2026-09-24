@@ -147,7 +147,12 @@ async function emit(
 	console.log(`${n} head requests`);
 }
 
-async function check(tag: string, modelsDir: string, sample: number): Promise<void> {
+async function check(
+	tag: string,
+	modelsDir: string,
+	sample: number,
+	withMove: boolean
+): Promise<void> {
 	const results = new Map<string, HeadResult>();
 	for await (const r of readJsonl<HeadResult>(headsPath(tag))) {
 		results.set(r.id, r);
@@ -171,7 +176,7 @@ async function check(tag: string, modelsDir: string, sample: number): Promise<vo
 		for (const r of rows) {
 			const py = results.get(r.id);
 			if (!py) continue;
-			const inputs = buildInputs(rowContext(game, r));
+			const inputs = buildInputs(queryContext(rowContext(game, r), withMove));
 			const reply = await inference.handle({ kind: "timing", id: r.id, inputs });
 			if (!reply.probs) throw new Error(`TS inference failed for ${r.id}`);
 			if (reply.band !== py.band)
@@ -199,7 +204,7 @@ async function main(): Promise<void> {
 		: CHESSMIMIC_SCALERS;
 	if (hasFlag(argv, "emit")) await emit(tag, scalers, hasFlag(argv, "with-move"));
 	else if (hasFlag(argv, "check"))
-		await check(tag, modelsDir, Number(flagValue(argv, "sample", "200")));
+		await check(tag, modelsDir, Number(flagValue(argv, "sample", "200")), hasFlag(argv, "with-move"));
 	else throw new Error("heads.ts: --emit or --check");
 	process.exit(0);
 }

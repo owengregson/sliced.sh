@@ -21,8 +21,12 @@ import {
 	assertHumanShapedAc,
 	assertWellFormedAc,
 } from "../../../tools/telemetry-conformance/ac-model";
+import { pinIdentityTimingCalibration } from "../../fakes/timing-calibration";
 import { createGameHarness, type GameHarness, type GameHarnessOptions } from "./harness";
 import { positionKey } from "./scripted-engine";
+
+// Queue mechanics at the strength propensities; the calibrated attempt rates have their own tests.
+pinIdentityTimingCalibration();
 
 let h: GameHarness;
 afterEach(async () => {

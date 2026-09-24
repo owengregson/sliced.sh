@@ -43,8 +43,17 @@ async function main(): Promise<void> {
 	const split = flagValue(argv, "split", "holdout") ?? "holdout";
 	const chains = Number(flagValue(argv, "chains", "2"));
 	const specs = (flagValue(argv, "tables", "identity,shipped") ?? "identity,shipped").split(",");
-	const data = await loadReplay();
-	const sides = data.sides.filter((s) => split === "all" || s.split === split);
+	// `SPEC@shipped` replays the shipped band set's outputs (`heads.jsonl`) instead of `SL_HEADS_TAG`'s.
+	const current = await loadReplay();
+	const shipped =
+		process.env.SL_HEADS_TAG && specs.some((s) => s.endsWith("@shipped"))
+			? await loadReplay({ headsTag: "" })
+			: current;
+	const pick = (spec: string) =>
+		(spec.endsWith("@shipped") ? shipped : current).sides.filter(
+			(s) => split === "all" || s.split === split
+		);
+	const sides = pick("");
 	const lines = [
 		"# closed-loop clock check",
 		"",
@@ -58,13 +67,15 @@ async function main(): Promise<void> {
 		return r ? `${r.tcGroup}|${wideBandOf(r.rating)}` : "";
 	};
 	for (const spec of specs) {
-		const table = spec === "identity" ? TIMING_CALIBRATION_IDENTITY : await loadTable(spec);
-		const production = spec !== "identity";
+		const name = spec.replace(/@shipped$/, "");
+		const table = name === "identity" ? TIMING_CALIBRATION_IDENTITY : await loadTable(name);
+		const production = name !== "identity";
+		const runSides = pick(spec);
 		const flagged = new Set<string>();
 		const lastClock = new Map<string, number>();
 		const spent = new Map<string, number>();
 		await simulate(
-			{ sides },
+			{ sides: runSides },
 			{
 				table,
 				fastReply: production,

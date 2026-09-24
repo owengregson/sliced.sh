@@ -104,13 +104,13 @@ export function summariseCI(
  */
 export function summariseGroups(
 	groups: readonly (readonly number[])[],
-	resamples = 200,
+	requested = 200,
 	seed = "timing-calib"
 ): SummaryCI {
 	const all: number[] = [];
 	for (const g of groups) for (const v of g) all.push(v);
 	const base = summarise(all, groups.length);
-	resamples = Math.min(resamples, Math.max(20, Math.floor(2e7 / Math.max(1, all.length))));
+	const resamples = Math.min(requested, Math.max(20, Math.floor(2e7 / Math.max(1, all.length))));
 	const rng = createRng(seed);
 	const qs: number[][] = QUANTILES.map(() => []);
 	const pre: number[] = [];

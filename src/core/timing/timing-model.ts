@@ -215,7 +215,17 @@ export class TimingModel {
 		);
 		const { tSec, mode } = guardPremove(calibrated.sample, f, this.forbidPremove, why);
 		const composed = composeThink(
-			{ f, ctx, mode, tSec, sample, budget, persona: this._persona, rng: this.rng },
+			{
+				f,
+				ctx,
+				mode,
+				tSec,
+				sample,
+				budget,
+				persona: this._persona,
+				rng: this.rng,
+				budgetPower: calibrated.budgetPower,
+			},
 			why
 		);
 		const plan = assemblePlan({

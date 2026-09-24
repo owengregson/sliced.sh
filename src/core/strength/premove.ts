@@ -67,8 +67,9 @@ interface PremoveGates {
 	race: ClockRacePolicy | null;
 	/** Ordinary (non-trade) premoves are allowed in this time control or race. */
 	ordinaryAllowed: boolean;
-	/** The ordinary attempt propensity, and the larger of it and the trade propensity. */
+	/** The ordinary and the trade attempt propensities, and the larger of the two. */
 	ordinaryP: number;
+	tradeP: number;
 	p: number;
 	legalReplies: string[];
 }
@@ -104,7 +105,15 @@ export async function premoveCandidate(
 	if (p <= 0 || !ctx.rng.chance(p)) return null;
 	const legalReplies = legalMoves(afterMove);
 	if (ctx.ponder !== undefined && !legalReplies.includes(ctx.ponder)) return null;
-	const gates: PremoveGates = { afterMove, race, ordinaryAllowed, ordinaryP, p, legalReplies };
+	const gates: PremoveGates = {
+		afterMove,
+		race,
+		ordinaryAllowed,
+		ordinaryP,
+		tradeP,
+		p,
+		legalReplies,
+	};
 	const analysedOpponent = await deps.analyseAfter(ctx.fen, [ctx.move], {
 		movetimeMs: Math.min(PREMOVE.ponderMovetimeMs, race?.maxSearchMs ?? Number.POSITIVE_INFINITY),
 		multiPv: PREMOVE.ponderMultiPv,
@@ -168,7 +177,7 @@ async function premoveAfterReply(
 	pReply: number,
 	primaryReply: string
 ): Promise<PremoveCandidate | null> {
-	const { afterMove, race, ordinaryAllowed, ordinaryP, p, legalReplies } = gates;
+	const { afterMove, race, ordinaryAllowed, ordinaryP, tradeP, p, legalReplies } = gates;
 	const replyCaptured = classifyMove(afterMove, reply)?.isCapture ?? false;
 	const afterReply = applyMoves(afterMove, [reply]);
 	if (afterReply === null) return null;
@@ -215,6 +224,10 @@ async function premoveAfterReply(
 	// the move — the only legal move, or a recapture every legal reply leaves a safe exchange —
 	// never a clear-best quiet move read off a 120 ms search (`loss2nd`).
 	if (isMaxStrength(ctx.targetElo) && !safeTrade && reason !== "only-move") return null;
+	// The attempt was drawn at the larger propensity: a safe trade whose own is smaller (a calibrated
+	// rate below the ordinary one) is thinned to it. The strength propensities never take this branch
+	// (the trade rate is the larger), so their random stream is unchanged.
+	if (safeTrade && tradeP < p && !ctx.rng.chance(tradeP / p)) return null;
 	if (
 		!safeTrade &&
 		(!ordinaryAllowed ||

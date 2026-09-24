@@ -27,6 +27,8 @@ export interface ComposeInput {
 	budget: MoveBudget;
 	persona: Persona;
 	rng: Rng;
+	/** The calibration's `budgetPower` for this game (1 = the budget as is). */
+	budgetPower?: number;
 }
 
 export interface ComposedThink {
@@ -102,10 +104,16 @@ export function composeThink(input: ComposeInput, why: string[]): ComposedThink 
 	const clockEmergency = f.tc !== "untimed" && ctx.myClockMs < C.replan.emergencyClockMs;
 	// A mean-constrained learned distribution may spend several allocations on one rare
 	// decision. Capping it again at the routine allocation erased its affordable long tail.
-	const capSec = Math.min(
-		sample.includesExecution ? budget.distributionCapSec : budget.capSec,
-		Math.max(physicalS, budget.recognitionCapSec)
-	);
+	// The recognition cap belongs to the move budget: when the calibration keeps less of the
+	// budget (`budgetPower` < 1, the learned distribution trusted instead), it relaxes towards the
+	// distribution's own cap in the same proportion (geometric: power 1 keeps it, 0 drops it).
+	const outer = sample.includesExecution ? budget.distributionCapSec : budget.capSec;
+	const power = input.budgetPower ?? 1;
+	const recognitionCap =
+		power >= 1 || !Number.isFinite(budget.recognitionCapSec) || !Number.isFinite(outer)
+			? budget.recognitionCapSec
+			: budget.recognitionCapSec ** power * Math.max(outer, budget.recognitionCapSec) ** (1 - power);
+	const capSec = Math.min(outer, Math.max(physicalS, recognitionCap));
 	const value = anticipated
 		? Math.max(tSec, physicalS)
 		: mode === "premove"

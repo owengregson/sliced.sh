@@ -1,13 +1,16 @@
 # tools/timing-calibration: fitting think times to chess.com players
 
-The think-time calibration (`src/core/constants/timing-calibration.ts`) holds two things for each
-chess.com time class, advertised rating and move situation (forced, book, obvious recapture,
-check, ordinary):
+The think-time calibration (`src/core/constants/timing-calibration.ts`) holds these, per chess.com
+time class, advertised rating and move situation (forced, book, obvious recapture, check,
+ordinary):
 
-- **how the timing model's sampled think is shifted**, a log multiplier above the physical
-  support;
+- **how much of the move budget's compression of the learned sample is kept** (`budgetPower`, per
+  class). 1 is the budget as before; 0 plans with ChessMimic's clock-conditioned sample at the
+  user's speed setting.
+- **how the sampled think is shifted**, a log multiplier above the physical support. A positive
+  shift fades out as the own clock runs down.
 - **how readily a safe recapture is premoved**, the attempt probability of the session's existing
-  premove path.
+  premove path, with its own prediction gate (`PREMOVE.tradeReplyMinProb`).
 
 The target is that the bot's *clock-recorded* think times match real chess.com players of that
 rating. This directory measures that, fits the table and verifies it on held-out players. Nothing
@@ -25,7 +28,7 @@ longer than the plan, and a calibration fitted to the plan alone would be wrong.
 
 | step | script | in → out (under `data/timing/calib/`, git-ignored) | cost |
 |---|---|---|---|
-| 1 | `build_corpus.py` (reference rules: `build-corpus.ts`) | `data/calibration/games.jsonl` or `data/timing/crawl/games.jsonl` → `corpus.jsonl` (per game: moves, per-ply labels), `labels.jsonl` (per game and ply, for the finetuner, see its README), `corpus-summary.json` | 10.8 k games ≈ 1.5 min; 250 k games ≈ 25 min (2 workers; `--no-fens` for the crawl) |
+| 1 | `build_corpus.py` (reference rules: `build-corpus.ts`) | `data/calibration/games.jsonl` or `data/timing/crawl/games.jsonl` → `corpus.jsonl` (per game: moves, per-ply labels), `labels.jsonl` (per game and ply, for the finetuner, see its README), `corpus-summary.json` | 10.8 k games ≈ 1.5 min at 2 workers (≈ 17 ms per game per worker); `--no-fens` for the crawl |
 | 1b | `verify-labels.ts` | recomputes a sample's labels with the TypeScript reference (shipped book and chess modules) and requires 0 mismatches | seconds |
 | 2 | `human-report.ts` | humans only: quantiles, premove and sub-second shares per tc group × band × situation, ≤ 30 game-sides per player per class, player-cluster bootstrap | ≈ 20 s |
 | 3 | `select.ts` | → `select.json`: the replayed game-sides per (tc group × 400-Elo band × split), ≤ 3 per player, preferring games already searched | seconds |
@@ -35,7 +38,11 @@ longer than the plan, and a calibration fitted to the plan alone would be wrong.
 | 6 | `fit.ts --stage premove` | one replay at `p = 0.5` → `fit/premove.json` | ≈ 10 min |
 | 7 | `fit.ts --stage shift --grid g1,g2,…` | one replay per grid value → `fit/shift_<g>.json` (run two processes with half the grid each) | ≈ 10 min per value |
 | 8 | `fit.ts --stage table --source fit\|holdout\|all [--write]` | → `fit/table-<source>.json`; `--write` puts the `all` table in `src/core/constants/timing-calibration.ts` | seconds |
-| 9 | `crossfit.ts` | before / fit→holdout / holdout→fit / all → `verify/crossfit/` | ≈ 40 min |
+| 9 | `crossfit.ts` | before (shipped band) / new band / mechanisms / fit→holdout / holdout→fit / all → `verify/crossfit/` | ≈ 40 min |
+| 10 | `flags.ts --tables identity@shipped,…` | closed loop, the bot on its own clock: flags, spend, final clock per class and band → `verify/flags.md` | ≈ 15 min |
+| 11 | `cap-check.ts` | does the fast-reply cap change the move? capped vs full searches → `verify/cap-check.md` | ≈ 30 min |
+| 12 | `premove-outcomes.ts` | queued trade premoves executed vs dropped by the site → `verify/premove-outcomes.md` | ≈ 5 min |
+| 13 | `fixture.ts` | → `test/fixtures/timing/calibration-replay.json`, the behavioural test's frozen replay | ≈ 3 min |
 | – | `verify.ts --label L --table identity\|shipped\|FILE [--fast-reply] [--hover]` | one replay, one split → `verify/<L>/report.md` | ≈ 5 min |
 
 ```
@@ -47,16 +54,22 @@ tools/data/.venv/bin/python tools/timing-calibration/build_corpus.py --games dat
 bun tools/timing-calibration/frames.ts --shard 0/2 & bun tools/timing-calibration/frames.ts --shard 1/2
 bun tools/timing-calibration/heads.ts --emit && tools/data/.venv/bin/python tools/timing-calibration/heads_worker.py && bun tools/timing-calibration/heads.ts --check
 bun tools/timing-calibration/fit.ts --stage premove
-bun tools/timing-calibration/fit.ts --stage shift --grid -1.2,-0.9,-0.6,-0.4,-0.2,0,0.2,0.4
+bun tools/timing-calibration/fit.ts --stage shift --power 0 --grid -1.0,-0.6,-0.4,-0.2,0,0.2,0.4,0.6,1.0,1.4
+bun tools/timing-calibration/fit.ts --stage shift --power 1 --grid -1.0,-0.6,-0.3,0,0.3,0.6,1.0,1.4,1.8,2.2
 for s in fit holdout all; do bun tools/timing-calibration/fit.ts --stage table --source $s; done
 bun tools/timing-calibration/fit.ts --stage table --source all --write
 bun tools/timing-calibration/crossfit.ts
+bun tools/timing-calibration/flags.ts --tables identity@shipped,data/timing/calib/fit/table-all.json
+bun tools/timing-calibration/cap-check.ts && bun tools/timing-calibration/premove-outcomes.ts
+bun tools/timing-calibration/fixture.ts
 ```
 
-To refit on a candidate ChessMimic band set (the finetuner's), give `heads.ts` and
-`heads_worker.py` `--models DIR --scalers FILE --tag T`, then pass `--heads-tag T` to
-`verify.ts`. The replay reads the shipped `buildInputs`, so an encoder change on the branch is
-picked up automatically.
+To refit on a candidate ChessMimic band set (the finetuner's), give `heads.ts --emit` the options
+`--with-move --scalers FILE --tag T` (the timed-move contract), and give `heads_worker.py` the
+options `--models DIR --tag T`. Bands missing from the directory fall back to the shipped ones.
+Then set `SL_HEADS_TAG=T` for every later step. The shipped table is fitted this way on the
+fine-tuned 2200–3500 band (`heads.cand.jsonl`); the "before" runs use the band on main
+(`heads.jsonl`, `identity@shipped`).
 
 ## The replay (`sim.ts`)
 
@@ -81,7 +94,8 @@ chain's game id. It sees the recorded positions, clocks, and the opponent's move
    `max(approach, natural touch)`, except that an anticipated prepared touch is realised as
    planned. `observe` feeds the release back.
 
-Recorded = `ceil(release / 100 ms)·100 ms`. The latency constants are in `sim.ts` `LATENCY`. The
+Recorded = `ceil(release / 100 ms)·100 ms`. With `ownClock` (the closed loop, `flags.ts`) the bot
+plays on its own clock, and a chain that runs out is a flag. The latency constants are in `sim.ts` `LATENCY`. The
 hand's numbers come from the `hover` executor simulation (60 seeds at 2700). Transport (30 ms)
 and preparation overheads are assumptions. No browser measured them.
 
@@ -100,10 +114,11 @@ situation cells.
   `p = 0.5 · human / bot` per recapture cell. It is clamped to [0, 1], smoothed over the rating
   knots (weighted least squares with a first-difference penalty), and then made non-decreasing in
   rating (PAVA).
-- **Shift.** There is one replay per grid value, with every cell at that value. Per cell the
-  objective is `n_eff·Σ_q w_q (ln bot_q − ln human_q)²`. A Viterbi pass over the knots
-  (800 … 2800, 3100: the 400-Elo bands' centres) minimises the objective plus
-  `λ(v_k − v_{k−1})²`. Cells with fewer than 25 human moves are filled by the smoothness.
+- **Shift and budget power.** There is one replay per (power, shift) grid value, with every cell
+  at that shift. Per cell the objective is `n_eff·Σ_q w_q (ln bot_q − ln human_q)²`. A Viterbi pass
+  over the knots (800 … 2800, 3100: the 400-Elo bands' centres) minimises the objective plus
+  `λ(v_k − v_{k−1})²` and a `2·g²` prior. Cells with fewer than 25 human moves are filled by the
+  smoothness. Per class, the power with the lower total objective is kept.
 
 Every replay covers both splits, so the fit-split table, the holdout-split table and the
 all-player table all come from the same runs. `crossfit.ts` verifies each on the other split.

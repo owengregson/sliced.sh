@@ -29,6 +29,8 @@ export interface CalibratedSample {
 	sample: NormalisedSample;
 	shift: number;
 	situationIndex: number;
+	/** The table's `budgetPower` for the game's time class (1 when not calibrated). */
+	budgetPower: number;
 }
 
 /** The situation of the chosen move (`calibrationSituation`) from the context and features. */
@@ -60,12 +62,15 @@ export function calibrateSample(
 	const situationIndex = situationOf(ctx, f);
 	const situation = TIMING_CALIBRATION_SITUATIONS[situationIndex];
 	const mode = normalised.mode;
+	// The table was fitted on the learned head's clock-labelled samples (`includesExecution`); the
+	// parametric fallback's samples are budget-shaped by design and are left as they are.
 	if (
+		!includesExecution ||
 		f.tc === "untimed" ||
 		situation === undefined ||
 		!(mode === "normal" || mode === "long" || mode === "instant")
 	)
-		return { sample: normalised, shift: 0, situationIndex };
+		return { sample: normalised, shift: 0, situationIndex, budgetPower: 1 };
 	const timeClass = calibrationTimeClass(ctx.baseSec, ctx.incSec);
 	const L = TIMING_CALIBRATION_LIMITS;
 	const tableShift = thinkShift(timeClass, ctx.targetElo, situation, table);
@@ -87,10 +92,11 @@ export function calibrateSample(
 		const kept = scale * Math.min(1, normalised.comp / scale) ** power;
 		above = Math.max(0, normalised.headSampleSec - support) * kept;
 	}
-	if (shift === 0 && power === 1) return { sample: normalised, shift, situationIndex };
+	if (shift === 0 && power === 1)
+		return { sample: normalised, shift, situationIndex, budgetPower: power };
 	const tSec = support + above * Math.exp(shift);
 	why.push(
 		`calibration: ${situation} ×${Math.exp(shift).toFixed(2)}${power === 1 ? "" : `, budget^${power}`}`
 	);
-	return { sample: { ...normalised, tSec }, shift, situationIndex };
+	return { sample: { ...normalised, tSec }, shift, situationIndex, budgetPower: power };
 }

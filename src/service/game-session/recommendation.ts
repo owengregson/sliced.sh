@@ -34,7 +34,13 @@ import { noteShortHistory, PolicyStage } from "./recommendation/policy";
 import { PipelineSearcher } from "./recommendation/search";
 import { chooseMove, markIncompleteSearch } from "./recommendation/select";
 import { tablebaseMove, tablebaseProbe, tablebaseWaitMs } from "./recommendation/tablebase";
-import { planChosenMove, TimingInference, timingContext } from "./recommendation/timing";
+import {
+	planChosenMove,
+	prepareChosenMove,
+	TimingInference,
+	timingCandidates,
+	timingContext,
+} from "./recommendation/timing";
 import type {
 	RecommendationInput,
 	RecommendationOutcome,
@@ -121,7 +127,13 @@ export class RecommendationPipeline {
 		const window = new PreparationWindow(preparationStarted, own.budget, this.now);
 		// Timing inference only needs position/history/clocks; overlap its bounded
 		// preparation with the search, then fill the chosen move before sampling.
-		const inference = new TimingInference(this.timing, timingCtx, own.timingBudgetMs, input.signal);
+		const inference = new TimingInference(
+			this.timing,
+			timingCtx,
+			own.timingBudgetMs,
+			input.signal,
+			timingCandidates(input)
+		);
 		const policyStart = this.policy.acquire(input, own.maiaElo);
 		const policyQuery = policyStart.query;
 
@@ -189,6 +201,8 @@ export class RecommendationPipeline {
 			if (!chosen) return null;
 			markIncompleteSearch(chosen, analysis, lines.length);
 
+			if (input.signal?.aborted) return null;
+			await prepareChosenMove(this.timing, timingCtx, chosen.uci, input.signal);
 			if (input.signal?.aborted) return null;
 			const plan = planChosenMove(
 				this.timing,
