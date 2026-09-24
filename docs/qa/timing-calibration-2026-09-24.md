@@ -442,6 +442,100 @@ Medians in seconds.
 Full quantile tables with bootstrap intervals, CRPS, KS and AUC for every cell are in
 `data/timing/calib/verify/crossfit/<run>.md`.
 
+## Independent check on the crawl (players the fit never saw)
+
+The table was fitted on the 10.8 k-game calibration corpus, whose 2200–3000 cells are thin. As a
+verification-only follow-up with no refit, `select_crawl.py` took **1 800 sides** from the timing
+crawl (`data/timing/crawl/`): 100 per class × 100-Elo band, bullet and blitz, 2200 to 3000+. It
+used only kept, holdout-split sides of players who appear nowhere in the calibration corpus, at
+most 2 per player; 76 021 moves in all. The frames, the replay and the statistics are the same as
+above (`crawl-verify.ts`, 4 chains):
+
+- before: main at e2e3775, with the upstream 2200–3500 band and its scalers (history row), the
+  identity table, no cap and no hover;
+- after: the shipped table, the fine-tuned band (timed-move row), the fast-reply cap and the hover.
+
+Outputs are in `data/timing/calib/verify/crawl-holdout/`, where `report.md` has the full
+quantiles and intervals.
+
+| run | cells | mean abs(AUC − ½) | KS | mean abs(ln median ratio) | mean abs(premove share diff) |
+|---|---|---|---|---|---|
+| before | 106 | 0.107 | 0.305 | 0.393 | 0.143 |
+| after | 106 | 0.069 | 0.191 | 0.166 | 0.125 |
+
+| tc | band | situation | n (human) | median human / before / after (s) | premove ≤ 0.2 s human / before / after |
+|---|---|---|---|---|---|
+| bullet | 2200 | book | 372 | 0.60 / 1.00 / 0.80 | 23% / 0% / 3% |
+| bullet | 2200 | recapture | 281 | 0.60 / 0.80 / 0.60 | 40% / 12% / 41% |
+| bullet | 2200 | ordinary | 2783 | 1.00 / 0.90 / 1.00 | 11% / 0% / 1% |
+| bullet | 2300 | book | 382 | 0.50 / 1.00 / 0.85 | 25% / 0% / 1% |
+| bullet | 2300 | recapture | 286 | 0.50 / 0.80 / 0.40 | 43% / 11% / 45% |
+| bullet | 2300 | ordinary | 2910 | 1.00 / 0.90 / 1.00 | 15% / 0% / 1% |
+| bullet | 2400 | book | 405 | 0.40 / 1.00 / 0.90 | 31% / 0% / 2% |
+| bullet | 2400 | recapture | 273 | 0.30 / 0.80 / 0.60 | 49% / 9% / 35% |
+| bullet | 2400 | ordinary | 3071 | 0.80 / 0.90 / 0.90 | 18% / 0% / 1% |
+| bullet | 2500 | book | 418 | 0.40 / 1.00 / 0.80 | 32% / 0% / 3% |
+| bullet | 2500 | recapture | 279 | 0.40 / 0.90 / 0.60 | 46% / 9% / 35% |
+| bullet | 2500 | ordinary | 3025 | 0.80 / 0.90 / 0.90 | 18% / 0% / 1% |
+| bullet | 2600 | book | 436 | 0.40 / 1.00 / 0.90 | 32% / 0% / 1% |
+| bullet | 2600 | recapture | 279 | 0.30 / 0.80 / 0.50 | 49% / 14% / 39% |
+| bullet | 2600 | ordinary | 3014 | 0.80 / 0.90 / 0.90 | 19% / 0% / 0% |
+| bullet | 2700 | book | 381 | 0.40 / 1.00 / 0.90 | 35% / 0% / 1% |
+| bullet | 2700 | recapture | 293 | 0.30 / 0.80 / 0.40 | 50% / 10% / 36% |
+| bullet | 2700 | ordinary | 3343 | 0.70 / 0.90 / 0.90 | 25% / 1% / 1% |
+| bullet | 2800 | book | 461 | 0.30 / 1.00 / 0.90 | 36% / 0% / 1% |
+| bullet | 2800 | recapture | 294 | 0.20 / 0.80 / 0.40 | 53% / 9% / 37% |
+| bullet | 2800 | ordinary | 3328 | 0.70 / 0.90 / 0.90 | 21% / 0% / 1% |
+| bullet | 2900 | book | 488 | 0.40 / 1.00 / 0.90 | 36% / 0% / 2% |
+| bullet | 2900 | recapture | 287 | 0.10 / 0.80 / 0.40 | 58% / 8% / 40% |
+| bullet | 2900 | ordinary | 3148 | 0.70 / 0.90 / 0.90 | 19% / 0% / 0% |
+| bullet | 3000 | recapture | 274 | 0.20 / 0.80 / 0.50 | 54% / 8% / 29% |
+| bullet | 3000 | ordinary | 3856 | 0.50 / 0.90 / 0.90 | 27% / 0% / 0% |
+| blitz | 2200 | book | 447 | 1.10 / 1.30 / 1.00 | 9% / 1% / 3% |
+| blitz | 2200 | recapture | 283 | 1.40 / 1.10 / 1.05 | 23% / 16% / 25% |
+| blitz | 2200 | ordinary | 3075 | 2.60 / 1.30 / 2.50 | 3% / 0% / 0% |
+| blitz | 2300 | book | 521 | 1.00 / 1.20 / 1.00 | 9% / 0% / 2% |
+| blitz | 2300 | recapture | 262 | 1.20 / 1.10 / 1.00 | 21% / 13% / 28% |
+| blitz | 2300 | ordinary | 2845 | 2.40 / 1.20 / 2.50 | 4% / 0% / 0% |
+| blitz | 2400 | book | 548 | 1.00 / 1.20 / 1.10 | 10% / 1% / 2% |
+| blitz | 2400 | recapture | 267 | 0.90 / 1.10 / 0.90 | 34% / 12% / 28% |
+| blitz | 2400 | ordinary | 3177 | 2.00 / 1.20 / 2.10 | 6% / 0% / 0% |
+| blitz | 2500 | book | 638 | 1.00 / 1.20 / 1.10 | 10% / 0% / 2% |
+| blitz | 2500 | recapture | 300 | 1.00 / 0.90 / 0.80 | 37% / 15% / 28% |
+| blitz | 2500 | ordinary | 3133 | 2.20 / 1.20 / 2.10 | 5% / 1% / 0% |
+| blitz | 2600 | book | 586 | 1.00 / 1.20 / 1.10 | 8% / 0% / 2% |
+| blitz | 2600 | recapture | 312 | 0.95 / 1.00 / 0.70 | 31% / 16% / 34% |
+| blitz | 2600 | ordinary | 3073 | 2.20 / 1.20 / 2.10 | 6% / 0% / 0% |
+| blitz | 2700 | book | 610 | 0.90 / 1.20 / 1.00 | 12% / 0% / 2% |
+| blitz | 2700 | recapture | 321 | 0.90 / 1.10 / 0.80 | 33% / 17% / 31% |
+| blitz | 2700 | ordinary | 3165 | 2.00 / 1.20 / 2.00 | 6% / 0% / 0% |
+| blitz | 2800 | book | 616 | 1.00 / 1.20 / 1.00 | 6% / 0% / 2% |
+| blitz | 2800 | recapture | 307 | 0.70 / 1.00 / 0.70 | 42% / 12% / 36% |
+| blitz | 2800 | ordinary | 3346 | 1.80 / 1.10 / 1.80 | 6% / 0% / 1% |
+| blitz | 2900 | book | 602 | 0.80 / 1.20 / 1.00 | 12% / 0% / 3% |
+| blitz | 2900 | recapture | 287 | 0.60 / 0.90 / 0.60 | 43% / 14% / 41% |
+| blitz | 2900 | ordinary | 3534 | 1.60 / 1.10 / 1.60 | 9% / 0% / 0% |
+| blitz | 3000 | book | 28 | 0.90 / 1.20 / 0.95 | 7% / 0% / 4% |
+| blitz | 3000 | recapture | 386 | 0.20 / 1.00 / 0.50 | 51% / 16% / 42% |
+| blitz | 3000 | ordinary | 4470 | 1.40 / 1.20 / 1.50 | 6% / 0% / 0% |
+
+What it confirms, and where it falls short:
+
+- **Blitz ordinary moves.** These are the largest block of moves, and they now match (2.0–2.5 s
+  against the humans' 2.0–2.6 s; main played 1.1–1.3 s).
+- **Blitz book moves** moved from 1.2 s to 1.0–1.1 s, against the humans' 0.8–1.1 s.
+- **Obvious recaptures.** In blitz these are within 0.1–0.2 s of the humans' median at 2200–2400
+  and 2800–2900. At 2500–2700 the bot is 0.2 s faster; at 3000+ it is 0.5 s against 0.2 s.
+  Premove shares went from 12–17 % to 25–42 %, against 21–51 %.
+- **Bullet recaptures** now take 0.4–0.6 s (main 0.8 s) against 0.1–0.6 s, with premove shares
+  of 29–45 % (main 8–14 %) against 40–58 %. That is still short above 2400: the fitted rate is at
+  its ceiling, and the prediction has to name the reply.
+- **Bullet book moves** stay at 0.8–0.9 s against the humans' 0.3–0.6 s. The humans premove 23–36 %
+  of them, which the self-invalidating queue cannot do (see Limitations). This is the largest
+  remaining gap, and it is not a fitting problem.
+- **The headline.** The mean |ln median ratio| falls 0.39 → 0.17, a bit better than on the
+  calibration holdout (0.19): the table carries over to new players.
+
 ## Safety checks
 
 ### Clock (closed loop: the bot on its own clock, holdout)
