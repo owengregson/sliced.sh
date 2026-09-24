@@ -43,7 +43,9 @@ describe("position rules", () => {
 	it("the §13.4 first-move scope also demands an explicitly exact reading", () => {
 		expect(isGameFirstMove(snapshot())).toBe(true);
 		expect(isGameFirstMove(snapshot({ approximate: true }))).toBe(false);
-		expect(isGameFirstMove(snapshot({ approximate: undefined }))).toBe(false);
+		const unstated = snapshot();
+		delete unstated.approximate;
+		expect(isGameFirstMove(unstated)).toBe(false);
 		expect(isGameFirstMove(snapshot({ fen: MIDGAME_CLAIMING_MOVE_ONE }))).toBe(false);
 	});
 
