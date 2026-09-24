@@ -13,14 +13,11 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { flagOr } from "../lib/cli";
 import { headId, jsonlLines } from "../lib/jsonl";
+import { CELLS_DIR, cellFile } from "./cells";
 import { DATA_DIR } from "./common";
 import type { CalibrationRow } from "./frames";
 
-export const CELLS_DIR = path.join(DATA_DIR, "cells");
-
-export function cellFile(dir: string, tc: string, bucket: number): string {
-	return path.join(dir, `${tc}-${bucket}.jsonl`);
-}
+export { CELLS_DIR, cellFile };
 
 async function main(): Promise<void> {
 	const argv = process.argv.slice(2);

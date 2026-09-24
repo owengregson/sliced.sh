@@ -6,8 +6,8 @@
 import { readdirSync } from "node:fs";
 import path from "node:path";
 import { jsonlLines } from "../../lib/jsonl";
+import { CELLS_DIR } from "../cells";
 import { moveClass } from "../rating-model";
-import { CELLS_DIR } from "../shard";
 import { type CellItem, judgeFor, positionFacts } from "../sim";
 import { type HumanMove, MOVES_FILE } from "./moves";
 
