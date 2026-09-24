@@ -166,7 +166,7 @@ export function legalDestinations(fen: string, from: Square): Square[] {
  * `myColor` belongs in the key, not just in the position: the colour of a live game arrives
  * *after* its first reading, the position has not moved by then, and the real content script
  * posts `gameStarted` before that first `position` — so `startGame()` has already reset
- * `lastPositionKey` and the republished ply is the first this key has seen. Without the colour
+ * the feed key (`PositionFeed.reset`) and the republished ply is the first this key has seen. Without the colour
  * the republish is indistinguishable from the reconnect replay and is dropped, and nothing else
  * can release the hold: as white the position cannot change until the owner moves by hand
  * (owner's live test, 2026-09-09).
