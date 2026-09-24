@@ -55,6 +55,29 @@ bun tools/calibration/fit.ts --smooth --write --out data/calibration/fit
 
 Python: `tools/data/.venv` (Python 3.12) with `onnxruntime numpy onnx` for step 4.
 
+## Layout
+
+Each script is a thin CLI (or, for `sim.ts` and `rating-model.ts`, a re-export entry) over a
+folder of parts with the same name; import the entry from outside its folder. `fit.ts`,
+`verify.ts` and `frames.ts` are also their own worker processes' entries.
+
+| entry | parts |
+|---|---|
+| `crawl-chesscom.ts` | `args`, `http` (the cached, budgeted client: the only network access), `archive` (`acceptGame`), `crawl` (state and visiting policy), `sources` (seed lists, one player's visit), `time-class-rule` |
+| `build-corpus.ts` | `pgn` (headers, SAN, clocks, replay), `rows` (one sampled side's rows, the split, the window), `summary` |
+| `maia-batch.ts` | `types`, `model` (the joined 79M), `worker` (one `maia_worker.py`), `codec` (the batch / result files), `pool`, `store` (the stored form) |
+| `frames.ts` | `schema`, `recipe` (a row's three searches), `select`, `store` (ids, policies, part merge), `worker`, `coordinator` |
+| `sim.ts` | `policy-grid`, `judge`, `games`, `replay` |
+| `rating-model.ts` | `model` (classes, covariates, likelihood), `train`, `estimate` |
+| `rating-eval.ts` | `moves` (the moves file, the model set), `extract`, `map-rating`, `evaluate` |
+| `fit.ts` | `args`, `surface` (one cell, the worker), `orchestrate`, `smooth` (`JOINT`, the Viterbi pass), `table` (the outputs, `--write`) |
+| `verify.ts` | `args`, `cell` (one cell, the worker), `orchestrate`, `report` |
+
+Shared at this level: `common.ts` (corpus shapes, buckets, data paths), `cells.ts` (the per-cell
+files `shard.ts` writes), `stats.ts` (the cluster-robust profile). From `../lib/`: `cli.ts`
+(`flagOr` / `flagValue` / `hasFlag`), `jsonl.ts`, `random.ts` (mulberry32, FNV-1a), `maia.ts`, the
+referee under `engine/`.
+
 ## What is measured
 
 Per move, against the referee's best line of the same frame (`sim.ts judgeFor`): expected-points

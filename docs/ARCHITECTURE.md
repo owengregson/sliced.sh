@@ -238,9 +238,10 @@ named steps (`build/steps.ts`), `verify-dist` a registry of independent checks
 / notice stages with pure notice-section renderers. The Python book builders share
 `pgn_games.py` and `polyglot_book.py`. `tools/lib/` holds the research tooling's shared pieces —
 the Stockfish referee and UCI plumbing (`engine/`), the Maia runner, PGN export/split/think-time
-readers (`pgn/`), CLI parsing and statistics — and each tool under `tools/*/` is a thin CLI over
-its own folder of parts; `tools/data/datalib/` is the Python equivalent for the numbered data
-scripts.
+readers (`pgn/`), CLI parsing, JSONL reading, the seeded generators and statistics — and each
+tool under `tools/*/` is a thin CLI over its own folder of parts (`tools/calibration/README.md`
+maps the calibration harness's entries to theirs); `tools/data/datalib/` is the Python
+equivalent for the numbered data scripts.
 
 ---
 
