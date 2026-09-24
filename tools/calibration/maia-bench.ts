@@ -9,14 +9,15 @@
 
 import "../lib/defines";
 import path from "node:path";
+import { flagValue } from "../lib/cli";
+import { ROOT } from "../lib/paths";
+import { mulberry32 } from "../lib/random";
 import {
 	createMaiaGridPool,
 	type MaiaGridPolicy,
 	type MaiaGridRequest,
 	maiaGrid,
 } from "./maia-batch";
-
-const ROOT = path.resolve(import.meta.dir, "../..");
 
 interface FixturePosition {
 	historyFens: string[];
@@ -31,18 +32,13 @@ async function fixture(): Promise<FixturePosition[]> {
 	return f.positions;
 }
 
-function argValue(args: string[], name: string): string | undefined {
-	const i = args.indexOf(name);
-	return i >= 0 ? args[i + 1] : undefined;
-}
-
 async function throughput(args: string[]): Promise<void> {
 	const positions = await fixture();
 	const configs = (
-		argValue(args, "--configs") ??
+		flagValue(args, "configs") ??
 		"3x2x32+0,0x1x32+1,1x2x32+1,2x2x32+1,3x2x32+1,4x2x32+1,2x3x32+1,6x1x32+1,3x2x16+1,3x2x64+1"
 	).split(",");
-	const target = Number(argValue(args, "--queries") ?? 3000);
+	const target = Number(flagValue(args, "queries") ?? 3000);
 	const elosPer = 12;
 	const perRound = positions.length * elosPer;
 	const rounds = Math.max(1, Math.round(target / perRound));
@@ -79,18 +75,6 @@ async function throughput(args: string[]): Promise<void> {
 	}
 }
 
-/** Mulberry32. */
-function rng(seed: number): () => number {
-	let a = seed >>> 0;
-	return () => {
-		a = (a + 0x6d2b79f5) >>> 0;
-		let t = a;
-		t = Math.imul(t ^ (t >>> 15), t | 1);
-		t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-		return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-	};
-}
-
 /** Log-linear interpolation of two policies over the same legal set at fraction `f`, renormalised. */
 function interpolate(a: MaiaGridPolicy, b: MaiaGridPolicy, f: number): Map<string, number> {
 	const pb = new Map(b.moves);
@@ -114,8 +98,8 @@ function tv(exact: MaiaGridPolicy, approx: Map<string, number>): number {
 
 async function smoothness(args: string[]): Promise<void> {
 	const all = await fixture();
-	const count = Number(argValue(args, "--positions") ?? 40);
-	const random = rng(Number(argValue(args, "--seed") ?? 7));
+	const count = Number(flagValue(args, "positions") ?? 40);
+	const random = mulberry32(Number(flagValue(args, "seed") ?? 7));
 	const order = all.map((_, i) => i);
 	for (let i = order.length - 1; i > 0; i--) {
 		const j = Math.floor(random() * (i + 1));

@@ -14,10 +14,11 @@
 
 import "../lib/defines";
 import path from "node:path";
+import { flagValue } from "../lib/cli";
 import { createMaiaRunner } from "../lib/maia";
+import { ROOT } from "../lib/paths";
 import { type MaiaGridOptions, type MaiaGridRequest, maiaGrid } from "./maia-batch";
 
-const ROOT = path.resolve(import.meta.dir, "../..");
 const EXTRA_ELOS = [600, 1500, 2500, 3000, 3400];
 const TV_LIMIT = 0.01;
 
@@ -35,11 +36,6 @@ export interface ParityReport {
 	maxAbsDwdl: number;
 	argmaxAgree: number;
 	pass: boolean;
-}
-
-function argValue(args: string[], name: string): string | undefined {
-	const i = args.indexOf(name);
-	return i >= 0 ? args[i + 1] : undefined;
 }
 
 export async function runParity(options: MaiaGridOptions = {}): Promise<ParityReport> {
@@ -106,10 +102,10 @@ export async function runParity(options: MaiaGridOptions = {}): Promise<ParityRe
 if (import.meta.main) {
 	const args = process.argv.slice(2);
 	const options: MaiaGridOptions = {
-		workers: Number(argValue(args, "--workers") ?? 3),
-		threads: Number(argValue(args, "--threads") ?? 2),
-		coremlWorkers: Number(argValue(args, "--coreml") ?? 1),
-		batch: Number(argValue(args, "--batch") ?? 32),
+		workers: Number(flagValue(args, "workers") ?? 3),
+		threads: Number(flagValue(args, "threads") ?? 2),
+		coremlWorkers: Number(flagValue(args, "coreml") ?? 1),
+		batch: Number(flagValue(args, "batch") ?? 32),
 	};
 	const r = await runParity(options);
 	console.log(
