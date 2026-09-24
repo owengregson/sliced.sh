@@ -15,33 +15,23 @@
  *     a disposed host all answer `probs: null` + `error`, and the SW's head falls back to v1.
  */
 
-import { CHESS_START_FEN } from "@core/constants/chess";
 import { LIMITS } from "@core/constants/limits";
 import type { EnginePortCommand, EnginePortMessage } from "@core/constants/messages";
 import { chessMimicBandFile } from "@core/constants/models";
 import { log } from "@core/logger";
-import {
-	type BandScalers,
-	bandCentre,
-	CHESSMIMIC_SCALERS,
-	standardiseInputs,
-} from "@core/timing/chessmimic-scalers";
-import {
-	INPUT_VOCAB_SIZE,
-	MOVE_VOCABULARY,
-	PAD_TOKEN,
-	tokenizeFen,
-} from "@core/timing/chessmimic-tokeniser";
+import { type BandScalers, bandCentre, CHESSMIMIC_SCALERS } from "@core/timing/chessmimic-scalers";
 import { TIMING_CONSTANTS } from "@core/timing/constants";
 import { FailureBackoff } from "./inference/failure-backoff";
 import { createSessionWithFallback, lazyRuntime } from "./inference/ort-session";
 import { SessionPool } from "./inference/session-pool";
-import type { OrtRuntime, OrtSession, OrtTensor } from "./ort-loader";
+import type { OrtRuntime, OrtSession } from "./ort-loader";
 import { errorMessage } from "./shared/errors";
+import { feedsFor, inputsProblem, warmInputs } from "./timing-inference/features";
+
+export { inputsProblem } from "./timing-inference/features";
 
 export type TimingCommand = Extract<EnginePortCommand, { kind: "timing" }>;
 export type TimingResultMessage = Extract<EnginePortMessage, { kind: "timing-result" }>;
-type TimingInputs = TimingCommand["inputs"];
 
 export const TIMING_NOT_AVAILABLE = "not-available";
 export const TIMING_BAD_INPUTS = "bad inputs";
@@ -49,12 +39,6 @@ export const TIMING_NO_BAND = "no band available";
 export const TIMING_DISPOSED = "disposed";
 
 const CM = TIMING_CONSTANTS.chessmimic;
-const UNTIMED = TIMING_CONSTANTS.untimedVirtual;
-const INPUT_NAMES = {
-	ids: "input_ids",
-	rating: "scaled_rating",
-	clocks: "clock_features",
-} as const;
 const OUTPUT_NAME = "probs";
 
 export interface BandSource {
@@ -83,42 +67,6 @@ export interface TimingInference {
 	dispose(): void;
 }
 
-function validTokens(tokens: unknown, length: number, vocab: number): tokens is number[] {
-	return (
-		Array.isArray(tokens) &&
-		tokens.length === length &&
-		tokens.every((t) => Number.isInteger(t) && t >= 0 && t < vocab)
-	);
-}
-
-/** Why `inputs` cannot be fed to the model, or `undefined` when it can. */
-export function inputsProblem(inputs: TimingInputs): string | undefined {
-	if (!inputs || typeof inputs !== "object") return "missing inputs";
-	if (typeof inputs.band !== "string") return "band";
-	if (!validTokens(inputs.moveTokens, CM.recentMoves, MOVE_VOCABULARY.length)) return "moveTokens";
-	if (!validTokens(inputs.fenTokens, CM.fenTokens, INPUT_VOCAB_SIZE)) return "fenTokens";
-	for (const key of ["rating", "playerClockS", "opponentClockS", "incrementS"] as const) {
-		const v = inputs[key];
-		if (typeof v !== "number" || !Number.isFinite(v)) return key;
-	}
-	if (inputs.playerClockS < 0 || inputs.opponentClockS < 0 || inputs.incrementS < 0)
-		return "negative clock";
-	return undefined;
-}
-
-/** The warm-up query: the start position, no history, the band's centre, untimed clocks. */
-function warmInputs(band: string): TimingInputs {
-	return {
-		band,
-		moveTokens: new Array<number>(CM.recentMoves).fill(PAD_TOKEN),
-		fenTokens: tokenizeFen(CHESS_START_FEN),
-		rating: bandCentre(band),
-		playerClockS: UNTIMED.clockS,
-		opponentClockS: UNTIMED.clockS,
-		incrementS: UNTIMED.incS,
-	};
-}
-
 export function createTimingInference(deps: TimingInferenceDeps): TimingInference {
 	const scalers: Readonly<Record<string, BandScalers>> = deps.scalers ?? CHESSMIMIC_SCALERS;
 	const bands = Object.keys(scalers);
@@ -134,23 +82,13 @@ export function createTimingInference(deps: TimingInferenceDeps): TimingInferenc
 	const failures = new FailureBackoff<string>(now, deps);
 	let disposed = false;
 
-	function feedsFor(rt: OrtRuntime, band: string, inputs: TimingInputs): Record<string, OrtTensor> {
-		const std = standardiseInputs({ ...inputs, band }, scalers[band]);
-		const ids = Int32Array.from([...inputs.moveTokens, ...inputs.fenTokens]);
-		return {
-			[INPUT_NAMES.ids]: rt.tensor("int32", ids, [1, ids.length]),
-			[INPUT_NAMES.rating]: rt.tensor("float32", Float32Array.of(std.scaledRating), [1]),
-			[INPUT_NAMES.clocks]: rt.tensor("float32", Float32Array.from(std.clockFeatures), [1, 3]),
-		};
-	}
-
 	async function loadSession(band: string): Promise<OrtSession> {
 		const rt = await runtime();
 		const bytes = await deps.store.get(chessMimicBandFile(band));
 		const t0 = now();
 		const session = await createSessionWithFallback(rt, bytes, "timing-inference");
 		const t1 = now();
-		await session.run(feedsFor(rt, band, warmInputs(band)));
+		await session.run(feedsFor(rt, scalers[band], band, warmInputs(band)));
 		log.info("timing-inference: band session ready", {
 			band,
 			threads: rt.threads,
@@ -237,7 +175,7 @@ export function createTimingInference(deps: TimingInferenceDeps): TimingInferenc
 				const { band, session } = await resolve(cmd.inputs.band, cmd.inputs.rating);
 				const rt = await runtime();
 				const t0 = now();
-				const out = await session.run(feedsFor(rt, band, cmd.inputs));
+				const out = await session.run(feedsFor(rt, scalers[band], band, cmd.inputs));
 				const ms = now() - t0;
 				const probs = Array.from(out[OUTPUT_NAME]?.data ?? []);
 				if (probs.length !== CM.nBuckets)

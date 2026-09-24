@@ -24,16 +24,17 @@ import { LIMITS } from "@core/constants/limits";
 import { MAIA_INPUT, type MaiaSize } from "@core/constants/maia";
 import type { EnginePortCommand, EnginePortMessage } from "@core/constants/messages";
 import { log } from "@core/logger";
-import { encodeMaiaInputs, type MaiaEncoded } from "@core/policy/maia-encoder";
 import { decodeMaiaOutputs } from "@core/policy/maia-policy";
-import type { PolicyInferenceInputs } from "@core/policy/types";
 import { FailureBackoff } from "./inference/failure-backoff";
 import { cappedThreads, createSessionWithFallback, lazyRuntime } from "./inference/ort-session";
 import { RunGuard } from "./inference/run-guard";
 import { SessionPool } from "./inference/session-pool";
 import { isMaiaSize, type MaiaSource } from "./maia-store";
-import type { OrtRuntime, OrtSession, OrtTensor } from "./ort-loader";
+import type { OrtRuntime, OrtSession } from "./ort-loader";
+import { encode, feedsFor, historyForQuery, inputsProblem } from "./policy-inference/features";
 import { errorMessage } from "./shared/errors";
+
+export { historyForQuery, inputsProblem } from "./policy-inference/features";
 
 export type PolicyCommand = Extract<EnginePortCommand, { kind: "policy" }>;
 export type PolicyResultMessage = Extract<EnginePortMessage, { kind: "policy-result" }>;
@@ -44,7 +45,6 @@ export const POLICY_BAD_INPUTS = "bad inputs";
 export const POLICY_NO_SESSION = "no session available";
 export const POLICY_DISPOSED = "disposed";
 
-const TOKENS_LENGTH = MAIA_INPUT.squares * MAIA_INPUT.tokenDim;
 const WDL_LENGTH = 3;
 
 export interface PolicyInferenceDeps {
@@ -74,40 +74,6 @@ export function policyThreads(hardwareConcurrency: number | undefined): number {
 	return cappedThreads(hardwareConcurrency, LIMITS.policyInferenceThreadsMax);
 }
 
-/** Why `inputs` cannot be fed to the model, or `undefined` when they can. */
-export function inputsProblem(inputs: PolicyInferenceInputs): string | undefined {
-	if (!inputs || typeof inputs !== "object") return "missing inputs";
-	if (!isMaiaSize(inputs.size)) return "size";
-	if (typeof inputs.fen !== "string" || inputs.fen.length === 0) return "fen";
-	if (!Array.isArray(inputs.historyFens) || !inputs.historyFens.every((f) => typeof f === "string"))
-		return "historyFens";
-	for (const key of ["selfElo", "oppoElo"] as const) {
-		const v = inputs[key];
-		if (typeof v !== "number" || !Number.isFinite(v)) return key;
-	}
-	return undefined;
-}
-
-/**
- * The history the encoder sees: the last `MAIA_INPUT.history` FENs ending in `fen` — appended
- * when the caller's list does not already end there (an empty list is just `[fen]`).
- */
-export function historyForQuery(
-	inputs: Pick<PolicyInferenceInputs, "fen" | "historyFens">
-): string[] {
-	const fens = [...inputs.historyFens];
-	if (fens[fens.length - 1] !== inputs.fen) fens.push(inputs.fen);
-	return fens.slice(-MAIA_INPUT.history);
-}
-
-/** The encoder's features for `historyFens`, checked against the model's input size. */
-function encode(historyFens: readonly string[]): MaiaEncoded {
-	const encoded = encodeMaiaInputs(historyFens);
-	if (encoded.tokens.length !== TOKENS_LENGTH)
-		throw new Error(`encoder produced ${encoded.tokens.length} features, expected ${TOKENS_LENGTH}`);
-	return encoded;
-}
-
 export function createPolicyInference(deps: PolicyInferenceDeps): PolicyInference {
 	const now = deps.now ?? (() => performance.now());
 	const runtime = lazyRuntime(deps.runtime);
@@ -122,23 +88,6 @@ export function createPolicyInference(deps: PolicyInferenceDeps): PolicyInferenc
 	/** Sizes that failed to load wait out a doubling cooldown before the next attempt. */
 	const failures = new FailureBackoff<MaiaSize>(now, deps);
 	let disposed = false;
-
-	function feedsFor(
-		rt: OrtRuntime,
-		encoded: MaiaEncoded,
-		selfElo: number,
-		oppoElo: number
-	): Record<string, OrtTensor> {
-		return {
-			[MAIA_INPUT.inputs.tokens]: rt.tensor("float32", encoded.tokens, [
-				1,
-				MAIA_INPUT.squares,
-				MAIA_INPUT.tokenDim,
-			]),
-			[MAIA_INPUT.inputs.selfElo]: rt.tensor("float32", Float32Array.of(selfElo), [1]),
-			[MAIA_INPUT.inputs.oppoElo]: rt.tensor("float32", Float32Array.of(oppoElo), [1]),
-		};
-	}
 
 	async function loadSession(size: MaiaSize): Promise<{ session: OrtSession; loadMs: number }> {
 		const rt = await runtime();
