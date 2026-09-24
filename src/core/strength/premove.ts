@@ -98,8 +98,9 @@ export async function premoveCandidate(
 	const ordinaryAllowed = isPremoveSpeed(ctx.timeControl) || race !== null;
 	if (!ordinaryAllowed && !(ctx.timeControl && ctx.timeControl.baseMs > 0)) return null;
 	if (!ordinaryAllowed && !hasTradeOffer(afterMove)) return null;
-	const ordinaryP = premoveProbability(ctx.targetElo, ctx.piP);
-	const p = Math.max(ordinaryP, tradePremoveProbability(ctx.targetElo, ctx.piP));
+	const ordinaryP = ctx.propensity?.ordinary ?? premoveProbability(ctx.targetElo, ctx.piP);
+	const tradeP = ctx.propensity?.trade ?? tradePremoveProbability(ctx.targetElo, ctx.piP);
+	const p = Math.max(ordinaryP, tradeP);
 	if (p <= 0 || !ctx.rng.chance(p)) return null;
 	const legalReplies = legalMoves(afterMove);
 	if (ctx.ponder !== undefined && !legalReplies.includes(ctx.ponder)) return null;
@@ -118,7 +119,16 @@ export async function premoveCandidate(
 		const reply = prediction.pvUci[0];
 		if (!reply || !plausibleScore(prediction, bestPrediction)) continue;
 		const pReply = replyProbability(reply, opponentLines);
-		if (pReply < PREMOVE.replyMinProb) continue;
+		// Under the think-time calibration a capture may arm a safe trade on a weaker prediction: a
+		// queued trade is legal only if they take on that square (`isQueueableCandidate`), so it
+		// cannot fire on any other reply. Every other candidate still needs `replyMinProb`
+		// (`premoveAfterReply`).
+		const tradeMin = ctx.propensity?.tradeReplyMinProb;
+		const minProb =
+			tradeMin !== undefined && classifyMove(afterMove, reply)?.isCapture === true
+				? tradeMin
+				: PREMOVE.replyMinProb;
+		if (pReply < minProb) continue;
 		const candidate = await premoveAfterReply(ctx, deps, gates, reply, pReply, primaryReply);
 		if (candidate) return candidate;
 	}

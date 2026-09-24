@@ -27,6 +27,8 @@ export const ANTICIPATION = {
 	hoverInnerFrac: 0.8,
 	/** A hover still counts while the hand rests inside the square grown by this fraction of a side. */
 	hoverToleranceFrac: 0.15,
+	/** Replaces the turn's initial rest when the hand will pre-position: it sets off sooner. */
+	engageDelayMs: [300, 800] as MsRange,
 	/** Dwell of one hover spell: the hand stays over the piece and re-plans (lines may change). */
 	dwellMs: [1400, 3200] as MsRange,
 
@@ -36,10 +38,13 @@ export const ANTICIPATION = {
 	 * response already prepared is 180–260 ms. Log-normal, floored.
 	 */
 	reaction: { medianMs: 215, sigma: 0.25, minMs: 150 },
-	/** The hand is already on the square: a short in-square approach, pre-grab pause and grab. */
-	grasp: { medianS: 0.1, sigma: 0.3, minS: 0.06 },
+	/**
+	 * The hand is already on the square: a short in-square approach (Fitts-floored, about 70–100
+	 * ms once fitted), then the prepared pre-grab pause, the grab and its wobble (about 100 ms).
+	 */
+	grasp: { medianS: 0.17, sigma: 0.25, minS: 0.1 },
 	/** Carrying the piece: Fitts on the distance, never shorter than the hand's minimum travel. */
-	drag: { baseS: 0.13, logS: 0.06, sdS: 0.025, minS: 0.13, maxS: 0.5 },
+	drag: { baseS: 0.13, logS: 0.06, sdS: 0.025, minS: 0.14, maxS: 0.5 },
 	/**
 	 * Hard human floor of the whole anticipated reply (reaction + grasp + carry). No hand makes an
 	 * unpremoved move faster than this. Clock data put the fastest non-premove recaptures at

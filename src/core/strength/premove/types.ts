@@ -19,6 +19,11 @@ export interface PremoveContext {
 	rng: Rng;
 	/** Timing-model premove propensity π_p in [0, 1] (default 1). */
 	piP?: number | undefined;
+	/**
+	 * The think-time calibration's attempt probabilities (`premovePropensity`), already scaled by
+	 * the persona; each replaces `tradePremoveProbability` / `premoveProbability` when present.
+	 */
+	propensity?: { trade?: number; ordinary?: number; tradeReplyMinProb?: number } | undefined;
 	/** Validated game history through our move, for the projected reply search. */
 	historyAfterMove?: PositionHistory;
 	ownClockMs?: number;

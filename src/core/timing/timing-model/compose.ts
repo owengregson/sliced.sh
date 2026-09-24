@@ -5,6 +5,8 @@
  * jitter, race window — so the stream a plan consumes never depends on which policies bind.
  */
 import { isLoneKing } from "@core/chess/material";
+import { anticipatedExecution } from "@core/motor/anticipation";
+import { ANTICIPATION } from "@core/motor/constants/anticipation";
 import type { Rng } from "@core/rng";
 import { TIMING_CONSTANTS as C } from "../constants";
 import { uniform } from "../distributions";
@@ -41,6 +43,24 @@ export interface ComposedThink {
 	race: ClockRacePolicy | null;
 	loneKing: boolean;
 	opponentPressure: number;
+	/** The hand rested on the answering piece and makes a prepared reply (`anticipate`). */
+	anticipated: boolean;
+}
+
+/**
+ * The hand was resting on the piece that answers (an engaged anticipatory hover, `hoverSquare`)
+ * and this move is that piece's expected answer — the pondered reply or a recapture: a quick
+ * sampled think is then a reaction, a grasp and a carry (`anticipatedExecution`), not an
+ * orientation re-scan and an approach. A premove, a long think or a clock race is not.
+ */
+function anticipates(f: Features, ctx: TimingContext, mode: TimingMode): boolean {
+	return (
+		(mode === "normal" || mode === "instant") &&
+		ctx.hoverSquare !== undefined &&
+		ctx.hoverSquare !== null &&
+		ctx.hoverSquare === f.from &&
+		(f.ponder_hit === 1 || f.is_recapture === 1)
+	);
 }
 
 /** Bound the sampled think by the clock; appends its rationale to `why`. */
@@ -60,9 +80,25 @@ export function composeThink(input: ComposeInput, why: string[]): ComposedThink 
 	// opponent-only pressure retains the clock-conditioned sample (or gradual fallback).
 	const race = clockPolicy?.opponentOnly ? null : clockPolicy;
 	if (race) mode = "instant";
-	const motor = planMotor(f, ctx, mode, input.persona, rng);
-	const orientationMs = race || mode === "premove" ? 0 : sampleOrientationMs(f, rng);
-	const physicalS = orientationMs / 1000 + motor.totalS;
+	let motor = planMotor(f, ctx, mode, input.persona, rng);
+	let orientationMs = race || mode === "premove" ? 0 : sampleOrientationMs(f, rng);
+	let physicalS = orientationMs / 1000 + motor.totalS;
+	// Drawn after the ordinary motor and orientation, so an un-anticipated plan's stream is unchanged.
+	const prepared =
+		!race && anticipates(f, ctx, mode)
+			? anticipatedExecution(f.dist, input.persona.motor_k, rng)
+			: null;
+	const anticipated = prepared !== null && tSec <= C.anticipated.maxThinkFactor * prepared.totalS;
+	if (prepared && anticipated) {
+		mode = "instant";
+		const handS = prepared.hoverS + prepared.dragS + motor.promoS;
+		motor = { hoverS: prepared.hoverS, dragS: prepared.dragS, promoS: motor.promoS, totalS: handS };
+		orientationMs = prepared.orientationMs;
+		physicalS = orientationMs / 1000 + handS;
+		why.push(
+			`anticipated reply: hand on ${f.from}, prepared touch ${(physicalS * 1000).toFixed(0)} ms`
+		);
+	}
 	const clockEmergency = f.tc !== "untimed" && ctx.myClockMs < C.replan.emergencyClockMs;
 	// A mean-constrained learned distribution may spend several allocations on one rare
 	// decision. Capping it again at the routine allocation erased its affordable long tail.
@@ -70,15 +106,17 @@ export function composeThink(input: ComposeInput, why: string[]): ComposedThink 
 		sample.includesExecution ? budget.distributionCapSec : budget.capSec,
 		Math.max(physicalS, budget.recognitionCapSec)
 	);
-	const value =
-		mode === "premove"
+	const value = anticipated
+		? Math.max(tSec, physicalS)
+		: mode === "premove"
 			? motor.totalS + tSec
 			: sample.includesExecution
 				? tSec
 				: mode === "instant"
 					? physicalS + tSec
 					: Math.max(tSec, physicalS);
-	const bounded = boundByCap(value, capSec, floorFor(mode), clockEmergency, rng);
+	const lowS = anticipated ? ANTICIPATION.floorMs / 1000 : floorFor(mode);
+	const bounded = boundByCap(value, capSec, lowS, clockEmergency, rng);
 	let totalS = bounded.totalSec;
 	let emergency = bounded.emergency;
 	if (bounded.bound) why.push(`cap ${capSec.toFixed(2)} s binds (lo ${bounded.lo.toFixed(2)})`);
@@ -111,5 +149,6 @@ export function composeThink(input: ComposeInput, why: string[]): ComposedThink 
 		race,
 		loneKing,
 		opponentPressure,
+		anticipated,
 	};
 }

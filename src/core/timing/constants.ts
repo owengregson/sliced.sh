@@ -19,7 +19,7 @@ import {
 	OPPONENT_PRESSURE,
 	REPLAN,
 } from "./constants/clock";
-import { FAKEOUT, MOTOR, ORIENTATION, WINDOW } from "./constants/execution";
+import { ANTICIPATED, FAKEOUT, MOTOR, ORIENTATION, WINDOW } from "./constants/execution";
 import { FEATURES, UNTIMED_VIRTUAL } from "./constants/features";
 import { BOT_PACE, BOT_PACE_FLOOR, PERSONA } from "./constants/persona";
 import {
@@ -54,6 +54,7 @@ export const TIMING_CONSTANTS = {
 	longThink: LONG_THINK,
 	tilt: TILT,
 	fakeout: FAKEOUT,
+	anticipated: ANTICIPATED,
 	motor: MOTOR,
 	persona: PERSONA,
 	orientation: ORIENTATION,

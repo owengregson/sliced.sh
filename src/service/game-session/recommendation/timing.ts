@@ -67,6 +67,8 @@ export function timingContext(
 		inputMethod: input.inputMethod,
 		autoQueen: input.autoQueen,
 		nowMs: input.nowMs,
+		priorFen: input.priorFen ?? null,
+		hoverSquare: input.hoverSquare ?? null,
 	};
 }
 
