@@ -12,7 +12,7 @@
  *     of actual rating on it — directly comparable with the first estimator's per-game R².
  */
 
-import "../human-match/defines";
+import "../lib/defines";
 import { readdirSync } from "node:fs";
 import path from "node:path";
 import { MAIA_CALIBRATION_TIME_CLASSES } from "@core/constants/maia-calibration";
