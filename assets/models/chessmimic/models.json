@@ -94,7 +94,7 @@
   "2200_3500": {
    "file": "2200_3500.onnx",
    "bytes": 18200481,
-   "sha256": "5e7d1175e4b44dc180068e6b72782a425953ed76848063e037eafc7d0e4203f7",
+   "sha256": "f799744bbdabbb4f30fcb44a3b1d17d7e04b1de6a449d6fb389297967e556110",
    "checkpoint": {
     "path": "backend/models/clock_model/2200_3500_brier/model.ckpt",
     "lfsOid": "051714117cba835dd937f8f064ebff63ecf347b929d4e5547fb216b918098a04",
@@ -103,7 +103,18 @@
    "fp32Bytes": 36059775,
    "weights": "44 float16 initializers behind Cast",
    "fixturePositions": 243,
-   "maxAbsProbDiffOnnxVsTorch": 0.0010869801044464111
+   "maxAbsProbDiffOnnxVsTorch": 0.0006818473339080811,
+   "fineTuned": {
+    "script": "tools/timing-finetune/train.py",
+    "export": "tools/timing-finetune/export.py",
+    "from": "backend/models/clock_model/2200_3500_brier/model.ckpt",
+    "checkpointSha256": "f5b55c8f12e120f4a25843acae97ad8ff3b715510764b3e999f0813b60f669d2",
+    "data": "public chess.com games: fit-split movers rated 2100+, 2.0M moves",
+    "contract": "mixed",
+    "minRating": 2100,
+    "trainMoves": 2000000,
+    "bestValNll": 1.574274026031494
+   }
   }
  }
 }
