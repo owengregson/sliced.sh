@@ -185,6 +185,19 @@ rather than hand-editing knots. Selector-mechanics tests pin the identity table
 (`recommendation/tablebase.ts`) decides before the selector on the advertised rating, not the
 calibrated one; when its move is played the Maia branch never runs.
 
+**The think-time table is a fitted calibration too.** `TIMING_CALIBRATION`
+(`src/core/constants/timing-calibration.ts`, per chess.com time class × rating × situation: a log
+shift, a budget power, and recapture / other premove rates with their trade prediction gate) was
+fitted by `tools/timing-calibration` (`fit.ts`, verified by `verify.ts` on held-out players) against
+the shipped ChessMimic band, through the production path: normalisation →
+`timing-model/calibrate.ts` → the clock policies and the hand, the premove path, the fast-reply
+search cap and anticipatory hover. Anything that changes that path (the head or its band, the
+budget, compose's policies, the premove gates, the search cap, the hand's latency) invalidates the
+fit: re-run the harness and update `docs/qa/timing-calibration-2026-09-24.md` rather than
+hand-editing the table. Mechanics tests pin the identity table (`test/fakes/timing-calibration.ts`);
+the calibration's own tests are `test/core/timing/calibration.test.ts` and
+`calibration-replay.test.ts`.
+
 **Offscreen documents have no `chrome.storage`.** Every setting the engine host needs arrives
 over the port as a `configure` message; anything it must persist goes to OPFS, with IndexedDB
 (`NNUE_DB`, `MODEL_DB`) as the fallback. Do not reach for `chrome.storage` in `src/offscreen/**`.
