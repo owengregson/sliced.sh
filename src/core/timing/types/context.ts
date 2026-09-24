@@ -1,7 +1,7 @@
 /** What the model is asked to plan from: the position, clocks and game, and the settings. */
 
 import type { EvalLine } from "@typedefs/engine";
-import type { Site } from "@typedefs/game";
+import type { Site, Square } from "@typedefs/game";
 import type { PersonaId, Settings } from "@typedefs/settings";
 
 /** Lichess convention on `base + 40·inc`; `"untimed"` when there is no clock (§8.4b item 1). */
@@ -38,6 +38,16 @@ export interface TimingContext {
 	 * book half, which only the session knows.
 	 */
 	inBook?: boolean;
+	/**
+	 * The position before the opponent's last move (the session's `history.priorFen`): what the
+	 * calibration's "obvious recapture" compares the material balance against. Absent → never one.
+	 */
+	priorFen?: string | null;
+	/**
+	 * The square the idle hand rested on (an engaged anticipatory hover) when the opponent's move
+	 * arrived, from `MoveExecutor.hoverSquare()`; null or absent when it was not resting on one.
+	 */
+	hoverSquare?: Square | null;
 	inputMethod: "drag" | "click";
 	autoQueen: boolean;
 	/** Original opponent-position arrival, even when planning runs after asynchronous preparation. */

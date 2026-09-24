@@ -9,6 +9,8 @@ export const CHESSMIMIC = {
 	arPhi: 0.35,
 	temperature: 1,
 	inferenceBudgetMs: 100,
+	/** Timed-move rows inferred ahead of the choice (the pondered answer, Maia's top moves). */
+	candidateRows: 3,
 	bands: CHESSMIMIC_BANDS,
 	recentMoves: 12,
 	fenTokens: 78,

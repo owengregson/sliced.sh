@@ -9,6 +9,7 @@ import type { Color } from "@typedefs/game";
 
 import { remainingClockMs } from "../clock";
 import { type SearchBudget, tcSeconds } from "./budget";
+import { fastReplyBudget } from "./fast-reply";
 import { type MaiaSearchInput, maiaSearchMode } from "./maia-search";
 import {
 	type MaiaEloContext,
@@ -37,7 +38,8 @@ export interface OwnMoveContext {
 export function ownMoveContext(
 	input: RecommendationInput,
 	myColor: Color,
-	hasPolicy: boolean
+	hasPolicy: boolean,
+	fastReply = false
 ): OwnMoveContext {
 	const { snapshot, settings } = input;
 	const [baseSec, incSec] = tcSeconds(snapshot.timeControl);
@@ -61,7 +63,8 @@ export function ownMoveContext(
 	};
 	const maia = maiaSearchMode(mode);
 	const shape: OwnMoveBudgetInput = { ...position, maia };
-	const budget = ownMoveBudget(shape, settings);
+	const shaped = ownMoveBudget(shape, settings);
+	const budget = fastReply ? fastReplyBudget(shaped, input) : shaped;
 	// Opponent-only rush keeps its short move search, but can afford the usual
 	// bounded timing inference. Otherwise a 30–70 ms search needlessly loses the
 	// learned clock distribution even while our own clock is comfortable.

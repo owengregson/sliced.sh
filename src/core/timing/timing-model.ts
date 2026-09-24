@@ -12,6 +12,10 @@
  */
 
 import { isLoneKing } from "@core/chess/material";
+import {
+	TIMING_CALIBRATION,
+	type TimingCalibrationTable,
+} from "@core/constants/timing-calibration";
 import type { Rng } from "@core/rng";
 import { clamp } from "@core/util/clamp";
 import { budgetController, scheduleAlloc } from "./budget";
@@ -22,6 +26,7 @@ import { clockRacePolicy } from "./opponent-pressure";
 import { samplePersona } from "./persona-latents";
 import { buildTimingLogEntry } from "./timing-log/entry";
 import { assemblePlan } from "./timing-model/assemble";
+import { calibrateSample } from "./timing-model/calibrate";
 import { composeThink } from "./timing-model/compose";
 import { guardPremove, normaliseSample } from "./timing-model/normalise";
 import { type ReplanHost, replan } from "./timing-model/replan";
@@ -50,6 +55,8 @@ export { freshState, isBotPace, knobsFromSettings };
 export interface TimingModelOptions {
 	/** Receives every `TimingLogEntry` (creation and `observe()` updates re-send the same object). */
 	onEntry?: (entry: TimingLogEntry) => void;
+	/** The think-time calibration; default the shipped `TIMING_CALIBRATION` (the harness overrides it). */
+	calibration?: TimingCalibrationTable;
 }
 
 export interface TimingObservation {
@@ -64,6 +71,7 @@ export class TimingModel {
 	private settings: TimingSettings;
 	private readonly rng: Rng;
 	private readonly onEntry: ((entry: TimingLogEntry) => void) | undefined;
+	private readonly calibration: TimingCalibrationTable;
 	private meta: GameMeta | null = null;
 	private _persona: Persona;
 	private _state: GameTimingState;
@@ -81,6 +89,7 @@ export class TimingModel {
 		this.settings = settings;
 		this.rng = rng;
 		this.onEntry = options.onEntry;
+		this.calibration = options.calibration ?? TIMING_CALIBRATION;
 		this._state = freshState("", knobsFromSettings(settings));
 		this._persona = samplePersona("", "balanced", C.features.eloCentre);
 	}
@@ -129,6 +138,20 @@ export class TimingModel {
 
 	/** Kick off head-side inference for the position (no-op for the v1 head). */
 	prepare(ctx: TimingContext, options?: TimingPreparation): Promise<void> {
+		if (this.skipsInference(ctx)) return Promise.resolve();
+		return this.head.prepare?.(ctx, options) ?? Promise.resolve();
+	}
+
+	/**
+	 * Infer the chosen move's row when `prepare` did not already (call after the move is chosen,
+	 * before `planMove`; no-op for the v1 head and under the same clock-race rule as `prepare`).
+	 */
+	prepareMove(ctx: TimingContext, options?: TimingPreparation): Promise<void> {
+		if (this.skipsInference(ctx)) return Promise.resolve();
+		return this.head.prepareMove?.(ctx, options) ?? Promise.resolve();
+	}
+
+	private skipsInference(ctx: TimingContext): boolean {
 		const race = clockRacePolicy({
 			ownClockMs: ctx.myClockMs,
 			opponentClockMs: ctx.oppClockMs,
@@ -138,8 +161,7 @@ export class TimingModel {
 		});
 		// An opponent's short clock is a reason to play briskly, not to discard
 		// position-conditioned thinking while we can still afford it.
-		if (race && !race.opponentOnly) return Promise.resolve();
-		return this.head.prepare?.(ctx, options) ?? Promise.resolve();
+		return race !== null && !race.opponentOnly;
 	}
 
 	private allocFor(f: Features): number {
@@ -149,6 +171,7 @@ export class TimingModel {
 	planMove(ctx: TimingContext): TimingPlan {
 		const st = this._state;
 		st.fen = ctx.fen;
+		st.move = ctx.chosenMove;
 		st.ply = ctx.ply;
 		const f = computeFeatures(ctx, st);
 		if (st.lastEvalOurPov !== null && f.eval_cp <= st.lastEvalOurPov - C.tilt.dropCp && st.tilt === 0)
@@ -179,9 +202,30 @@ export class TimingModel {
 			},
 			why
 		);
-		const { tSec, mode } = guardPremove(normalised, f, this.forbidPremove, why);
+		const calibrated = calibrateSample(
+			normalised,
+			{
+				ctx,
+				f,
+				includesExecution: sample.includesExecution === true,
+				table: this.calibration,
+				moveTimeScale: this.settings.moveTimeScale,
+			},
+			why
+		);
+		const { tSec, mode } = guardPremove(calibrated.sample, f, this.forbidPremove, why);
 		const composed = composeThink(
-			{ f, ctx, mode, tSec, sample, budget, persona: this._persona, rng: this.rng },
+			{
+				f,
+				ctx,
+				mode,
+				tSec,
+				sample,
+				budget,
+				persona: this._persona,
+				rng: this.rng,
+				budgetPower: calibrated.budgetPower,
+			},
 			why
 		);
 		const plan = assemblePlan({
@@ -196,6 +240,7 @@ export class TimingModel {
 			eps: st.eps,
 			rationale: why,
 			rng: this.rng,
+			calibration: { shift: calibrated.shift, situationIndex: calibrated.situationIndex },
 		});
 		st.plannedMs.push(plan.thinkMs);
 		st.lastPlan = plan;

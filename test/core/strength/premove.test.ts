@@ -463,3 +463,95 @@ describe("maiaPremoveGate", () => {
 		expect(elsewhere?.premove).toBe("d2d4");
 	});
 });
+
+describe("premoveCandidate under the think-time calibration's propensities", () => {
+	// The trade from "premoves a recapture on the square just captured on".
+	const fen = "4k3/8/8/8/1b6/2N5/1P6/4K3 w - - 0 1";
+	const opp = [line("b4c3", 0, 1), line("b4a5", -200, 2), line("e8f8", -300, 3)];
+
+	/** The first `chance` draw is the attempt gate: record its probability, then pass. */
+	function recordingRng(seen: number[]): Rng {
+		return {
+			...createRng(1),
+			chance: (p: number) => {
+				seen.push(p);
+				return true;
+			},
+		};
+	}
+
+	it("draws the attempt with the calibrated trade probability when one is given", async () => {
+		const seen: number[] = [];
+		const a = analysis(opp, [line("b2c3", 200, 1)]);
+		const res = await premoveCandidate(
+			ctx({
+				fen,
+				move: "e1f1",
+				ponder: undefined,
+				rng: recordingRng(seen),
+				propensity: { trade: 0.3, ordinary: 0.2 },
+			}),
+			a.deps
+		);
+		expect(res?.reason).toBe("recapture");
+		expect(seen[0]).toBeCloseTo(0.3, 9);
+	});
+
+	it("keeps the strength propensities when the table gives none", async () => {
+		const seen: number[] = [];
+		const a = analysis(opp, [line("b2c3", 200, 1)]);
+		await premoveCandidate(
+			ctx({ fen, move: "e1f1", ponder: undefined, rng: recordingRng(seen), propensity: {} }),
+			a.deps
+		);
+		expect(seen[0]).toBeCloseTo(Math.max(premoveProbability(2000), tradePremoveProbability(2000)), 9);
+	});
+
+	it("never attempts when the calibrated probabilities are zero", async () => {
+		const a = analysis(opp, [line("b2c3", 200, 1)]);
+		const res = await premoveCandidate(
+			ctx({ fen, move: "e1f1", ponder: undefined, propensity: { trade: 0, ordinary: 0 } }),
+			a.deps
+		);
+		expect(res).toBeNull();
+		expect(a.calls).toHaveLength(0);
+	});
+});
+
+describe("the calibrated trade gate (`tradeReplyMinProb`)", () => {
+	const fen = "4k3/8/8/8/1b6/2N5/1P6/4K3 w - - 0 1";
+	// Bxc3 is a live but unconfident prediction (≈ 0.3): the bishop may just as well retreat.
+	const opp = [line("b4a5", 0, 1), line("b4c3", -5, 2), line("e8f8", -10, 3)];
+
+	it("arms a safe trade on a capture the prediction only finds plausible", async () => {
+		expect(replyProbability("b4c3", opp)).toBeLessThan(PREMOVE.replyMinProb);
+		expect(replyProbability("b4c3", opp)).toBeGreaterThan(PREMOVE.tradeReplyMinProb);
+		const a = analysis(opp, [line("b2c3", 200, 1)]);
+		const res = await premoveCandidate(
+			ctx({
+				fen,
+				move: "e1f1",
+				ponder: undefined,
+				propensity: { tradeReplyMinProb: PREMOVE.tradeReplyMinProb },
+			}),
+			a.deps
+		);
+		expect(res?.reply).toBe("b4c3");
+		expect(res?.premove).toBe("b2c3");
+		expect(res?.reason).toBe("recapture");
+	});
+
+	it("keeps the confident-prediction gate without it, and for everything but a safe trade", async () => {
+		const a = analysis(opp, [line("b2c3", 200, 1)]);
+		expect(await premoveCandidate(ctx({ fen, move: "e1f1", ponder: undefined }), a.deps)).toBeNull();
+		// A quiet reply never uses the trade gate.
+		const quiet = [line("b4a5", 0, 1), line("e8f8", -5, 2), line("b4c3", -300, 3)];
+		const b = analysis(quiet, [line("c3d5", 200, 1)]);
+		expect(
+			await premoveCandidate(
+				ctx({ fen, move: "e1f1", ponder: undefined, propensity: { tradeReplyMinProb: 0.2 } }),
+				b.deps
+			)
+		).toBeNull();
+	});
+});

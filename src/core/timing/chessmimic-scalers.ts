@@ -10,11 +10,10 @@
  * never extrapolates because its 14 bands are contiguous; with five shipped bands the nearest
  * band answers for its edge.
  *
- * The clamp bounds the z-score only as far as the band is narrow. `2200_3500` is 1 300 Elo wide
- * against a 126.7 Elo std (its population's mean is 2357), so a 3000 target sits *inside* the
- * band at z = +5.07 and 3500 at z = +9.02. That is upstream's own model — one wide band for
- * everything above 2200 — not a failure of the clamp, and it is why `docs/models.md` §1 records
- * the top band's mean and std rather than treating it like the others.
+ * The clamp bounds the z-score only as far as the band is narrow. `2200_3500` is 1 300 Elo wide.
+ * Upstream fitted it on a population of 2357 ± 126.7, which put a 3000 target at z = +5.07; the
+ * shipped band is fine-tuned on chess.com movers rated 2100+ and its scaler refitted to that
+ * population (2632.6 ± 280.1), so 3000 is z = +1.31 and 3500 z = +3.10 (`docs/models.md` §9).
  */
 
 import type { ChessMimicBand } from "@core/constants/models";
@@ -64,8 +63,9 @@ export function bandRange(band: string): [number, number] {
  *
  * The two agree to within a couple of Elo for the 100-wide bands (1200–1300's population mean is
  * 1251.9 against a midpoint of 1250) and disagree completely for the wide top band: `2200_3500`'s
- * midpoint is 2850, its population mean 2357.1. Nearest-*midpoint* selection therefore sent every
- * target from 2200 to 2450 — inside that band's own range — to `2000_2100` instead, where
+ * midpoint is 2850, its population mean 2632.6 (upstream's, before the fine-tune: 2357.1).
+ * Nearest-*midpoint* selection therefore sent every target from 2200 to 2450 — inside that
+ * band's own range — to `2000_2100` instead, where
  * `standardiseInputs` clamped it to 2100. The owner plays at 2400–2450, so the band added on
  * 2026-09-13 to stop a 2400 being modelled as a 1900 would have modelled it as a 2100
  * (docs/research/chessmimic-bands-and-the-clock-2026-09-13.md). The population mean is what

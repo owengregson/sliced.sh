@@ -14,13 +14,14 @@ import { log } from "@core/logger";
 import type { PolicyResult } from "@core/policy/types";
 import type { PremoveReason } from "@core/strength/premove";
 import { maiaPremoveGate, premoveCandidate } from "@core/strength/premove";
+import { calibrationTimeClass, premovePropensity } from "@core/timing/calibration";
 import { errorMessage } from "@core/util/errors";
 import type { MoveContext } from "@service/move-executor";
 import type { ChosenMove, PositionSnapshot, Recommendation } from "@typedefs/game";
 import type { SessionCore } from "./core";
 import { instantPlan, unsearchedRecommendation } from "./instant-plan";
 import type { MoveRecorder } from "./move-recorder";
-import { PREMOVE_WINDOW_MS } from "./position-rules";
+import { MS_PER_S, PREMOVE_WINDOW_MS } from "./position-rules";
 import type { Prediction } from "./prediction";
 
 export interface PremoveArm {
@@ -82,6 +83,7 @@ export class PremoveArming {
 						snapshot.ply + 1
 					)
 				: null;
+		const piP = 1 / (1 + Math.exp(-(timing.persona.pi_p + timing.state.knobs.piOffset)));
 		const heldPolicy =
 			candidatePolicy && policyQuery?.identity === candidatePolicy.identity ? candidatePolicy : null;
 		try {
@@ -102,7 +104,15 @@ export class PremoveArming {
 					...(heldPolicy ? { policy: { fen: heldPolicy.fen, result: heldPolicy.result } } : {}),
 					rng: core.rng,
 					// `Persona.pi_p` is in logit units; the policy takes a probability in [0, 1].
-					piP: 1 / (1 + Math.exp(-(timing.persona.pi_p + timing.state.knobs.piOffset))),
+					piP,
+					propensity: premovePropensity(
+						calibrationTimeClass(
+							(snapshot.timeControl?.baseMs ?? 0) / MS_PER_S,
+							(snapshot.timeControl?.incMs ?? 0) / MS_PER_S
+						),
+						targetElo,
+						piP
+					),
 				},
 				{
 					analyseAfter: async (_fen, moves, opts) => {

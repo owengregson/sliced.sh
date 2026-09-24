@@ -3,6 +3,7 @@
  * Every function returns `null`/`[]` rather than throwing on bad input.
  */
 
+import { LEGAL_MOVES_CACHE_SIZE } from "@core/constants/chess";
 import type { PromoPiece, Square } from "@typedefs/game";
 import type { Chess, Move } from "chess.js";
 import { loadPosition } from "./fen";
@@ -87,9 +88,19 @@ export function applyMoves(fen: string, moves: readonly Uci[]): string | null {
 	return chess.fen();
 }
 
-/** All legal moves in UCI form (`[]` on an invalid FEN). */
+const legalCache = new Map<string, readonly Uci[]>();
+
+/** All legal moves in UCI form (`[]` on an invalid FEN). A fresh array: callers may mutate it. */
 export function legalMoves(fen: string): Uci[] {
+	const hit = legalCache.get(fen);
+	if (hit) return [...hit];
 	const chess = loadPosition(fen);
 	if (!chess) return [];
-	return chess.moves({ verbose: true }).map(moveToUci);
+	const moves = chess.moves({ verbose: true }).map(moveToUci);
+	legalCache.set(fen, moves);
+	if (legalCache.size > LEGAL_MOVES_CACHE_SIZE) {
+		const oldest = legalCache.keys().next().value;
+		if (oldest !== undefined) legalCache.delete(oldest);
+	}
+	return [...moves];
 }

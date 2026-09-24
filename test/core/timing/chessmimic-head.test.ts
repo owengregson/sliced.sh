@@ -44,6 +44,30 @@ describe("inputs and bands", () => {
 		const negative = buildInputs(ctx({ myClockMs: -500 }));
 		expect(negative.playerClockS).toBe(0);
 	});
+	it("puts the timed move last in the window when it is known (upstream's training contract)", () => {
+		const history = [
+			"e2e4",
+			"e7e5",
+			"g1f3",
+			"b8c6",
+			"f1b5",
+			"a7a6",
+			"b5a4",
+			"g8f6",
+			"e1g1",
+			"f8e7",
+			"f1e1",
+			"b7b5",
+		];
+		const c = ctx({ moves: history });
+		expect(buildInputs(c).moveTokens).toEqual(encodeRecentMoves(history));
+		expect(buildInputs(c, "").moveTokens).toEqual(encodeRecentMoves(history));
+		const timed = buildInputs(c, "a4b3").moveTokens;
+		// The oldest move drops out; the timed move is the last token.
+		expect(timed).toEqual(encodeRecentMoves([...history.slice(1), "a4b3"]));
+		expect(timed.slice(0, 11)).toEqual(encodeRecentMoves(history).slice(1));
+		expect(buildInputs(c, "a4b3").fenTokens).toEqual(buildInputs(c).fenTokens);
+	});
 	it("uses a containing training band before filling rating gaps by nearest population mean", () => {
 		expect(CHESSMIMIC_BANDS).toEqual([
 			"0_1000",
@@ -67,7 +91,7 @@ describe("inputs and bands", () => {
 		expect(selectBand(1960)).toBe("2000_2100");
 		expect(selectBand(2100)).toBe("2000_2100");
 		// Centres are each band's own training-population mean (`bandCentre` reads `scalers.json`):
-		// 1252 / 1551 / 1849 / 2048 / 2357. The arithmetic midpoint of the wide top band's name would
+		// 1252 / 1551 / 1849 / 2048 / 2633 (the fine-tuned top band). The arithmetic midpoint of the wide top band's name would
 		// be 2850, which put every target from 2200 to 2450 in `2000_2100` to be clamped at 2100 —
 		// inside `2200_3500`'s own range, and exactly the owner's rating.
 		expect(selectBand(2300)).toBe("2200_3500");
@@ -305,5 +329,56 @@ describe("ChessMimicHead", () => {
 			3
 		);
 		expect(s.why[0]).toContain("bucket 7");
+	});
+	it("infers a row per candidate move and samples the chosen move's row, else the history row", async () => {
+		const seen: number[][] = [];
+		const byLast = new Map<number, number>([
+			[encodeRecentMoves(["e7e5"])[11] ?? -1, 3],
+			[encodeRecentMoves(["g1f3"])[11] ?? -1, 9],
+		]);
+		const h = new ChessMimicHead({
+			infer: (inputs) => {
+				seen.push(inputs.moveTokens);
+				return Promise.resolve(result(probsAt([byLast.get(inputs.moveTokens[11] ?? -1) ?? 5])));
+			},
+			fallback,
+			budgetMs: 50,
+		});
+		const c = ctx({ moves: ["e2e4", "e7e5"], baseSec: 600, myClockMs: 300_000 });
+		await h.prepare(c, { candidates: ["g1f3", "g1f3"] });
+		// The history row (last token e7e5) and one row for the deduplicated candidate.
+		expect(seen.length).toBe(2);
+		const f = computeFeatures(c);
+		const st = freshState("g");
+		st.fen = c.fen;
+		st.move = "g1f3";
+		expect(h.sample(f, persona, st, createRng(1), 3).why[0]).toContain("bucket 9");
+		st.move = "b1c3";
+		expect(h.sample(f, persona, st, createRng(1), 3).why[0]).toContain("bucket 3");
+		// prepareMove infers only the missing row, and the next sample uses it.
+		await h.prepareMove({ ...c, chosenMove: "g1f3" });
+		expect(seen.length).toBe(2);
+		await h.prepareMove({ ...c, chosenMove: "b1c3" });
+		expect(seen.length).toBe(3);
+		expect(h.sample(f, persona, st, createRng(1), 3).why[0]).toContain("bucket 5");
+		expect(h.diagnostics(c.fen)).toEqual({ head: "chessmimic", band: "1500_1600" });
+	});
+	it("prepareMove on an unprepared position prepares it with the chosen move", async () => {
+		let calls = 0;
+		const h = new ChessMimicHead({
+			infer: () => {
+				calls++;
+				return Promise.resolve(result(probsAt([4])));
+			},
+			fallback,
+			budgetMs: 50,
+		});
+		const c = ctx({ chosenMove: "g1f3" });
+		await h.prepareMove(c);
+		expect(calls).toBe(2);
+		const st = freshState("g");
+		st.fen = c.fen;
+		st.move = "g1f3";
+		expect(h.sample(computeFeatures(c), persona, st, createRng(1), 3).why[0]).toContain("bucket 4");
 	});
 });

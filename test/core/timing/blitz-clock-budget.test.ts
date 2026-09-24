@@ -3,9 +3,11 @@ import { afterAll, describe, expect, it } from "bun:test";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { applyMoves } from "@core/chess/san";
+import { BOOK, BOOKS } from "@core/constants/books";
 import { DEFAULT_SETTINGS } from "@core/constants/defaults";
 import { MODELS_DIR } from "@core/constants/models";
 import { createRng } from "@core/rng";
+import { createBookPolicy } from "@core/strength/book/book-policy";
 import { ChessMimicHead } from "@core/timing/chessmimic-head";
 import { TimingModel } from "@core/timing/timing-model";
 import type { TimingContext } from "@core/timing/types";
@@ -15,6 +17,7 @@ import { createTimingInference } from "@offscreen/timing-inference";
 import { timingSettingsFor } from "@service/game-session/presets";
 import { ownMoveBudget } from "@service/game-session/recommendation";
 import type { EvalLine } from "@typedefs/engine";
+import humanClock from "../../fixtures/human-clock-reference.json";
 import corpus from "../../fixtures/timing/pgn-replay.json";
 import { median, START_FEN } from "./helpers";
 
@@ -32,6 +35,13 @@ const inference = createTimingInference({
 	},
 });
 afterAll(() => inference.dispose());
+/** The bundled theory books (`THEORY_BOOKS`), read from the checkout. */
+const book = createBookPolicy({
+	loadBook: async (name) =>
+		new Uint8Array(await Bun.file(path.join(ROOT, BOOKS.dir, name)).arrayBuffer()),
+	repertoire: async () => null,
+});
+afterAll(() => book.dispose());
 const head = new ChessMimicHead({
 	infer: async (inputs) => {
 		const reply = await inference.handle({ kind: "timing", id: "replay", inputs });
@@ -75,6 +85,7 @@ async function replay(baseSec: number, seed: number): Promise<GameResult[]> {
 		});
 		head.reset();
 		let fen = START_FEN;
+		let priorFen: string | null = null;
 		let left = baseSec * 1000;
 		let opponent = baseSec * 1000;
 		const moves: string[] = [];
@@ -113,8 +124,16 @@ async function replay(baseSec: number, seed: number): Promise<GameResult[]> {
 					inputMethod: "drag",
 					autoQueen: true,
 					nowMs: 1_000_000 + ply * 1000,
+					// What the session supplies (2026-09-24): the position before the opponent's reply
+					// (the calibration's recapture test) and the book flag when the move is theory.
+					priorFen,
+					...((await book.bookMoves?.(fen))?.includes(record.uci) && ply <= BOOK.maxPly
+						? { inBook: true }
+						: {}),
 				};
 				await model.prepare(context);
+				// The session infers the chosen move's timed-move row before planning it.
+				await model.prepareMove(context);
 				const plan = model.planMove(context);
 				const search = ownMoveBudget(
 					{
@@ -157,6 +176,7 @@ async function replay(baseSec: number, seed: number): Promise<GameResult[]> {
 				opponent = next;
 			}
 			moves.push(record.uci);
+			priorFen = fen;
 			const next = applyMoves(fen, [record.uci]);
 			if (!next) throw new Error(`Invalid corpus move ${game.id}:${ply}`);
 			fen = next;
@@ -255,15 +275,25 @@ describe("complete PGN games with native timing and uncached execution cost", ()
 		expect(long).toBeGreaterThanOrEqual(longLow);
 		expect(long).toBeLessThanOrEqual(longHigh);
 	}, 300_000);
-	it("preserves comfortable rapid clocks instead of treating allocation as mandatory spend", async () => {
+	// Until 2026-09-24 this required ≥ 240 s at move 40, a regression guard with no human evidence
+	// behind it, which the upstream top band passed by thinking too fast in rapid. Humans rated
+	// 2300–2499 at 10+0 keep a median of ~143 s after move 40 and only ~25 % keep ≥ 240 s
+	// (`human-clock-reference.json`, generated from the chess.com crawl by
+	// tools/timing-finetune/human_clock_reference.py). The bot must neither hoard nor burn its
+	// clock: its median must sit inside the human interquartile range (docs/models.md §9;
+	// data/timing/finetune/RESULTS.md).
+	it("keeps a human rapid clock at move 40: neither hoarding nor burning time", async () => {
 		const games = await sweep(600);
+		const at40 = atMove(games, 40);
 		report({
 			timeControl: "10+0",
 			games: games.length,
-			at40: atMove(games, 40),
+			at40,
+			human: { median: humanClock.medianS, p25: humanClock.p25S, p75: humanClock.p75S },
 			flags: games.filter((g) => g.flagged).length,
 		});
-		expect(atMove(games, 40)).toBeGreaterThanOrEqual(240);
+		expect(at40).toBeGreaterThanOrEqual(humanClock.p25S);
+		expect(at40).toBeLessThanOrEqual(humanClock.p75S);
 		for (const game of games) expect(game.flagged).toBe(false);
 	}, 300_000);
 });

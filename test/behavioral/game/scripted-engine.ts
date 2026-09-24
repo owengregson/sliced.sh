@@ -13,7 +13,7 @@ export interface ScriptOptions {
 	stopWithReportedEvidence?: boolean;
 	/** Keep the explicitly long ponder request in flight until stop/release, for lifecycle tests. */
 	holdPonder?: boolean;
-	/** `2`: every line's PV carries the first legal reply too (what a ponder's answer reads). */
+	/** `2`: every line's PV carries the reply too — the preferred one, else the first legal (what a ponder's answer reads). */
 	pvDepth?: 1 | 2;
 	/** cp of the best line; every next line loses `stepCp`. */
 	bestCp?: number;
@@ -198,7 +198,7 @@ export class ScriptedEngineTransport extends FakeEngineTransport {
 		}
 		const lines = moves.map((uci, i) => {
 			const after = this.pvDepth === 2 ? applyMoves(fen, [uci]) : null;
-			const reply = after === null ? undefined : legalMoves(after)[0];
+			const reply = after === null ? undefined : this.movesFor(after)[0];
 			const pv = reply === undefined ? uci : `${uci} ${reply}`;
 			return (
 				`info depth ${depth} seldepth ${depth + 2} multipv ${i + 1} ` +

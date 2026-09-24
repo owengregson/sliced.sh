@@ -9,7 +9,7 @@ import type { BookPolicy } from "@core/strength/book/book-policy";
 import type { SelectionState } from "@core/strength/types";
 import type { TablebasePort } from "@core/tablebase/client";
 import type { TimingModel } from "@core/timing/timing-model";
-import type { PositionSnapshot, Recommendation } from "@typedefs/game";
+import type { PositionSnapshot, Recommendation, Square } from "@typedefs/game";
 import type { PersonaId, Settings } from "@typedefs/settings";
 
 import type { SearchBudget } from "./budget";
@@ -35,6 +35,16 @@ export interface RecommendationInput {
 	/** Starting FEN and validated move history for repetition-aware searches. */
 	history?: PositionHistory;
 	expectedOppReply: string | null;
+	/** The position before the opponent's last move (`history.priorFen`), for the recapture test. */
+	priorFen?: string | null;
+	/**
+	 * Our answer to the reply that just arrived, as the analysis done during the opponent's turn
+	 * rated it best (the pre-analysis of the predicted position, else the ponder's top line when
+	 * its first move is that reply); null when neither predicted this reply.
+	 */
+	ponderedAnswer?: string | null;
+	/** Where the idle hand rested when the opponent's move arrived (`MoveExecutor.hoverSquare`). */
+	hoverSquare?: Square | null;
 	oppThinkMsHistory: number[];
 	myThinkMsHistory: number[];
 	selectionState: SelectionState;

@@ -25,6 +25,8 @@ export interface AssembleInput {
 	eps: number;
 	rationale: string[];
 	rng: Rng;
+	/** The think-time calibration applied (`calibrateSample`). */
+	calibration?: { shift: number; situationIndex: number };
 }
 
 export function assemblePlan(input: AssembleInput): TimingPlan {
@@ -64,6 +66,9 @@ export function assemblePlan(input: AssembleInput): TimingPlan {
 		emergency: emergency ? 1 : 0,
 		eps: input.eps,
 		bodyMedianMs: normalised.median * 1000,
+		anticipated: composed.anticipated ? 1 : 0,
+		calibrationShift: input.calibration?.shift ?? 0,
+		calibrationSituation: input.calibration?.situationIndex ?? -1,
 	};
 	const plan: TimingPlan = {
 		thinkMs,

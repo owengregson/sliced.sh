@@ -4,6 +4,7 @@
  */
 
 import { BOOK } from "@core/constants/books";
+import { TIMING_CONSTANTS } from "@core/timing/constants";
 import { remainingMoveWindow } from "@core/timing/move-window";
 import type { TimingModel } from "@core/timing/timing-model";
 import type { TimingContext, TimingPlan } from "@core/timing/types";
@@ -67,6 +68,8 @@ export function timingContext(
 		inputMethod: input.inputMethod,
 		autoQueen: input.autoQueen,
 		nowMs: input.nowMs,
+		priorFen: input.priorFen ?? null,
+		hoverSquare: input.hoverSquare ?? null,
 	};
 }
 
@@ -102,10 +105,15 @@ export class TimingInference {
 		timing: TimingModel,
 		ctx: TimingContext,
 		budgetMs: number,
-		private readonly signal: AbortSignal | undefined
+		private readonly signal: AbortSignal | undefined,
+		candidates: readonly string[] = []
 	) {
 		signal?.addEventListener("abort", this.onAbort, { once: true });
-		this.pending = timing.prepare(ctx, { budgetMs, signal: this.controller.signal });
+		this.pending = timing.prepare(ctx, {
+			budgetMs,
+			signal: this.controller.signal,
+			...(candidates.length ? { candidates } : {}),
+		});
 	}
 
 	/**
@@ -123,6 +131,37 @@ export class TimingInference {
 		this.controller.abort();
 		this.signal?.removeEventListener("abort", this.onAbort);
 	}
+}
+
+/**
+ * The moves likely to be chosen, known before the search: our pondered answer to the reply that
+ * arrived and the held Maia answer's top moves. The head infers their timed-move rows alongside the
+ * history row, so the chosen move is usually already cached (`prepareChosenMove`).
+ */
+export function timingCandidates(input: RecommendationInput): string[] {
+	const out: string[] = [];
+	if (input.ponderedAnswer) out.push(input.ponderedAnswer);
+	const held = input.policyAnswer;
+	if (held && held.fen === input.snapshot.fen)
+		for (const [uci] of held.result.moves.slice(0, TIMING_CONSTANTS.chessmimic.candidateRows))
+			out.push(uci);
+	return [...new Set(out)].slice(0, TIMING_CONSTANTS.chessmimic.candidateRows);
+}
+
+/**
+ * Infer the chosen move's timed-move row when the candidates missed it (one bounded inference,
+ * after the move is chosen and before it is planned); the history row answers if it fails.
+ */
+export async function prepareChosenMove(
+	timing: TimingModel,
+	ctx: TimingContext,
+	uci: string,
+	signal: AbortSignal | undefined
+): Promise<void> {
+	await timing.prepareMove(
+		{ ...ctx, chosenMove: uci },
+		{ budgetMs: TIMING_CONSTANTS.chessmimic.inferenceBudgetMs, ...(signal ? { signal } : {}) }
+	);
 }
 
 /** What the timing plan needs to know about the chosen move. */

@@ -29,11 +29,18 @@ import { acquireAnalysis, scoreExtraCandidates } from "./recommendation/analysis
 import { assembleOutcome } from "./recommendation/assemble";
 import { bookMove, openingChoice } from "./recommendation/book";
 import { ownMoveContext, PreparationWindow } from "./recommendation/context";
+import { isFastReply } from "./recommendation/fast-reply";
 import { noteShortHistory, PolicyStage } from "./recommendation/policy";
 import { PipelineSearcher } from "./recommendation/search";
 import { chooseMove, markIncompleteSearch } from "./recommendation/select";
 import { tablebaseMove, tablebaseProbe, tablebaseWaitMs } from "./recommendation/tablebase";
-import { planChosenMove, TimingInference, timingContext } from "./recommendation/timing";
+import {
+	planChosenMove,
+	prepareChosenMove,
+	TimingInference,
+	timingCandidates,
+	timingContext,
+} from "./recommendation/timing";
 import type {
 	RecommendationInput,
 	RecommendationOutcome,
@@ -108,19 +115,29 @@ export class RecommendationPipeline {
 		const { snapshot } = input;
 		const myColor = snapshot.myColor;
 		if (myColor === null || input.signal?.aborted) return null;
-		const own = ownMoveContext(input, myColor, this.policy.available());
+		// Book lookup overlaps the policy and engine work; so does a tablebase probe. The book's
+		// answer (normally resident) also decides the fast-reply cap before the search starts.
+		const bookPending = bookMove(this.book, input);
+		const tablebasePending = tablebaseProbe(this.tablebase, input);
+		// A tablebase answer is decided by the probe, not the search: the cap stays out of it.
+		const fastReply = tablebasePending === null && (await isFastReply(input, bookPending));
+		if (input.signal?.aborted) return null;
+		const own = ownMoveContext(input, myColor, this.policy.available(), fastReply);
 		const timingCtx = timingContext(input, own, this.timing.state.lastEvalOurPov);
 		const window = new PreparationWindow(preparationStarted, own.budget, this.now);
 		// Timing inference only needs position/history/clocks; overlap its bounded
 		// preparation with the search, then fill the chosen move before sampling.
-		const inference = new TimingInference(this.timing, timingCtx, own.timingBudgetMs, input.signal);
+		const inference = new TimingInference(
+			this.timing,
+			timingCtx,
+			own.timingBudgetMs,
+			input.signal,
+			timingCandidates(input)
+		);
 		const policyStart = this.policy.acquire(input, own.maiaElo);
 		const policyQuery = policyStart.query;
 
 		try {
-			// Book lookup overlaps the policy and engine work; so does a tablebase probe.
-			const bookPending = bookMove(this.book, input);
-			const tablebasePending = tablebaseProbe(this.tablebase, input);
 			let acquired: Awaited<ReturnType<typeof acquireAnalysis>>;
 			try {
 				acquired = await acquireAnalysis(
@@ -184,6 +201,8 @@ export class RecommendationPipeline {
 			if (!chosen) return null;
 			markIncompleteSearch(chosen, analysis, lines.length);
 
+			if (input.signal?.aborted) return null;
+			await prepareChosenMove(this.timing, timingCtx, chosen.uci, input.signal);
 			if (input.signal?.aborted) return null;
 			const plan = planChosenMove(
 				this.timing,
