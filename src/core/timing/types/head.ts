@@ -36,6 +36,8 @@ export interface GameTimingState {
 	gameId: string;
 	/** Position being planned (set by `planMove`; the ChessMimic head keys its cache on it). */
 	fen: string;
+	/** Move being planned (set by `planMove`): the ChessMimic head's row for it, when inferred. */
+	move?: string;
 	ply: number;
 	/** AR(1) residual ε_t. */
 	eps: number;
@@ -70,6 +72,11 @@ export interface TimingPreparation {
 	/** Bounded inference window from preparation start; never extends the engine search. */
 	budgetMs?: number;
 	signal?: AbortSignal;
+	/**
+	 * Moves likely to be chosen (book, policy top-k, a pondered reply): ChessMimic infers one row
+	 * per candidate with the move in its window alongside the history-only row.
+	 */
+	candidates?: readonly string[];
 }
 
 export interface DistributionHead {
@@ -87,6 +94,8 @@ export interface DistributionHead {
 	mean?(f: Features, persona: Persona, state: GameTimingState, allocSec: number): number;
 	/** Issue asynchronous inference for `ctx` ahead of `sample` (ChessMimic); resolves when cached. */
 	prepare?(ctx: TimingContext, options?: TimingPreparation): Promise<void>;
+	/** Ensure the row for `ctx.chosenMove` is inferred (after the move is chosen, before `sample`). */
+	prepareMove?(ctx: TimingContext, options?: TimingPreparation): Promise<void>;
 	/** Source actually available for this position, including fallback failures. */
 	diagnostics?(fen: string): TimingModelSource;
 	/** Drop any per-game cache (called from `startGame`). */
