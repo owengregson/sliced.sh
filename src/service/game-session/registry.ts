@@ -12,22 +12,17 @@
  * alarm for the whole worker, held while *any* tab is live.
  */
 
-import { pageKindFromPath } from "@content/adapters/page-kind";
 import { onTabRemoved, onTabUpdated, tabsQuery } from "@core/chrome/tabs";
 import { KEEPALIVE_REASONS } from "@core/constants/alarms";
-import { REMATCH } from "@core/constants/rematch";
-import { URLS } from "@core/constants/urls";
 import { log } from "@core/logger";
 import type { TimeControlClass } from "@core/motor/types";
 import type { PolicyPort } from "@core/policy/types";
-import { createRng } from "@core/rng";
 import type { BookPolicy } from "@core/strength/book/book-policy";
 import type { TimingLogWriter } from "@core/timing/timing-log";
 import type { DistributionHead } from "@core/timing/types";
 import { errorMessage } from "@core/util/errors";
 import { defaultNow, defaultScheduler, type Scheduler } from "@core/util/scheduler";
-import { AutoQueue } from "@service/auto-queue";
-import { createAutoQueuePersistence } from "@service/auto-queue-persistence";
+import type { AutoQueue } from "@service/auto-queue";
 import type { BoardRectSource } from "@service/board-watch";
 import type { GameSessionHandle, GameSessionRegistry } from "@service/bootstrap";
 import type { ContentLink } from "@service/content-link";
@@ -37,20 +32,22 @@ import type { FocusGate } from "@service/focus-gate";
 import type { HandOwnership } from "@service/hand-ownership";
 import type { Keepalive } from "@service/keepalive";
 import { MoveExecutor } from "@service/move-executor";
-import { NewGameInput } from "@service/new-game-input";
+import type { NewGameInput } from "@service/new-game-input";
 import type {
 	ExecutorHandle,
 	HandSources,
 	SessionSource,
 	SnapshotSources,
 } from "@service/panel-broadcaster";
-import { RematchStep } from "@service/rematch";
-import { ResignInput } from "@service/resign-input";
+import type { RematchStep } from "@service/rematch";
+import type { ResignInput } from "@service/resign-input";
 import type { EngineStatus } from "@typedefs/engine";
 import type { Site } from "@typedefs/game";
 import type { LicenseState, PersonaId, Settings } from "@typedefs/settings";
 import type { ReviewSearcher } from "./board-effects";
 import { executorSettingsFor } from "./executor-settings";
+import { createQueueStack } from "./registry/queue-stack";
+import { isQueuePageUrl } from "./registry/tab-url";
 import { GameSession } from "./session";
 
 export interface SessionRegistryDeps {
@@ -130,84 +127,20 @@ export class SessionRegistry implements GameSessionRegistry, SnapshotSources {
 		this.now = deps.now ?? defaultNow;
 		this.scheduler = deps.scheduler ?? defaultScheduler;
 		this.hand = { debugger: deps.debugger, focus: deps.focus, ownership: deps.ownership };
-		// New worker lifetimes must not replay identical session lengths and button paths.
-		// Tests can inject a fixed seed; sampled session/break deadlines are persisted separately.
-		const queueSeed = deps.seed ?? crypto.randomUUID();
-		this.newGameInput = new NewGameInput({
-			link: deps.link,
-			debugger: deps.debugger,
-			ownership: deps.ownership,
-			focus: deps.focus,
-			rng: createRng(`${queueSeed}:queue-input`),
+		const stack = createQueueStack({
+			deps,
 			scheduler: this.scheduler,
 			now: this.now,
-			showCursor: () => deps.getSettings().display.virtualCursor,
-		});
-		this.resignInput = new ResignInput({
-			link: deps.link,
-			debugger: deps.debugger,
-			ownership: deps.ownership,
-			focus: deps.focus,
-			rng: createRng(`${queueSeed}:resign-input`),
-			scheduler: this.scheduler,
-			now: this.now,
-			showCursor: () => deps.getSettings().display.virtualCursor,
-		});
-		this.rematchStep = new RematchStep({
-			// A passive read over the same port request the click path revalidates with.
-			incoming: async (tabId, signal) => {
-				const reply = await deps.link.request(
-					tabId,
-					{ kind: "rematch", action: "accept" },
-					REMATCH.targetTimeoutMs,
-					signal
-				);
-				return reply.incoming;
-			},
-			// The queue's own click path (`NewGameInput`): the same hand, guards and revalidation.
-			click: async (tabId, gameId, action, signal) => {
-				await this.sessions.get(tabId)?.session.executor()?.whenIdle();
-				const reply = await this.newGameInput.attempt(tabId, gameId, signal, {
-					kind: "rematch",
-					action,
-				});
-				return { status: reply.status === "searching" ? "not-ready" : reply.status };
-			},
-			scheduler: this.scheduler,
-			now: this.now,
-		});
-		this.autoQueue = new AutoQueue({
-			attempt: async (tabId, gameId, signal) => {
-				await this.sessions.get(tabId)?.session.executor()?.whenIdle();
-				return this.newGameInput.attempt(tabId, gameId, signal);
-			},
-			scheduler: this.scheduler,
-			now: this.now,
-			rng: createRng(`${queueSeed}:auto-queue`),
-			persistence: createAutoQueuePersistence(),
-			rematch: {
-				step: this.rematchStep,
-				allowed: () => deps.getSettings().automation.rematchTitled,
-			},
-			onBreak: (tabId) => this.sessions.get(tabId)?.session.takeQueueBreak(),
-			canQueue: (tabId, gameId) => {
-				if (deps.settingsKnown?.() === false) return "hold";
-				const settings = deps.getSettings();
-				if (!settings.enabled || !settings.automation.autoQueue) return "cancel";
-				const session = this.sessions.get(tabId)?.session;
-				if (!session) return "hold";
-				const view = session.view();
-				if (view.gameId !== null && view.gameId !== gameId) return "cancel";
-				// A finished board can render its toolbar before its requeue popup. Retain the
-				// deadline, but permit no native gesture until the adapter sees queue controls.
-				if (view.pageKind === "live-spectate") return "hold";
-				return view.state === "game-over" || view.state === "waiting-for-game" ? "allow" : "hold";
-			},
+			session: (tabId) => this.sessions.get(tabId)?.session ?? null,
 			onChanged: () => {
 				this.reconcileKeepalive();
 				deps.notify();
 			},
 		});
+		this.newGameInput = stack.newGameInput;
+		this.resignInput = stack.resignInput;
+		this.rematchStep = stack.rematchStep;
+		this.autoQueue = stack.autoQueue;
 		void this.autoQueue.ready
 			.then(async () => {
 				const restoredTabs = this.autoQueue.tabIds();
@@ -231,16 +164,7 @@ export class SessionRegistry implements GameSessionRegistry, SnapshotSources {
 			}),
 			onTabUpdated((tabId, changeInfo) => {
 				if (typeof changeInfo.url !== "string") return;
-				let queuePage = false;
-				try {
-					const url = new URL(changeInfo.url);
-					const kind = pageKindFromPath(url.pathname);
-					queuePage =
-						url.origin === new URL(URLS.chesscom).origin &&
-						(kind === "live-game" || kind === "live-lobby" || kind === "vs-computer");
-				} catch {
-					/* An invalid destination cancels pending input. */
-				}
+				const queuePage = isQueuePageUrl(changeInfo.url);
 				const preserve = queuePage && this.autoQueue.isTracking(tabId);
 				this.sessions.get(tabId)?.session.onTabEvent("navigated", preserve);
 				if (!queuePage) this.autoQueue.cancel(tabId);

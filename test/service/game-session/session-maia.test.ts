@@ -69,10 +69,10 @@ function fakePolicy(opts: { hold?: boolean } = {}) {
 /** Record every `RecommendationInput` the session hands its pipeline (the pipeline still runs). */
 function tapPipeline(harness: GameHarness): RecommendationInput[] {
 	const inputs: RecommendationInput[] = [];
-	const session = harness.session() as unknown as { pipeline: SessionPipeline | null };
-	const real = session.pipeline;
+	const session = harness.session() as unknown as { core: { pipeline: SessionPipeline | null } };
+	const real = session.core.pipeline;
 	if (!real) throw new Error("no pipeline on the session");
-	session.pipeline = {
+	session.core.pipeline = {
 		run: (input) => {
 			inputs.push(input);
 			return real.run(input);
@@ -82,9 +82,10 @@ function tapPipeline(harness: GameHarness): RecommendationInput[] {
 }
 
 const formOf = (harness: GameHarness): number =>
-	(harness.session() as unknown as { form: { value: number } }).form.value;
+	(harness.session() as unknown as { core: { form: { value: number } } }).core.form.value;
 const tauOf = (harness: GameHarness): number =>
-	(harness.session() as unknown as { timing: { persona: { tau: number } } }).timing.persona.tau;
+	(harness.session() as unknown as { core: { timing: { persona: { tau: number } } } }).core.timing
+		.persona.tau;
 
 describe("H7.3 — the predicted position is pre-inferred on the opponent's clock", () => {
 	it("issues the query for the predicted position with the pipeline's inputs, and hands the answer to the pipeline when the reply lands", async () => {
@@ -157,8 +158,8 @@ describe("H7.3 — the predicted position is pre-inferred on the opponent's cloc
 		policy.release();
 		expect(await h.until(() => inputs.length === 1, 5_000)).toBe(true);
 		expect(inputs[0]?.policyAnswer).toBeUndefined();
-		const session = h.session() as unknown as { predictedPolicy: unknown };
-		expect(session.predictedPolicy).toBeNull();
+		const session = h.session() as unknown as { prediction: { policy: unknown } };
+		expect(session.prediction.policy).toBeNull();
 	}, 60_000);
 });
 
@@ -270,11 +271,14 @@ describe("H8 — the premove gate when the answer lands after the arm", () => {
 			settings: { strength: { targetElo: 1200, matchOpponentRating: false } },
 		});
 		type Arm = { reply: string; chosen: ChosenMove; fen: string; reason: string };
-		const session = h.session() as unknown as {
-			premove: Arm | null;
-			premoveEntry: unknown;
-			gatePremoveWithPolicy(reply: string, predicted: string, result: PolicyResult): void;
-		};
+		const session = (
+			h.session() as unknown as {
+				arming: {
+					armed: Arm | null;
+					gateWithPolicy(reply: string, predicted: string, result: PolicyResult): void;
+				};
+			}
+		).arming;
 		const chosen: ChosenMove = {
 			uci: "e7e5",
 			san: "e5",
@@ -293,17 +297,17 @@ describe("H8 — the premove gate when the answer lands after the arm", () => {
 			wdl: [0.3, 0.4, 0.3],
 			size: "79m",
 		});
-		session.premove = arm();
-		session.gatePremoveWithPolicy("e2e4", AFTER_E4, answer(PREMOVE.maiaMinProb - 0.05));
-		expect(session.premove).toBeNull();
+		session.armed = arm();
+		session.gateWithPolicy("e2e4", AFTER_E4, answer(PREMOVE.maiaMinProb - 0.05));
+		expect(session.armed).toBeNull();
 
-		session.premove = arm();
-		session.gatePremoveWithPolicy("e2e4", AFTER_E4, answer(PREMOVE.maiaMinProb + 0.05));
-		expect(session.premove).not.toBeNull();
+		session.armed = arm();
+		session.gateWithPolicy("e2e4", AFTER_E4, answer(PREMOVE.maiaMinProb + 0.05));
+		expect(session.armed).not.toBeNull();
 
 		// An answer for a different reply (another position) gates nothing.
-		session.gatePremoveWithPolicy("d2d4", AFTER_E4, answer(0));
-		expect(session.premove).not.toBeNull();
+		session.gateWithPolicy("d2d4", AFTER_E4, answer(0));
+		expect(session.armed).not.toBeNull();
 	});
 });
 
@@ -334,11 +338,11 @@ describe("active policy eligibility and stale work", () => {
 		expect(policy.calls).toHaveLength(count);
 		expect(warmTargets).toEqual([MAIA.eloMax, 3300]);
 		const state = h.session() as unknown as {
-			predictedPolicy: unknown;
-			gameMaia: { size: string | null };
+			prediction: { policy: unknown };
+			maia: { commitment: { size: string | null } };
 		};
-		expect(state.predictedPolicy).toBeNull();
-		expect(state.gameMaia.size).toBeNull();
+		expect(state.prediction.policy).toBeNull();
+		expect(state.maia.commitment.size).toBeNull();
 	});
 
 	it("rejects a late answer when only opponent conditioning changes on the same board", async () => {
@@ -357,8 +361,10 @@ describe("active policy eligibility and stale work", () => {
 		expect(policy.signals[0]?.aborted).toBe(true);
 		policy.release();
 		await h.advance(50);
-		const state = h.session() as unknown as { predictedPolicy: { identity: string } | null };
-		if (state.predictedPolicy) expect(state.predictedPolicy.identity).toContain("2900");
+		const state = h.session() as unknown as {
+			prediction: { policy: { identity: string } | null };
+		};
+		if (state.prediction.policy) expect(state.prediction.policy.identity).toContain("2900");
 		expect(first?.oppoElo).not.toBe(2900);
 	});
 
@@ -378,8 +384,8 @@ describe("active policy eligibility and stale work", () => {
 		expect(await h.until(() => policy.calls.length > 0, 5000)).toBe(true);
 		expect(policy.calls.at(-1)?.size).toBe("79m");
 		expect(warmed).toEqual([3300, 2800]);
-		const state = h.session() as unknown as { gameMaia: { size: string | null } };
-		expect(state.gameMaia.size).toBe("79m");
+		const state = h.session() as unknown as { maia: { commitment: { size: string | null } } };
+		expect(state.maia.commitment.size).toBe("79m");
 	});
 });
 
@@ -404,29 +410,33 @@ describe("prepared holds preserve routing boundaries", () => {
 				comparison?: AnalysisUpdate;
 			};
 			const state = h.session() as unknown as {
-				snapshot: PositionSnapshot;
-				predictedAnalysis: Prepared | null;
-				validPredictedAnalysis(snapshot: PositionSnapshot): Prepared | null;
-				readyMoveFrom(
-					fen: string,
-					lines: EvalLine[],
-					snapshot: PositionSnapshot,
-					request: AnalysisRequest,
-					best: string | null,
-					comparison?: AnalysisUpdate
-				): ChosenMove | null;
+				core: { snapshot: PositionSnapshot };
+				prediction: {
+					analysis: Prepared | null;
+					validAnalysis(snapshot: PositionSnapshot): Prepared | null;
+				};
+				holds: {
+					readyMoveFrom(
+						fen: string,
+						lines: EvalLine[],
+						snapshot: PositionSnapshot,
+						request: AnalysisRequest,
+						best: string | null,
+						comparison?: AnalysisUpdate
+					): ChosenMove | null;
+				};
 			};
 			await h.arrive();
-			expect(await h.until(() => state.predictedAnalysis !== null, 5000)).toBe(true);
-			const prepared = state.validPredictedAnalysis(state.snapshot);
+			expect(await h.until(() => state.prediction.analysis !== null, 5000)).toBe(true);
+			const prepared = state.prediction.validAnalysis(state.core.snapshot);
 			expect(prepared).not.toBeNull();
 			if (!prepared) return;
 			expect(prepared.request.targetElo).toBe(targetElo);
 			expect(prepared.request.moves).toEqual(["e2e4"]);
-			const chosen = state.readyMoveFrom(
+			const chosen = state.holds.readyMoveFrom(
 				prepared.fen,
 				prepared.lines,
-				state.snapshot,
+				state.core.snapshot,
 				prepared.request,
 				prepared.bestmove,
 				prepared.comparison
@@ -443,10 +453,10 @@ describe("prepared holds preserve routing boundaries", () => {
 				expect(rationale).not.toContain("maia prior:");
 			}
 			prepared.request.targetElo = targetElo - 1;
-			expect(state.validPredictedAnalysis(state.snapshot)).toBeNull();
+			expect(state.prediction.validAnalysis(state.core.snapshot)).toBeNull();
 			prepared.request.targetElo = targetElo;
 			prepared.request.limit.depth = 1;
-			expect(state.validPredictedAnalysis(state.snapshot)).toBeNull();
+			expect(state.prediction.validAnalysis(state.core.snapshot)).toBeNull();
 		});
 	}
 });
