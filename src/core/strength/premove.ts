@@ -17,306 +17,60 @@
  */
 
 import { loadPosition } from "@core/chess/fen";
-import type { PositionHistory } from "@core/chess/history";
-import { isLoneKing, material, PIECE_VALUES } from "@core/chess/material";
-import { classifyMove } from "@core/chess/move-classify";
+import { isLoneKing } from "@core/chess/material";
+import { classifyMove, type MoveClassification } from "@core/chess/move-classify";
 import { phase } from "@core/chess/phase";
 import { applyMoves, legalMoves, parseUci } from "@core/chess/san";
 import { PREMOVE } from "@core/constants/books";
-import type { PolicyResult } from "@core/policy/types";
-import type { Rng } from "@core/rng";
-import { tcClass } from "@core/timing/features";
-import { clockRacePolicy } from "@core/timing/opponent-pressure";
-import type { TcClass } from "@core/timing/types";
-import { clamp } from "@core/util/clamp";
+import { type ClockRacePolicy, clockRacePolicy } from "@core/timing/opponent-pressure";
 import type { EvalLine } from "@typedefs/engine";
-import type { Square, TimeControl } from "@typedefs/game";
 import { conversionPool } from "./conversion";
 import { cpEffective, winProb } from "./elo-map";
 import { isMaxStrength } from "./max-strength";
+import { maiaPremoveGate } from "./premove/gate";
+import { plausibleScore, predictionLines, replyProbability } from "./premove/prediction";
+import { isPremoveSpeed, premoveProbability, tradePremoveProbability } from "./premove/propensity";
+import {
+	hasTradeOffer,
+	isQueueableCandidate,
+	loneKingCandidate,
+	plausibleExchange,
+} from "./premove/queue-safety";
+import type { PremoveCandidate, PremoveContext, PremoveDeps, PremoveReason } from "./premove/types";
 import { avoidRepetition } from "./repetition";
 
-export interface PremoveContext {
-	/** Position before our move. */
-	fen: string;
-	/** Our chosen move `m` (UCI). */
-	move: string;
-	/** Effective Elo `E`. */
-	targetElo: number;
-	timeControl?: TimeControl | undefined;
-	/** The engine's `ponder` move after `m`, when it reported one. */
-	ponder?: string | undefined;
-	rng: Rng;
-	/** Timing-model premove propensity π_p in [0, 1] (default 1). */
-	piP?: number | undefined;
-	/** Validated game history through our move, for the projected reply search. */
-	historyAfterMove?: PositionHistory;
-	ownClockMs?: number;
-	opponentClockMs?: number;
-	/**
-	 * H8: the human policy's answer for one predicted position (`fen` = the board after `m r`).
-	 * Gates a candidate in that position through `maiaPremoveGate`; a candidate in any other
-	 * position is not gated (the answer is for the wrong board).
-	 */
-	policy?: PredictedPolicy | undefined;
-}
+export { maiaPremoveGate } from "./premove/gate";
+export { replyProbability } from "./premove/prediction";
+export {
+	isPremoveSpeed,
+	isQueueableReason,
+	premoveProbability,
+	tradePremoveProbability,
+} from "./premove/propensity";
+export {
+	hasTradeOffer,
+	isQueueableCandidate,
+	isUniversalKingPremove,
+} from "./premove/queue-safety";
+export type {
+	AnalyseOptions,
+	PredictedPolicy,
+	PremoveCandidate,
+	PremoveContext,
+	PremoveDeps,
+	PremoveReason,
+} from "./premove/types";
 
-/** A Maia answer bound to the position it was asked about. */
-export interface PredictedPolicy {
-	fen: string;
-	result: PolicyResult;
-}
-
-/** Placement + side to move + castling + en passant: the position, not its move counters. */
-function positionOf(fen: string): string {
-	return fen.split(" ").slice(0, 4).join(" ");
-}
-
-/**
- * H8: `true` when `premove` may be armed in `fen` given `policy` — either there is no answer for
- * that position (no gate), or Maia gives the move at least `PREMOVE.maiaMinProb` there.
- */
-export function maiaPremoveGate(
-	fen: string,
-	premove: string,
-	policy: PredictedPolicy | undefined
-): boolean {
-	if (!policy || positionOf(policy.fen) !== positionOf(fen)) return true;
-	let p = 0;
-	for (const [uci, prob] of policy.result.moves) if (uci === premove) p = Math.max(p, prob);
-	return p >= PREMOVE.maiaMinProb;
-}
-
-export interface AnalyseOptions {
-	movetimeMs: number;
-	multiPv: number;
-}
-
-export interface PremoveDeps {
-	/** MultiPV lines (side-to-move POV) after playing `moves` from `fen`. */
-	analyseAfter(fen: string, moves: readonly string[], opts: AnalyseOptions): Promise<EvalLine[]>;
-}
-
-export type PremoveReason = "recapture" | "only-move" | "loss2nd" | "king-escape";
-
-export interface PremoveCandidate {
-	/** The opponent reply `r` the premove is conditioned on. */
-	reply: string;
-	/** Our premove `q`. */
-	premove: string;
-	from: Square;
-	to: Square;
-	promotion?: "q" | "r" | "b" | "n";
-	reason: PremoveReason;
-	replyProbability: number;
-}
-
-/** `0.35 + 0.5·clamp((E − 1200)/1200, 0, 1)` × π_p; 0 below E = 1200. */
-export function premoveProbability(E: number, piP = 1): number {
-	if (E < PREMOVE.minElo) return 0;
-	const base =
-		PREMOVE.probBase + PREMOVE.probRange * clamp((E - PREMOVE.minElo) / PREMOVE.probSpan, 0, 1);
-	return clamp(base * clamp(piP, 0, 1), 0, 1);
-}
-
-export function tradePremoveProbability(E: number, piP = 1): number {
-	if (piP <= 0) return 0;
-	const base =
-		PREMOVE.tradeProbBase +
-		PREMOVE.tradeProbRange * clamp((E - PREMOVE.minElo) / PREMOVE.probSpan, 0, 1);
-	return base * (PREMOVE.tradePersonaFloor + (1 - PREMOVE.tradePersonaFloor) * clamp(piP, 0, 1));
-}
-
-/**
- * A reason alone is not proof that a queued move is safe. Require a recapture onto our own
- * occupied square; every other reply that leaves it legal must also be a safe exchange there.
- */
-export function isQueueableCandidate(
-	afterMove: string,
-	candidate: Pick<PremoveCandidate, "reply" | "premove" | "reason">
-): boolean {
-	if (!isQueueableReason(candidate.reason)) return false;
-	if (candidate.reason === "king-escape")
-		return isUniversalKingPremove(afterMove, candidate.premove);
-	const board = loadPosition(afterMove);
-	const parts = parseUci(candidate.premove);
-	if (!board || !parts) return false;
-	const target = board.get(parts.to);
-	const ours = board.get(parts.from);
-	if (!target || !ours || target.color !== ours.color || target.color === board.turn()) return false;
-	const predicted = applyMoves(afterMove, [candidate.reply]);
-	if (
-		!predicted ||
-		!classifyMove(afterMove, candidate.reply)?.isCapture ||
-		!classifyMove(predicted, candidate.premove, candidate.reply)?.isRecapture
-	)
-		return false;
-	for (const reply of legalMoves(afterMove)) {
-		const next = applyMoves(afterMove, [reply]);
-		if (!next) continue;
-		const recapture = classifyMove(next, candidate.premove, reply);
-		if (!recapture) continue; // The site drops an illegal premove.
-		const capture = classifyMove(afterMove, reply);
-		if (!capture?.isCapture || !recapture.isRecapture) return false;
-		const afterRecapture = applyMoves(next, [candidate.premove]);
-		if (!afterRecapture) return false;
-		// A recapture which allows mate in one is not a safe trade, even on the predicted branch.
-		const responses = legalMoves(afterRecapture);
-		if (responses.some((response) => classifyMove(afterRecapture, response)?.givesMate)) return false;
-		if (recapture.capturedType && PIECE_VALUES[recapture.capturedType] < PIECE_VALUES[ours.type]) {
-			// A queen taking back a pawn is safe only when no legal reply can take the queen.
-			for (const response of responses) {
-				if (parseUci(response)?.to === parts.to && classifyMove(afterRecapture, response)?.isCapture)
-					return false;
-			}
-		}
-	}
-	return true;
-}
-
-/** A lone king may queue an escape only when every legal opponent reply leaves it legal. */
-export function isUniversalKingPremove(afterMove: string, premove: string): boolean {
-	const board = loadPosition(afterMove);
-	const parts = parseUci(premove);
-	if (!board || !parts || parts.promotion) return false;
-	const us = board.turn() === "w" ? "b" : "w";
-	if (
-		!isLoneKing(afterMove, us) ||
-		board.get(parts.from)?.color !== us ||
-		board.get(parts.from)?.type !== "k"
-	)
-		return false;
-	const replies = legalMoves(afterMove);
-	return (
-		replies.length > 0 &&
-		replies.every((reply) => {
-			const next = applyMoves(afterMove, [reply]);
-			return next !== null && classifyMove(next, premove)?.pieceType === "k";
-		})
-	);
-}
-
-function loneKingCandidate(afterMove: string): PremoveCandidate | null {
-	const reply = legalMoves(afterMove)[0];
-	const next = reply ? applyMoves(afterMove, [reply]) : null;
-	if (!reply || !next) return null;
-	for (const premove of legalMoves(next)) {
-		if (!isUniversalKingPremove(afterMove, premove)) continue;
-		const parts = parseUci(premove);
-		if (parts)
-			return {
-				reply,
-				premove,
-				from: parts.from,
-				to: parts.to,
-				reason: "king-escape",
-				replyProbability: 0,
-			};
-	}
-	return null;
-}
-
-/** Cheap eligibility before interrupting continuous pondering in a slower time control. */
-export function hasTradeOffer(afterMove: string): boolean {
-	const board = loadPosition(afterMove);
-	if (!board) return false;
-	for (const reply of board.moves({ verbose: true })) {
-		if (!reply.isCapture()) continue;
-		const next = loadPosition(reply.after);
-		if (
-			next
-				?.moves({ verbose: true })
-				.some((move) => move.to === reply.to && move.isCapture() && move.piece !== "k")
-		)
-			return true;
-	}
-	return false;
-}
-
-/** Softmax(τ = 0.06) over the opponent lines' win fractions; 0 when `reply` is not among them. */
-export function replyProbability(reply: string, lines: readonly EvalLine[]): number {
-	if (lines.length === 0) return 0;
-	const wins = lines.map((line) => winProb(cpEffective(line.score)));
-	const max = Math.max(...wins);
-	let total = 0;
-	let own = 0;
-	for (let i = 0; i < lines.length; i++) {
-		const w = Math.exp(((wins[i] ?? 0) - max) / PREMOVE.replyTau);
-		total += w;
-		if (lines[i]?.pvUci[0] === reply) own += w;
-	}
-	return total > 0 ? own / total : 0;
-}
-
-/** Only fresh, distinct, comparable root scores are evidence about the next opponent move. */
-function predictionLines(lines: readonly EvalLine[], legalReplies: readonly string[]): EvalLine[] {
-	const roots = new Set<string>();
-	return [...lines]
-		.sort((a, b) => a.multipv - b.multipv)
-		.filter((line) => {
-			const reply = line.pvUci[0];
-			if (
-				!reply ||
-				!legalReplies.includes(reply) ||
-				roots.has(reply) ||
-				line.bound !== undefined ||
-				!Number.isFinite(line.depth) ||
-				line.depth < PREMOVE.replyMinDepth ||
-				!(Number.isFinite(line.score.cp) || Number.isFinite(line.score.mate))
-			)
-				return false;
-			roots.add(reply);
-			return true;
-		});
-}
-
-function plausibleScore(candidate: EvalLine, best: EvalLine): boolean {
-	if (best.score.mate !== undefined) {
-		if (candidate.score.mate === undefined) return best.score.mate < 0;
-		if (best.score.mate > 0)
-			return candidate.score.mate > 0 && candidate.score.mate <= best.score.mate;
-		return candidate.score.mate < 0 && candidate.score.mate <= best.score.mate;
-	}
-	if (candidate.score.mate !== undefined) return candidate.score.mate > 0;
-	return (best.score.cp ?? 0) - (candidate.score.cp ?? 0) <= PREMOVE.replyMaxCpLoss;
-}
-
-/**
- * Legality does not make a queen donation believable. Check the material exchange from the
- * opponent's side, giving them credit for their best immediate legal takeback on this square.
- * This deliberately leaves compensated sacrifices to normal play after the move appears.
- */
-function plausibleExchange(afterMove: string, reply: string, premove: string): boolean {
-	const before = material(afterMove);
-	const next = applyMoves(afterMove, [reply, premove]);
-	const board = next && loadPosition(next);
-	const square = parseUci(premove)?.to;
-	if (!before || !board || !square) return false;
-	const after = material(board.fen());
-	if (!after) return false;
-	const direction = board.turn() === "w" ? 1 : -1;
-	let gain = direction * (after.diff - before.diff);
-	for (const takeback of board.moves({ verbose: true })) {
-		if (takeback.to !== square || !takeback.isCapture()) continue;
-		const final = material(takeback.after);
-		if (final) gain = Math.max(gain, direction * (final.diff - before.diff));
-	}
-	return gain >= -PREMOVE.tradeMaxMaterialLoss;
-}
-
-/**
- * Category eligibility for a site queue. isQueueableCandidate provides the actual board proof;
- * a reason cannot establish that an unexpected reply makes a move illegal.
- */
-export function isQueueableReason(reason: PremoveReason): boolean {
-	return (PREMOVE.queueReasons as readonly PremoveReason[]).includes(reason);
-}
-
-/** Ordinary premoves use these speed classes; safe trades and clock races also work in slower controls. */
-export function isPremoveSpeed(timeControl: TimeControl | undefined): boolean {
-	if (!timeControl) return false;
-	const cls = tcClass(timeControl.baseMs / 1000, timeControl.incMs / 1000);
-	return (PREMOVE.speeds as readonly TcClass[]).includes(cls);
+/** What the cheap gates settled before the per-reply search. */
+interface PremoveGates {
+	afterMove: string;
+	race: ClockRacePolicy | null;
+	/** Ordinary (non-trade) premoves are allowed in this time control or race. */
+	ordinaryAllowed: boolean;
+	/** The ordinary attempt propensity, and the larger of it and the trade propensity. */
+	ordinaryP: number;
+	p: number;
+	legalReplies: string[];
 }
 
 /**
@@ -349,6 +103,7 @@ export async function premoveCandidate(
 	if (p <= 0 || !ctx.rng.chance(p)) return null;
 	const legalReplies = legalMoves(afterMove);
 	if (ctx.ponder !== undefined && !legalReplies.includes(ctx.ponder)) return null;
+	const gates: PremoveGates = { afterMove, race, ordinaryAllowed, ordinaryP, p, legalReplies };
 	const analysedOpponent = await deps.analyseAfter(ctx.fen, [ctx.move], {
 		movetimeMs: Math.min(PREMOVE.ponderMovetimeMs, race?.maxSearchMs ?? Number.POSITIVE_INFINITY),
 		multiPv: PREMOVE.ponderMultiPv,
@@ -364,69 +119,100 @@ export async function premoveCandidate(
 		if (!reply || !plausibleScore(prediction, bestPrediction)) continue;
 		const pReply = replyProbability(reply, opponentLines);
 		if (pReply < PREMOVE.replyMinProb) continue;
-		const replyCaptured = classifyMove(afterMove, reply)?.isCapture ?? false;
-		const afterReply = applyMoves(afterMove, [reply]);
-		if (afterReply === null) continue;
-		const analysed = await deps.analyseAfter(ctx.fen, [ctx.move, reply], {
-			movetimeMs: Math.min(PREMOVE.replyMovetimeMs, race?.maxSearchMs ?? Number.POSITIVE_INFINITY),
-			multiPv: PREMOVE.replyMultiPv,
-		});
-		const projectedHistory = ctx.historyAfterMove && {
-			fen: ctx.historyAfterMove.fen,
-			moves: [...ctx.historyAfterMove.moves, reply],
-		};
-		const repetitionSafe = avoidRepetition(analysed, afterReply, projectedHistory).lines;
-		const lines = conversionPool(repetitionSafe, {
-			fen: afterReply,
-			phase: phase(afterReply) ?? "middlegame",
-			...(projectedHistory ? { history: projectedHistory } : {}),
-		}).lines;
-		const best = lines[0];
-		const q = best?.pvUci[0];
-		if (!best || !q) continue;
-		const facts = classifyMove(afterReply, q, reply);
-		if (!facts || facts.pieceType === "k" || facts.isCastle) continue;
-		let reason: PremoveReason | null = null;
-		if (facts.isRecapture && replyCaptured) reason = "recapture";
-		else if (facts.isOnlyMove) reason = "only-move";
-		else if (
-			lines[1] &&
-			winProb(cpEffective(best.score)) - winProb(cpEffective(lines[1].score)) >= PREMOVE.loss2ndMin
-		)
-			reason = "loss2nd";
-		if (!reason) continue;
-		if (reason === "recapture" && legalReplies.length > 1 && !plausibleExchange(afterMove, reply, q))
-			continue;
-		// H8: a human premoves a move they would have played anyway — the model's word, when it has
-		// already answered for this very position.
-		if (!maiaPremoveGate(afterReply, q, ctx.policy)) continue;
-		const parts = parseUci(q);
-		if (!parts) continue;
-		const candidate: PremoveCandidate = {
-			reply,
-			premove: q,
-			from: parts.from,
-			to: parts.to,
-			reason,
-			replyProbability: pReply,
-		};
-		if (parts.promotion !== undefined) candidate.promotion = parts.promotion;
-		const safeTrade = reason === "recapture" && isQueueableCandidate(afterMove, candidate);
-		// Max-strength mode (owner, 2026-09-15: "the absolute best possible move in every situation"):
-		// a premove skips the deep own-move search, so it is armed only when the board itself proves
-		// the move — the only legal move, or a recapture every legal reply leaves a safe exchange —
-		// never a clear-best quiet move read off a 120 ms search (`loss2nd`).
-		if (isMaxStrength(ctx.targetElo) && !safeTrade && reason !== "only-move") continue;
-		if (
-			!safeTrade &&
-			(!ordinaryAllowed ||
-				ordinaryP <= 0 ||
-				reply !== primaryReply ||
-				pReply < PREMOVE.replyMinProb ||
-				!ctx.rng.chance(ordinaryP / p))
-		)
-			continue;
-		return candidate;
+		const candidate = await premoveAfterReply(ctx, deps, gates, reply, pReply, primaryReply);
+		if (candidate) return candidate;
 	}
 	return null;
+}
+
+/**
+ * Why our reply `q` to `reply` looks forced: a recapture of what `reply` took, the only legal
+ * move, or clearly the best (`loss_2nd`); `null` when it does not.
+ */
+function premoveReason(
+	facts: MoveClassification,
+	replyCaptured: boolean,
+	lines: readonly EvalLine[]
+): PremoveReason | null {
+	const best = lines[0];
+	if (facts.isRecapture && replyCaptured) return "recapture";
+	if (facts.isOnlyMove) return "only-move";
+	if (
+		best &&
+		lines[1] &&
+		winProb(cpEffective(best.score)) - winProb(cpEffective(lines[1].score)) >= PREMOVE.loss2ndMin
+	)
+		return "loss2nd";
+	return null;
+}
+
+/**
+ * Search our answer to one predicted `reply` and arm it when it is forced-looking and every gate
+ * agrees; `null` moves on to the next prediction.
+ */
+async function premoveAfterReply(
+	ctx: PremoveContext,
+	deps: PremoveDeps,
+	gates: PremoveGates,
+	reply: string,
+	pReply: number,
+	primaryReply: string
+): Promise<PremoveCandidate | null> {
+	const { afterMove, race, ordinaryAllowed, ordinaryP, p, legalReplies } = gates;
+	const replyCaptured = classifyMove(afterMove, reply)?.isCapture ?? false;
+	const afterReply = applyMoves(afterMove, [reply]);
+	if (afterReply === null) return null;
+	const analysed = await deps.analyseAfter(ctx.fen, [ctx.move, reply], {
+		movetimeMs: Math.min(PREMOVE.replyMovetimeMs, race?.maxSearchMs ?? Number.POSITIVE_INFINITY),
+		multiPv: PREMOVE.replyMultiPv,
+	});
+	const projectedHistory = ctx.historyAfterMove && {
+		fen: ctx.historyAfterMove.fen,
+		moves: [...ctx.historyAfterMove.moves, reply],
+	};
+	const repetitionSafe = avoidRepetition(analysed, afterReply, projectedHistory).lines;
+	const lines = conversionPool(repetitionSafe, {
+		fen: afterReply,
+		phase: phase(afterReply) ?? "middlegame",
+		...(projectedHistory ? { history: projectedHistory } : {}),
+	}).lines;
+	const best = lines[0];
+	const q = best?.pvUci[0];
+	if (!best || !q) return null;
+	const facts = classifyMove(afterReply, q, reply);
+	if (!facts || facts.pieceType === "k" || facts.isCastle) return null;
+	const reason = premoveReason(facts, replyCaptured, lines);
+	if (!reason) return null;
+	if (reason === "recapture" && legalReplies.length > 1 && !plausibleExchange(afterMove, reply, q))
+		return null;
+	// H8: a human premoves a move they would have played anyway — the model's word, when it has
+	// already answered for this very position.
+	if (!maiaPremoveGate(afterReply, q, ctx.policy)) return null;
+	const parts = parseUci(q);
+	if (!parts) return null;
+	const candidate: PremoveCandidate = {
+		reply,
+		premove: q,
+		from: parts.from,
+		to: parts.to,
+		reason,
+		replyProbability: pReply,
+	};
+	if (parts.promotion !== undefined) candidate.promotion = parts.promotion;
+	const safeTrade = reason === "recapture" && isQueueableCandidate(afterMove, candidate);
+	// Max-strength mode (owner, 2026-09-15: "the absolute best possible move in every situation"):
+	// a premove skips the deep own-move search, so it is armed only when the board itself proves
+	// the move — the only legal move, or a recapture every legal reply leaves a safe exchange —
+	// never a clear-best quiet move read off a 120 ms search (`loss2nd`).
+	if (isMaxStrength(ctx.targetElo) && !safeTrade && reason !== "only-move") return null;
+	if (
+		!safeTrade &&
+		(!ordinaryAllowed ||
+			ordinaryP <= 0 ||
+			reply !== primaryReply ||
+			pReply < PREMOVE.replyMinProb ||
+			!ctx.rng.chance(ordinaryP / p))
+	)
+		return null;
+	return candidate;
 }
