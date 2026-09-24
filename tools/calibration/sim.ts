@@ -121,8 +121,24 @@ export interface MoveOutcome {
 
 export const CP_LOSS_CAP = 1000;
 
+/**
+ * How hard the position is, from the referee frame alone (the same for every mover): the rating
+ * model's covariates.
+ */
+export interface PositionShape {
+	/** Scored moves within `NEAR_BEST_LOSS` of the best (the best included). */
+	nearBest: number;
+	/** The smallest loss among the other scored moves (how "only" the best move is), capped at 0.5. */
+	secondLoss: number;
+	/** `|2·winProb(best) − 1|`: 0 in a balanced position, → 1 in a decided one. */
+	decided: number;
+}
+
+export const NEAR_BEST_LOSS = 0.02;
+
 export interface Judge {
 	bestUci: string;
+	shape: PositionShape;
 	topCp: number;
 	/** The referee's `cpEffective` score of `uci`, when scored. */
 	cpOf(uci: string): number | undefined;
@@ -145,8 +161,18 @@ export function judgeFor(frame: FrameCacheRecord): Judge {
 	if (frame.humanLine && humanUci !== undefined && !cpOf.has(humanUci))
 		cpOf.set(humanUci, cpEffective(frame.humanLine.score));
 	const bestUci = top.pvUci[0] ?? "";
+	let nearBest = 0;
+	let secondLoss = 0.5;
+	for (const line of frame.lines) {
+		const uci = line.pvUci[0];
+		if (uci === undefined) continue;
+		const loss = Math.max(0, winTop - winProb(cpEffective(line.score)));
+		if (loss <= NEAR_BEST_LOSS) nearBest++;
+		if (uci !== bestUci) secondLoss = Math.min(secondLoss, loss);
+	}
 	return {
 		bestUci,
+		shape: { nearBest: Math.max(1, nearBest), secondLoss, decided: Math.abs(2 * winTop - 1) },
 		topCp,
 		cpOf: (uci) => cpOf.get(uci),
 		outcome(uci) {
@@ -264,6 +290,9 @@ export interface SimRow {
 	ply: number;
 	/** Mover's clock over the base clock, before the move (clock-quartile reports). */
 	clockFrac: number;
+	/** The human mover's chess.com rating. */
+	rating: number;
+	shape: PositionShape;
 	human: MoveOutcome | null;
 	/** One draw per chain. */
 	draws: Draw[];
@@ -303,6 +332,8 @@ export function simulateMany(games: readonly Game[], options: SimManyOptions): S
 				ply: g.item.row.ply,
 				clockFrac:
 					(g.item.row.baseMs ?? 0) > 0 ? clamp(g.item.row.clockMs / (g.item.row.baseMs ?? 1), 0, 1) : 1,
+				rating: g.item.row.selfElo,
+				shape: g.judge.shape,
 				human: g.human,
 				draws: [],
 			}))

@@ -5,9 +5,16 @@ import "../human-match/defines";
 import { describe, expect, it } from "bun:test";
 import { MAIA } from "@core/constants/maia";
 import type { EvalLine } from "@typedefs/engine";
-import { features, linearFit, predict, train } from "./estimator";
 import { type CellSurface, smoothClass, tableSource } from "./fit";
 import type { FrameCacheRecord } from "./frames";
+import {
+	CLASSES,
+	covariates,
+	estimateRating,
+	moveClass,
+	pairedDifference,
+	trainModel,
+} from "./rating-model";
 import { gridFor } from "./requests";
 import { judgeFor, type MoveOutcome, PolicyGrid } from "./sim";
 import { objective, type Profile, ProfileBuilder } from "./stats";
@@ -122,7 +129,11 @@ describe("fit smoothing", () => {
 		),
 	});
 	it("keeps clean minima, makes the conditioning monotone and drops thin cells", () => {
-		const picks = smoothClass([bowl(1000, 100, 0.8), bowl(1200, 100, 0.8), bowl(1400, -300, 0.8)]);
+		const cells = [bowl(1000, 100, 0.8), bowl(1200, 100, 0.8), bowl(1400, -300, 0.8)];
+		const picks = smoothClass(cells, 1);
+		// A heavier smoothness weight pulls the outlying cell towards its neighbours' offset.
+		const pulled = smoothClass(cells, 50);
+		expect(pulled[2]?.point.offset ?? 0).toBeGreaterThan(picks[2]?.point.offset ?? 0);
 		expect(picks.map((p) => p.temperature)).toEqual([0.8, 0.8, 0.8]);
 		for (let i = 1; i < picks.length; i++)
 			expect(picks[i]?.conditioning ?? 0).toBeGreaterThanOrEqual(picks[i - 1]?.conditioning ?? 0);
@@ -130,7 +141,7 @@ describe("fit smoothing", () => {
 		// every pick is an evaluated point
 		for (const p of picks) expect(p.conditioning).toBe(p.bucket + p.point.offset);
 		const thin = { ...bowl(1600, 0, 1), games: 3 };
-		expect(smoothClass([bowl(1000, 100, 0.8), thin]).map((p) => p.bucket)).toEqual([1000]);
+		expect(smoothClass([bowl(1000, 100, 0.8), thin], 1).map((p) => p.bucket)).toEqual([1000]);
 		const source = tableSource(picks);
 		expect(source).toContain("export const MAIA_CALIBRATION: MaiaCalibrationTable = {");
 		expect(source).toContain("\t\t[1000, 1100, 0.8],");
@@ -146,28 +157,49 @@ describe("fit smoothing", () => {
 	});
 });
 
-describe("estimator", () => {
-	it("recovers a rating from a continuous loss signal", () => {
-		const xs: number[][] = [];
-		const ys: number[] = [];
-		for (let g = 0; g < 200; g++) {
-			const rating = 800 + 10 * g;
-			// Mean loss falls smoothly with the rating; alternate moves are exact so nothing is flat.
-			const moves = Array.from({ length: 30 }, (_, i) => outcome(i % 2 === 0 ? 40 / rating : 0));
-			const x = features(moves);
-			if (x) {
-				xs.push(x);
-				ys.push(rating);
-			}
+describe("rating model", () => {
+	it("recovers a rating from move classes whose odds move with the rating", () => {
+		const shape = { nearBest: 2, secondLoss: 0.05, decided: 0.2 };
+		const moves: Array<{ x: number[]; y: number; rating: number }> = [];
+		let seed = 7;
+		const rand = () => {
+			seed = (seed * 1103515245 + 12345) % 2147483648;
+			return seed / 2147483648;
+		};
+		for (let i = 0; i < 6000; i++) {
+			const rating = 800 + (i % 21) * 100;
+			// Weaker players land in worse classes more often.
+			const p = 0.2 + (0.6 * (rating - 800)) / 2000;
+			const y = rand() < p ? 0 : 1 + Math.floor(rand() * (CLASSES - 1));
+			moves.push({ x: covariates(shape, 1), y, rating });
 		}
-		const model = train(xs, ys);
-		expect(model.residualSd).toBeLessThan(60);
-		const { b } = linearFit(
-			ys,
-			xs.map((x) => predict(model, x))
+		const model = trainModel(moves, 800);
+		expect(model.beta).toBeLessThan(0);
+		const strong = estimateRating(
+			model,
+			moves.filter((m) => m.rating === 2600).map((m) => ({ ...m, cluster: `${m.rating}` }))
 		);
-		expect(b).toBeGreaterThan(0.9);
-		expect(features([outcome(0)])).toBeNull();
+		const weak = estimateRating(
+			model,
+			moves.filter((m) => m.rating === 1000).map((m) => ({ ...m, cluster: `${m.rating}` }))
+		);
+		expect(strong.rating).toBeGreaterThan(weak.rating + 800);
+		expect(moveClass({ winLoss: 0, cpLoss: 0, top1: 1 })).toBe(0);
+		expect(moveClass({ winLoss: 0.25, cpLoss: 300, top1: 0 })).toBe(CLASSES - 2);
+		expect(moveClass({ winLoss: 0.5, cpLoss: 900, top1: 0 })).toBe(CLASSES - 1);
+	});
+	it("a paired difference of identical sets is zero with zero SE", () => {
+		const shape = { nearBest: 1, secondLoss: 0.2, decided: 0 };
+		const moves = Array.from({ length: 400 }, (_, i) => ({
+			x: covariates(shape, 0.5),
+			y: i % 3,
+			rating: 1000 + (i % 4) * 400,
+		}));
+		const model = trainModel(moves, 300);
+		const set = moves.map((m, i) => ({ ...m, cluster: `g${i % 20}` }));
+		const d = pairedDifference(estimateRating(model, set), estimateRating(model, set));
+		expect(d.diff).toBe(0);
+		expect(d.se).toBe(0);
 	});
 });
 
