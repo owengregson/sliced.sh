@@ -13,28 +13,17 @@ Requires: zstandard.
 from __future__ import annotations
 
 import argparse
-import io
 import json
 import random
 import re
 import sys
 
+from datalib.lichess import iter_games, open_pgn_zst, reservoir_add, tc_class
+
 TARGET_TC = {"60+0", "120+1", "180+0", "180+2", "300+0", "300+3", "600+0", "600+5", "900+10"}
 RATING_BUCKETS = [(700, 1000), (1000, 1200), (1200, 1400), (1400, 1600), (1600, 1800), (1800, 2000), (2000, 2300), (2300, 2700)]
-INC_WEIGHT = 40
 CLK_RE = re.compile(r"\[%clk (\d+):(\d\d):(\d\d)\]")
 MOVE_RE = re.compile(r"(?:\d+\.{1,3}\s*)?([KQRBN]?[a-h]?[1-8]?x?[a-h][1-8](?:=[QRBN])?[+#]?|O-O(?:-O)?[+#]?)\s*\{\s*\[%clk ([^\]]+)\]\s*\}")
-
-
-def tc_class(base: int, inc: int) -> str:
-    eff = base + INC_WEIGHT * inc
-    if eff < 180:
-        return "bullet"
-    if eff < 480:
-        return "blitz"
-    if eff < 1500:
-        return "rapid"
-    return "classical"
 
 
 def rating_bucket(elo: int) -> int | None:
@@ -47,24 +36,6 @@ def rating_bucket(elo: int) -> int | None:
 def clk_seconds(s: str) -> float:
     h, m, rest = s.split(":")
     return int(h) * 3600 + int(m) * 60 + float(rest)
-
-
-def iter_games(stream: io.TextIOBase):
-    headers: dict[str, str] = {}
-    moves: list[str] = []
-    for line in stream:
-        line = line.rstrip("\n")
-        if line.startswith("["):
-            m = re.match(r'\[(\w+) "(.*)"\]', line)
-            if m:
-                headers[m.group(1)] = m.group(2)
-        elif line.strip():
-            moves.append(line)
-        elif moves:
-            yield headers, " ".join(moves)
-            headers, moves = {}, []
-    if moves:
-        yield headers, " ".join(moves)
 
 
 def parse_game(headers: dict[str, str], text: str):
@@ -109,9 +80,7 @@ def main() -> int:
     seen: dict[tuple[int, str], int] = {}
     accepted = 0
     for path in args.inputs:
-        with open(path, "rb") as fh:
-            reader = zstandard.ZstdDecompressor().stream_reader(fh)
-            text = io.TextIOWrapper(reader, encoding="utf-8", errors="replace")
+        with open_pgn_zst(path, zstandard) as text:
             for headers, body in iter_games(text):
                 game = parse_game(headers, body)
                 if game is None:
@@ -125,14 +94,7 @@ def main() -> int:
                         continue
                     key = (rb, cls)
                     seen[key] = seen.get(key, 0) + 1
-                    row = dict(game, side=side)
-                    res = reservoirs.setdefault(key, [])
-                    if len(res) < args.per_cell:
-                        res.append(row)
-                    else:
-                        j = rng.randrange(seen[key])
-                        if j < args.per_cell:
-                            res[j] = row
+                    reservoir_add(reservoirs.setdefault(key, []), seen[key], dict(game, side=side), args.per_cell, rng)
                 accepted += 1
                 if args.limit and accepted >= args.limit:
                     break

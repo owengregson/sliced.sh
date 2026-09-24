@@ -4,6 +4,7 @@
 
 import { ENGINE_FILES } from "@core/constants/engine-files";
 import type { EvalLine } from "@typedefs/engine";
+import type { ReviewEngineProvenance } from "../lib/engine/types";
 
 export const START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
@@ -43,16 +44,8 @@ export interface EvidenceFrame {
 	accept?: string;
 }
 
-export interface EvidenceProvenance {
-	version: string;
-	module: string;
-	networks: Record<string, string>;
-	variant: "full";
-	limitedStrength: false;
-	wasmSha256: string;
-	runtime: string;
-	threads: number;
-	hashMb: number;
+/** The review engine's own provenance, plus the dataset and search settings of the collection. */
+export interface EvidenceProvenance extends ReviewEngineProvenance {
 	datasetSha256?: string;
 	requestedDepth?: number;
 	movetimeMs?: number;

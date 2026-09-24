@@ -1,22 +1,25 @@
-/** Launch the exact shipped full engine under V8, rather than a Bun SIMD substitute. */
+/**
+ * tools/lib/engine/review-referee.ts — the exact shipped full engine, launched under V8 rather
+ * than a Bun SIMD substitute: `review-worker.node.ts` is bundled for Node and driven over JSON
+ * lines on its stdin/stdout, one search at a time.
+ */
+
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import { Readable } from "node:stream";
-import type { RefereeEngine, RefereeOptions, SearchFrame } from "../human-match/engine";
-import type { EvidenceProvenance } from "./evidence";
-
-export const ROOT = path.resolve(import.meta.dir, "../..");
+import { ROOT } from "../paths";
+import type { RefereeEngine, RefereeOptions, ReviewEngineProvenance, SearchFrame } from "./types";
 
 export async function createReviewReferee(
 	options: RefereeOptions
-): Promise<RefereeEngine & { provenance: EvidenceProvenance }> {
+): Promise<RefereeEngine & { provenance: ReviewEngineProvenance }> {
 	const node = Bun.which("node");
 	if (!node) throw new Error("Review benchmark requires Node/V8 on PATH");
 	const dir = await mkdtemp(path.join(tmpdir(), "sliced-review-node-"));
 	const build = await Bun.build({
-		entrypoints: [path.join(import.meta.dir, "engine.node.ts")],
+		entrypoints: [path.join(import.meta.dir, "review-worker.node.ts")],
 		outdir: dir,
 		naming: "[name].mjs",
 		target: "node",
@@ -27,7 +30,7 @@ export async function createReviewReferee(
 	const child = Bun.spawn(
 		[
 			node,
-			path.join(dir, "engine.node.mjs"),
+			path.join(dir, "review-worker.node.mjs"),
 			ROOT,
 			String(options.threads ?? 1),
 			String(options.hashMb ?? 64),
@@ -46,7 +49,7 @@ export async function createReviewReferee(
 		if (row.done) throw new Error(`Review worker exited (${await child.exited})`);
 		return JSON.parse(row.value);
 	};
-	const { provenance } = (await receive()) as { provenance: EvidenceProvenance };
+	const { provenance } = (await receive()) as { provenance: ReviewEngineProvenance };
 	let chain = Promise.resolve();
 	const send = async (message: unknown) => {
 		child.stdin.write(`${JSON.stringify(message)}\n`);

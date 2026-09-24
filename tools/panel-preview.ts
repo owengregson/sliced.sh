@@ -1,7 +1,7 @@
 /** Deterministic browser preview of every real panel route; no extension or game required. */
 import path from "node:path";
+import { ROOT as root } from "./lib/paths";
 
-const root = path.resolve(import.meta.dir, "..");
 const build = await Bun.build({
 	entrypoints: [path.join(root, "test/fixtures/panel-preview.ts")],
 	target: "browser",

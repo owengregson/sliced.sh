@@ -9,11 +9,12 @@ import { parseBestmove, parseInfo } from "@core/engine/uci-parser";
 import { bootEngineDetailed } from "@offscreen/stockfish-loader";
 import type { EvalLine } from "@typedefs/engine";
 import { Chess } from "chess.js";
-import type { SearchSpec } from "../human-match/engine";
+import type { SearchSpec } from "./types";
+import { evalScoreOf, goCommand, LineHub, positionCommand } from "./uci";
 
 const [root, threadsText, hashText] = process.argv.slice(2);
 if (!root || process.versions.bun) throw new Error("Requires Node/V8 and a repository root");
-const listeners = new Set<(line: string) => void>();
+const listeners = new LineHub();
 const errors: string[] = [];
 let version = "";
 const networks: Record<string, string> = {};
@@ -32,26 +33,20 @@ const boot = await bootEngineDetailed("full", {
 	},
 	listen: (line) => {
 		if (line.startsWith("id name ")) version = line.slice(8);
-		for (const listener of listeners) listener(line);
+		listeners.dispatch(line);
 	},
 	onError: (message) => errors.push(message),
 });
 const sf = boot.sf;
-const command = (text: string, accept: (line: string) => boolean, timeout = 15_000) =>
-	new Promise<string>((resolve, reject) => {
-		const listener = (line: string) => {
-			if (!accept(line)) return;
-			clearTimeout(timer);
-			listeners.delete(listener);
-			resolve(line);
-		};
-		const timer = setTimeout(() => {
-			listeners.delete(listener);
-			reject(new Error(`Engine timeout: ${text}; ${errors.join("; ")}`));
-		}, timeout);
-		listeners.add(listener);
-		sf.uci(text);
-	});
+const command = (text: string, accept: (line: string) => boolean, timeout = 15_000) => {
+	const answer = listeners.waitFor(
+		accept,
+		timeout,
+		() => new Error(`Engine timeout: ${text}; ${errors.join("; ")}`)
+	);
+	sf.uci(text);
+	return answer;
+};
 const emit = (value: unknown) => process.stdout.write(`${JSON.stringify(value)}\n`);
 await command("uci", (line) => line === "uciok");
 sf.uci(`setoption name Threads value ${Number(threadsText)}`);
@@ -97,7 +92,7 @@ try {
 			cycle.set(rank, {
 				multipv: rank,
 				depth: info.depth,
-				score: info.score.type === "mate" ? { mate: info.score.value } : { cp: info.score.value },
+				score: evalScoreOf(info.score),
 				pvUci: info.pv,
 				pvSan: [],
 				...(info.wdl ? { wdl: info.wdl } : {}),
@@ -105,11 +100,16 @@ try {
 		};
 		sf.uci(`setoption name MultiPV value ${spec.multiPv}`);
 		await command("isready", (line) => line === "readyok");
-		sf.uci(`position fen ${spec.fen}${spec.moves?.length ? ` moves ${spec.moves.join(" ")}` : ""}`);
+		sf.uci(positionCommand(spec.fen, spec.moves));
 		listeners.add(collect);
 		const started = performance.now();
+		// A zero depth means "no depth cap" here, unlike the Bun referee.
 		const best = await command(
-			`go movetime ${spec.movetimeMs}${spec.depth ? ` depth ${spec.depth}` : ""}${spec.searchmoves?.length ? ` searchmoves ${spec.searchmoves.join(" ")}` : ""}`,
+			goCommand({
+				movetimeMs: spec.movetimeMs,
+				...(spec.depth ? { depth: spec.depth } : {}),
+				...(spec.searchmoves ? { searchmoves: spec.searchmoves } : {}),
+			}),
 			(line) => line.startsWith("bestmove "),
 			spec.movetimeMs + 30_000
 		);

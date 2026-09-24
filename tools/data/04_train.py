@@ -13,6 +13,8 @@ import json
 import math
 import sys
 
+from datalib.lichess import INC_WEIGHT, tc_class
+
 BUCKETS = [0.10, 0.35, 0.6, 0.9, 1.25, 1.7, 2.2, 2.8, 3.5, 4.3, 5.2, 6.3, 7.6, 9.1, 11, 13, 15.5, 18.5, 22, 26, 31, 37, 44, 52, 62, 75, 90, 110, 135, 170, 220, math.inf]
 FEATURES = ["elo_z", "tc_bullet", "tc_blitz", "tc_rapid", "log_base_eff", "inc", "log_clock", "pressure", "clock_ratio", "ply", "ply_sq",
             "phase_opening", "phase_middlegame", "phase_endgame", "in_book", "ln_n_reasonable", "decisiveness", "chosen_gap", "eval_abs",
@@ -30,8 +32,8 @@ def vectorise(row: dict) -> list[float] | None:
     if row.get("n_reasonable") is None:
         return None
     base, inc = row["base"], row["inc"]
-    eff = base + 40 * inc
-    cls = "bullet" if eff < 180 else "blitz" if eff < 480 else "rapid" if eff < 1500 else "classical"
+    eff = base + INC_WEIGHT * inc
+    cls = tc_class(base, inc)
     n_reasonable = row["n_reasonable"]
     dec = row["decisiveness"]
     eval_cp = row.get("eval_cp") or 0.0
