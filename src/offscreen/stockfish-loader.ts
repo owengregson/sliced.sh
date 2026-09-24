@@ -24,55 +24,17 @@ import { LIMITS } from "@core/constants/limits";
 import { log } from "@core/logger";
 import type StockfishWeb from "@lichess-org/stockfish-web";
 import type { EngineVariant } from "@typedefs/engine";
+import { errorMessage } from "./shared/errors";
+import { RELAXED_SIMD_ERROR, supportsRelaxedSimd } from "./stockfish-loader/relaxed-simd";
+
+export {
+	RELAXED_SIMD_ERROR,
+	RELAXED_SIMD_PROBE,
+	supportsRelaxedSimd,
+} from "./stockfish-loader/relaxed-simd";
 
 /** Status error when the document is not cross-origin isolated (no `SharedArrayBuffer`). */
 export const CROSS_ORIGIN_ISOLATION_ERROR = "cross-origin isolation missing";
-
-/** Status error when the runtime rejects relaxed SIMD: the only engine builds shipped need it. */
-export const RELAXED_SIMD_ERROR = "relaxed SIMD unsupported (Chrome 114 or newer is required)";
-
-/**
- * Smallest module exercising a relaxed-simd instruction: one function
- * `() -> v128` computing `i8x16.relaxed_swizzle(v128.const 0, v128.const 0)`.
- * `WebAssembly.validate` accepts it only where the relaxed-simd proposal is
- * implemented (Chrome ≥ 114).
- */
-export const RELAXED_SIMD_PROBE: Uint8Array = Uint8Array.of(
-	0x00,
-	0x61,
-	0x73,
-	0x6d, // magic
-	0x01,
-	0x00,
-	0x00,
-	0x00, // version
-	0x01,
-	0x05,
-	0x01,
-	0x60,
-	0x00,
-	0x01,
-	0x7b, // type: () -> v128
-	0x03,
-	0x02,
-	0x01,
-	0x00, // function 0 has type 0
-	0x0a,
-	0x2b,
-	0x01,
-	0x29,
-	0x00, // code section, one body, no locals
-	0xfd,
-	0x0c,
-	...new Array<number>(16).fill(0), // v128.const 0
-	0xfd,
-	0x0c,
-	...new Array<number>(16).fill(0), // v128.const 0
-	0xfd,
-	0x80,
-	0x02, // i8x16.relaxed_swizzle (0xfd 0x100)
-	0x0b // end
-);
 
 /** Emscripten `moduleArg` the stockfish-web factory understands. */
 export interface StockfishFactoryArgs {
@@ -119,14 +81,6 @@ const defaultValidate = (bytes: Uint8Array): boolean =>
 const defaultMemory = (initial: number, maximum: number): WebAssembly.Memory =>
 	new WebAssembly.Memory({ initial, maximum, shared: true });
 
-export function supportsRelaxedSimd(validate: (bytes: Uint8Array) => boolean): boolean {
-	try {
-		return validate(RELAXED_SIMD_PROBE);
-	} catch {
-		return false;
-	}
-}
-
 /** The `.js` file for `variant` (always the relaxed-simd build — the only one shipped). */
 export function chooseModule(variant: EngineVariant): string {
 	return (variant === "full" ? ENGINE_FILES.full : ENGINE_FILES.smallnet).js;
@@ -141,10 +95,6 @@ export function recommendedNnue(sf: StockfishWeb): string[] {
 		names.push(name);
 	}
 	return names;
-}
-
-function errorMessage(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
 }
 
 export async function bootEngineDetailed(

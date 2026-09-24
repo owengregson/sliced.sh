@@ -12,6 +12,8 @@ import { packagedModelName } from "@core/constants/model-packing";
 import { log } from "@core/logger";
 import { type AssetFetchResponse, sha256Hex } from "./asset-store";
 import { unpackModelResponse } from "./model-unpack";
+import { errorMessage } from "./shared/errors";
+import { SingleFlight } from "./shared/single-flight";
 
 export const MAIA_SIZE_ERROR = "unknown maia size";
 export const MAIA_FETCH_ERROR = "maia model not readable";
@@ -34,16 +36,12 @@ export interface MaiaSource {
 	get(size: MaiaSize): Promise<Uint8Array>;
 }
 
-function errorMessage(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
-}
-
 export function isMaiaSize(value: unknown): value is MaiaSize {
 	return typeof value === "string" && (MAIA_SIZES as readonly string[]).includes(value);
 }
 
 export class MaiaStore implements MaiaSource {
-	private readonly inFlight = new Map<MaiaSize, Promise<Uint8Array>>();
+	private readonly flights = new SingleFlight<MaiaSize, Uint8Array>();
 	private readonly fetchFn: (url: string) => Promise<AssetFetchResponse>;
 	private readonly getUrl: (path: string) => string;
 	private readonly digest: ((data: Uint8Array) => Promise<ArrayBuffer>) | undefined;
@@ -64,13 +62,7 @@ export class MaiaStore implements MaiaSource {
 
 	/** Bytes of `size`'s model, verified; concurrent calls for one size share the work. */
 	get(size: MaiaSize): Promise<Uint8Array> {
-		const running = this.inFlight.get(size);
-		if (running) return running;
-		const p = this.load(size).finally(() => {
-			if (this.inFlight.get(size) === p) this.inFlight.delete(size);
-		});
-		this.inFlight.set(size, p);
-		return p;
+		return this.flights.run(size, (s) => this.load(s));
 	}
 
 	private async load(size: MaiaSize): Promise<Uint8Array> {

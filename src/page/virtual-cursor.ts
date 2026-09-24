@@ -41,49 +41,19 @@
  */
 
 import { BRIDGE_WIRE as W } from "@core/constants/bridge";
-import { POINTER_CONTROL } from "@core/constants/cdp";
-import { CURSOR_EFFECTS, CURSOR_LAYER } from "@core/constants/cursor";
 import { HIGHLIGHT_MOTION } from "@core/constants/timings";
 import { defineProgram, type Expression, js, type Statement } from "@pagescript";
 import cursorCss from "../../css/page-cursor.css?raw";
 import { defineHandle, KINDS, listen } from "./bridge-common";
 import { CURSOR_FEEDBACK, cursorEffectStatements } from "./cursor-effects";
+import { add, joined, text } from "./parts/ast";
 import markup from "./templates/virtual-cursor.html?raw";
+import { CURSOR_ART as A, CURSOR } from "./virtual-cursor/names";
+import { prepareRoutine, shieldRoutines } from "./virtual-cursor/shield";
 
 const doc = js.id("document");
 
-/** Function names shared by the bridge and standalone page program. */
-export const CURSOR = {
-	to: "curTo",
-	hide: "curHide",
-	prepare: "curPrepare",
-	seal: "curSeal",
-} as const;
-
-/**
- * The graphic's own geometry — part of the artwork, not theme (the `--sl-*`
- * tokens do not resolve in the page realm, §13.3 / C3).
- */
-export const CURSOR_ART = {
-	/** Canvas size of the source SVG. */
-	sizePx: 32,
-	/** Arrow-tip hotspot inside that canvas; also the scale pivot. */
-	hotX: 5,
-	hotY: 5,
-	/** Artwork compression; the input position stays fixed. */
-	pressScale: CURSOR_EFFECTS.pressedScale,
-	/**
-	 * The maximum `z-index` there is (`CURSOR_LAYER`, 2026-09-13: "some popups go over it"). Nothing
-	 * with a `z-index` can paint over the arrow; only the top layer can, and that is not a number.
-	 */
-	zIndex: CURSOR_LAYER.zIndex,
-	/** The trail and the shield's no-popover fallback sit one step under the arrow. */
-	underlayZIndex: CURSOR_LAYER.underlayZIndex,
-	/** A CSS-pixel aperture, not a board-sized passthrough. */
-	apertureRadiusPx: 1,
-} as const;
-
-const A = CURSOR_ART;
+export { CURSOR, CURSOR_ART } from "./virtual-cursor/names";
 
 /**
  * The style attribute, written **once** at insert time; after that only
@@ -98,14 +68,6 @@ const STYLE_HEAD =
 	`pointer-events:none;z-index:${A.zIndex};transform-origin:${A.hotX}px ${A.hotY}px;` +
 	"will-change:transform;filter:drop-shadow(1.5px 1.5px 2px rgba(0,0,0,0.3));transition:opacity ";
 const STYLE_TAIL = "ms ease;opacity:0";
-
-const add = (a: Expression, b: Expression): Expression => js.op(a, "+", b);
-const text = (v: Expression): Expression => js.call(js.id("String"), v);
-/** `a + b + c…`; an empty list is the empty string rather than a throw. */
-const joined = (parts: Expression[]): Expression => {
-	const [first, ...rest] = parts;
-	return first === undefined ? js.str("") : rest.reduce(add, first);
-};
 
 export interface CursorParams {
 	/** The per-build class name of the mirror's `<div>`. */
@@ -131,100 +93,6 @@ export function cursorStatements(p: CursorParams): Statement[] {
 	const host = js.id("host");
 	const q = js.id("q");
 	const shield = js.id("curShield");
-	const shieldState = js.let_("curShield", js.nil());
-	const shieldFind = js.const_(
-		"curFindShield",
-		js.arrow([], js.call(js.member(doc, "querySelector"), joined([js.str("."), p.cls, js.str("h")])))
-	);
-	const shieldTimer = js.let_("curShieldTimer", js.nil());
-	const shieldSeal = js.const_(
-		CURSOR.seal,
-		js.arrow(
-			[],
-			[
-				js.expr(js.call(js.id("clearTimeout"), js.id("curShieldTimer"))),
-				js.assign(js.id("curShieldTimer"), js.nil()),
-				js.assign(shield, js.call(js.id("curFindShield"))),
-				js.if_(shield, [js.assign(js.member(shield, "style", "clipPath"), js.str("none"))]),
-			]
-		)
-	);
-	const curPrepare = js.const_(
-		CURSOR.prepare,
-		js.arrow(
-			["q"],
-			[
-				js.if_(js.or(js.not(q), js.not(js.call(js.id("curFind")))), [js.ret(js.bool(false))]),
-				js.if_(
-					js.not(
-						js.and(
-							js.call(js.member(js.id("Number"), "isFinite"), js.member(q, W.x)),
-							js.call(js.member(js.id("Number"), "isFinite"), js.member(q, W.y))
-						)
-					),
-					[js.ret(js.bool(false))]
-				),
-				js.expr(js.call(js.id(CURSOR.seal))),
-				js.if_(js.not(shield), [
-					js.assign(shield, js.call(js.member(doc, "createElement"), js.str("div"))),
-					js.expr(js.call(js.member(shield, "setAttribute"), js.str("class"), add(p.cls, js.str("h")))),
-					js.expr(
-						js.call(
-							js.member(shield, "setAttribute"),
-							js.str("style"),
-							js.str(
-								`position:fixed;inset:0;width:auto;height:auto;margin:0;padding:0;border:0;pointer-events:auto;cursor:not-allowed;z-index:${A.underlayZIndex};background:transparent;`
-							)
-						)
-					),
-					// Under `<html>` like the arrow: where the popover API is missing, the `z-index`
-					// fallback must not be trapped in a stacking context either.
-					js.expr(js.call(js.member(doc, "documentElement", "appendChild"), shield)),
-					js.if_(js.op(js.typeof_(js.member(shield, "showPopover")), "===", js.str("function")), [
-						js.expr(js.call(js.member(shield, "setAttribute"), js.str("popover"), js.str("manual"))),
-						js.try_([js.expr(js.call(js.member(shield, "showPopover")))], "error", [
-							js.expr(js.call(js.member(shield, "removeAttribute"), js.str("popover"))),
-						]),
-					]),
-				]),
-				js.const_("x0", js.op(js.member(q, W.x), "-", js.num(A.apertureRadiusPx))),
-				js.const_("x1", js.op(js.member(q, W.x), "+", js.num(A.apertureRadiusPx))),
-				js.const_("y0", js.op(js.member(q, W.y), "-", js.num(A.apertureRadiusPx))),
-				js.const_("y1", js.op(js.member(q, W.y), "+", js.num(A.apertureRadiusPx))),
-				js.assign(
-					js.member(shield, "style", "clipPath"),
-					joined([
-						js.str("polygon(evenodd,0 0,100% 0,100% 100%,0 100%,0 0,"),
-						text(js.id("x0")),
-						js.str("px "),
-						text(js.id("y0")),
-						js.str("px,"),
-						text(js.id("x1")),
-						js.str("px "),
-						text(js.id("y0")),
-						js.str("px,"),
-						text(js.id("x1")),
-						js.str("px "),
-						text(js.id("y1")),
-						js.str("px,"),
-						text(js.id("x0")),
-						js.str("px "),
-						text(js.id("y1")),
-						js.str("px,"),
-						text(js.id("x0")),
-						js.str("px "),
-						text(js.id("y0")),
-						js.str("px)"),
-					])
-				),
-				js.assign(
-					js.id("curShieldTimer"),
-					js.call(js.id("setTimeout"), js.id(CURSOR.seal), js.num(POINTER_CONTROL.expiresMs))
-				),
-				js.ret(js.bool(true)),
-			]
-		)
-	);
 	const curBase = js.const_(
 		"curBase",
 		joined([js.str(STYLE_HEAD), text(p.fadeMs), js.str(STYLE_TAIL)])
@@ -343,14 +211,11 @@ export function cursorStatements(p: CursorParams): Statement[] {
 			hotX: A.hotX,
 			hotY: A.hotY,
 		}),
-		shieldState,
-		shieldTimer,
-		shieldFind,
-		shieldSeal,
+		...shieldRoutines(p),
 		curBase,
 		curFind,
 		curEnsure,
-		curPrepare,
+		prepareRoutine(p),
 		curTo,
 		curHide,
 	];
