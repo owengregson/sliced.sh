@@ -75,7 +75,7 @@ export const CHESSMIMIC_BAND_FILES: Readonly<Record<ChessMimicBand, ChessMimicBa
 	},
 	"2200_3500": {
 		bytes: 18_200_481,
-		sha256: "5e7d1175e4b44dc180068e6b72782a425953ed76848063e037eafc7d0e4203f7",
+		sha256: "f799744bbdabbb4f30fcb44a3b1d17d7e04b1de6a449d6fb389297967e556110",
 		bundled: true,
 		packed: true,
 	},

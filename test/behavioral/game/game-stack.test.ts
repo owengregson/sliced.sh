@@ -205,7 +205,7 @@ describe("createGameStack: the real service-worker stack", () => {
 					{ rating: 1650, band: "1500_1600", playerClockS: 180, opponentClockS: 170 },
 					// 2300 selects `2200_3500` since 2026-09-13. The centres are each band's own training
 					// population mean (`bandCentre` reads `scalers.json`) — 1252 / 1551 / 1849 / 2048 /
-					// 2357 — not the arithmetic midpoint of the name, which would put the wide top band
+					// 2633 — not the arithmetic midpoint of the name, which would put the wide top band
 					// at 2850 and send every target from 2200 to 2450 to `2000_2100` to be clamped at
 					// 2100. Before the two new bands this was `1800_1900`, clamped to 1900: a 400 Elo
 					// lie at this target, and the whole reason the bands were added.

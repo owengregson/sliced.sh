@@ -23,6 +23,10 @@ Run from the repository root:
     VIRTUAL_ENV=tools/data/.venv uv pip install torch onnx onnxruntime numpy chess
     tools/data/.venv/bin/python tools/data/08_export_chessmimic.py
 
+The shipped 2200_3500 band is fine-tuned (docs/models.md §9) and exported by
+tools/timing-finetune/export.py; running this script for that band restores upstream's weights,
+scaler and fixture rows.
+
 Provenance, measured precision, packaging and runtime checks: docs/models.md.
 """
 from __future__ import annotations

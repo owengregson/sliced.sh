@@ -91,7 +91,7 @@ describe("inputs and bands", () => {
 		expect(selectBand(1960)).toBe("2000_2100");
 		expect(selectBand(2100)).toBe("2000_2100");
 		// Centres are each band's own training-population mean (`bandCentre` reads `scalers.json`):
-		// 1252 / 1551 / 1849 / 2048 / 2357. The arithmetic midpoint of the wide top band's name would
+		// 1252 / 1551 / 1849 / 2048 / 2633 (the fine-tuned top band). The arithmetic midpoint of the wide top band's name would
 		// be 2850, which put every target from 2200 to 2450 in `2000_2100` to be clamped at 2100 —
 		// inside `2200_3500`'s own range, and exactly the owner's rating.
 		expect(selectBand(2300)).toBe("2200_3500");

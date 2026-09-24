@@ -38,8 +38,9 @@ describe("scalers.json", () => {
 		expect(bandCentre("1200_1300")).toBeCloseTo(1251.858, 3);
 		expect(Math.abs(bandCentre("1200_1300") - 1250)).toBeLessThan(5);
 		// … and for the 1 300-wide top band they do not, which is the whole reason for the change:
-		// the midpoint 2850 sent every 2200–2450 target to the band below.
-		expect(bandCentre("2200_3500")).toBeCloseTo(2357.105, 3);
+		// the midpoint 2850 sent every 2200–2450 target to the band below. The fine-tuned top band's
+		// population (chess.com movers rated 2100+, docs/models.md §9) has mean 2632.6.
+		expect(bandCentre("2200_3500")).toBeCloseTo(2632.595, 3);
 		// A band with no scalers falls back to the midpoint of its name.
 		expect(bandCentre("900_1000", {})).toBe(950);
 	});
@@ -106,20 +107,21 @@ describe("standardiseInputs", () => {
 		for (const band of CHESSMIMIC_BANDS)
 			if (bandRange(band)[1] - bandRange(band)[0] === 100)
 				for (const rating of [0, 1000, 1550, 3000]) expect(Math.abs(z(band, rating))).toBeLessThan(2.5);
-		// `2200_3500` is the exception and it is upstream's, not ours: one model for everything above
-		// 2200, 1 300 Elo wide against a 126.7 Elo std around a mean of 2357. Clamping bounds the
-		// *outside*; inside the range the band's own tail is thin, so a 3000 target really is +5.07
-		// std out. Pinned so that a re-export which changed the scaler would show up here.
+		// `2200_3500` is the exception: one model for everything above 2200, 1 300 Elo wide. Upstream
+		// fitted it on a population of 2357 ± 126.7, so a 3000 target was +5.07 std out; the
+		// fine-tuned band (docs/models.md §9) was refitted on chess.com movers rated 2100+ with the
+		// scaler 2632.6 ± 280.1, which puts 3000 at +1.31. Pinned so that a re-export which changed
+		// the scaler would show up here.
 		expect(z("0_1000", 400)).toBeCloseTo(
 			(400 - CHESSMIMIC_SCALERS["0_1000"].rating.mean) / CHESSMIMIC_SCALERS["0_1000"].rating.std,
 			10
 		);
 		expect(z("0_1000", -500)).toBe(z("0_1000", 0));
-		expect(z("2200_3500", 0)).toBeCloseTo(-1.2397, 3);
-		expect(z("2200_3500", 1550)).toBeCloseTo(-1.2397, 3);
-		expect(z("2200_3500", 2400)).toBeCloseTo(0.3385, 3);
-		expect(z("2200_3500", 3000)).toBeCloseTo(5.0732, 3);
-		expect(z("2200_3500", 9999)).toBeCloseTo(9.0188, 3);
+		expect(z("2200_3500", 0)).toBeCloseTo(-1.5447, 3);
+		expect(z("2200_3500", 1550)).toBeCloseTo(-1.5447, 3);
+		expect(z("2200_3500", 2400)).toBeCloseTo(-0.8305, 3);
+		expect(z("2200_3500", 3000)).toBeCloseTo(1.3119, 3);
+		expect(z("2200_3500", 9999)).toBeCloseTo(3.0973, 3);
 	});
 	it("uses log(clock + 1) with the band's own means and stds", () => {
 		const s = CHESSMIMIC_SCALERS["1500_1600"];

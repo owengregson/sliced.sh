@@ -82,6 +82,11 @@ distributed under the same licence; the PolyForm text is reproduced in the upstr
 The searchless_chess FEN tokeniser ChessMimic builds on is Apache-2.0 (google-deepmind); the
 extension's TypeScript transcription of it lives in `src/core/timing/chessmimic-tokeniser.ts`.
 
+The 2200–3500 band's weights were further fine-tuned from the upstream checkpoint
+named in the table (`tools/timing-finetune/train.py`, on public chess.com games: fit-split movers rated 2100+, 2.0M moves); the result is a derivative
+of the upstream weights and is distributed under the same licence and the same non-commercial
+condition.
+
 Export: `tools/data/08_export_chessmimic.py` (torch 2.14.0, onnx 1.22.0,
 onnxruntime 1.30.0; details, latency and the reference fixture in `docs/models.md`).
 
@@ -92,7 +97,7 @@ onnxruntime 1.30.0; details, latency and the reference fixture in `docs/models.m
 | 1500–1600 | `1500_1600.onnx` | `03a421db3e47` | 19,247,529 | 1.51e-3 |
 | 1800–1900 | `1800_1900.onnx` | `f7b6c7772cb3` | 18,200,481 | 8.02e-4 |
 | 2000–2100 | `2000_2100.onnx` | `759cd045c01b` | 18,200,481 | 5.42e-4 |
-| 2200–3500 | `2200_3500.onnx` | `051714117cba` | 18,200,481 | 1.09e-3 |
+| 2200–3500 | `2200_3500.onnx` | `051714117cba` (fine-tuned) | 18,200,481 | 6.82e-4 |
 
 Bands that are registered but not bundled would download from `https://sliced.sh/models/chessmimic/` and
 are verified against the SHA-256 in `src/core/constants/models.ts` before use.
@@ -104,11 +109,11 @@ are verified against the SHA-256 in `src/core/constants/models.ts` before use.
 | `1500_1600.onnx` | 19,247,529 | `09ffcd130d46b3273f2186c38ffcf49aedc5dc17c1499f1bf04714599dd99bc8` |
 | `1800_1900.onnx` | 18,200,481 | `121bc7a7fa7920f9b0cf55dfe642f1e32e33a82dea23831bfbc018fa8d8f6f22` |
 | `2000_2100.onnx` | 18,200,481 | `f50058cdab70d1f21d987faf0c11ed3059d30ad57c6e095cf3472bceb51f3eb9` |
-| `2200_3500.onnx` | 18,200,481 | `5e7d1175e4b44dc180068e6b72782a425953ed76848063e037eafc7d0e4203f7` |
-| `scalers.json` | 2,127 | `d4ee707edff08deb7bbb8f9fa48832bc80890b1c3232df6a451d9f15cde51f93` |
+| `2200_3500.onnx` | 18,200,481 | `f799744bbdabbb4f30fcb44a3b1d17d7e04b1de6a449d6fb389297967e556110` |
+| `scalers.json` | 2,127 | `f0a2dbb2fd13c77a5faaa8f208dfa892b55d35f34256a51a28f8bbfaea644503` |
 | `buckets.json` | 14,917 | `871f0e06bc560d0f5fc40d466cf254587aed8a5127c8bb5104263d8290ed3377` |
 | `vocab.json` | 14,193 | `3756cc02bbf66dce1796f18f4334ea4ae27107e4b9ad4e003609656f925d5f19` |
-| `models.json` | 3,669 | `3c22f42015ff26ffdcc416e72a5f1d4a29b8de4147ceeca6cfa8c214f4115424` |
+| `models.json` | 4,142 | `09b2cbb4fc228cd714b9121f565d14ca5b89d7f974eba06ea61596b9689550db` |
 
 ## Maia-3 human move-policy models — `assets/models/maia3/`
 
