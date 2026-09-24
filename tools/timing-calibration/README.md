@@ -42,6 +42,7 @@ longer than the plan, and a calibration fitted to the plan alone would be wrong.
 | 10 | `flags.ts --tables identity@shipped,…` | closed loop, the bot on its own clock: flags, spend, final clock per class and band → `verify/flags.md` | ≈ 15 min |
 | 11 | `cap-check.ts` | does the fast-reply cap change the move? capped vs full searches → `verify/cap-check.md` | ≈ 30 min |
 | 12 | `premove-outcomes.ts` | queued trade premoves executed vs dropped by the site → `verify/premove-outcomes.md` | ≈ 5 min |
+| 14 | `select_crawl.py --out DIR` → `build_corpus.py --only DIR/select.json` → (with `SL_TIMING_CALIB_DIR=DIR`) `frames.ts`, `heads.ts --emit --tag main/cand` + `heads_worker.py`, `crawl-verify.ts` | independent holdout on the crawl (players absent from the calibration corpus), main vs shipped → `verify/crawl-holdout/` | ≈ 40 min |
 | 13 | `fixture.ts` | → `test/fixtures/timing/calibration-replay.json`, the behavioural test's frozen replay | ≈ 3 min |
 | – | `verify.ts --label L --table identity\|shipped\|FILE [--fast-reply] [--hover]` | one replay, one split → `verify/<L>/report.md` | ≈ 5 min |
 
