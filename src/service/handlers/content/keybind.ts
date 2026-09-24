@@ -9,7 +9,7 @@ import { MSG } from "@core/constants/messages";
 import { log } from "@core/logger";
 import type { MessageRouter } from "@core/messaging/router";
 import { errorMessage } from "@core/util/errors";
-import type { ContentHandlerDeps } from "@service/handlers/content/hello";
+import type { ContentHandlerDeps } from "@service/handlers/content/deps";
 
 export function registerContentKeybindHandler(
 	router: MessageRouter,

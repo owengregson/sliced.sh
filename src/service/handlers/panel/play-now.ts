@@ -10,7 +10,7 @@
 import { PANEL_COMMAND_ERRORS } from "@core/constants/cdp";
 import { MSG } from "@core/constants/messages";
 import type { MessageRouter } from "@core/messaging/router";
-import { mayAct, type PanelHandlerDeps } from "@service/handlers/panel";
+import { mayAct, type PanelHandlerDeps } from "@service/handlers/panel/deps";
 
 export function registerPlayNowHandler(
 	router: MessageRouter,

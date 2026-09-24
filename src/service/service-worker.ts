@@ -19,7 +19,7 @@ import { registerPanelHandlers } from "@service/handlers/panel";
 import { registerSettingsHandlers } from "@service/handlers/settings";
 import { wireServiceLifecycle } from "@service/lifecycle";
 import { installLogBridge } from "@service/log-bridge";
-import { PanelBroadcaster, type SnapshotSources } from "@service/panel-broadcaster";
+import { lateBoundSources, PanelBroadcaster } from "@service/panel-broadcaster";
 
 const systems = bootstrapServiceSystems();
 const { router } = systems;
@@ -28,23 +28,13 @@ const logBridge = installLogBridge(router);
 
 const lifecycle = wireServiceLifecycle({ systems });
 
-// The panel broadcaster is built first so the game stack can push snapshots into it, and its
-// sources are the registry the stack then constructs (Task 30) — a cycle, resolved through a
-// holder rather than a closure over the `const` below: a source read before the stack exists
-// answers "idle" instead of throwing a temporal-dead-zone error at worker boot.
-let sources: SnapshotSources | null = null;
-const panel = new PanelBroadcaster({
-	session: (tabId) => sources?.session(tabId) ?? null,
-	executor: (tabId) => sources?.executor(tabId) ?? null,
-	get hand() {
-		return sources?.hand ?? null;
-	},
-	engineStatus: () => sources?.engineStatus(),
-	license: () => systems.license.getState(),
-});
+// The panel broadcaster is built first so the game stack can push snapshots into it; its sources
+// are the registry the stack then constructs, bound once it exists (`lateBoundSources`).
+const panelSources = lateBoundSources(() => systems.license.getState());
+const panel = new PanelBroadcaster(panelSources.sources);
 
 const game = createGameStack({ systems, router, broadcaster: panel });
-sources = game.registry;
+panelSources.bind(game.registry);
 systems.sessions = game.registry;
 systems.engine = game.engine;
 

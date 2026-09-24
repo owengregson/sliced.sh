@@ -2,7 +2,11 @@ import type { ResignStep } from "@core/constants/messages";
 import { RESIGN } from "@core/constants/resign";
 import { sampleRange } from "@core/motor/geometry";
 import type { Pt } from "@core/motor/types";
-import { NativeControlInput, type NativeControlInputOptions } from "@service/native-control-input";
+import {
+	type ControlRead,
+	NativeControlInput,
+	type NativeControlInputOptions,
+} from "@service/native-control-input";
 
 export type ResignInputStatus = "resigned" | "not-ready" | "aborted";
 export interface ResignInputResult {
@@ -25,34 +29,23 @@ export class ResignInput {
 		try {
 			return (
 				(await this.input.run<ResignInputResult>(tabId, signal, async (gesture) => {
-					let reply = await this.read(tabId, step, gesture.signal);
-					if (reply.status !== "ready") return { status: "not-ready", step };
-					await gesture.attach();
-					// Attaching the debugger can move the control by adding its infobar.
-					reply = await this.read(tabId, step, gesture.signal);
-					if (reply.status !== "ready") return { status: "not-ready", step };
-					const { target } = reply;
-					if (
-						!(await gesture.click(target, (point) =>
-							this.read(tabId, step, gesture.signal, target.targetId, point)
-						))
-					)
+					const read: ControlRead = (targetId, point) =>
+						this.read(tabId, step, gesture.signal, targetId, point);
+					if ((await gesture.attachAndClick(read)).status !== "clicked")
 						return { status: "not-ready", step };
 					step = "confirm";
 					await gesture.wait(sampleRange(RESIGN.confirmDelayMs, this.options.rng));
 					// The prompt can arrive after the click receipt, so allow a bounded render window.
 					const giveUp = gesture.now() + RESIGN.confirmWaitMs;
-					let confirm = await this.read(tabId, step, gesture.signal);
+					let confirm = await read();
 					while (confirm.status !== "ready" && gesture.now() < giveUp) {
 						await gesture.wait(RESIGN.confirmPollMs);
-						confirm = await this.read(tabId, step, gesture.signal);
+						confirm = await read();
 					}
 					if (confirm.status !== "ready") return { status: "not-ready", step };
-					const confirmedTarget = confirm.target;
-					const clicked = await gesture.click(confirmedTarget, (point) =>
-						this.read(tabId, step, gesture.signal, confirmedTarget.targetId, point)
-					);
-					return clicked ? { status: "resigned" } : { status: "not-ready", step };
+					return (await gesture.clickControl(confirm.target, read))
+						? { status: "resigned" }
+						: { status: "not-ready", step };
 				})) ?? { status: "not-ready" }
 			);
 		} catch {

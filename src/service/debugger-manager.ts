@@ -14,6 +14,9 @@
  * while anything is attached (an attached debugger keeps the worker alive on
  * Chrome 118+, the alarm covers older builds and the gaps).
  *
+ * Native focus/visibility emulation and its arm reservations live in
+ * `debugger-manager/focus-emulation.ts`.
+ *
  * `ready` relies on Chrome always invoking the `getTargets` callback (with a
  * result or `lastError`); the wrapper turns either into a settled promise, so
  * a caller awaiting `ensureAttached` can never hang on the rebuild.
@@ -37,6 +40,7 @@ import { TIMINGS } from "@core/constants/timings";
 import { log } from "@core/logger";
 import { errorMessage } from "@core/util/errors";
 import { defaultNow, defaultScheduler, type Scheduler } from "@core/util/scheduler";
+import { FocusEmulation } from "@service/debugger-manager/focus-emulation";
 import type { Keepalive } from "@service/keepalive";
 
 export type DetachReason = (typeof DEBUGGER_DETACH_REASONS)[keyof typeof DEBUGGER_DETACH_REASONS];
@@ -63,10 +67,7 @@ export class DebuggerManager {
 	/** Resolves once the attach map has been rebuilt from `getTargets()`. */
 	readonly ready: Promise<void>;
 	private readonly attached = new Set<number>();
-	private readonly focused = new Set<number>();
-	private readonly focusUpdates = new Map<number, Promise<void>>();
-	private readonly focusReservations = new Map<number, number>();
-	private nextFocusReservation = 0;
+	private readonly focus = new FocusEmulation(this);
 	private readonly inflight = new Map<number, Promise<void>>();
 	private readonly idleTimers = new Map<number, unknown>();
 	private readonly errors = new Map<number, string>();
@@ -107,43 +108,21 @@ export class DebuggerManager {
 
 	/** True only after Chrome acknowledged native page focus/visibility emulation. */
 	isFocusMaintained(tabId: number): boolean {
-		return this.attached.has(tabId) && this.focused.has(tabId);
+		return this.attached.has(tabId) && this.focus.isFocused(tabId);
 	}
 
 	/** Reserve a new arm intent before asynchronous attach/cleanup work can overtake it. */
 	reserveFocus(tabId: number): number {
-		const reservation = ++this.nextFocusReservation;
-		this.focusReservations.set(tabId, reservation);
-		return reservation;
+		return this.focus.reserve(tabId);
 	}
 
 	hasFocusReservation(tabId: number, reservation: number): boolean {
-		return this.focusReservations.get(tabId) === reservation;
+		return this.focus.hasReservation(tabId, reservation);
 	}
 
 	/** Serialised with stop/re-arm so a late disable cannot undo a newer activation. */
 	setFocusMaintained(tabId: number, enabled: boolean, reservation?: number): Promise<void> {
-		const prior = this.focusUpdates.get(tabId) ?? Promise.resolve();
-		const next = prior
-			.catch(() => {})
-			.then(async () => {
-				if (reservation !== undefined && !this.hasFocusReservation(tabId, reservation)) return;
-				if (!this.attached.has(tabId)) {
-					this.focused.delete(tabId);
-					return;
-				}
-				await this.send(tabId, CDP.focusEmulation, { enabled });
-				if (reservation !== undefined && !this.hasFocusReservation(tabId, reservation)) return;
-				if (enabled && this.attached.has(tabId)) this.focused.add(tabId);
-				else this.focused.delete(tabId);
-			});
-		this.focusUpdates.set(tabId, next);
-		void next
-			.finally(() => {
-				if (this.focusUpdates.get(tabId) === next) this.focusUpdates.delete(tabId);
-			})
-			.catch(() => {});
-		return next;
+		return this.focus.set(tabId, enabled, reservation);
 	}
 
 	/** The user-facing reason of the last failed attach for `tabId`, if any. */
@@ -212,8 +191,7 @@ export class DebuggerManager {
 		this.listeners.clear();
 		this.inflight.clear();
 		this.attached.clear();
-		this.focused.clear();
-		this.focusReservations.clear();
+		this.focus.clear();
 		void this.keepalive?.release(DEBUGGER_KEEPALIVE_REASON);
 	}
 
@@ -264,8 +242,7 @@ export class DebuggerManager {
 
 	private markDetached(tabId: number, reason: DetachReason): void {
 		this.attached.delete(tabId);
-		this.focused.delete(tabId);
-		this.focusReservations.delete(tabId);
+		this.focus.forget(tabId);
 		this.clearIdle(tabId);
 		if (this.attached.size === 0) void this.keepalive?.release(DEBUGGER_KEEPALIVE_REASON);
 		for (const l of [...this.listeners]) l(tabId, reason);

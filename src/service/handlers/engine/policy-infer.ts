@@ -15,7 +15,6 @@
  */
 
 import { MAIA, type MaiaSize } from "@core/constants/maia";
-import type { EnginePortCommand, EnginePortMessage } from "@core/constants/messages";
 import { log } from "@core/logger";
 import type {
 	PolicyInferenceInputs,
@@ -24,12 +23,11 @@ import type {
 	PolicyResult,
 } from "@core/policy/types";
 import { DEFAULT_SCHEDULER, type TimerScheduler } from "@core/util/scheduler";
+import type { EnginePortLike } from "./engine-port";
+import { createQueryTable } from "./query-table";
 
 /** The engine port as seen from the SW (`RemoteEngine` satisfies it). */
-export interface PolicyRelayPort {
-	onMessage(cb: (m: EnginePortMessage) => void): () => void;
-	post(cmd: EnginePortCommand): void;
-}
+export type PolicyRelayPort = EnginePortLike;
 
 export interface PolicyInferPort extends PolicyPort {
 	/** Queries still waiting for the host (tests; the expiry keeps this bounded). */
@@ -45,31 +43,14 @@ export interface PolicyInferPortOptions {
 
 const ID_PREFIX = "p";
 
-interface PendingQuery {
-	resolve: (r: PolicyResult | null) => void;
-	timer: unknown;
-	cleanup: () => void;
-}
-
 export function createPolicyInferPort(
 	port: PolicyRelayPort,
 	options: PolicyInferPortOptions = {}
 ): PolicyInferPort {
-	const sched = options.scheduler ?? DEFAULT_SCHEDULER;
 	const budgetMs = options.budgetMs ?? MAIA.inferenceBudgetMs;
-	const pending = new Map<string, PendingQuery>();
+	const queries = createQueryTable<PolicyResult>(options.scheduler ?? DEFAULT_SCHEDULER);
 	let seq = 0;
 	let disposed = false;
-
-	/** Remove `id` from the map and stop its expiry; returns the waiter if it was still there. */
-	function take(id: string): PendingQuery | undefined {
-		const q = pending.get(id);
-		if (!q) return undefined;
-		pending.delete(id);
-		sched.clearTimeout(q.timer);
-		q.cleanup();
-		return q;
-	}
 
 	const off = port.onMessage((m) => {
 		if (m.kind === "policy-status") {
@@ -79,20 +60,20 @@ export function createPolicyInferPort(
 			return;
 		}
 		if (m.kind !== "policy-result") return;
-		const q = take(m.id);
-		if (!q) return;
+		const resolve = queries.take(m.id);
+		if (!resolve) return;
 		if (m.moves === null) {
 			log.debug("policy-infer: host answered without a distribution", {
 				id: m.id,
 				size: m.size,
 				error: m.error,
 			});
-			q.resolve(null);
+			resolve(null);
 			return;
 		}
 		const result: PolicyResult = { moves: m.moves, wdl: m.wdl, size: m.size };
 		if (m.ms !== undefined) result.ms = m.ms;
-		q.resolve(result);
+		resolve(result);
 	});
 	return {
 		infer(
@@ -102,23 +83,15 @@ export function createPolicyInferPort(
 			if (disposed || preparation?.signal?.aborted) return Promise.resolve(null);
 			const id = `${ID_PREFIX}${++seq}`;
 			const expiresMs = preparation?.budgetMs ?? budgetMs;
-			return new Promise((resolve) => {
-				const abort = () => take(id)?.resolve(null);
-				const timer = sched.setTimeout(() => {
-					if (!take(id)) return;
-					log.debug("policy-infer: query expired unanswered", { id, budgetMs: expiresMs });
-					resolve(null);
-				}, expiresMs);
-				pending.set(id, {
-					resolve,
-					timer,
-					cleanup: () => preparation?.signal?.removeEventListener("abort", abort),
-				});
-				preparation?.signal?.addEventListener("abort", abort, { once: true });
-				port.post({ kind: "policy", id, inputs });
-			});
+			return queries.ask(
+				id,
+				expiresMs,
+				preparation?.signal,
+				() => log.debug("policy-infer: query expired unanswered", { id, budgetMs: expiresMs }),
+				() => port.post({ kind: "policy", id, inputs })
+			);
 		},
-		pendingCount: () => pending.size,
+		pendingCount: () => queries.size(),
 		warm(size: MaiaSize) {
 			if (disposed) return;
 			port.post({ kind: "policy-warm", size });
@@ -127,13 +100,7 @@ export function createPolicyInferPort(
 			if (disposed) return;
 			disposed = true;
 			off();
-			const waiting = [...pending.values()];
-			pending.clear();
-			for (const q of waiting) {
-				sched.clearTimeout(q.timer);
-				q.cleanup();
-				q.resolve(null);
-			}
+			queries.settleAll();
 		},
 	};
 }
