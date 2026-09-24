@@ -24,7 +24,7 @@ import type { LinePreviewMode } from "@core/motor/line-preview";
 import type { OpponentExplorationCandidates } from "@core/motor/opponent-candidates";
 import type { ExecutionResult, HandState, Pt, TimeControlClass } from "@core/motor/types";
 import { defaultNow, defaultScheduler } from "@core/util/scheduler";
-import type { GameSessionView, Recommendation } from "@typedefs/game";
+import type { GameSessionView, Recommendation, Square } from "@typedefs/game";
 import type { TimingPlan } from "@typedefs/timing";
 import { AttachSettle } from "./executor/attach-settle";
 import { BoardChecks } from "./executor/board-checks";
@@ -322,6 +322,17 @@ export class MoveExecutor {
 
 	isExploring(): boolean {
 		return this.explorer.isExploring();
+	}
+
+	/**
+	 * Anticipatory hover (2026-09-24): the square of our piece the idle hand is resting over
+	 * because it anticipated the opponent's reply, or null. The session reads it when the reply
+	 * arrives (`TimingContext.hoverSquare`), and the timing model plans an anticipated reply only
+	 * when the move starts from this square. The hand must still be over the square for this to
+	 * be non-null.
+	 */
+	hoverSquare(): Square | null {
+		return this.explorer.hoverSquare();
 	}
 
 	// ── scheduling ────────────────────────────────────────────────────────

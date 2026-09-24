@@ -18,3 +18,11 @@ export function fastTouch(timing: TimingPlan): boolean {
 		(timing.features.loneKing ?? 0) > 0
 	);
 }
+
+/**
+ * A plan the timing model made for a reply the hand anticipated (`features.anticipated`, set when
+ * the idle hand was hovering over the moving piece): the hand runs a prepared touch.
+ */
+export function anticipatedTouch(timing: TimingPlan): boolean {
+	return (timing.features.anticipated ?? 0) > 0 && !fastTouch(timing);
+}
